@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Testing
+coverage/
+*.lcov
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.eslintcache
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Claude local config options
+.claude/settings.local.json
+.serena
