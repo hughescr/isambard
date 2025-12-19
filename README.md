@@ -62,7 +62,7 @@ Named after Isambard Kingdom Brunel, the visionary Victorian engineer, and from 
 
    # Email
    bunx sst secret set EmailUser <email@icloud.com>
-   bunx sst secret set ImapPassword <app-specific-password>
+   bunx sst secret set EmailPassword <app-specific-password>
 
    # Box
    bunx sst secret set BoxClientId <client-id>

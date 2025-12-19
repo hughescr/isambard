@@ -11,7 +11,7 @@ export const caldavPassword = new sst.Secret('CaldavPassword');
 
 // Email (IMAP/SMTP)
 export const emailUser = new sst.Secret('EmailUser');
-export const imapPassword = new sst.Secret('ImapPassword');
+export const emailPassword = new sst.Secret('EmailPassword');
 
 // Box
 export const boxClientId = new sst.Secret('BoxClientId');
