@@ -26,13 +26,13 @@ export const config = {
   // Email (IMAP/SMTP)
   email: {
     imapHost: new sst.Linkable('ImapHost', {
-      properties: { value: 'imap.mail.me.com' },
+      properties: { value: 'mail.hughes-family.org' },
     }),
     imapPort: new sst.Linkable('ImapPort', {
       properties: { value: '993' },
     }),
     smtpHost: new sst.Linkable('SmtpHost', {
-      properties: { value: 'smtp.mail.me.com' },
+      properties: { value: 'mail.hughes-family.org' },
     }),
     smtpPort: new sst.Linkable('SmtpPort', {
       properties: { value: '587' },
