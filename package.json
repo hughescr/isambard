@@ -1,0 +1,37 @@
+{
+  "name": "isambard",
+  "version": "0.1.0",
+  "description": "AI-powered Discord bot with persistent memory using DynamoDB",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "db:setup": "bun run scripts/migrate-db.ts",
+    "dev": "bun --watch src/index.ts",
+    "dev:docker": "docker compose -f docker/docker-compose.yml up --build",
+    "lint": "eslint --cache .",
+    "lint:fix": "eslint --cache --fix .",
+    "mutate": "bunx stryker run",
+    "sst-deploy": "if [ -z \"$AWS_ACCESS_KEY_ID\" ]; then op run --env-file=.env.op -- bunx sst deploy; else bunx sst deploy; fi",
+    "sst-dev": "if [ -z \"$AWS_ACCESS_KEY_ID\" ]; then op run --env-file=.env.op -- bunx sst dev; else bunx sst dev; fi",
+    "sst-diagnostics": "sh -c 'if [ -z \"$AWS_ACCESS_KEY_ID\" ]; then op run --env-file=.env.op -- bunx sst diagnostic --print-logs \"$@\"; else bunx sst diagnostics --print-logs \"$@\"; fi' _",
+    "sst-remove": "if [ -z \"$AWS_ACCESS_KEY_ID\" ]; then op run --env-file=.env.op -- bunx sst remove; else bunx sst remove; fi",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.700.0",
+    "@aws-sdk/lib-dynamodb": "^3.700.0",
+    "discord.js": "^14.16.0",
+    "zod": "4.2.1"
+  },
+  "devDependencies": {
+    "@hughescr/eslint-config-default": "^4.0.0",
+    "@stryker-mutator/core": "9.4.0",
+    "@types/bun": "latest",
+    "eslint": "^9.17.0",
+    "sst": "latest",
+    "typescript": "^5.7.0"
+  }
+}

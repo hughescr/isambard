@@ -1,13 +1,17 @@
 # Dependencies
 node_modules/
+bun.lockb
 
 # Build outputs
 dist/
 build/
+*.tsbuildinfo
 
 # Testing
 coverage/
 *.lcov
+.stryker-tmp/
+stryker.log
 
 # Environment
 .env
@@ -35,6 +39,15 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Cache
+.cache/
+
+# Docker
+neo4j_db/
+
 # Claude local config options
 .claude/settings.local.json
 .serena
+
+# SST
+.sst/

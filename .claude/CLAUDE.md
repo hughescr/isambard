@@ -1,0 +1,71 @@
+# Isambard Development Instructions
+
+## Project Overview
+Isambard is a self-improving agentic thought partner using Claude Agent SDK, TypeScript, and Bun.
+
+## Development Workflow
+
+### TDD Mandate (RED-GREEN-REFACTOR)
+1. **RED**: Write a failing test first
+2. **GREEN**: Write minimal code to pass the test
+3. **REFACTOR**: Clean up while keeping tests green
+
+Never write production code without a failing test. Tests are not optional.
+
+### Quality Gates
+Before any PR or commit:
+- [ ] All tests pass (`bun test`)
+- [ ] Zero TypeScript errors (`bun run typecheck`)
+- [ ] Zero lint warnings (`bun run lint`)
+- [ ] Mutation score >= 70% for changed files (`bun run mutate`)
+
+### Stryker Mutation Testing
+Run mutation testing to verify test quality:
+```bash
+bun run mutate
+```
+Target: >= 70% mutation score. If mutants survive, tests are incomplete.
+
+### Codex Consultation
+Consult Codex for:
+- Architectural decisions
+- Design pattern choices
+- API design reviews
+- Performance considerations
+
+### Self-Modification Protocol
+Isambard can propose improvements to its own code:
+1. Changes are submitted as PRs
+2. All PRs require human approval
+3. CI must pass before merge
+4. No direct commits to main
+
+## Architecture
+
+### Directory Structure
+- `src/agent/` - Claude Agent SDK integration
+- `src/storage/` - DynamoDB models and repositories
+- `src/integrations/` - External services (Discord, etc.)
+- `src/config/` - Configuration with Zod validation
+- `src/utils/` - Shared utilities
+
+### Key Patterns
+- **Repository Pattern** for data access
+- **Dependency Injection** for testability
+- **Zod Schemas** for runtime validation
+- **Structured Logging** with correlation IDs
+
+## Roadmaps
+- [Short-term (Weeks 1-2)](../roadmaps/short-term.md)
+- [Mid-term (Weeks 3-8)](../roadmaps/mid-term.md)
+- [Long-term (Months 3+)](../roadmaps/long-term.md)
+
+## Commands
+```bash
+bun run dev          # Development with hot reload
+bun run dev:docker   # Full stack with DynamoDB
+bun test             # Run tests
+bun run mutate       # Mutation testing
+bun run lint         # Check linting
+bun run typecheck    # TypeScript validation
+```
