@@ -7,9 +7,9 @@ Establish foundation for Isambard with working Discord bot and memory system.
 - [x] Project scaffolding
 - [x] Configuration system with Zod validation
 - [x] Structured logging utility
-- [ ] DynamoDB client setup
-- [ ] Basic memory repository (CRUD operations)
-- [ ] Unit tests for all above
+- [x] DynamoDB client setup
+- [x] Basic memory repository (CRUD operations)
+- [x] Unit tests for all above
 
 ## Week 2: Discord + Agent
 - [ ] Discord.js client wrapper
