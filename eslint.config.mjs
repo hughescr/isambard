@@ -1,9 +1,14 @@
-// eslint-disable-next-line n/no-unpublished-import -- This is a devDependency
 import config from '@hughescr/eslint-config-default';
 
 export default [
     ...config,
     {
-        ignores: ['dist/', 'node_modules/', '.stryker-tmp/', 'sst.config.ts', 'sst/**/*']
+        ignores: ['dist/', 'node_modules/', '.stryker-tmp/', '.sst/', 'sst.config.ts', 'sst/**/*']
+    },
+    {
+        rules: {
+            'n/no-missing-import':     'off',
+            'n/no-unpublished-import': 'off'
+        }
     }
 ];

@@ -5,8 +5,8 @@ Establish foundation for Isambard with working Discord bot and memory system.
 
 ## Week 1: Foundation
 - [x] Project scaffolding
-- [ ] Configuration system with Zod validation
-- [ ] Structured logging utility
+- [x] Configuration system with Zod validation
+- [x] Structured logging utility
 - [ ] DynamoDB client setup
 - [ ] Basic memory repository (CRUD operations)
 - [ ] Unit tests for all above
