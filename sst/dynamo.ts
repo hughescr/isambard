@@ -24,10 +24,28 @@ export const memoryTable = new sst.aws.Dynamo('IsambardMemory', {
   },
   ttl: 'TTL',  // Enable TTL on TTL attribute
   transform: {
-    table: (args: any) => {
-      args.billingMode = 'PROVISIONED';
-      args.readCapacity = 1;
-      args.writeCapacity = 1;
+    table: {
+      billingMode:            'PROVISIONED',
+      readCapacity:           1,
+      writeCapacity:          1,
+      globalSecondaryIndexes: [
+        {
+          name:           'GSI1',
+          hashKey:        'GSI1PK',
+          rangeKey:       'GSI1SK',
+          readCapacity:   1,
+          writeCapacity:  1,
+          projectionType: 'ALL',
+        },
+        {
+          name:           'GSI2',
+          hashKey:        'GSI2PK',
+          rangeKey:       'GSI2SK',
+          readCapacity:   1,
+          writeCapacity:  1,
+          projectionType: 'ALL',
+        },
+      ],
     },
   },
 });

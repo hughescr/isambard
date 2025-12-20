@@ -1,5 +1,6 @@
 import { Resource } from 'sst';
-import { configSchema, type Config } from './schemas';
+import _ from 'lodash';
+import { configSchema, dynamoDBConfigSchema, type Config, type DynamoDBConfig } from './schemas';
 
 export interface ResourceProvider {
     NodeEnv:              { value: string | undefined }
@@ -18,6 +19,12 @@ export interface ResourceProvider {
     DiscordApplicationId: { value: string | undefined }
     BoxClientId:          { value: string | undefined }
     BoxClientSecret:      { value: string | undefined }
+}
+
+export interface DynamoDBResourceProvider {
+    DynamoDBTableName: { value: string | undefined }
+    DynamoDBRegion:    { value: string | undefined }
+    DynamoDBEndpoint:  { value: string | undefined }
 }
 
 export function loadConfig(resources: ResourceProvider = Resource as unknown as ResourceProvider): Config {
@@ -54,10 +61,10 @@ export function loadConfig(resources: ResourceProvider = Resource as unknown as 
 
     if(!result.success) {
         const sensitiveFields = ['password', 'token', 'secret'];
-        const safeErrors = result.error.issues.map((issue) => {
+        const safeErrors = _.map(result.error.issues, (issue) => {
             const path = issue.path.join('.');
-            const isSensitive = issue.path.some(p =>
-                sensitiveFields.some(sf => String(p).toLowerCase().includes(sf))
+            const isSensitive = _.some(issue.path, p =>
+                _.some(sensitiveFields, sf => _.includes(_.toLower(String(p)), sf))
             );
             return {
                 path,
@@ -65,6 +72,22 @@ export function loadConfig(resources: ResourceProvider = Resource as unknown as 
             };
         });
         throw new Error(`Config validation failed: ${JSON.stringify(safeErrors)}`);
+    }
+
+    return result.data;
+}
+
+export function loadDynamoDBConfig(resources: DynamoDBResourceProvider): DynamoDBConfig {
+    const rawConfig = {
+        tableName: resources.DynamoDBTableName.value,
+        region:    resources.DynamoDBRegion.value,
+        endpoint:  resources.DynamoDBEndpoint.value,
+    };
+
+    const result = dynamoDBConfigSchema.safeParse(rawConfig);
+
+    if(!result.success) {
+        throw new Error(`DynamoDB config validation failed: ${JSON.stringify(result.error.issues)}`);
     }
 
     return result.data;

@@ -1,0 +1,25 @@
+// Client
+export { createDynamoDBClient, type DynamoDBClients } from './client';
+
+// Errors
+export { StorageError, ItemNotFoundError, ConflictError, ValidationError } from './errors';
+
+// Models
+export {
+    memoryTypeSchema,
+    memorySchema,
+    createMemoryKeys,
+    type Memory,
+    type MemoryType,
+    type MemoryItem
+} from './models/memory';
+
+// Repositories
+export { BaseRepository, type DynamoDBKey } from './repositories/base';
+export {
+    MemoryRepository,
+    type CreateMemoryInput,
+    type UpdateMemoryInput,
+    type QueryOptions,
+    type QueryResult
+} from './repositories/memory';

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test';
-import { loadConfig, type ResourceProvider } from '@/config/loader';
-import type { Config } from '@/config/schemas';
+import _ from 'lodash';
+import { loadConfig, loadDynamoDBConfig, type ResourceProvider, type DynamoDBResourceProvider } from '@/config/loader';
 
 /**
  * Helper to create mock ResourceProvider with sensible defaults.
@@ -187,7 +187,7 @@ describe('loadConfig', () => {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
             } catch (error) {
-                const errorMessage = error instanceof Error ? error.message : String(error);
+                const errorMessage = _.isError(error) ? error.message : String(error);
                 expect(errorMessage).not.toContain('super-secret-password-123');
             }
         });
@@ -201,7 +201,7 @@ describe('loadConfig', () => {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
             } catch (error) {
-                const errorMessage = error instanceof Error ? error.message : String(error);
+                const errorMessage = _.isError(error) ? error.message : String(error);
                 expect(errorMessage).toMatch(/password/i);
                 // If the error mentions the field, it should redact the value
                 if(errorMessage.includes('password')) {
@@ -219,7 +219,7 @@ describe('loadConfig', () => {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
             } catch (error) {
-                const errorMessage = error instanceof Error ? error.message : String(error);
+                const errorMessage = _.isError(error) ? error.message : String(error);
                 expect(errorMessage).toMatch(/token|discord/i);
             }
         });
@@ -233,7 +233,7 @@ describe('loadConfig', () => {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
             } catch (error) {
-                const errorMessage = error instanceof Error ? error.message : String(error);
+                const errorMessage = _.isError(error) ? error.message : String(error);
                 // Should mention the field but not the value
                 expect(errorMessage).toMatch(/box|secret|clientSecret/i);
             }
@@ -285,5 +285,47 @@ describe('loadConfig', () => {
             const config = loadConfig(resources);
             expect(config.app.logLevel).toBe('debug');
         });
+    });
+});
+
+describe('loadDynamoDBConfig', () => {
+    it('should load valid DynamoDB configuration', () => {
+        const resources: DynamoDBResourceProvider = {
+            DynamoDBTableName: { value: 'IsambardMemory' },
+            DynamoDBRegion:    { value: 'us-west-2' },
+            DynamoDBEndpoint:  { value: undefined },
+        };
+        const config = loadDynamoDBConfig(resources);
+        expect(config.tableName).toBe('IsambardMemory');
+        expect(config.region).toBe('us-west-2');
+        expect(config.endpoint).toBeUndefined();
+    });
+
+    it('should load config with endpoint for local development', () => {
+        const resources: DynamoDBResourceProvider = {
+            DynamoDBTableName: { value: 'IsambardMemory' },
+            DynamoDBRegion:    { value: 'us-west-2' },
+            DynamoDBEndpoint:  { value: 'http://localhost:8000' },
+        };
+        const config = loadDynamoDBConfig(resources);
+        expect(config.endpoint).toBe('http://localhost:8000');
+    });
+
+    it('should throw on missing tableName', () => {
+        const resources: DynamoDBResourceProvider = {
+            DynamoDBTableName: { value: undefined },
+            DynamoDBRegion:    { value: 'us-west-2' },
+            DynamoDBEndpoint:  { value: undefined },
+        };
+        expect(() => loadDynamoDBConfig(resources)).toThrow('DynamoDB config validation failed');
+    });
+
+    it('should throw on missing region', () => {
+        const resources: DynamoDBResourceProvider = {
+            DynamoDBTableName: { value: 'IsambardMemory' },
+            DynamoDBRegion:    { value: undefined },
+            DynamoDBEndpoint:  { value: undefined },
+        };
+        expect(() => loadDynamoDBConfig(resources)).toThrow();
     });
 });

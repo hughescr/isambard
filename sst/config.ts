@@ -1,6 +1,8 @@
 // Non-secret configuration managed by SST
 // Values vary by stage using $app.stage
 
+import { memoryTable } from './dynamo';
+
 export const config = {
   // Application
   app: {
@@ -36,6 +38,19 @@ export const config = {
     }),
     smtpPort: new sst.Linkable('SmtpPort', {
       properties: { value: '587' },
+    }),
+  },
+
+  // DynamoDB
+  dynamodb: {
+    tableName: new sst.Linkable('DynamoDBTableName', {
+      properties: { value: memoryTable.name },
+    }),
+    region: new sst.Linkable('DynamoDBRegion', {
+      properties: { value: 'us-west-2' },
+    }),
+    endpoint: new sst.Linkable('DynamoDBEndpoint', {
+      properties: { value: $app.stage === 'development' ? 'http://localhost:8000' : undefined },
     }),
   },
 };

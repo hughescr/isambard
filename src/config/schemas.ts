@@ -42,6 +42,13 @@ export const boxConfigSchema = z.object({
     clientSecret: z.string().min(1),
 });
 
+// DynamoDB config
+export const dynamoDBConfigSchema = z.object({
+    tableName: z.string().min(1),
+    region:    z.string().min(1),
+    endpoint:  z.string().url().optional(),
+});
+
 // Full config schema (all sections required)
 export const configSchema = z.object({
     app:     appConfigSchema,
@@ -58,4 +65,5 @@ export type CaldavConfig = z.infer<typeof caldavConfigSchema>;
 export type EmailConfig = z.infer<typeof emailConfigSchema>;
 export type DiscordConfig = z.infer<typeof discordConfigSchema>;
 export type BoxConfig = z.infer<typeof boxConfigSchema>;
+export type DynamoDBConfig = z.infer<typeof dynamoDBConfigSchema>;
 export type Config = z.infer<typeof configSchema>;

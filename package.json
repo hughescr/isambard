@@ -31,6 +31,7 @@
     "@hughescr/eslint-config-default": "^4.0.0",
     "@stryker-mutator/core": "9.4.0",
     "@types/bun": "latest",
+    "aws-sdk-client-mock": "4.1.0",
     "eslint": "^9.17.0",
     "sst": "latest",
     "typescript": "^5.7.0"
