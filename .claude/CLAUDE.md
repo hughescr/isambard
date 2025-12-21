@@ -26,6 +26,12 @@ bun run mutate
 ```
 Target: >= 70% mutation score. If mutants survive, tests are incomplete.
 
+**Claude Code Note**: When running mutation testing in Claude Code, use a clean PATH to avoid module resolution conflicts:
+```bash
+PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin bun run mutate
+```
+This prevents Claude Code's bundled paths from interfering with Stryker's `@babel/generator` module resolution.
+
 ### Codex Consultation
 Consult Codex for:
 - Architectural decisions

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, spyOn } from 'bun:test';
 import { StorageError, ItemNotFoundError, ConflictError, ValidationError } from '@/storage/errors';
 
 describe('StorageError', () => {
@@ -94,5 +94,25 @@ describe('ValidationError', () => {
     it('should include issues in message', () => {
         const error = new ValidationError([{ path: 'id', message: 'invalid' }]);
         expect(error.message).toContain('id');
+    });
+});
+
+describe('Error.captureStackTrace handling', () => {
+    it('should use captureStackTrace when available', () => {
+        const spy = spyOn(Error, 'captureStackTrace');
+        const error = new StorageError('test');
+        expect(spy).toHaveBeenCalledWith(error, StorageError);
+        spy.mockRestore();
+    });
+
+    it('should handle missing captureStackTrace gracefully', () => {
+        const original = Error.captureStackTrace;
+        (Error as any).captureStackTrace = undefined;
+
+        const error = new StorageError('test without capture');
+        expect(error.message).toBe('test without capture');
+        expect(error.name).toBe('StorageError');
+
+        Error.captureStackTrace = original;
     });
 });

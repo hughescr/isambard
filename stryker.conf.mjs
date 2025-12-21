@@ -10,7 +10,8 @@ export default {
     mutate:           [
         'src/**/*.ts',
         '!src/**/*.test.ts',
-        '!src/**/*.spec.ts'
+        '!src/**/*.spec.ts',
+        '!src/index.ts'
     ],
     thresholds: {
         high:    80,

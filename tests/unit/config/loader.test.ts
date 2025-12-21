@@ -192,7 +192,22 @@ describe('loadConfig', () => {
             }
         });
 
-        it('should show [REDACTED] for password field errors', () => {
+        it('should show [REDACTED] for password field errors (caldav.password)', () => {
+            const resources = createMockResources({
+                CaldavPassword: { value: '' }, // Empty password fails min(1) validation
+            });
+
+            try {
+                loadConfig(resources);
+                expect.unreachable('Should have thrown an error');
+            } catch (error) {
+                const errorMessage = _.isError(error) ? error.message : String(error);
+                expect(errorMessage).toContain('[REDACTED]');
+                expect(errorMessage).toContain('caldav.password');
+            }
+        });
+
+        it('should show [REDACTED] for password field errors (email.password)', () => {
             const resources = createMockResources({
                 EmailPassword: { value: '' }, // Empty password should fail validation
             });
@@ -202,15 +217,12 @@ describe('loadConfig', () => {
                 expect.unreachable('Should have thrown an error');
             } catch (error) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
-                expect(errorMessage).toMatch(/password/i);
-                // If the error mentions the field, it should redact the value
-                if(errorMessage.includes('password')) {
-                    expect(errorMessage).not.toContain('actual-password-value');
-                }
+                expect(errorMessage).toContain('[REDACTED]');
+                expect(errorMessage).toContain('email.password');
             }
         });
 
-        it('should show [REDACTED] for token field errors', () => {
+        it('should show [REDACTED] for token field errors (discord.botToken)', () => {
             const resources = createMockResources({
                 DiscordBotToken: { value: '' }, // Empty token should fail
             });
@@ -220,11 +232,12 @@ describe('loadConfig', () => {
                 expect.unreachable('Should have thrown an error');
             } catch (error) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
-                expect(errorMessage).toMatch(/token|discord/i);
+                expect(errorMessage).toContain('[REDACTED]');
+                expect(errorMessage).toContain('discord.botToken');
             }
         });
 
-        it('should still show the field path that failed', () => {
+        it('should show [REDACTED] for secret field errors (box.clientSecret)', () => {
             const resources = createMockResources({
                 BoxClientSecret: { value: '' },
             });
@@ -234,8 +247,137 @@ describe('loadConfig', () => {
                 expect.unreachable('Should have thrown an error');
             } catch (error) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
-                // Should mention the field but not the value
-                expect(errorMessage).toMatch(/box|secret|clientSecret/i);
+                expect(errorMessage).toContain('[REDACTED]');
+                expect(errorMessage).toContain('box.clientSecret');
+            }
+        });
+
+        it('should redact based on case-insensitive matching (Password)', () => {
+            const resources = createMockResources({
+                EmailPassword: { value: undefined }, // Undefined password
+            });
+
+            try {
+                loadConfig(resources);
+                expect.unreachable('Should have thrown an error');
+            } catch (error) {
+                const errorMessage = _.isError(error) ? error.message : String(error);
+                // Field name contains "Password" (capital P) - should still redact
+                expect(errorMessage).toContain('[REDACTED]');
+            }
+        });
+
+        it('should redact based on case-insensitive matching (Token)', () => {
+            const resources = createMockResources({
+                DiscordBotToken: { value: undefined }, // Undefined token
+            });
+
+            try {
+                loadConfig(resources);
+                expect.unreachable('Should have thrown an error');
+            } catch (error) {
+                const errorMessage = _.isError(error) ? error.message : String(error);
+                // Field name contains "Token" (capital T) - should still redact
+                expect(errorMessage).toContain('[REDACTED]');
+            }
+        });
+
+        it('should redact based on case-insensitive matching (Secret)', () => {
+            const resources = createMockResources({
+                BoxClientSecret: { value: undefined }, // Undefined secret
+            });
+
+            try {
+                loadConfig(resources);
+                expect.unreachable('Should have thrown an error');
+            } catch (error) {
+                const errorMessage = _.isError(error) ? error.message : String(error);
+                // Field name contains "Secret" (capital S) - should still redact
+                expect(errorMessage).toContain('[REDACTED]');
+            }
+        });
+
+        it('should NOT redact non-sensitive field errors', () => {
+            const resources = createMockResources({
+                Port: { value: 'not-a-number' }, // Invalid port
+            });
+
+            try {
+                loadConfig(resources);
+                expect.unreachable('Should have thrown an error');
+            } catch (error) {
+                const errorMessage = _.isError(error) ? error.message : String(error);
+                // Non-sensitive field should show actual Zod error message
+                expect(errorMessage).not.toContain('[REDACTED]');
+                expect(errorMessage).toContain('app.port');
+                // Should contain actual validation error details
+                expect(errorMessage).toMatch(/Expected number|Invalid/i);
+            }
+        });
+
+        it('should NOT redact non-sensitive URL field errors', () => {
+            const resources = createMockResources({
+                CaldavUrl: { value: 'not-a-valid-url' }, // Invalid URL
+            });
+
+            try {
+                loadConfig(resources);
+                expect.unreachable('Should have thrown an error');
+            } catch (error) {
+                const errorMessage = _.isError(error) ? error.message : String(error);
+                // Non-sensitive field should show actual error
+                expect(errorMessage).not.toContain('[REDACTED]');
+                expect(errorMessage).toContain('caldav.url');
+                expect(errorMessage).toMatch(/Invalid url|url/i);
+            }
+        });
+
+        it('should NOT redact username field errors', () => {
+            const resources = createMockResources({
+                CaldavUsername: { value: '' }, // Empty username
+            });
+
+            try {
+                loadConfig(resources);
+                expect.unreachable('Should have thrown an error');
+            } catch (error) {
+                const errorMessage = _.isError(error) ? error.message : String(error);
+                // Username is not sensitive - should show actual error
+                expect(errorMessage).not.toContain('[REDACTED]');
+                expect(errorMessage).toContain('caldav.username');
+            }
+        });
+
+        it('should handle multiple errors with mixed sensitivity', () => {
+            const resources = createMockResources({
+                Port:           { value: 'invalid' },      // Non-sensitive
+                EmailPassword:  { value: '' },             // Sensitive
+                CaldavUrl:      { value: 'bad-url' },      // Non-sensitive
+                DiscordBotToken: { value: '' },            // Sensitive
+            });
+
+            try {
+                loadConfig(resources);
+                expect.unreachable('Should have thrown an error');
+            } catch (error) {
+                const errorMessage = _.isError(error) ? error.message : String(error);
+
+                // Sensitive fields should be redacted
+                expect(errorMessage).toContain('[REDACTED]');
+                expect(errorMessage).toContain('email.password');
+                expect(errorMessage).toContain('discord.botToken');
+
+                // Non-sensitive fields should show actual errors
+                expect(errorMessage).toContain('app.port');
+                expect(errorMessage).toContain('caldav.url');
+
+                // Should have actual error messages for non-sensitive fields
+                const parsed = JSON.parse(errorMessage.replace('Config validation failed: ', ''));
+                const portError = _.find(parsed, { path: 'app.port' });
+                const urlError = _.find(parsed, { path: 'caldav.url' });
+
+                expect(portError?.message).not.toBe('[REDACTED]');
+                expect(urlError?.message).not.toBe('[REDACTED]');
             }
         });
     });

@@ -272,6 +272,317 @@ describe('MemoryRepository', () => {
                 repository.update(testId, 'identity', { content: 'Updated' })
             ).rejects.toThrow(ConflictError);
         });
+
+        describe('optional field conditionals', () => {
+            const itemWithAllFields: MemoryItem = {
+                PK:          `MEMORY#${testId}`,
+                SK:          'TYPE#identity',
+                GSI1PK:      'TYPE#identity',
+                GSI1SK:      'CREATED#2024-01-01T00:00:00.000Z',
+                id:          testId,
+                memory_type: 'identity',
+                content:     'Original content',
+                metadata:    { key: 'original' },
+                TTL:         1000,
+                version:     0,
+                createdAt:   '2024-01-01T00:00:00.000Z',
+                updatedAt:   '2024-01-01T00:00:00.000Z',
+            };
+
+            it('should update ONLY content when only content provided', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
+                ddbMock.on(PutCommand).resolves({});
+
+                const result = await repository.update(testId, 'identity', {
+                    content: 'New content',
+                });
+
+                expect(result.content).toBe('New content');
+                expect(result.metadata).toEqual({ key: 'original' }); // unchanged
+                expect(result.TTL).toBe(1000); // unchanged
+            });
+
+            it('should update ONLY metadata when only metadata provided', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
+                ddbMock.on(PutCommand).resolves({});
+
+                const result = await repository.update(testId, 'identity', {
+                    metadata: { key: 'new' },
+                });
+
+                expect(result.content).toBe('Original content'); // unchanged
+                expect(result.metadata).toEqual({ key: 'new' });
+                expect(result.TTL).toBe(1000); // unchanged
+            });
+
+            it('should update ONLY TTL when only TTL provided', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
+                ddbMock.on(PutCommand).resolves({});
+
+                const result = await repository.update(testId, 'identity', {
+                    TTL: 2000,
+                });
+
+                expect(result.content).toBe('Original content'); // unchanged
+                expect(result.metadata).toEqual({ key: 'original' }); // unchanged
+                expect(result.TTL).toBe(2000);
+            });
+
+            it('should update ALL fields when all provided', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
+                ddbMock.on(PutCommand).resolves({});
+
+                const result = await repository.update(testId, 'identity', {
+                    content:  'New content',
+                    metadata: { key: 'new' },
+                    TTL:      2000,
+                });
+
+                expect(result.content).toBe('New content');
+                expect(result.metadata).toEqual({ key: 'new' });
+                expect(result.TTL).toBe(2000);
+            });
+
+            it('should update NOTHING except version/timestamp when empty update', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
+                ddbMock.on(PutCommand).resolves({});
+
+                const result = await repository.update(testId, 'identity', {});
+
+                expect(result.content).toBe('Original content');
+                expect(result.metadata).toEqual({ key: 'original' });
+                expect(result.TTL).toBe(1000);
+                expect(result.version).toBe(1); // version still increments
+            });
+
+            it('should NOT update content when content is explicitly undefined', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
+                ddbMock.on(PutCommand).resolves({});
+
+                const result = await repository.update(testId, 'identity', {
+                    content: undefined,
+                });
+
+                expect(result.content).toBe('Original content'); // unchanged
+            });
+
+            it('should NOT update metadata when metadata is explicitly undefined', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
+                ddbMock.on(PutCommand).resolves({});
+
+                const result = await repository.update(testId, 'identity', {
+                    metadata: undefined,
+                });
+
+                expect(result.metadata).toEqual({ key: 'original' }); // unchanged
+            });
+
+            it('should NOT update TTL when TTL is explicitly undefined', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
+                ddbMock.on(PutCommand).resolves({});
+
+                const result = await repository.update(testId, 'identity', {
+                    TTL: undefined,
+                });
+
+                expect(result.TTL).toBe(1000); // unchanged
+            });
+
+            it('should allow clearing metadata to empty object', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
+                ddbMock.on(PutCommand).resolves({});
+
+                const result = await repository.update(testId, 'identity', {
+                    metadata: {},
+                });
+
+                expect(result.metadata).toEqual({}); // changed to empty
+            });
+
+            it('should allow updating content to different value', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+                ddbMock.on(PutCommand).resolves({});
+
+                const result = await repository.update(testId, 'identity', {
+                    content: 'Completely different',
+                });
+
+                expect(result.content).toBe('Completely different');
+                expect(result.metadata).toEqual({}); // unchanged from original
+            });
+
+            it('should preserve existing TTL when not updating', async () => {
+                const itemWithTTL: MemoryItem = {
+                    ...existingItem,
+                    TTL: 5000,
+                };
+                ddbMock.on(GetCommand).resolves({ Item: itemWithTTL });
+                ddbMock.on(PutCommand).resolves({});
+
+                const result = await repository.update(testId, 'identity', {
+                    content: 'New content',
+                });
+
+                expect(result.TTL).toBe(5000); // unchanged
+            });
+
+            it('should preserve absence of TTL when not provided', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+                ddbMock.on(PutCommand).resolves({});
+
+                const result = await repository.update(testId, 'identity', {
+                    content: 'New content',
+                });
+
+                expect(result.TTL).toBeUndefined();
+            });
+        });
+
+        describe('error handling', () => {
+            it('should throw ValidationError when update input fails Zod validation', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+
+                // Invalid content - empty string
+                await expect(
+                    repository.update(testId, 'identity', { content: '' })
+                ).rejects.toThrow(ValidationError);
+            });
+
+            it('should throw ValidationError with Zod issues when validation fails', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+
+                try {
+                    await repository.update(testId, 'identity', { content: '' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    expect(error).toBeInstanceOf(ValidationError);
+                    expect((error as ValidationError).issues).toBeDefined();
+                    expect(Array.isArray((error as ValidationError).issues)).toBe(true);
+                }
+            });
+
+            it('should include correct expectedVersion in ConflictError', async () => {
+                const itemWithVersion3 = { ...existingItem, version: 3 };
+                ddbMock.on(GetCommand)
+                    .resolvesOnce({ Item: itemWithVersion3 })
+                    .resolvesOnce({ Item: { ...itemWithVersion3, version: 7 } });
+
+                const conditionalError = new Error('Conditional check failed');
+                _assign(conditionalError, { name: 'ConditionalCheckFailedException' });
+                ddbMock.on(PutCommand).rejectsOnce(conditionalError);
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    expect(error).toBeInstanceOf(ConflictError);
+                    expect((error as ConflictError).expectedVersion).toBe(3);
+                }
+            });
+
+            it('should include correct actualVersion in ConflictError', async () => {
+                ddbMock.on(GetCommand)
+                    .resolvesOnce({ Item: existingItem })
+                    .resolvesOnce({ Item: { ...existingItem, version: 7 } });
+
+                const conditionalError = new Error('Conditional check failed');
+                _assign(conditionalError, { name: 'ConditionalCheckFailedException' });
+                ddbMock.on(PutCommand).rejectsOnce(conditionalError);
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    expect(error).toBeInstanceOf(ConflictError);
+                    expect((error as ConflictError).actualVersion).toBe(7);
+                }
+            });
+
+            it('should use version -1 in ConflictError when current item is undefined', async () => {
+                ddbMock.on(GetCommand)
+                    .resolvesOnce({ Item: existingItem })
+                    .resolvesOnce({ Item: undefined });
+
+                const conditionalError = new Error('Conditional check failed');
+                _assign(conditionalError, { name: 'ConditionalCheckFailedException' });
+                ddbMock.on(PutCommand).rejectsOnce(conditionalError);
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    expect(error).toBeInstanceOf(ConflictError);
+                    expect((error as ConflictError).actualVersion).toBe(-1);
+                }
+            });
+
+            it('should re-throw non-ConditionalCheckFailed errors as-is', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+
+                const networkError = new Error('Network timeout');
+                _assign(networkError, { name: 'NetworkingError' });
+                ddbMock.on(PutCommand).rejectsOnce(networkError);
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    expect(error).toBe(networkError);
+                    expect((error as Error).message).toBe('Network timeout');
+                    expect((error as Error).name).toBe('NetworkingError');
+                }
+            });
+
+            it('should re-throw errors that do not match object structure', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+
+                // aws-sdk-client-mock wraps strings into Error objects
+                const stringError = 'String error';
+                ddbMock.on(PutCommand).rejectsOnce(stringError);
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    // Verify it's not a ConflictError (was re-thrown as-is)
+                    expect(error).toBeInstanceOf(Error);
+                    expect((error as Error).message).toBe('String error');
+                }
+            });
+
+            it('should re-throw errors without name property', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+
+                // aws-sdk-client-mock normalizes errors to Error instances
+                const errorWithoutName = { message: 'Some error' };
+                ddbMock.on(PutCommand).rejectsOnce(errorWithoutName);
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    // Verify it's not a ConflictError (was re-thrown as-is)
+                    expect(error).toBeInstanceOf(Error);
+                    expect((error as Error).message).toBe('Some error');
+                }
+            });
+
+            it('should only catch ConditionalCheckFailedException specifically', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+
+                const conditionalError = new Error('Different error');
+                _assign(conditionalError, { name: 'ConditionalCheckFailedExceptionTypo' });
+                ddbMock.on(PutCommand).rejectsOnce(conditionalError);
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    expect(error).toBe(conditionalError);
+                    expect((error as Error).name).toBe('ConditionalCheckFailedExceptionTypo');
+                }
+            });
+        });
     });
 
     describe('delete', () => {
@@ -368,6 +679,113 @@ describe('MemoryRepository', () => {
 
             expect(result.items[0]).not.toHaveProperty('PK');
             expect(result.items[0]).not.toHaveProperty('GSI1PK');
+        });
+
+        it('should query with ScanIndexForward=false (newest first)', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await repository.queryByType('identity');
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls[0].args[0].input.ScanIndexForward).toBe(false);
+        });
+
+        it('should use correct KeyConditionExpression format', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await repository.queryByType('state');
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls[0].args[0].input.KeyConditionExpression).toBe('GSI1PK = :pk');
+        });
+
+        it('should NOT set ExclusiveStartKey when cursor not provided', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await repository.queryByType('identity');
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls[0].args[0].input.ExclusiveStartKey).toBeUndefined();
+        });
+
+        it('should set ExclusiveStartKey when cursor provided', async () => {
+            const testId = '550e8400-e29b-41d4-a716-446655440009';
+            const lastEvaluatedKey = { PK: `MEMORY#${testId}`, SK: 'TYPE#identity' };
+            const cursor = Buffer.from(JSON.stringify(lastEvaluatedKey)).toString('base64');
+
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await repository.queryByType('identity', { cursor });
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls[0].args[0].input.ExclusiveStartKey).toEqual(lastEvaluatedKey);
+        });
+
+        it('should correctly decode base64 cursor', async () => {
+            const expectedKey = { PK: 'MEMORY#test-id', SK: 'TYPE#state' };
+            const cursor = Buffer.from(JSON.stringify(expectedKey)).toString('base64');
+
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await repository.queryByType('state', { cursor });
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls[0].args[0].input.ExclusiveStartKey).toEqual(expectedKey);
+        });
+
+        it('should return base64 encoded nextCursor when LastEvaluatedKey present', async () => {
+            const testId = '550e8400-e29b-41d4-a716-446655440010';
+            const lastEvaluatedKey = { PK: `MEMORY#${testId}`, SK: 'TYPE#event' };
+
+            ddbMock.on(QueryCommand).resolves({
+                Items:            [],
+                LastEvaluatedKey: lastEvaluatedKey,
+            });
+
+            const result = await repository.queryByType('event');
+
+            expect(result.nextCursor).toBeDefined();
+            const decodedCursor = JSON.parse(
+                Buffer.from(result.nextCursor!, 'base64').toString('utf-8')
+            );
+            expect(decodedCursor).toEqual(lastEvaluatedKey);
+        });
+
+        it('should return undefined nextCursor when no LastEvaluatedKey', async () => {
+            ddbMock.on(QueryCommand).resolves({
+                Items: [],
+                // No LastEvaluatedKey
+            });
+
+            const result = await repository.queryByType('identity');
+
+            expect(result.nextCursor).toBeUndefined();
+        });
+
+        it('should handle cursor pagination round-trip correctly', async () => {
+            const testId = '550e8400-e29b-41d4-a716-446655440011';
+            const firstPageKey = { PK: `MEMORY#${testId}`, SK: 'TYPE#identity' };
+
+            // Reset mock to control responses
+            ddbMock.reset();
+
+            // First query returns a nextCursor
+            ddbMock.on(QueryCommand)
+                .resolvesOnce({
+                    Items:            [],
+                    LastEvaluatedKey: firstPageKey,
+                })
+                .resolvesOnce({ Items: [] });
+
+            const firstResult = await repository.queryByType('identity');
+            const cursor = firstResult.nextCursor!;
+
+            // Second query uses that cursor
+            await repository.queryByType('identity', { cursor });
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls.length).toBe(2);
+            expect(calls[1].args[0].input.ExclusiveStartKey).toEqual(firstPageKey);
         });
     });
 });
