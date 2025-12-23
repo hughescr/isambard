@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import { assign as _assign } from 'lodash';
 import {
@@ -88,6 +88,46 @@ describe('MemoryRepository', () => {
             });
 
             expect(memory.metadata).toEqual({});
+        });
+
+        it('should call putItem with default metadata when metadata undefined', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            await repository.create({
+                id:          '550e8400-e29b-41d4-a716-446655440000',
+                memory_type: 'identity',
+                content:     'Test content',
+                // metadata intentionally undefined
+            });
+
+            const calls = ddbMock.commandCalls(PutCommand);
+            expect(calls).toHaveLength(1);
+            const item = calls[0].args[0].input.Item as MemoryItem;
+            expect(item.metadata).toEqual({});
+        });
+
+        it('should use provided metadata when metadata is empty object', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            const memory = await repository.create({
+                memory_type: 'identity',
+                content:     'Test content',
+                metadata:    {},
+            });
+
+            expect(memory.metadata).toEqual({});
+        });
+
+        it('should use provided metadata when metadata has values', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            const memory = await repository.create({
+                memory_type: 'identity',
+                content:     'Test content',
+                metadata:    { key: 'value' },
+            });
+
+            expect(memory.metadata).toEqual({ key: 'value' });
         });
 
         it('should accept optional TTL', async () => {
@@ -196,6 +236,19 @@ describe('MemoryRepository', () => {
             expect(result).not.toHaveProperty('GSI1PK');
             expect(result).not.toHaveProperty('GSI1SK');
         });
+
+        it('should construct correct DynamoDB key format for getItem', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: undefined });
+
+            await repository.getById(testId, 'identity');
+
+            const calls = ddbMock.commandCalls(GetCommand);
+            expect(calls).toHaveLength(1);
+            expect(calls[0].args[0].input.Key).toEqual({
+                PK: `MEMORY#${testId}`,
+                SK: 'TYPE#identity',
+            });
+        });
     });
 
     describe('update', () => {
@@ -271,6 +324,85 @@ describe('MemoryRepository', () => {
             expect(
                 repository.update(testId, 'identity', { content: 'Updated' })
             ).rejects.toThrow(ConflictError);
+        });
+
+        it('should merge business data with DynamoDB keys in PutCommand item', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: existingItem });
+            ddbMock.on(PutCommand).resolves({});
+
+            await repository.update(testId, 'identity', {
+                content: 'Updated content',
+            });
+
+            const calls = ddbMock.commandCalls(PutCommand);
+            expect(calls).toHaveLength(1);
+            const item = calls[0].args[0].input.Item as MemoryItem;
+            // Verify business data
+            expect(item.id).toBe(testId);
+            expect(item.content).toBe('Updated content');
+            expect(item.memory_type).toBe('identity');
+            expect(item.version).toBe(1);
+            // Verify DynamoDB keys are present
+            expect(item.PK).toBe(`MEMORY#${testId}`);
+            expect(item.SK).toBe('TYPE#identity');
+            expect(item.GSI1PK).toBe('TYPE#identity');
+            expect(item.GSI1SK).toBeDefined();
+        });
+
+        it('should use correct ConditionExpression in PutCommand', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: existingItem });
+            ddbMock.on(PutCommand).resolves({});
+
+            await repository.update(testId, 'identity', {
+                content: 'Updated content',
+            });
+
+            const calls = ddbMock.commandCalls(PutCommand);
+            expect(calls).toHaveLength(1);
+            expect(calls[0].args[0].input.ConditionExpression).toBe('#version = :expectedVersion');
+        });
+
+        it('should use correct ExpressionAttributeNames in PutCommand', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: existingItem });
+            ddbMock.on(PutCommand).resolves({});
+
+            await repository.update(testId, 'identity', {
+                content: 'Updated content',
+            });
+
+            const calls = ddbMock.commandCalls(PutCommand);
+            expect(calls).toHaveLength(1);
+            expect(calls[0].args[0].input.ExpressionAttributeNames).toEqual({
+                '#version': 'version',
+            });
+        });
+
+        it('should use correct ExpressionAttributeValues in PutCommand', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: existingItem });
+            ddbMock.on(PutCommand).resolves({});
+
+            await repository.update(testId, 'identity', {
+                content: 'Updated content',
+            });
+
+            const calls = ddbMock.commandCalls(PutCommand);
+            expect(calls).toHaveLength(1);
+            expect(calls[0].args[0].input.ExpressionAttributeValues).toEqual({
+                ':expectedVersion': 0,
+            });
+        });
+
+        it('should use correct TableName in PutCommand', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: existingItem });
+            ddbMock.on(PutCommand).resolves({});
+
+            await repository.update(testId, 'identity', {
+                content: 'Updated content',
+            });
+
+            const calls = ddbMock.commandCalls(PutCommand);
+            expect(calls).toHaveLength(1);
+            expect(calls[0].args[0].input.TableName).toBe('TestTable');
         });
 
         describe('optional field conditionals', () => {
@@ -581,6 +713,214 @@ describe('MemoryRepository', () => {
                     expect(error).toBe(conditionalError);
                     expect((error as Error).name).toBe('ConditionalCheckFailedExceptionTypo');
                 }
+            });
+
+            it('should re-throw when error is undefined', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+                ddbMock.on(PutCommand).rejectsOnce(undefined as unknown as Error);
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    // aws-sdk-client-mock normalizes undefined to Error object
+                    expect(error).toBeInstanceOf(Error);
+                    // But verify it's not a ConflictError (was re-thrown as-is)
+                    expect(error).not.toBeInstanceOf(ConflictError);
+                }
+            });
+
+            it('should re-throw when error is an empty object', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+                const emptyError = {};
+                ddbMock.on(PutCommand).rejectsOnce(emptyError);
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    // Should be the error object itself
+                    expect(error).toBeInstanceOf(Error);
+                }
+            });
+
+            it('should re-throw when error has wrong name property value', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+                const wrongNameError = new Error('Wrong name');
+                _assign(wrongNameError, { name: 'SomeOtherError' });
+                ddbMock.on(PutCommand).rejectsOnce(wrongNameError);
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    expect(error).toBe(wrongNameError);
+                    expect((error as Error).name).toBe('SomeOtherError');
+                }
+            });
+
+            it('should verify error is truthy before checking properties', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+                // Pass null as error
+                const nullError = null;
+                ddbMock.on(PutCommand).rejectsOnce(nullError as unknown as Error);
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    // null gets normalized to Error by aws-sdk-client-mock
+                    expect(error).toBeInstanceOf(Error);
+                    expect(error).not.toBeInstanceOf(ConflictError);
+                }
+            });
+
+            it('should verify error is an object before checking name property', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+                // Pass a number as error (not an object)
+                const numberError = 42;
+                ddbMock.on(PutCommand).rejectsOnce(numberError as unknown as Error);
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    // Number gets normalized to Error by aws-sdk-client-mock
+                    expect(error).toBeInstanceOf(Error);
+                    expect(error).not.toBeInstanceOf(ConflictError);
+                }
+            });
+
+            it('should check for name property existence before accessing it', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+                // Object without name property
+                const noNameError = { message: 'Error without name' };
+                ddbMock.on(PutCommand).rejectsOnce(noNameError);
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    expect(error).toBeInstanceOf(Error);
+                    expect(error).not.toBeInstanceOf(ConflictError);
+                }
+            });
+
+            // Tests to kill remaining mutants at line 122
+            // These tests use spyOn to directly mock docClient.send(), bypassing aws-sdk-client-mock normalization
+
+            it('should re-throw when error is primitive undefined (kills mutant: skips error check)', async () => {
+                // Spy on docClient.send to intercept both GetCommand and PutCommand
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/dot-notation -- Need private access and any type to bypass mock library error normalization
+                const sendSpy = spyOn(repository['docClient'] as any, 'send');
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Command can be any DynamoDB command type
+                sendSpy.mockImplementation((command: any) => {
+                    // First call is GetCommand, return existingItem
+                    if(command instanceof GetCommand) {
+                        return Promise.resolve({ Item: existingItem });
+                    }
+                    // Second call is PutCommand, throw undefined
+                    if(command instanceof PutCommand) {
+                        // eslint-disable-next-line @typescript-eslint/only-throw-error -- Intentionally testing behavior when undefined is thrown
+                        throw undefined;
+                    }
+                    return Promise.resolve({});
+                });
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    // Should re-throw undefined as-is
+                    expect(error).toBeUndefined();
+                }
+
+                sendSpy.mockRestore();
+            });
+
+            it('should re-throw when error is primitive number (kills mutant: skips _isObject check)', async () => {
+                // Spy on docClient.send to intercept both GetCommand and PutCommand
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/dot-notation -- Need private access and any type to bypass mock library error normalization
+                const sendSpy = spyOn(repository['docClient'] as any, 'send');
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Command can be any DynamoDB command type
+                sendSpy.mockImplementation((command: any) => {
+                    if(command instanceof GetCommand) {
+                        return Promise.resolve({ Item: existingItem });
+                    }
+                    if(command instanceof PutCommand) {
+                        // eslint-disable-next-line @typescript-eslint/only-throw-error -- Intentionally testing behavior when primitive number is thrown
+                        throw 42;
+                    }
+                    return Promise.resolve({});
+                });
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    // Should re-throw number as-is
+                    expect(error).toBe(42);
+                }
+
+                sendSpy.mockRestore();
+            });
+
+            it('should re-throw when error is object without name (kills mutant: skips name check)', async () => {
+                const objWithoutName = { foo: 'bar' };
+                // Spy on docClient.send to intercept both GetCommand and PutCommand
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/dot-notation -- Need private access and any type to bypass mock library error normalization
+                const sendSpy = spyOn(repository['docClient'] as any, 'send');
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Command can be any DynamoDB command type
+                sendSpy.mockImplementation((command: any) => {
+                    if(command instanceof GetCommand) {
+                        return Promise.resolve({ Item: existingItem });
+                    }
+                    if(command instanceof PutCommand) {
+                        // eslint-disable-next-line @typescript-eslint/only-throw-error -- Intentionally testing behavior when object without name property is thrown
+                        throw objWithoutName;
+                    }
+                    return Promise.resolve({});
+                });
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    // Should re-throw object as-is
+                    expect(error).toBe(objWithoutName);
+                    expect(error).not.toBeInstanceOf(ConflictError);
+                }
+
+                sendSpy.mockRestore();
+            });
+
+            it('should re-throw when error has wrong name value (kills mutant: changes && to ||)', async () => {
+                const wrongNameError = { name: 'DifferentError', message: 'Wrong error' };
+                // Spy on docClient.send to intercept both GetCommand and PutCommand
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/dot-notation -- Need private access and any type to bypass mock library error normalization
+                const sendSpy = spyOn(repository['docClient'] as any, 'send');
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Command can be any DynamoDB command type
+                sendSpy.mockImplementation((command: any) => {
+                    if(command instanceof GetCommand) {
+                        return Promise.resolve({ Item: existingItem });
+                    }
+                    if(command instanceof PutCommand) {
+                        // eslint-disable-next-line @typescript-eslint/only-throw-error -- Intentionally testing behavior when non-Error object with wrong name is thrown
+                        throw wrongNameError;
+                    }
+                    return Promise.resolve({});
+                });
+
+                try {
+                    await repository.update(testId, 'identity', { content: 'Updated' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    // Should re-throw error as-is
+                    expect(error).toBe(wrongNameError);
+                    expect(error).not.toBeInstanceOf(ConflictError);
+                }
+
+                sendSpy.mockRestore();
             });
         });
     });

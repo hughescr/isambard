@@ -4,8 +4,12 @@
 Expand integrations and enable self-improvement capabilities.
 
 ## Weeks 3-4: Memory Enhancement
+
+**Foundation:** Memory-tool MCP implementation completed in Week 2 provides CRUD operations and entity-relation storage pattern.
+
 - [ ] Three-layer memory system (Identity, State, Events)
 - [ ] Memory search and recall tools
+- [ ] Semantic search via Pinecone integration (depends on memory-tool foundation)
 - [ ] Conversation context management
 - [ ] TTL for ephemeral data
 

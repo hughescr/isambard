@@ -8,7 +8,11 @@ export interface DynamoDBClients {
     tableName: string
 }
 
-export function createDynamoDBClient(config: DynamoDBConfig): DynamoDBClients {
+/**
+ * Builds the client configuration object for DynamoDBClient.
+ * Exported for testing purposes.
+ */
+export function buildClientConfig(config: DynamoDBConfig) {
     const clientConfig: ConstructorParameters<typeof DynamoDBClient>[0] = {
         region:      config.region,
         maxAttempts: 3, // Retry configuration for production
@@ -17,6 +21,12 @@ export function createDynamoDBClient(config: DynamoDBConfig): DynamoDBClients {
     if(config.endpoint) {
         clientConfig.endpoint = config.endpoint;
     }
+
+    return clientConfig;
+}
+
+export function createDynamoDBClient(config: DynamoDBConfig): DynamoDBClients {
+    const clientConfig = buildClientConfig(config);
 
     const client = new DynamoDBClient(clientConfig);
 

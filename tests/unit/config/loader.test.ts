@@ -350,9 +350,9 @@ describe('loadConfig', () => {
 
         it('should handle multiple errors with mixed sensitivity', () => {
             const resources = createMockResources({
-                Port:           { value: 'invalid' },      // Non-sensitive
-                EmailPassword:  { value: '' },             // Sensitive
-                CaldavUrl:      { value: 'bad-url' },      // Non-sensitive
+                Port:            { value: 'invalid' },      // Non-sensitive
+                EmailPassword:   { value: '' },             // Sensitive
+                CaldavUrl:       { value: 'bad-url' },      // Non-sensitive
                 DiscordBotToken: { value: '' },            // Sensitive
             });
 

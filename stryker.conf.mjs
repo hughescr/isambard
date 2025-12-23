@@ -14,10 +14,10 @@ export default {
         '!src/index.ts'
     ],
     thresholds: {
-        high:    80,
-        low:     70,
-        'break': 60
+        high:    100,
+        low:     95,
+        'break': 90
     },
-    concurrency: 4,
+    concurrency: 12,
     tempDirName: '.stryker-tmp'
 };

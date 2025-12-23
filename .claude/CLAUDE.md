@@ -55,11 +55,24 @@ Isambard can propose improvements to its own code:
 - `src/config/` - Configuration with Zod validation
 - `src/utils/` - Shared utilities
 
+### Memory Tool Subsystem
+The memory tool implements Claude's betaMemoryTool with a DynamoDB backend:
+- `src/storage/memory-tool/` - Complete memory tool implementation
+  - `types.ts` - Zod schemas, branded MemoryPath type, MemoryToolItem
+  - `errors.ts` - MemoryToolError hierarchy (PathNotFoundError, TextNotUniqueError, etc.)
+  - `key-generator.ts` - DynamoDB key structure (DIR#/FILE#/PATH#/CREATED#)
+  - `backend.ts` - DynamoDB CRUD operations with optimistic locking
+  - `handlers.ts` - SDK handlers: view, create, str_replace, insert, delete, rename
+  - `index.ts` - Public exports
+- `src/agent/claude.ts` - betaMemoryTool integration with Claude SDK
+
 ### Key Patterns
 - **Repository Pattern** for data access
 - **Dependency Injection** for testability
 - **Zod Schemas** for runtime validation
 - **Structured Logging** with correlation IDs
+- **betaMemoryTool Integration** for self-editing agent memory
+- **Filesystem-like paths** with `/memories/` prefix
 
 ## Roadmaps
 - [Short-term (Weeks 1-2)](../roadmaps/short-term.md)

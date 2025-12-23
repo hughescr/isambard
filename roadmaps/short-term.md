@@ -14,10 +14,17 @@ Establish foundation for Isambard with working Discord bot and memory system.
 ## Week 2: Discord + Agent
 - [ ] Discord.js client wrapper
 - [ ] Message event handling
-- [ ] Basic Claude Agent SDK integration
-- [ ] Memory loading on conversation start
+- [x] Basic Claude Agent SDK integration (betaMemoryTool)
+- [x] Memory loading on conversation start (memory-tool MCP)
 - [ ] Simple response loop
 - [ ] Integration tests
+
+### Memory Tool Implementation (Completed)
+- [x] MCP-compliant memory-tool implementation
+- [x] CRUD operations (create, read, update, delete)
+- [x] Entity-relation storage pattern
+- [x] Comprehensive unit tests with 92.82% mutation coverage
+- [x] Integration with Claude Agent SDK via betaMemoryTool
 
 ## Success Criteria
 - Bot responds to Discord messages

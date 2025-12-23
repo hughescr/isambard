@@ -2,8 +2,66 @@ import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
-import { createDynamoDBClient, type DynamoDBClients } from '@/storage/client';
+import { createDynamoDBClient, buildClientConfig, type DynamoDBClients } from '@/storage/client';
 import type { DynamoDBConfig } from '@/config/schemas';
+
+describe('buildClientConfig', () => {
+    it('should not include endpoint property when config.endpoint is undefined', () => {
+        // Critical test for mutation: if(config.endpoint) -> if(true)
+        const config: DynamoDBConfig = {
+            tableName: 'TestTable',
+            region:    'us-west-2',
+        };
+
+        const clientConfig = buildClientConfig(config);
+
+        // Verify endpoint property does NOT exist
+        expect('endpoint' in clientConfig).toBe(false);
+
+        // Verify other properties are set
+        expect(clientConfig.region).toBe('us-west-2');
+        expect(clientConfig.maxAttempts).toBe(3);
+    });
+
+    it('should include endpoint property when config.endpoint is provided', () => {
+        const config: DynamoDBConfig = {
+            tableName: 'TestTable',
+            region:    'us-west-2',
+            endpoint:  'http://localhost:8000',
+        };
+
+        const clientConfig = buildClientConfig(config);
+
+        // Verify endpoint property DOES exist
+        expect('endpoint' in clientConfig).toBe(true);
+        expect(clientConfig.endpoint).toBe('http://localhost:8000');
+
+        // Verify other properties
+        expect(clientConfig.region).toBe('us-west-2');
+        expect(clientConfig.maxAttempts).toBe(3);
+    });
+
+    it('should always set region and maxAttempts', () => {
+        const config1: DynamoDBConfig = {
+            tableName: 'TestTable',
+            region:    'eu-west-1',
+        };
+
+        const clientConfig1 = buildClientConfig(config1);
+        expect(clientConfig1.region).toBe('eu-west-1');
+        expect(clientConfig1.maxAttempts).toBe(3);
+
+        const config2: DynamoDBConfig = {
+            tableName: 'TestTable',
+            region:    'ap-southeast-2',
+            endpoint:  'http://localhost:9000',
+        };
+
+        const clientConfig2 = buildClientConfig(config2);
+        expect(clientConfig2.region).toBe('ap-southeast-2');
+        expect(clientConfig2.maxAttempts).toBe(3);
+    });
+});
 
 describe('createDynamoDBClient', () => {
     it('should create DynamoDBClient and DocumentClient', () => {

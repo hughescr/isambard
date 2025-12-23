@@ -12,6 +12,7 @@ coverage/
 *.lcov
 .stryker-tmp/
 stryker.log
+reports/
 
 # Environment
 .env
