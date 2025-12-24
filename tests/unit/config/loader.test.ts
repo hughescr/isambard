@@ -388,6 +388,40 @@ describe('loadConfig', () => {
         });
     });
 
+    describe('Comma-Separated Values (Discord Channel IDs)', () => {
+        it('should split comma-separated monitored channel IDs', () => {
+            const resources = createMockResources({
+                DiscordMonitoredChannelIds: { value: 'channel1,channel2,channel3' },
+            });
+            const config = loadConfig(resources);
+            expect(config.discord.monitoredChannelIds).toEqual(['channel1', 'channel2', 'channel3']);
+        });
+
+        it('should trim whitespace from monitored channel IDs', () => {
+            const resources = createMockResources({
+                DiscordMonitoredChannelIds: { value: '  channel1 , channel2  ,  channel3  ' },
+            });
+            const config = loadConfig(resources);
+            expect(config.discord.monitoredChannelIds).toEqual(['channel1', 'channel2', 'channel3']);
+        });
+
+        it('should handle single channel ID', () => {
+            const resources = createMockResources({
+                DiscordMonitoredChannelIds: { value: 'channel1' },
+            });
+            const config = loadConfig(resources);
+            expect(config.discord.monitoredChannelIds).toEqual(['channel1']);
+        });
+
+        it('should return empty array when monitored channel IDs are not provided', () => {
+            const resources = createMockResources({
+                DiscordMonitoredChannelIds: { value: undefined },
+            });
+            const config = loadConfig(resources);
+            expect(config.discord.monitoredChannelIds).toEqual([]);
+        });
+    });
+
     describe('Type Coercion', () => {
         it('should coerce string ports to numbers', () => {
             const resources = createMockResources({

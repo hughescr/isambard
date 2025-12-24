@@ -290,4 +290,206 @@ describe('createClaudeAgent', () => {
             })
         );
     });
+
+    it('should find text content by type property', async () => {
+        // Test that _.find uses { type: 'text' } correctly
+        (mockClient.messages.create as ReturnType<typeof mock>).mockResolvedValue({
+            id:      'msg_123',
+            type:    'message',
+            role:    'assistant',
+            content: [
+                {
+                    type:  'tool_use',
+                    id:    'tool_456',
+                    name:  'foo',
+                    input: {},
+                },
+                {
+                    type: 'text',
+                    text: 'hello',
+                },
+            ],
+            model:         'claude-sonnet-4-20250514',
+            stop_reason:   'end_turn',
+            stop_sequence: null,
+            usage:         {
+                input_tokens:  10,
+                output_tokens: 5,
+            },
+        });
+
+        const agent = createClaudeAgent({ client: mockClient });
+        const response = await agent.chat(mockMessageContext);
+
+        expect(response).toBe('hello');
+    });
+
+    it('should not truncate responses exactly at MAX_RESPONSE_LENGTH (1900)', async () => {
+        const exactText = _.repeat('x', 1900);
+        (mockClient.messages.create as ReturnType<typeof mock>).mockResolvedValue({
+            id:      'msg_123',
+            type:    'message',
+            role:    'assistant',
+            content: [
+                {
+                    type: 'text',
+                    text: exactText,
+                },
+            ],
+            model:         'claude-sonnet-4-20250514',
+            stop_reason:   'end_turn',
+            stop_sequence: null,
+            usage:         {
+                input_tokens:  10,
+                output_tokens: 500,
+            },
+        });
+
+        const agent = createClaudeAgent({ client: mockClient });
+        const response = await agent.chat(mockMessageContext);
+
+        expect(response).toBe(exactText);
+        expect(response?.length).toBe(1900);
+    });
+
+    it('should truncate responses exceeding MAX_RESPONSE_LENGTH by exactly 1 character', async () => {
+        const longText = _.repeat('y', 1901);
+        (mockClient.messages.create as ReturnType<typeof mock>).mockResolvedValue({
+            id:      'msg_123',
+            type:    'message',
+            role:    'assistant',
+            content: [
+                {
+                    type: 'text',
+                    text: longText,
+                },
+            ],
+            model:         'claude-sonnet-4-20250514',
+            stop_reason:   'end_turn',
+            stop_sequence: null,
+            usage:         {
+                input_tokens:  10,
+                output_tokens: 500,
+            },
+        });
+
+        const agent = createClaudeAgent({ client: mockClient });
+        const response = await agent.chat(mockMessageContext);
+
+        expect(response).toBe(_.repeat('y', 1897) + '...');
+        expect(response?.length).toBe(1900);
+    });
+
+    it('should log when no text content found', async () => {
+        const consoleSpy = mock(_.noop);
+        const originalLog = console.log;
+        // eslint-disable-next-line no-console -- Testing console.log behavior
+        console.log = consoleSpy as typeof console.log;
+
+        (mockClient.messages.create as ReturnType<typeof mock>).mockResolvedValue({
+            id:      'msg_123',
+            type:    'message',
+            role:    'assistant',
+            content: [
+                {
+                    type:  'tool_use',
+                    id:    'tool_789',
+                    name:  'memory',
+                    input: {},
+                },
+            ],
+            model:         'claude-sonnet-4-20250514',
+            stop_reason:   'tool_use',
+            stop_sequence: null,
+            usage:         {
+                input_tokens:  10,
+                output_tokens: 20,
+            },
+        });
+
+        const agent = createClaudeAgent({ client: mockClient });
+        await agent.chat(mockMessageContext);
+
+        expect(consoleSpy).toHaveBeenCalled();
+        expect(consoleSpy).toHaveBeenCalledWith(
+            expect.stringContaining('no text content')
+        );
+        expect(consoleSpy).toHaveBeenCalledWith(
+            expect.stringContaining('msg_999')
+        );
+
+        // eslint-disable-next-line no-console -- Restoring original console.log
+        console.log = originalLog;
+    });
+
+    it('should log when truncating response', async () => {
+        const consoleSpy = mock(_.noop);
+        const originalLog = console.log;
+        // eslint-disable-next-line no-console -- Testing console.log behavior
+        console.log = consoleSpy as typeof console.log;
+
+        const longText = _.repeat('z', 2500);
+        (mockClient.messages.create as ReturnType<typeof mock>).mockResolvedValue({
+            id:      'msg_123',
+            type:    'message',
+            role:    'assistant',
+            content: [
+                {
+                    type: 'text',
+                    text: longText,
+                },
+            ],
+            model:         'claude-sonnet-4-20250514',
+            stop_reason:   'end_turn',
+            stop_sequence: null,
+            usage:         {
+                input_tokens:  10,
+                output_tokens: 600,
+            },
+        });
+
+        const agent = createClaudeAgent({ client: mockClient });
+        await agent.chat(mockMessageContext);
+
+        expect(consoleSpy).toHaveBeenCalled();
+        expect(consoleSpy).toHaveBeenCalledWith(
+            expect.stringContaining('Truncating')
+        );
+        expect(consoleSpy).toHaveBeenCalledWith(
+            expect.stringContaining('msg_999')
+        );
+
+        // eslint-disable-next-line no-console -- Restoring original console.log
+        console.log = originalLog;
+    });
+
+    it('should log error details on failure', async () => {
+        const consoleSpy = mock(_.noop);
+        const originalError = console.error;
+        // eslint-disable-next-line no-console -- Testing console.error behavior
+        console.error = consoleSpy as typeof console.error;
+
+        const apiError = new Error('API down');
+        (mockClient.messages.create as ReturnType<typeof mock>).mockRejectedValue(apiError);
+
+        const agent = createClaudeAgent({ client: mockClient });
+        await agent.chat(mockMessageContext);
+
+        expect(consoleSpy).toHaveBeenCalled();
+        expect(consoleSpy).toHaveBeenCalledWith(
+            expect.stringContaining('Failed to get Claude response'),
+            apiError
+        );
+        expect(consoleSpy).toHaveBeenCalledWith(
+            expect.stringContaining('msg_999'),
+            apiError
+        );
+        expect(consoleSpy).toHaveBeenCalledWith(
+            expect.stringContaining('111222333'),
+            apiError
+        );
+
+        // eslint-disable-next-line no-console -- Restoring original console.error
+        console.error = originalError;
+    });
 });

@@ -69,6 +69,21 @@ describe('Discord Event Handlers', () => {
             expect(() => handler(mockClient)).not.toThrow();
             expect(consoleSpy).toHaveBeenCalled();
         });
+
+        it('should log fallback message when client.user is null', () => {
+            const consoleSpy = spyOn(console, 'log');
+            const handler = createReadyHandler();
+
+            const mockClient = {
+                user: null
+            } as unknown as Client;
+
+            handler(mockClient);
+
+            expect(consoleSpy).toHaveBeenCalled();
+            const lastCall = consoleSpy.mock.calls[consoleSpy.mock.calls.length - 1];
+            expect(lastCall[0]).toContain('not available');
+        });
     });
 
     describe('createErrorHandler', () => {
@@ -177,10 +192,40 @@ describe('Discord Event Handlers', () => {
             expect(mockOnMessage).not.toHaveBeenCalled();
         });
 
+        it('should ignore bot messages even in monitored channels', async () => {
+            const channelId = '333333333333333333';
+            const handler = createMessageHandler({
+                monitoredChannelIds: [channelId as ChannelId],
+                botUserId:           '999999999999999999' as UserId,
+                onMessage:           mockOnMessage,
+            });
+
+            mockMessage.author.bot = true;
+            await handler(mockMessage);
+
+            expect(mockOnMessage).not.toHaveBeenCalled();
+        });
+
         it('should ignore messages from the bot itself', async () => {
             const botId = '999999999999999999';
             const handler = createMessageHandler({
                 monitoredChannelIds: [],
+                botUserId:           botId as UserId,
+                onMessage:           mockOnMessage,
+            });
+
+            mockMessage.author.id = botId;
+            mockMessage.author.bot = false;
+            await handler(mockMessage);
+
+            expect(mockOnMessage).not.toHaveBeenCalled();
+        });
+
+        it('should ignore self messages even in monitored channels', async () => {
+            const botId = '999999999999999999';
+            const channelId = '333333333333333333';
+            const handler = createMessageHandler({
+                monitoredChannelIds: [channelId as ChannelId],
                 botUserId:           botId as UserId,
                 onMessage:           mockOnMessage,
             });

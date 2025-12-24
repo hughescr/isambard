@@ -26,6 +26,14 @@ describe('guildIdSchema', () => {
         expect(result.success).toBe(false);
     });
 
+    it('should include descriptive error message for empty GuildId', () => {
+        const result = guildIdSchema.safeParse('');
+        expect(result.success).toBe(false);
+        if(!result.success) {
+            expect(result.error.issues[0]?.message).toContain('cannot be empty');
+        }
+    });
+
     it('should reject non-string values', () => {
         const result = guildIdSchema.safeParse(12345);
         expect(result.success).toBe(false);
@@ -52,6 +60,14 @@ describe('channelIdSchema', () => {
         expect(result.success).toBe(false);
     });
 
+    it('should include descriptive error message for empty ChannelId', () => {
+        const result = channelIdSchema.safeParse('');
+        expect(result.success).toBe(false);
+        if(!result.success) {
+            expect(result.error.issues[0]?.message).toContain('cannot be empty');
+        }
+    });
+
     it('should reject non-string values', () => {
         const result = channelIdSchema.safeParse(98765);
         expect(result.success).toBe(false);
@@ -76,6 +92,14 @@ describe('userIdSchema', () => {
     it('should reject empty string', () => {
         const result = userIdSchema.safeParse('');
         expect(result.success).toBe(false);
+    });
+
+    it('should include descriptive error message for empty UserId', () => {
+        const result = userIdSchema.safeParse('');
+        expect(result.success).toBe(false);
+        if(!result.success) {
+            expect(result.error.issues[0]?.message).toContain('cannot be empty');
+        }
     });
 
     it('should reject non-string values', () => {
