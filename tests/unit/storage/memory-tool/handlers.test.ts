@@ -1,5 +1,7 @@
+/* eslint-disable @typescript-eslint/unbound-method -- Mock functions don't have proper this binding */
 import { describe, it, expect, beforeEach, spyOn } from 'bun:test';
 import { mock } from 'bun:test';
+import { split as _split, some as _some, includes as _includes, noop as _noop } from 'lodash';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';
 import { memoryPathSchema } from '@/storage/memory-tool/types';
@@ -14,9 +16,9 @@ import {
 import {
     create,
     view,
-    delete_memory,
+    delete_memory as deleteMemory,
     insert,
-    str_replace,
+    str_replace as strReplace,
     rename
 } from '@/storage/memory-tool/handlers';
 
@@ -25,18 +27,16 @@ describe('Memory Tool Handlers', () => {
 
     beforeEach(() => {
         mockBackend = {
-            create:  mock(async () => ({})),
-            get:     mock(async () => undefined),
-            update:  mock(async () => ({})),
-            // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function
-            delete:  mock(async () => {}),
-            list:    mock(async () => ({ items: [], nextCursor: undefined })),
+            create:   mock(async () => ({})),
+            get:      mock(async () => undefined),
+            update:   mock(async () => ({})),
+            'delete': mock(async () => { /* intentionally empty */ }),
+            list:     mock(async () => ({ items: [], nextCursor: undefined })),
         } as unknown as MemoryToolBackend;
     });
 
     describe('create', () => {
         it('should create a new memory and return success message', async () => {
-            // eslint-disable-next-line @typescript-eslint/unbound-method -- Test mocking
             mockBackend.create = mock(async () => ({
                 path:        '/test/file.md' as MemoryPath,
                 content:     'Hello World',
@@ -62,7 +62,6 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should detect content type from path extension', async () => {
-            // eslint-disable-next-line @typescript-eslint/unbound-method -- Test mocking
             mockBackend.create = mock(async () => ({
                 path:        '/test/file.txt' as MemoryPath,
                 content:     'Plain text',
@@ -86,7 +85,6 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should detect application/json content type for .json files', async () => {
-            // eslint-disable-next-line @typescript-eslint/unbound-method -- Test mocking
             mockBackend.create = mock(async () => ({
                 path:        '/test/data.json' as MemoryPath,
                 content:     '{"key": "value"}',
@@ -110,7 +108,7 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should throw InvalidPathError for invalid paths', async () => {
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Testing promise rejection
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(create(mockBackend, {
                 path:      'no-leading-slash',
                 file_text: 'content',
@@ -124,7 +122,7 @@ describe('Memory Tool Handlers', () => {
                     file_text: 'content',
                 });
                 expect(true).toBe(false); // Should not reach here
-            } catch (error) {
+            } catch (error: unknown) {
                 expect(error).toBeInstanceOf(InvalidPathError);
                 expect((error as InvalidPathError).message).toContain('invalid//path');
                 // Verify the error message contains validation failure details
@@ -140,7 +138,7 @@ describe('Memory Tool Handlers', () => {
                     file_text: 'content',
                 });
                 expect(true).toBe(false); // Should not reach here
-            } catch (error) {
+            } catch (error: unknown) {
                 expect(error).toBeInstanceOf(InvalidPathError);
                 const errorMessage = (error as InvalidPathError).message;
                 // Should contain both error messages joined with ', '
@@ -163,7 +161,7 @@ describe('Memory Tool Handlers', () => {
                     file_text: 'content',
                 });
                 expect(true).toBe(false); // Should not reach here
-            } catch (error) {
+            } catch (error: unknown) {
                 // Should propagate the non-ZodError as-is, not wrap it
                 expect(error).toBe(customError);
                 expect(error).not.toBeInstanceOf(InvalidPathError);
@@ -177,6 +175,7 @@ describe('Memory Tool Handlers', () => {
                 throw new PathAlreadyExistsError('/test/file.md');
             });
 
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(create(mockBackend, {
                 path:      '/test/file.md',
                 file_text: 'content',
@@ -326,10 +325,10 @@ describe('Memory Tool Handlers', () => {
             // Critical: verify items are joined with newline, not empty string
             expect(result).toContain('\n');
             // Verify the actual structure: file1 line, newline, file2 line
-            const lines = result.split('\n');
+            const lines = _split(result, '\n');
             expect(lines.length).toBeGreaterThan(2); // "Directory contents:" + at least 2 files
-            expect(lines.some(line => line.includes('file1.md'))).toBe(true);
-            expect(lines.some(line => line.includes('file2.txt'))).toBe(true);
+            expect(_some(lines, line => _includes(line, 'file1.md'))).toBe(true);
+            expect(_some(lines, line => _includes(line, 'file2.txt'))).toBe(true);
         });
 
         it('should handle root path "/" by listing with empty parent path', async () => {
@@ -383,17 +382,19 @@ describe('Memory Tool Handlers', () => {
             mockBackend.get = mock(async () => undefined);
             mockBackend.list = mock(async () => ({ items: [], nextCursor: undefined }));
 
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(view(mockBackend, { path: '/nonexistent' }))
                 .rejects.toThrow(PathNotFoundError);
         });
 
         it('should throw InvalidPathError for invalid paths', async () => {
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(view(mockBackend, { path: 'bad-path' }))
                 .rejects.toThrow(InvalidPathError);
         });
     });
 
-    describe('delete_memory', () => {
+    describe('deleteMemory', () => {
         it('should delete a single file', async () => {
             mockBackend.get = mock(async () => ({
                 path:        '/test/file.md' as MemoryPath,
@@ -405,9 +406,9 @@ describe('Memory Tool Handlers', () => {
                 updatedAt:   '2025-01-01T00:00:00.000Z',
             }));
             mockBackend.list = mock(async () => ({ items: [], nextCursor: undefined }));
-            mockBackend.delete = mock(async () => {});
+            mockBackend.delete = mock(async () => { /* intentionally empty */ });
 
-            const result = await delete_memory(mockBackend, { path: '/test/file.md' });
+            const result = await deleteMemory(mockBackend, { path: '/test/file.md' });
 
             expect(result).toContain('deleted');
             expect(result).toContain('/test/file.md');
@@ -439,9 +440,9 @@ describe('Memory Tool Handlers', () => {
                 ],
                 nextCursor: undefined,
             }));
-            mockBackend.delete = mock(async () => {});
+            mockBackend.delete = mock(async () => { /* intentionally empty */ });
 
-            const result = await delete_memory(mockBackend, { path: '/test/dir' });
+            const result = await deleteMemory(mockBackend, { path: '/test/dir' });
 
             expect(result).toContain('2 memories');
             expect(mockBackend.delete).toHaveBeenCalledTimes(2);
@@ -463,9 +464,9 @@ describe('Memory Tool Handlers', () => {
                 ],
                 nextCursor: undefined,
             }));
-            mockBackend.delete = mock(async () => {});
+            mockBackend.delete = mock(async () => { /* intentionally empty */ });
 
-            const result = await delete_memory(mockBackend, { path: '/' });
+            const result = await deleteMemory(mockBackend, { path: '/' });
 
             expect(result).toContain('1 memories');
             expect(mockBackend.list).toHaveBeenCalledWith('');
@@ -488,9 +489,9 @@ describe('Memory Tool Handlers', () => {
                 ],
                 nextCursor: undefined,
             }));
-            mockBackend.delete = mock(async () => {});
+            mockBackend.delete = mock(async () => { /* intentionally empty */ });
 
-            const result = await delete_memory(mockBackend, { path: '/memories/old' });
+            const result = await deleteMemory(mockBackend, { path: '/memories/old' });
 
             expect(result).toContain('1 memories');
             // Critical: verify the path itself is used, not empty string
@@ -532,17 +533,19 @@ describe('Memory Tool Handlers', () => {
                 ],
                 nextCursor: undefined,
             }));
-            mockBackend.delete = mock(async () => {});
+            mockBackend.delete = mock(async () => { /* intentionally empty */ });
 
-            const result = await delete_memory(mockBackend, { path: '/test/dir' });
+            const result = await deleteMemory(mockBackend, { path: '/test/dir' });
 
             expect(result).toBe('Recursively deleted 3 memories under /test/dir');
             expect(mockBackend.delete).toHaveBeenCalledTimes(3);
         });
 
         it('should log warning when individual file delete fails in directory', async () => {
-            const warnSpy = mock(() => {});
+            const warnSpy = mock(_noop);
+            // eslint-disable-next-line no-console -- Testing console.warn behavior
             const originalWarn = console.warn;
+            // eslint-disable-next-line no-console -- Testing console.warn behavior
             console.warn = warnSpy;
 
             try {
@@ -572,20 +575,21 @@ describe('Memory Tool Handlers', () => {
                 }));
 
                 let callCount = 0;
-                mockBackend.delete = mock(async (path: MemoryPath) => {
+                mockBackend.delete = mock(async (_path: MemoryPath) => {
                     callCount++;
                     if(callCount === 2) {
                         throw new Error('Delete failed');
                     }
                 });
 
-                const result = await delete_memory(mockBackend, { path: '/test/dir' });
+                const result = await deleteMemory(mockBackend, { path: '/test/dir' });
 
                 expect(result).toContain('1 memories');
                 expect(warnSpy).toHaveBeenCalledTimes(1);
                 expect(warnSpy.mock.calls[0][0]).toContain('Failed to delete');
                 expect(warnSpy.mock.calls[0][0]).toContain('file2.txt');
             } finally {
+                // eslint-disable-next-line no-console -- Restoring console.warn
                 console.warn = originalWarn;
             }
         });
@@ -594,12 +598,14 @@ describe('Memory Tool Handlers', () => {
             mockBackend.get = mock(async () => undefined);
             mockBackend.list = mock(async () => ({ items: [], nextCursor: undefined }));
 
-            await expect(delete_memory(mockBackend, { path: '/nonexistent' }))
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(deleteMemory(mockBackend, { path: '/nonexistent' }))
                 .rejects.toThrow(PathNotFoundError);
         });
 
         it('should throw InvalidPathError for invalid paths', async () => {
-            await expect(delete_memory(mockBackend, { path: '' }))
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(deleteMemory(mockBackend, { path: '' }))
                 .rejects.toThrow(InvalidPathError);
         });
     });
@@ -712,6 +718,7 @@ describe('Memory Tool Handlers', () => {
                 updatedAt:   '2025-01-01T00:00:00.000Z',
             }));
 
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(insert(mockBackend, {
                 path:        '/test/file.md',
                 insert_line: 10,
@@ -730,6 +737,7 @@ describe('Memory Tool Handlers', () => {
                 updatedAt:   '2025-01-01T00:00:00.000Z',
             }));
 
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(insert(mockBackend, {
                 path:        '/test/file.md',
                 insert_line: -1,
@@ -740,6 +748,7 @@ describe('Memory Tool Handlers', () => {
         it('should throw PathNotFoundError when path does not exist', async () => {
             mockBackend.get = mock(async () => undefined);
 
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(insert(mockBackend, {
                 path:        '/nonexistent',
                 insert_line: 1,
@@ -748,6 +757,7 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should throw InvalidPathError for invalid paths', async () => {
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(insert(mockBackend, {
                 path:        'bad//path',
                 insert_line: 1,
@@ -756,7 +766,7 @@ describe('Memory Tool Handlers', () => {
         });
     });
 
-    describe('str_replace', () => {
+    describe('strReplace', () => {
         it('should replace unique text occurrence', async () => {
             mockBackend.get = mock(async () => ({
                 path:        '/test/file.md' as MemoryPath,
@@ -777,7 +787,7 @@ describe('Memory Tool Handlers', () => {
                 updatedAt:   '2025-01-01T00:00:01.000Z',
             }));
 
-            const result = await str_replace(mockBackend, {
+            const result = await strReplace(mockBackend, {
                 path:    '/test/file.md',
                 old_str: 'Hello World',
                 new_str: 'Hello Universe',
@@ -800,7 +810,8 @@ describe('Memory Tool Handlers', () => {
                 updatedAt:   '2025-01-01T00:00:00.000Z',
             }));
 
-            await expect(str_replace(mockBackend, {
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(strReplace(mockBackend, {
                 path:    '/test/file.md',
                 old_str: 'Not Found',
                 new_str: 'Replacement',
@@ -818,7 +829,8 @@ describe('Memory Tool Handlers', () => {
                 updatedAt:   '2025-01-01T00:00:00.000Z',
             }));
 
-            await expect(str_replace(mockBackend, {
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(strReplace(mockBackend, {
                 path:    '/test/file.md',
                 old_str: 'Hello World',
                 new_str: 'Replacement',
@@ -828,7 +840,8 @@ describe('Memory Tool Handlers', () => {
         it('should throw PathNotFoundError when path does not exist', async () => {
             mockBackend.get = mock(async () => undefined);
 
-            await expect(str_replace(mockBackend, {
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(strReplace(mockBackend, {
                 path:    '/nonexistent',
                 old_str: 'text',
                 new_str: 'replacement',
@@ -836,7 +849,8 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should throw InvalidPathError for invalid paths', async () => {
-            await expect(str_replace(mockBackend, {
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(strReplace(mockBackend, {
                 path:    'invalid',
                 old_str: 'text',
                 new_str: 'replacement',
@@ -871,7 +885,7 @@ describe('Memory Tool Handlers', () => {
                 updatedAt:   '2025-01-01T00:00:01.000Z',
                 tags:        ['tag1'],
             }));
-            mockBackend.delete = mock(async () => {});
+            mockBackend.delete = mock(async () => { /* intentionally empty */ });
 
             const result = await rename(mockBackend, {
                 path:     '/test/old.md',
@@ -892,8 +906,10 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should log warning when cleanup delete fails after rename', async () => {
-            const warnSpy = mock(() => {});
+            const warnSpy = mock(_noop);
+            // eslint-disable-next-line no-console -- Testing console.warn behavior
             const originalWarn = console.warn;
+            // eslint-disable-next-line no-console -- Testing console.warn behavior
             console.warn = warnSpy;
 
             try {
@@ -934,6 +950,7 @@ describe('Memory Tool Handlers', () => {
                 expect(warnSpy.mock.calls[0][0]).toContain('Failed to delete original');
                 expect(warnSpy.mock.calls[0][0]).toContain('/test/old.md');
             } finally {
+                // eslint-disable-next-line no-console -- Restoring console.warn
                 console.warn = originalWarn;
             }
         });
@@ -941,6 +958,7 @@ describe('Memory Tool Handlers', () => {
         it('should throw PathNotFoundError when source path does not exist', async () => {
             mockBackend.get = mock(async () => undefined);
 
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(rename(mockBackend, {
                 path:     '/nonexistent',
                 new_path: '/test/new.md',
@@ -958,6 +976,7 @@ describe('Memory Tool Handlers', () => {
                 updatedAt:   '2025-01-01T00:00:00.000Z',
             }));
 
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(rename(mockBackend, {
                 path:     '/test/old.md',
                 new_path: '/test/existing.md',
@@ -965,6 +984,7 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should throw InvalidPathError for invalid source path', async () => {
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(rename(mockBackend, {
                 path:     'bad-path',
                 new_path: '/test/new.md',
@@ -982,6 +1002,7 @@ describe('Memory Tool Handlers', () => {
                 updatedAt:   '2025-01-01T00:00:00.000Z',
             }));
 
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(rename(mockBackend, {
                 path:     '/test/old.md',
                 new_path: 'bad-path',

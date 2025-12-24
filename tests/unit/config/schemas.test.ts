@@ -251,7 +251,10 @@ describe('discordConfigSchema', () => {
         const result = discordConfigSchema.safeParse(validConfig);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data).toEqual(validConfig);
+            expect(result.data).toEqual({
+                ...validConfig,
+                monitoredChannelIds: [], // Default empty array
+            });
         }
     });
 
@@ -361,7 +364,13 @@ describe('configSchema', () => {
         const result = configSchema.safeParse(validConfig);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data).toEqual(validConfig);
+            expect(result.data).toEqual({
+                ...validConfig,
+                discord: {
+                    ...validConfig.discord,
+                    monitoredChannelIds: [], // Default empty array
+                },
+            });
         }
     });
 

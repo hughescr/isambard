@@ -3,22 +3,23 @@ import _ from 'lodash';
 import { configSchema, dynamoDBConfigSchema, type Config, type DynamoDBConfig } from './schemas';
 
 export interface ResourceProvider {
-    NodeEnv:              { value: string | undefined }
-    LogLevel:             { value: string | undefined }
-    Port:                 { value: string | undefined }
-    CaldavUrl:            { value: string | undefined }
-    CaldavUsername:       { value: string | undefined }
-    CaldavPassword:       { value: string | undefined }
-    ImapHost:             { value: string | undefined }
-    ImapPort:             { value: string | undefined }
-    SmtpHost:             { value: string | undefined }
-    SmtpPort:             { value: string | undefined }
-    EmailUser:            { value: string | undefined }
-    EmailPassword:        { value: string | undefined }
-    DiscordBotToken:      { value: string | undefined }
-    DiscordApplicationId: { value: string | undefined }
-    BoxClientId:          { value: string | undefined }
-    BoxClientSecret:      { value: string | undefined }
+    NodeEnv:                    { value: string | undefined }
+    LogLevel:                   { value: string | undefined }
+    Port:                       { value: string | undefined }
+    CaldavUrl:                  { value: string | undefined }
+    CaldavUsername:             { value: string | undefined }
+    CaldavPassword:             { value: string | undefined }
+    ImapHost:                   { value: string | undefined }
+    ImapPort:                   { value: string | undefined }
+    SmtpHost:                   { value: string | undefined }
+    SmtpPort:                   { value: string | undefined }
+    EmailUser:                  { value: string | undefined }
+    EmailPassword:              { value: string | undefined }
+    DiscordBotToken:            { value: string | undefined }
+    DiscordApplicationId:       { value: string | undefined }
+    DiscordMonitoredChannelIds: { value: string | undefined }
+    BoxClientId:                { value: string | undefined }
+    BoxClientSecret:            { value: string | undefined }
 }
 
 export interface DynamoDBResourceProvider {
@@ -48,8 +49,15 @@ export function loadConfig(resources: ResourceProvider = Resource as unknown as 
             password: resources.EmailPassword.value,
         },
         discord: {
-            botToken:      resources.DiscordBotToken.value,
-            applicationId: resources.DiscordApplicationId.value,
+            botToken:            resources.DiscordBotToken.value,
+            applicationId:       resources.DiscordApplicationId.value,
+            monitoredChannelIds: resources.DiscordMonitoredChannelIds.value
+                ? _.chain(resources.DiscordMonitoredChannelIds.value)
+                    .split(',')
+                    .map(s => _.trim(s))
+                    .compact()
+                    .value()
+                : undefined,
         },
         box: {
             clientId:     resources.BoxClientId.value,

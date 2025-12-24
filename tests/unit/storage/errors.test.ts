@@ -106,7 +106,9 @@ describe('Error.captureStackTrace handling', () => {
     });
 
     it('should handle missing captureStackTrace gracefully', () => {
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- Storing method for restoration
         const original = Error.captureStackTrace;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Intentionally testing behavior when captureStackTrace is undefined
         (Error as any).captureStackTrace = undefined;
 
         const error = new StorageError('test without capture');

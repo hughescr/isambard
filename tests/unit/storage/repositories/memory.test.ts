@@ -575,6 +575,7 @@ describe('MemoryRepository', () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
 
                 // Invalid content - empty string
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
                 await expect(
                     repository.update(testId, 'identity', { content: '' })
                 ).rejects.toThrow(ValidationError);
@@ -589,6 +590,7 @@ describe('MemoryRepository', () => {
                 } catch (error) {
                     expect(error).toBeInstanceOf(ValidationError);
                     expect((error as ValidationError).issues).toBeDefined();
+                    // eslint-disable-next-line lodash/prefer-lodash-method -- Native Array.isArray is idiomatic
                     expect(Array.isArray((error as ValidationError).issues)).toBe(true);
                 }
             });
@@ -1085,6 +1087,7 @@ describe('MemoryRepository', () => {
             const result = await repository.queryByType('event');
 
             expect(result.nextCursor).toBeDefined();
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Decoding cursor from JSON
             const decodedCursor = JSON.parse(
                 Buffer.from(result.nextCursor!, 'base64').toString('utf-8')
             );

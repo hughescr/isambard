@@ -32,8 +32,9 @@ export const emailConfigSchema = z.object({
 
 // Discord config
 export const discordConfigSchema = z.object({
-    botToken:      z.string().min(1),
-    applicationId: z.string().min(1),
+    botToken:            z.string().min(1),
+    applicationId:       z.string().min(1),
+    monitoredChannelIds: z.array(z.string().min(1)).default([]),
 });
 
 // Box config

@@ -59,6 +59,7 @@ describe('MemoryToolKeyGenerator', () => {
             expect(keys.GSI1SK).toMatch(/^CREATED#\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 
             // Extract timestamp from GSI1SK
+            // eslint-disable-next-line lodash/prefer-lodash-method -- String.replace is simpler for single replacement
             const timestamp = keys.GSI1SK.replace('CREATED#', '');
             expect(timestamp >= beforeCall).toBe(true);
             expect(timestamp <= afterCall).toBe(true);

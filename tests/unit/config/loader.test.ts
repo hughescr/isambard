@@ -10,22 +10,23 @@ function createMockResources(
     overrides?: Partial<Record<keyof ResourceProvider, { value: string | undefined }>>
 ): ResourceProvider {
     const defaults: ResourceProvider = {
-        NodeEnv:              { value: 'development' },
-        LogLevel:             { value: 'info' },
-        Port:                 { value: '3000' },
-        CaldavUrl:            { value: 'https://caldav.example.com' },
-        CaldavUsername:       { value: 'user' },
-        CaldavPassword:       { value: 'password' },
-        ImapHost:             { value: 'mail.example.com' },
-        ImapPort:             { value: '993' },
-        SmtpHost:             { value: 'mail.example.com' },
-        SmtpPort:             { value: '587' },
-        EmailUser:            { value: 'user@example.com' },
-        EmailPassword:        { value: 'emailpass' },
-        DiscordBotToken:      { value: 'bot-token-123' },
-        DiscordApplicationId: { value: 'app-id-456' },
-        BoxClientId:          { value: 'box-client-id' },
-        BoxClientSecret:      { value: 'box-secret' },
+        NodeEnv:                    { value: 'development' },
+        LogLevel:                   { value: 'info' },
+        Port:                       { value: '3000' },
+        CaldavUrl:                  { value: 'https://caldav.example.com' },
+        CaldavUsername:             { value: 'user' },
+        CaldavPassword:             { value: 'password' },
+        ImapHost:                   { value: 'mail.example.com' },
+        ImapPort:                   { value: '993' },
+        SmtpHost:                   { value: 'mail.example.com' },
+        SmtpPort:                   { value: '587' },
+        EmailUser:                  { value: 'user@example.com' },
+        EmailPassword:              { value: 'emailpass' },
+        DiscordBotToken:            { value: 'bot-token-123' },
+        DiscordApplicationId:       { value: 'app-id-456' },
+        DiscordMonitoredChannelIds: { value: undefined },
+        BoxClientId:                { value: 'box-client-id' },
+        BoxClientSecret:            { value: 'box-secret' },
     };
     return { ...defaults, ...overrides };
 }
@@ -186,7 +187,7 @@ describe('loadConfig', () => {
             try {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
-            } catch (error) {
+            } catch (error: unknown) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 expect(errorMessage).not.toContain('super-secret-password-123');
             }
@@ -200,7 +201,7 @@ describe('loadConfig', () => {
             try {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
-            } catch (error) {
+            } catch (error: unknown) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 expect(errorMessage).toContain('[REDACTED]');
                 expect(errorMessage).toContain('caldav.password');
@@ -215,7 +216,7 @@ describe('loadConfig', () => {
             try {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
-            } catch (error) {
+            } catch (error: unknown) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 expect(errorMessage).toContain('[REDACTED]');
                 expect(errorMessage).toContain('email.password');
@@ -230,7 +231,7 @@ describe('loadConfig', () => {
             try {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
-            } catch (error) {
+            } catch (error: unknown) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 expect(errorMessage).toContain('[REDACTED]');
                 expect(errorMessage).toContain('discord.botToken');
@@ -245,7 +246,7 @@ describe('loadConfig', () => {
             try {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
-            } catch (error) {
+            } catch (error: unknown) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 expect(errorMessage).toContain('[REDACTED]');
                 expect(errorMessage).toContain('box.clientSecret');
@@ -260,7 +261,7 @@ describe('loadConfig', () => {
             try {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
-            } catch (error) {
+            } catch (error: unknown) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 // Field name contains "Password" (capital P) - should still redact
                 expect(errorMessage).toContain('[REDACTED]');
@@ -275,7 +276,7 @@ describe('loadConfig', () => {
             try {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
-            } catch (error) {
+            } catch (error: unknown) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 // Field name contains "Token" (capital T) - should still redact
                 expect(errorMessage).toContain('[REDACTED]');
@@ -290,7 +291,7 @@ describe('loadConfig', () => {
             try {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
-            } catch (error) {
+            } catch (error: unknown) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 // Field name contains "Secret" (capital S) - should still redact
                 expect(errorMessage).toContain('[REDACTED]');
@@ -305,7 +306,7 @@ describe('loadConfig', () => {
             try {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
-            } catch (error) {
+            } catch (error: unknown) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 // Non-sensitive field should show actual Zod error message
                 expect(errorMessage).not.toContain('[REDACTED]');
@@ -323,7 +324,7 @@ describe('loadConfig', () => {
             try {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
-            } catch (error) {
+            } catch (error: unknown) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 // Non-sensitive field should show actual error
                 expect(errorMessage).not.toContain('[REDACTED]');
@@ -340,7 +341,7 @@ describe('loadConfig', () => {
             try {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
-            } catch (error) {
+            } catch (error: unknown) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 // Username is not sensitive - should show actual error
                 expect(errorMessage).not.toContain('[REDACTED]');
@@ -359,7 +360,7 @@ describe('loadConfig', () => {
             try {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
-            } catch (error) {
+            } catch (error: unknown) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
 
                 // Sensitive fields should be redacted
@@ -372,11 +373,16 @@ describe('loadConfig', () => {
                 expect(errorMessage).toContain('caldav.url');
 
                 // Should have actual error messages for non-sensitive fields
-                const parsed = JSON.parse(errorMessage.replace('Config validation failed: ', ''));
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Parsing JSON from error message
+                const parsed = JSON.parse(_.replace(errorMessage, 'Config validation failed: ', ''));
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Lodash find needed for partial object matching
                 const portError = _.find(parsed, { path: 'app.port' });
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Lodash find result
                 const urlError = _.find(parsed, { path: 'caldav.url' });
 
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Testing error message property
                 expect(portError?.message).not.toBe('[REDACTED]');
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Testing error message property
                 expect(urlError?.message).not.toBe('[REDACTED]');
             }
         });

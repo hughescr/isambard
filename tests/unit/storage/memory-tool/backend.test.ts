@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
-import { assign as _assign } from 'lodash';
+import { assign as _assign, isError as _isError } from 'lodash';
 import {
     DynamoDBDocumentClient,
     GetCommand,
@@ -348,7 +348,7 @@ describe('MemoryToolBackend', () => {
             try {
                 await backend.update(testPath, { content: 'Updated' });
                 expect(true).toBe(false); // Should not reach here
-            } catch (error) {
+            } catch (error: unknown) {
                 expect(error).toBeInstanceOf(ConflictError);
                 if(error instanceof ConflictError) {
                     expect(error.message).toContain('-1');
@@ -363,6 +363,7 @@ describe('MemoryToolBackend', () => {
             _assign(otherError, { name: 'NetworkError' });
             ddbMock.on(PutCommand).rejectsOnce(otherError);
 
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(
                 backend.update(testPath, { content: 'Updated' })
             ).rejects.toThrow('Network timeout');
@@ -372,13 +373,14 @@ describe('MemoryToolBackend', () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             // Mock normalizes null to Error, but we verify it's NOT ConflictError
             ddbMock.on(PutCommand).callsFake(() => {
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Intentionally testing non-Error throw
                 throw null;
             });
 
             try {
                 await backend.update(testPath, { content: 'Updated' });
                 expect(true).toBe(false); // Should not reach here
-            } catch (error) {
+            } catch (error: unknown) {
                 // Key test: should NOT be ConflictError
                 expect(error).not.toBeInstanceOf(ConflictError);
             }
@@ -388,13 +390,14 @@ describe('MemoryToolBackend', () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             // Mock normalizes number to Error, but we verify it's NOT ConflictError
             ddbMock.on(PutCommand).callsFake(() => {
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Intentionally testing non-Error throw
                 throw 42;
             });
 
             try {
                 await backend.update(testPath, { content: 'Updated' });
                 expect(true).toBe(false); // Should not reach here
-            } catch (error) {
+            } catch (error: unknown) {
                 // Key test: should NOT be ConflictError
                 expect(error).not.toBeInstanceOf(ConflictError);
             }
@@ -404,13 +407,14 @@ describe('MemoryToolBackend', () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             const errorWithoutName = { message: 'Error without name' };
             ddbMock.on(PutCommand).callsFake(() => {
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Intentionally testing non-Error throw
                 throw errorWithoutName;
             });
 
             try {
                 await backend.update(testPath, { content: 'Updated' });
                 expect(true).toBe(false); // Should not reach here
-            } catch (error) {
+            } catch (error: unknown) {
                 // Key test: should NOT be ConflictError
                 expect(error).not.toBeInstanceOf(ConflictError);
                 // Verify it has the message property from our thrown object
@@ -428,11 +432,11 @@ describe('MemoryToolBackend', () => {
             try {
                 await backend.update(testPath, { content: 'Updated' });
                 expect(true).toBe(false); // Should not reach here
-            } catch (error) {
+            } catch (error: unknown) {
                 // Key test: should NOT be ConflictError
                 expect(error).not.toBeInstanceOf(ConflictError);
                 expect(error).toBeInstanceOf(Error);
-                if(error instanceof Error) {
+                if(_isError(error)) {
                     expect(error.message).toBe('Different error');
                 }
             }
@@ -440,6 +444,7 @@ describe('MemoryToolBackend', () => {
 
         it('should handle truly falsy errors (direct spy bypass)', async () => {
             // Spy on the backend's docClient.send method directly
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Need to bypass type safety to access private docClient
             const sendSpy = spyOn((backend as any).docClient, 'send');
             // First call (GetCommand) succeeds, second call (PutCommand) throws null
             sendSpy
@@ -449,7 +454,7 @@ describe('MemoryToolBackend', () => {
             try {
                 await backend.update(testPath, { content: 'Updated' });
                 expect(true).toBe(false); // Should not reach here
-            } catch (error) {
+            } catch (error: unknown) {
                 // Should re-throw null as-is, NOT convert to ConflictError
                 expect(error).toBe(null);
             } finally {
@@ -459,6 +464,7 @@ describe('MemoryToolBackend', () => {
 
         it('should handle truly primitive errors (direct spy bypass - number)', async () => {
             // Spy on the backend's docClient.send method directly
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Need to bypass type safety to access private docClient
             const sendSpy = spyOn((backend as any).docClient, 'send');
             // First call (GetCommand) succeeds, second call (PutCommand) throws number
             sendSpy
@@ -468,7 +474,7 @@ describe('MemoryToolBackend', () => {
             try {
                 await backend.update(testPath, { content: 'Updated' });
                 expect(true).toBe(false); // Should not reach here
-            } catch (error) {
+            } catch (error: unknown) {
                 // Should re-throw number as-is, NOT convert to ConflictError
                 expect(error).toBe(999);
             } finally {
@@ -479,6 +485,7 @@ describe('MemoryToolBackend', () => {
         it('should handle object without name property (direct spy bypass)', async () => {
             const objectWithoutName = { code: 'SomeError', message: 'No name prop' };
             // Spy on the backend's docClient.send method directly
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Need to bypass type safety to access private docClient
             const sendSpy = spyOn((backend as any).docClient, 'send');
             // First call (GetCommand) succeeds, second call (PutCommand) throws object without name
             sendSpy
@@ -488,7 +495,7 @@ describe('MemoryToolBackend', () => {
             try {
                 await backend.update(testPath, { content: 'Updated' });
                 expect(true).toBe(false); // Should not reach here
-            } catch (error) {
+            } catch (error: unknown) {
                 // Should re-throw object as-is, NOT convert to ConflictError
                 expect(error).toBe(objectWithoutName);
                 expect(error).not.toBeInstanceOf(ConflictError);
@@ -519,6 +526,7 @@ describe('MemoryToolBackend', () => {
         it('should throw ValidationError on invalid update data', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
 
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(
                 backend.update(testPath, { content: '' }) // Empty content
             ).rejects.toThrow(ValidationError);

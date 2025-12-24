@@ -12,11 +12,11 @@ Establish foundation for Isambard with working Discord bot and memory system.
 - [x] Unit tests for all above
 
 ## Week 2: Discord + Agent
-- [ ] Discord.js client wrapper
-- [ ] Message event handling
+- [x] Discord.js client wrapper
+- [x] Message event handling
 - [x] Basic Claude Agent SDK integration (betaMemoryTool)
 - [x] Memory loading on conversation start (memory-tool MCP)
-- [ ] Simple response loop
+- [ ] Simple response loop (connect Discord → Claude Agent)
 - [ ] Integration tests
 
 ### Memory Tool Implementation (Completed)
@@ -25,6 +25,15 @@ Establish foundation for Isambard with working Discord bot and memory system.
 - [x] Entity-relation storage pattern
 - [x] Comprehensive unit tests with 92.82% mutation coverage
 - [x] Integration with Claude Agent SDK via betaMemoryTool
+
+### Discord Integration (Completed)
+- [x] discord.js client with proper intents (Guilds, GuildMessages, MessageContent)
+- [x] Branded types (GuildId, ChannelId, UserId) with Zod validation
+- [x] Error hierarchy (InvalidTokenError, PermissionError, etc.)
+- [x] Event handlers (ready, error, messageCreate)
+- [x] Bot factory with lifecycle management (start/stop)
+- [x] Message routing: DMs, @mentions, monitored channels
+- [x] Comprehensive unit tests with 90.32% mutation coverage
 
 ## Success Criteria
 - Bot responds to Discord messages
