@@ -16,8 +16,8 @@ Establish foundation for Isambard with working Discord bot and memory system.
 - [x] Message event handling
 - [x] Basic Claude Agent SDK integration (betaMemoryTool)
 - [x] Memory loading on conversation start (memory-tool MCP)
-- [ ] Simple response loop (connect Discord → Claude Agent)
-- [ ] Integration tests
+- [x] Simple response loop (connect Discord → Claude Agent)
+- [x] Integration tests
 
 ### Memory Tool Implementation (Completed)
 - [x] MCP-compliant memory-tool implementation
