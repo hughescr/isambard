@@ -1,4 +1,7 @@
-# Short-Term Roadmap (Weeks 1-2)
+# Short-Term Roadmap (Weeks 1-2) ✅ COMPLETE
+
+## Status
+**All objectives achieved.** Ready to proceed to [Mid-Term Roadmap](./mid-term.md).
 
 ## Goals
 Establish foundation for Isambard with working Discord bot and memory system.
@@ -34,6 +37,16 @@ Establish foundation for Isambard with working Discord bot and memory system.
 - [x] Bot factory with lifecycle management (start/stop)
 - [x] Message routing: DMs, @mentions, monitored channels
 - [x] Comprehensive unit tests with 90.32% mutation coverage
+
+### Claude Agent Integration (Completed)
+- [x] Anthropic SDK client factory
+- [x] Claude agent with chat() method for Discord messages
+- [x] Message formatting: "User @{userId} said: {content}"
+- [x] Response truncation at 1900 chars for Discord limits
+- [x] Optional memory tool integration with graceful degradation
+- [x] Application entry point with graceful startup/shutdown (SIGINT/SIGTERM)
+- [x] 20 integration tests for full bot lifecycle
+- [x] 639 total tests passing
 
 ## Success Criteria
 - Bot responds to Discord messages

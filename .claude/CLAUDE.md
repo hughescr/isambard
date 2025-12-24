@@ -55,6 +55,22 @@ Isambard can propose improvements to its own code:
 - `src/config/` - Configuration with Zod validation
 - `src/utils/` - Shared utilities
 
+### Claude Agent Subsystem
+The agent subsystem connects Discord to Claude with optional persistent memory:
+- `src/agent/client.ts` - Anthropic SDK client factory
+- `src/agent/agent.ts` - Claude agent with `chat()` method for message processing
+- `src/agent/claude.ts` - betaMemoryTool integration with Claude SDK
+- `src/index.ts` - Application entry point with lifecycle management
+
+### Discord Integration
+The Discord integration provides bot functionality:
+- `src/integrations/discord/types.ts` - Branded types (GuildId, ChannelId, UserId)
+- `src/integrations/discord/errors.ts` - Error hierarchy
+- `src/integrations/discord/client.ts` - Discord.js client factory
+- `src/integrations/discord/handlers.ts` - Event handlers (ready, error, messageCreate)
+- `src/integrations/discord/bot.ts` - Bot factory with start/stop lifecycle
+- `src/integrations/discord/index.ts` - Public exports
+
 ### Memory Tool Subsystem
 The memory tool implements Claude's betaMemoryTool with a DynamoDB backend:
 - `src/storage/memory-tool/` - Complete memory tool implementation
@@ -64,7 +80,6 @@ The memory tool implements Claude's betaMemoryTool with a DynamoDB backend:
   - `backend.ts` - DynamoDB CRUD operations with optimistic locking
   - `handlers.ts` - SDK handlers: view, create, str_replace, insert, delete, rename
   - `index.ts` - Public exports
-- `src/agent/claude.ts` - betaMemoryTool integration with Claude SDK
 
 ### Key Patterns
 - **Repository Pattern** for data access
