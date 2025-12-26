@@ -22,7 +22,6 @@
     "typecheck": "bunx tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "0.71.2",
     "@aws-sdk/client-dynamodb": "^3.700.0",
     "@aws-sdk/lib-dynamodb": "^3.700.0",
     "@hughescr/logger": "2.7.2",
@@ -30,6 +29,7 @@
     "zod": "4.2.1"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.1.76",
     "@hughescr/eslint-config-default": "^4.0.0",
     "@stryker-mutator/core": "9.4.0",
     "@types/bun": "latest",

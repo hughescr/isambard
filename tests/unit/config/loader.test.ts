@@ -27,6 +27,7 @@ function createMockResources(
         DiscordMonitoredChannelIds: { value: undefined },
         BoxClientId:                { value: 'box-client-id' },
         BoxClientSecret:            { value: 'box-secret' },
+        ClaudeCodeOAuthToken:       { value: 'test-oauth-token-12345' },
     };
     return { ...defaults, ...overrides };
 }

@@ -7,7 +7,7 @@
 
 import { map as _map, groupBy as _groupBy, isNumber as _isNumber } from 'lodash';
 import type { MemoryToolBackend } from '../storage/memory-tool/backend';
-import type { MemoryPath } from '../storage/memory-tool/types';
+import type { MemoryPath, LayerName } from '../storage/memory-tool/types';
 import { extractLayerFromPath } from '../storage/memory-tool/types';
 
 export interface ContextBuilderOptions {
@@ -22,6 +22,20 @@ export interface ContextBuilder {
      * @returns Formatted context string ready for inclusion in system prompt
      */
     buildSystemContext: () => Promise<string>
+
+    /**
+     * Load core identity (permanent, essential memories)
+     * @returns Formatted identity string for system prompt
+     */
+    loadCoreIdentity: () => Promise<string>
+
+    /**
+     * Load recent context for a specific user
+     * @param userId User ID to load context for
+     * @param limit Maximum number of recent memories to load
+     * @returns Array of recent memory texts
+     */
+    loadRecentContext: (userId: string, limit?: number) => Promise<string[]>
 
     /**
      * Update access stats when memories are used
@@ -46,6 +60,30 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
     const maxStateChars = maxStateTokens * CHARS_PER_TOKEN;
 
     return {
+        loadCoreIdentity: async (): Promise<string> => {
+            // Load identity layer items (permanent, auto-loaded)
+            const result = await backend.listByLayer('identity' as LayerName);
+
+            if(result.items.length === 0) {
+                return '';
+            }
+
+            // Format and truncate if needed
+            const content = _map(result.items, item => item.content).join('\n\n');
+            if(content.length > maxIdentityChars) {
+                return content.slice(0, maxIdentityChars - 3) + '...';
+            }
+            return content;
+        },
+
+        loadRecentContext: async (userId: string, limit: number = 3): Promise<string[]> => {
+            // Load recent state/events for this user via tag search
+            const result = await backend.searchByTag(`user:${userId}`, undefined, { limit });
+
+            // Return in reverse chronological order (most recent first)
+            return result.items.map(item => item.content);
+        },
+
         buildSystemContext: async (): Promise<string> => {
             // Get auto-load items from backend
             const items = await backend.getAutoLoadItems();

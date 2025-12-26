@@ -1,40 +1,18 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
-import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import _ from 'lodash';
-import type Anthropic from '@anthropic-ai/sdk';
+import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
 import { createClaudeAgent } from '../../../src/agent/agent';
 import type { DiscordMessageContext } from '../../../src/integrations/discord/types';
 import { createGuildId, createChannelId, createUserId } from '../../../src/integrations/discord/types';
+import type { ContextBuilder } from '../../../src/agent/context-builder';
 
 describe('createClaudeAgent', () => {
-    let mockClient: Anthropic;
     let mockMessageContext: DiscordMessageContext;
+    let mockContextBuilder: ContextBuilder;
+    let querySpy: ReturnType<typeof spyOn>;
 
     beforeEach(() => {
-    // Create mock Anthropic client
-        mockClient = {
-            messages: {
-                create: mock(async () => ({
-                    id:      'msg_123',
-                    type:    'message',
-                    role:    'assistant',
-                    content: [
-                        {
-                            type: 'text',
-                            text: 'Hello! This is a test response.',
-                        },
-                    ],
-                    model:         'claude-sonnet-4-20250514',
-                    stop_reason:   'end_turn',
-                    stop_sequence: null,
-                    usage:         {
-                        input_tokens:  10,
-                        output_tokens: 20,
-                    },
-                })),
-            },
-        } as unknown as Anthropic;
-
         // Create mock Discord message context
         mockMessageContext = {
             guildId:   createGuildId('123456789'),
@@ -44,63 +22,75 @@ describe('createClaudeAgent', () => {
             content:   'Hello Claude!',
             timestamp: '2025-01-15T12:00:00Z',
         };
+
+        // Create mock context builder
+        mockContextBuilder = {
+            loadCoreIdentity:   mock(async () => ''),
+            loadRecentContext:  mock(async () => []),
+            buildSystemContext: mock(async () => ''),
+            // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function
+            recordAccess:       mock(async () => {}),
+        };
+
+        // Mock query() to return an async generator with assistant message
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock needs flexible typing
+        querySpy = spyOn(agentSdk, 'query').mockImplementation((_params: any): any => {
+            async function* mockGenerator() {
+                yield {
+                    type:    'assistant' as const,
+                    message: {
+                        content: [
+                            {
+                                type: 'text' as const,
+                                text: 'Hello! This is a test response.',
+                            },
+                        ],
+                    },
+                };
+            }
+            return mockGenerator();
+        });
     });
 
     afterEach(() => {
-    // Reset all mocks
-        (mockClient.messages.create as ReturnType<typeof mock>).mockClear();
+        querySpy.mockRestore();
     });
 
     it('should create an agent with chat method', () => {
-        const agent = createClaudeAgent({ client: mockClient });
+        const agent = createClaudeAgent({});
 
         expect(agent).toBeDefined();
         expect(typeof agent.chat).toBe('function');
     });
 
-    it('should format message with username prefix', async () => {
-        const agent = createClaudeAgent({ client: mockClient });
+    it('should call query with user message', async () => {
+        const agent = createClaudeAgent({});
 
         await agent.chat(mockMessageContext);
 
-        expect(mockClient.messages.create).toHaveBeenCalledWith(
+        expect(querySpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                messages: [
-                    {
-                        role:    'user',
-                        content: 'User @111222333 said: Hello Claude!',
-                    },
-                ],
+                prompt: 'User @111222333 in #987654321: Hello Claude!',
             })
         );
     });
 
-    it('should use claude-sonnet-4-20250514 model', async () => {
-        const agent = createClaudeAgent({ client: mockClient });
+    it('should use claude-sonnet-4-5 model', async () => {
+        const agent = createClaudeAgent({});
 
         await agent.chat(mockMessageContext);
 
-        expect(mockClient.messages.create).toHaveBeenCalledWith(
+        expect(querySpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                model: 'claude-sonnet-4-20250514',
-            })
-        );
-    });
-
-    it('should use max_tokens of 2048', async () => {
-        const agent = createClaudeAgent({ client: mockClient });
-
-        await agent.chat(mockMessageContext);
-
-        expect(mockClient.messages.create).toHaveBeenCalledWith(
-            expect.objectContaining({
-                max_tokens: 2048,
+                options: expect.objectContaining({
+                    model: 'claude-sonnet-4-5',
+                }),
             })
         );
     });
 
     it('should return text content from Claude response', async () => {
-        const agent = createClaudeAgent({ client: mockClient });
+        const agent = createClaudeAgent({});
 
         const response = await agent.chat(mockMessageContext);
 
@@ -109,120 +99,85 @@ describe('createClaudeAgent', () => {
 
     it('should truncate responses longer than 1900 characters', async () => {
         const longText = _.repeat('a', 2000);
-        (mockClient.messages.create as ReturnType<typeof mock>).mockResolvedValue({
-            id:      'msg_123',
-            type:    'message',
-            role:    'assistant',
-            content: [
-                {
-                    type: 'text',
-                    text: longText,
-                },
-            ],
-            model:         'claude-sonnet-4-20250514',
-            stop_reason:   'end_turn',
-            stop_sequence: null,
-            usage:         {
-                input_tokens:  10,
-                output_tokens: 500,
-            },
+        querySpy.mockImplementation((_params: any): any => {
+            async function* mockGenerator() {
+                yield {
+                    type:    'assistant' as const,
+                    message: {
+                        content: [
+                            {
+                                type: 'text' as const,
+                                text: longText,
+                            },
+                        ],
+                    },
+                };
+            }
+            return mockGenerator();
         });
 
-        const agent = createClaudeAgent({ client: mockClient });
+        const agent = createClaudeAgent({});
         const response = await agent.chat(mockMessageContext);
 
         expect(response).toBe(_.repeat('a', 1897) + '...');
         expect(response?.length).toBe(1900);
     });
 
-    it('should include memory tool when provided', async () => {
-        const mockMemoryTool = {
-            name: 'memory_tool',
-            type: 'custom' as const,
-            // Mock memory tool structure
-        };
+    it('should include memory MCP server when provided', async () => {
+        const mockMcpServer = { name: 'memory', version: '1.0.0' };
 
         const agent = createClaudeAgent({
-            client:     mockClient,
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any -- Mock tool type
-            memoryTool: mockMemoryTool as any,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any -- Mock MCP server
+            memoryMcpServer: mockMcpServer as any,
         });
 
         await agent.chat(mockMessageContext);
 
-        expect(mockClient.messages.create).toHaveBeenCalledWith(
+        expect(querySpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                tools: [mockMemoryTool],
+                options: expect.objectContaining({
+                    mcpServers: { memory: mockMcpServer },
+                }),
             })
         );
     });
 
-    it('should not include tools when memory tool is not provided', async () => {
-        const agent = createClaudeAgent({ client: mockClient });
+    it('should not include MCP servers when not provided', async () => {
+        const agent = createClaudeAgent({});
 
         await agent.chat(mockMessageContext);
 
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Accessing mock call args
-        const callArgs = (mockClient.messages.create as ReturnType<typeof mock>).mock.calls[0][0];
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing tools property from mock
-        expect(callArgs.tools).toBeUndefined();
+        const callArgs = querySpy.mock.calls[0][0];
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing options
+        expect(callArgs.options.mcpServers).toBeUndefined();
     });
 
     it('should return null on API error', async () => {
-        (mockClient.messages.create as ReturnType<typeof mock>).mockRejectedValue(
-            new Error('API rate limit exceeded')
-        );
+        querySpy.mockImplementation((_params: any): any => {
+            throw new Error('API rate limit exceeded');
+        });
 
-        const agent = createClaudeAgent({ client: mockClient });
+        const agent = createClaudeAgent({});
         const response = await agent.chat(mockMessageContext);
 
         expect(response).toBeNull();
     });
 
     it('should return null when response has no text content', async () => {
-        (mockClient.messages.create as ReturnType<typeof mock>).mockResolvedValue({
-            id:            'msg_123',
-            type:          'message',
-            role:          'assistant',
-            content:       [], // Empty content
-            model:         'claude-sonnet-4-20250514',
-            stop_reason:   'end_turn',
-            stop_sequence: null,
-            usage:         {
-                input_tokens:  10,
-                output_tokens: 0,
-            },
+        querySpy.mockImplementation((_params: any): any => {
+            async function* mockGenerator() {
+                yield {
+                    type:    'assistant' as const,
+                    message: {
+                        content: [], // Empty content
+                    },
+                };
+            }
+            return mockGenerator();
         });
 
-        const agent = createClaudeAgent({ client: mockClient });
-        const response = await agent.chat(mockMessageContext);
-
-        expect(response).toBeNull();
-    });
-
-    it('should return null when response has non-text content', async () => {
-        (mockClient.messages.create as ReturnType<typeof mock>).mockResolvedValue({
-            id:      'msg_123',
-            type:    'message',
-            role:    'assistant',
-            content: [
-                {
-                    type:  'tool_use',
-                    id:    'tool_123',
-                    name:  'some_tool',
-                    input: {},
-                },
-            ],
-            model:         'claude-sonnet-4-20250514',
-            stop_reason:   'tool_use',
-            stop_sequence: null,
-            usage:         {
-                input_tokens:  10,
-                output_tokens: 20,
-            },
-        });
-
-        const agent = createClaudeAgent({ client: mockClient });
+        const agent = createClaudeAgent({});
         const response = await agent.chat(mockMessageContext);
 
         expect(response).toBeNull();
@@ -234,17 +189,12 @@ describe('createClaudeAgent', () => {
             content: '',
         };
 
-        const agent = createClaudeAgent({ client: mockClient });
+        const agent = createClaudeAgent({});
         await agent.chat(emptyMessageContext);
 
-        expect(mockClient.messages.create).toHaveBeenCalledWith(
+        expect(querySpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                messages: [
-                    {
-                        role:    'user',
-                        content: 'User @111222333 said: ',
-                    },
-                ],
+                prompt: 'User @111222333 in #987654321: ',
             })
         );
     });
@@ -255,17 +205,12 @@ describe('createClaudeAgent', () => {
             content: '  Hello   World  ',
         };
 
-        const agent = createClaudeAgent({ client: mockClient });
+        const agent = createClaudeAgent({});
         await agent.chat(messageWithWhitespace);
 
-        expect(mockClient.messages.create).toHaveBeenCalledWith(
+        expect(querySpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                messages: [
-                    {
-                        role:    'user',
-                        content: 'User @111222333 said:   Hello   World  ',
-                    },
-                ],
+                prompt: 'User @111222333 in #987654321:   Hello   World  ',
             })
         );
     });
@@ -276,76 +221,71 @@ describe('createClaudeAgent', () => {
             content: 'Hello! @user <#channel> **bold** `code`',
         };
 
-        const agent = createClaudeAgent({ client: mockClient });
+        const agent = createClaudeAgent({});
         await agent.chat(messageWithSpecialChars);
 
-        expect(mockClient.messages.create).toHaveBeenCalledWith(
+        expect(querySpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                messages: [
-                    {
-                        role:    'user',
-                        content: 'User @111222333 said: Hello! @user <#channel> **bold** `code`',
-                    },
-                ],
+                prompt: 'User @111222333 in #987654321: Hello! @user <#channel> **bold** `code`',
             })
         );
     });
 
-    it('should find text content by type property', async () => {
-        // Test that _.find uses { type: 'text' } correctly
-        (mockClient.messages.create as ReturnType<typeof mock>).mockResolvedValue({
-            id:      'msg_123',
-            type:    'message',
-            role:    'assistant',
-            content: [
-                {
-                    type:  'tool_use',
-                    id:    'tool_456',
-                    name:  'foo',
-                    input: {},
-                },
-                {
-                    type: 'text',
-                    text: 'hello',
-                },
-            ],
-            model:         'claude-sonnet-4-20250514',
-            stop_reason:   'end_turn',
-            stop_sequence: null,
-            usage:         {
-                input_tokens:  10,
-                output_tokens: 5,
-            },
+    it('should extract latest assistant message from stream', async () => {
+        querySpy.mockImplementation((_params: any): any => {
+            async function* mockGenerator() {
+                yield {
+                    type:    'assistant' as const,
+                    message: {
+                        content: [
+                            {
+                                type: 'text' as const,
+                                text: 'First message',
+                            },
+                        ],
+                    },
+                };
+                yield {
+                    type:    'assistant' as const,
+                    message: {
+                        content: [
+                            {
+                                type: 'text' as const,
+                                text: 'Latest message',
+                            },
+                        ],
+                    },
+                };
+            }
+            return mockGenerator();
         });
 
-        const agent = createClaudeAgent({ client: mockClient });
+        const agent = createClaudeAgent({});
         const response = await agent.chat(mockMessageContext);
 
-        expect(response).toBe('hello');
+        expect(response).toBe('Latest message');
     });
 
     it('should not truncate responses exactly at MAX_RESPONSE_LENGTH (1900)', async () => {
         const exactText = _.repeat('x', 1900);
-        (mockClient.messages.create as ReturnType<typeof mock>).mockResolvedValue({
-            id:      'msg_123',
-            type:    'message',
-            role:    'assistant',
-            content: [
-                {
-                    type: 'text',
-                    text: exactText,
-                },
-            ],
-            model:         'claude-sonnet-4-20250514',
-            stop_reason:   'end_turn',
-            stop_sequence: null,
-            usage:         {
-                input_tokens:  10,
-                output_tokens: 500,
-            },
+        querySpy.mockImplementation((_params: any): any => {
+            async function* mockGenerator() {
+                yield {
+                    type:    'assistant' as const,
+                    message: {
+                        content: [
+                            {
+                                type: 'text' as const,
+                                text: exactText,
+                            },
+                        ],
+                    },
+                };
+            }
+            return mockGenerator();
         });
 
-        const agent = createClaudeAgent({ client: mockClient });
+        const agent = createClaudeAgent({});
         const response = await agent.chat(mockMessageContext);
 
         expect(response).toBe(exactText);
@@ -354,338 +294,586 @@ describe('createClaudeAgent', () => {
 
     it('should truncate responses exceeding MAX_RESPONSE_LENGTH by exactly 1 character', async () => {
         const longText = _.repeat('y', 1901);
-        (mockClient.messages.create as ReturnType<typeof mock>).mockResolvedValue({
-            id:      'msg_123',
-            type:    'message',
-            role:    'assistant',
-            content: [
-                {
-                    type: 'text',
-                    text: longText,
-                },
-            ],
-            model:         'claude-sonnet-4-20250514',
-            stop_reason:   'end_turn',
-            stop_sequence: null,
-            usage:         {
-                input_tokens:  10,
-                output_tokens: 500,
-            },
+        querySpy.mockImplementation((_params: any): any => {
+            async function* mockGenerator() {
+                yield {
+                    type:    'assistant' as const,
+                    message: {
+                        content: [
+                            {
+                                type: 'text' as const,
+                                text: longText,
+                            },
+                        ],
+                    },
+                };
+            }
+            return mockGenerator();
         });
 
-        const agent = createClaudeAgent({ client: mockClient });
+        const agent = createClaudeAgent({});
         const response = await agent.chat(mockMessageContext);
 
         expect(response).toBe(_.repeat('y', 1897) + '...');
         expect(response?.length).toBe(1900);
     });
 
-    it('should log when no text content found', async () => {
-        const consoleSpy = mock(_.noop);
-        const originalLog = console.log;
-        // eslint-disable-next-line no-console -- Testing console.log behavior
-        console.log = consoleSpy as typeof console.log;
-
-        (mockClient.messages.create as ReturnType<typeof mock>).mockResolvedValue({
-            id:      'msg_123',
-            type:    'message',
-            role:    'assistant',
-            content: [
-                {
-                    type:  'tool_use',
-                    id:    'tool_789',
-                    name:  'memory',
-                    input: {},
-                },
-            ],
-            model:         'claude-sonnet-4-20250514',
-            stop_reason:   'tool_use',
-            stop_sequence: null,
-            usage:         {
-                input_tokens:  10,
-                output_tokens: 20,
-            },
-        });
-
-        const agent = createClaudeAgent({ client: mockClient });
-        await agent.chat(mockMessageContext);
-
-        expect(consoleSpy).toHaveBeenCalled();
-        expect(consoleSpy).toHaveBeenCalledWith(
-            expect.stringContaining('no text content')
-        );
-        expect(consoleSpy).toHaveBeenCalledWith(
-            expect.stringContaining('msg_999')
-        );
-
-        // eslint-disable-next-line no-console -- Restoring original console.log
-        console.log = originalLog;
-    });
-
-    it('should log when truncating response', async () => {
-        const consoleSpy = mock(_.noop);
-        const originalLog = console.log;
-        // eslint-disable-next-line no-console -- Testing console.log behavior
-        console.log = consoleSpy as typeof console.log;
-
-        const longText = _.repeat('z', 2500);
-        (mockClient.messages.create as ReturnType<typeof mock>).mockResolvedValue({
-            id:      'msg_123',
-            type:    'message',
-            role:    'assistant',
-            content: [
-                {
-                    type: 'text',
-                    text: longText,
-                },
-            ],
-            model:         'claude-sonnet-4-20250514',
-            stop_reason:   'end_turn',
-            stop_sequence: null,
-            usage:         {
-                input_tokens:  10,
-                output_tokens: 600,
-            },
-        });
-
-        const agent = createClaudeAgent({ client: mockClient });
-        await agent.chat(mockMessageContext);
-
-        expect(consoleSpy).toHaveBeenCalled();
-        expect(consoleSpy).toHaveBeenCalledWith(
-            expect.stringContaining('Truncating')
-        );
-        expect(consoleSpy).toHaveBeenCalledWith(
-            expect.stringContaining('msg_999')
-        );
-
-        // eslint-disable-next-line no-console -- Restoring original console.log
-        console.log = originalLog;
-    });
-
-    it('should log error details on failure', async () => {
-        const consoleSpy = mock(_.noop);
-        const originalError = console.error;
-        // eslint-disable-next-line no-console -- Testing console.error behavior
-        console.error = consoleSpy as typeof console.error;
-
-        const apiError = new Error('API down');
-        (mockClient.messages.create as ReturnType<typeof mock>).mockRejectedValue(apiError);
-
-        const agent = createClaudeAgent({ client: mockClient });
-        await agent.chat(mockMessageContext);
-
-        expect(consoleSpy).toHaveBeenCalled();
-        expect(consoleSpy).toHaveBeenCalledWith(
-            expect.stringContaining('Failed to get Claude response'),
-            apiError
-        );
-        expect(consoleSpy).toHaveBeenCalledWith(
-            expect.stringContaining('msg_999'),
-            apiError
-        );
-        expect(consoleSpy).toHaveBeenCalledWith(
-            expect.stringContaining('111222333'),
-            apiError
-        );
-
-        // eslint-disable-next-line no-console -- Restoring original console.error
-        console.error = originalError;
-    });
-
     describe('context builder integration', () => {
-        it('should accept optional contextBuilder', () => {
-            const mockContextBuilder = {
-                buildSystemContext: mock(async () => ''),
-                // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function needs no implementation
-                recordAccess:       mock(async () => {}),
-            };
+        it('should load core identity when contextBuilder provided', async () => {
+            (mockContextBuilder.loadCoreIdentity as ReturnType<typeof mock>).mockResolvedValue('I am Isambard, a helpful AI assistant.');
 
             const agent = createClaudeAgent({
-                client:         mockClient,
-                contextBuilder: mockContextBuilder,
-            });
-
-            expect(agent).toBeDefined();
-        });
-
-        it('should prepend system context to user message when contextBuilder provided', async () => {
-            const mockContextBuilder = {
-                buildSystemContext: mock(async () => '=== MEMORY CONTEXT ===\n\n## Identity\nI am a helpful assistant'),
-                // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function needs no implementation
-                recordAccess:       mock(async () => {}),
-            };
-
-            const agent = createClaudeAgent({
-                client:         mockClient,
                 contextBuilder: mockContextBuilder,
             });
 
             await agent.chat(mockMessageContext);
 
-            expect(mockContextBuilder.buildSystemContext).toHaveBeenCalled();
-            expect(mockClient.messages.create).toHaveBeenCalledWith(
+            expect(mockContextBuilder.loadCoreIdentity).toHaveBeenCalled();
+            expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    messages: [
-                        {
-                            role:    'user',
-                            content: '=== MEMORY CONTEXT ===\n\n## Identity\nI am a helpful assistant\n\nUser @111222333 said: Hello Claude!',
-                        },
-                    ],
+                    options: expect.objectContaining({
+                        systemPrompt: expect.stringContaining('I am Isambard, a helpful AI assistant.'),
+                    }),
                 })
             );
         });
 
-        it('should not call buildSystemContext when contextBuilder is not provided', async () => {
-            const agent = createClaudeAgent({ client: mockClient });
-
-            await agent.chat(mockMessageContext);
-
-            // Just verify the standard message format without context
-            expect(mockClient.messages.create).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    messages: [
-                        {
-                            role:    'user',
-                            content: 'User @111222333 said: Hello Claude!',
-                        },
-                    ],
-                })
-            );
-        });
-
-        it('should handle empty context from buildSystemContext', async () => {
-            const mockContextBuilder = {
-                buildSystemContext: mock(async () => ''),
-                // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function needs no implementation
-                recordAccess:       mock(async () => {}),
-            };
+        it('should load recent context when contextBuilder provided', async () => {
+            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockResolvedValue([
+                'User likes coffee',
+                'User is working on TypeScript',
+            ]);
 
             const agent = createClaudeAgent({
-                client:         mockClient,
                 contextBuilder: mockContextBuilder,
             });
 
             await agent.chat(mockMessageContext);
 
-            expect(mockClient.messages.create).toHaveBeenCalledWith(
+            expect(mockContextBuilder.loadRecentContext).toHaveBeenCalledWith('111222333', 3);
+            expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    messages: [
-                        {
-                            role:    'user',
-                            content: 'User @111222333 said: Hello Claude!',
-                        },
-                    ],
+                    prompt: expect.stringContaining('User likes coffee'),
                 })
             );
         });
 
-        it('should not prepend empty string context (empty string should not add separator)', async () => {
-            const mockContextBuilder = {
-                buildSystemContext: mock(async () => ''),
-                // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function needs no implementation
-                recordAccess:       mock(async () => {}),
-            };
+        it('should not call contextBuilder when not provided', async () => {
+            const agent = createClaudeAgent({});
+
+            await agent.chat(mockMessageContext);
+
+            expect(mockContextBuilder.loadCoreIdentity).not.toHaveBeenCalled();
+            expect(mockContextBuilder.loadRecentContext).not.toHaveBeenCalled();
+        });
+
+        it('should handle empty core identity', async () => {
+            (mockContextBuilder.loadCoreIdentity as ReturnType<typeof mock>).mockResolvedValue('');
 
             const agent = createClaudeAgent({
-                client:         mockClient,
                 contextBuilder: mockContextBuilder,
             });
 
             await agent.chat(mockMessageContext);
 
-            // Should NOT include the '\n\n' separator when context is empty
-            // Must verify exact match - empty context should produce the same result as no contextBuilder
-            expect(mockClient.messages.create).toHaveBeenCalledWith(
+            // Should still have base system prompt
+            expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    messages: [
-                        {
-                            role:    'user',
-                            content: 'User @111222333 said: Hello Claude!',
-                        },
-                    ],
+                    options: expect.objectContaining({
+                        systemPrompt: expect.stringContaining('You are Isambard'),
+                    }),
                 })
             );
-
-            // Explicitly verify the content does NOT start with '\n\n'
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Accessing mock call args
-            const callArgs = (mockClient.messages.create as ReturnType<typeof mock>).mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing messages array
-            expect(callArgs.messages[0].content).not.toMatch(/^\n\n/);
         });
 
-        it('should prepend non-empty context with separator', async () => {
-            const mockContextBuilder = {
-                buildSystemContext: mock(async () => 'Context'),
-                // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function needs no implementation
-                recordAccess:       mock(async () => {}),
-            };
+        it('should not append core identity section when empty', async () => {
+            (mockContextBuilder.loadCoreIdentity as ReturnType<typeof mock>).mockResolvedValue('');
 
             const agent = createClaudeAgent({
-                client:         mockClient,
                 contextBuilder: mockContextBuilder,
             });
 
             await agent.chat(mockMessageContext);
 
-            // Should include the '\n\n' separator when context is non-empty
-            expect(mockClient.messages.create).toHaveBeenCalledWith(
+            // Should not have "## Who You Are" section
+            expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    messages: [
-                        {
-                            role:    'user',
-                            content: 'Context\n\nUser @111222333 said: Hello Claude!',
-                        },
-                    ],
+                    options: expect.objectContaining({
+                        systemPrompt: expect.not.stringContaining('## Who You Are'),
+                    }),
                 })
             );
         });
 
-        it('should handle whitespace-only context as empty', async () => {
-            const mockContextBuilder = {
-                buildSystemContext: mock(async () => '   '),
-                // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function needs no implementation
-                recordAccess:       mock(async () => {}),
-            };
+        it('should handle empty recent context', async () => {
+            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockResolvedValue([]);
 
             const agent = createClaudeAgent({
-                client:         mockClient,
                 contextBuilder: mockContextBuilder,
             });
 
             await agent.chat(mockMessageContext);
 
-            // Whitespace-only context should still be prepended (length > 0)
-            expect(mockClient.messages.create).toHaveBeenCalledWith(
+            // Should not have [Recent context] prefix
+            expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    messages: [
-                        {
-                            role:    'user',
-                            content: '   \n\nUser @111222333 said: Hello Claude!',
-                        },
-                    ],
+                    prompt: 'User @111222333 in #987654321: Hello Claude!',
                 })
             );
         });
 
-        it('should handle buildSystemContext errors gracefully', async () => {
-            const mockContextBuilder = {
-                buildSystemContext: mock(async () => {
-                    throw new Error('Context build failed');
-                }),
-                // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function needs no implementation
-                recordAccess: mock(async () => {}),
-            };
+        it('should format multiple recent memories with newline-separated bullets', async () => {
+            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockResolvedValue([
+                'First memory',
+                'Second memory',
+                'Third memory',
+            ]);
 
             const agent = createClaudeAgent({
-                client:         mockClient,
                 contextBuilder: mockContextBuilder,
             });
 
+            await agent.chat(mockMessageContext);
+
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    prompt: '[Recent context]\n- First memory\n- Second memory\n- Third memory\n\nUser @111222333 in #987654321: Hello Claude!',
+                })
+            );
+        });
+    });
+
+    describe('tool configuration', () => {
+        it('should include memory tools when MCP server provided', async () => {
+            const mockMcpServer = { name: 'memory', version: '1.0.0' };
+
+            const agent = createClaudeAgent({
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any -- Mock MCP server
+                memoryMcpServer: mockMcpServer as any,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({
+                        allowedTools: ['mcp__memory__view', 'mcp__memory__store', 'mcp__memory__search'],
+                    }),
+                })
+            );
+        });
+
+        it('should use empty array for allowedTools when no MCP server', async () => {
+            const agent = createClaudeAgent({});
+
+            await agent.chat(mockMessageContext);
+
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({
+                        allowedTools: [],
+                    }),
+                })
+            );
+        });
+
+        it('should use bypassPermissions mode', async () => {
+            const agent = createClaudeAgent({});
+
+            await agent.chat(mockMessageContext);
+
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({
+                        permissionMode: 'bypassPermissions',
+                    }),
+                })
+            );
+        });
+    });
+
+    describe('message stream processing', () => {
+        it('should ignore non-assistant messages in stream', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'user' as const,
+                        message: {
+                            content: [
+                                {
+                                    type: 'text' as const,
+                                    text: 'This should be ignored',
+                                },
+                            ],
+                        },
+                    };
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type: 'text' as const,
+                                    text: 'Assistant response',
+                                },
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
             const response = await agent.chat(mockMessageContext);
 
-            // Should return null on error
+            expect(response).toBe('Assistant response');
+        });
+
+        it('should return null when stream has only non-assistant messages', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'user' as const,
+                        message: {
+                            content: [
+                                {
+                                    type: 'text' as const,
+                                    text: 'User message',
+                                },
+                            ],
+                        },
+                    };
+                    yield {
+                        type:    'system' as const,
+                        message: {
+                            content: [
+                                {
+                                    type: 'text' as const,
+                                    text: 'System message',
+                                },
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const response = await agent.chat(mockMessageContext);
+
             expect(response).toBeNull();
+        });
+
+        it('should handle messages with no content field', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {}, // No content field
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const response = await agent.chat(mockMessageContext);
+
+            expect(response).toBeNull();
+        });
+
+        it('should handle messages with null content', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: null,
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const response = await agent.chat(mockMessageContext);
+
+            expect(response).toBeNull();
+        });
+
+        it('should filter out non-text blocks and combine multiple text blocks', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type: 'tool_use' as const,
+                                    id:   'tool_123',
+                                    name: 'memory_view',
+                                },
+                                {
+                                    type: 'text' as const,
+                                    text: 'First text block',
+                                },
+                                {
+                                    type: 'image' as const,
+                                    data: 'base64data',
+                                },
+                                {
+                                    type: 'text' as const,
+                                    text: 'Second text block',
+                                },
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const response = await agent.chat(mockMessageContext);
+
+            expect(response).toBe('First text block\nSecond text block');
+        });
+
+        it('should trim whitespace from combined text blocks', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type: 'text' as const,
+                                    text: '  Leading and trailing spaces  ',
+                                },
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const response = await agent.chat(mockMessageContext);
+
+            expect(response).toBe('Leading and trailing spaces');
+        });
+
+        it('should return null when text is only whitespace', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type: 'text' as const,
+                                    text: '   \n\t  ',
+                                },
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const response = await agent.chat(mockMessageContext);
+
+            expect(response).toBeNull();
+        });
+
+        it('should handle messages with no message field', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type: 'assistant' as const,
+                        // No message field
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const response = await agent.chat(mockMessageContext);
+
+            expect(response).toBeNull();
+        });
+
+        it('should handle assistant message with undefined message property', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: undefined,
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const response = await agent.chat(mockMessageContext);
+
+            expect(response).toBeNull();
+        });
+
+        it('should handle assistant message with message.content undefined', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: undefined,
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const response = await agent.chat(mockMessageContext);
+
+            expect(response).toBeNull();
+        });
+
+        it('should safely handle filter returning undefined with || fallback', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: null, // This will make filter return falsy, triggering || []
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const response = await agent.chat(mockMessageContext);
+
+            expect(response).toBeNull();
+        });
+
+        it('should update lastAssistantText only when text is non-empty', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type: 'text' as const,
+                                    text: 'First valid response',
+                                },
+                            ],
+                        },
+                    };
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type: 'text' as const,
+                                    text: '   ',  // Only whitespace, should not update
+                                },
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const response = await agent.chat(mockMessageContext);
+
+            expect(response).toBe('First valid response');
+        });
+
+        it('should join multiple text blocks with newlines', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type: 'text' as const,
+                                    text: 'Line 1',
+                                },
+                                {
+                                    type: 'text' as const,
+                                    text: 'Line 2',
+                                },
+                                {
+                                    type: 'text' as const,
+                                    text: 'Line 3',
+                                },
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const response = await agent.chat(mockMessageContext);
+
+            expect(response).toBe('Line 1\nLine 2\nLine 3');
+        });
+    });
+
+    describe('error handling and logging', () => {
+        it('should log truncation with message details', async () => {
+            const consoleSpy = spyOn(console, 'log');
+            const longText = _.repeat('x', 2000);
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type: 'text' as const,
+                                    text: longText,
+                                },
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chat(mockMessageContext);
+
+            expect(consoleSpy).toHaveBeenCalledWith(
+                expect.stringContaining('Truncating Claude response for message msg_999')
+            );
+            expect(consoleSpy).toHaveBeenCalledWith(
+                expect.stringContaining('2000 -> 1900')
+            );
+
+            consoleSpy.mockRestore();
+        });
+
+        it('should log error with message and user details', async () => {
+            const consoleErrorSpy = spyOn(console, 'error');
+            const testError = new Error('Test error message');
+            querySpy.mockImplementation((_params: any): any => {
+                throw testError;
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chat(mockMessageContext);
+
+            expect(consoleErrorSpy).toHaveBeenCalledWith(
+                expect.stringContaining('Failed to get Claude response for message msg_999 from user 111222333'),
+                testError
+            );
+
+            consoleErrorSpy.mockRestore();
         });
     });
 });

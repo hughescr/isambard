@@ -11,10 +11,18 @@ Named after Isambard Kingdom Brunel, the visionary Victorian engineer, and from 
 - **Self-Improvement** - Proposes enhancements via PRs (requires human approval)
 - **Integrations** - Apple Calendar, Email, Box Documents
 
+## Authentication
+
+Isambard uses OAuth authentication via Claude Max subscription:
+- Set up token: `claude setup-token`
+- Configure: `bunx sst secret set ClaudeCodeOAuthToken <token>`
+- Token valid for 1 year, renewable
+- Uses Max subscription quota (no separate API billing)
+
 ## Tech Stack
 
 - **Runtime**: Bun + TypeScript
-- **LLM**: Claude Agent SDK
+- **LLM**: Claude Agent SDK (OAuth via Max subscription)
 - **Infrastructure**: SST (AWS CDK)
 - **Database**: DynamoDB (single-table design)
 - **Interface**: Discord.js
@@ -52,6 +60,9 @@ Named after Isambard Kingdom Brunel, the visionary Victorian engineer, and from 
 
 3. **Set SST secrets**
    ```bash
+   # Claude Agent (OAuth)
+   bunx sst secret set ClaudeCodeOAuthToken <token-from-claude-setup-token>
+
    # Discord
    bunx sst secret set DiscordBotToken <token>
    bunx sst secret set DiscordApplicationId <app-id>
@@ -109,20 +120,21 @@ See [.claude/CLAUDE.md](.claude/CLAUDE.md) for full development instructions.
 - All tests must pass
 - Zero TypeScript errors
 - Zero lint warnings
-- Mutation score >= 70%
+- Mutation score >= 90% (per stryker.conf.mjs)
 
 ## Architecture
 
 ```
 src/
 ├── agent/          # Claude Agent SDK core
-│   ├── handlers/   # Message/event handlers
-│   ├── tools/      # Custom MCP tools
-│   └── middleware/ # Request/response middleware
+│   ├── agent.ts           # Main agent with chat() method
+│   ├── context-builder.ts # Memory context loading
+│   └── memory-mcp-server.ts # MCP server for memory tools
 ├── integrations/   # External services
-│   └── discord/    # Discord adapter
+│   └── discord/    # Discord bot integration
 ├── storage/        # DynamoDB layer
-│   ├── models/     # Entity definitions
+│   ├── memory-tool/  # Three-layer memory system
+│   ├── models/       # Entity definitions
 │   └── repositories/ # Data access
 ├── config/         # Zod-validated configuration
 └── utils/          # Shared utilities

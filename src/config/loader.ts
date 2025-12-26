@@ -6,6 +6,7 @@ export interface ResourceProvider {
     NodeEnv:                    { value: string | undefined }
     LogLevel:                   { value: string | undefined }
     Port:                       { value: string | undefined }
+    ClaudeCodeOAuthToken:       { value: string | undefined }
     CaldavUrl:                  { value: string | undefined }
     CaldavUsername:             { value: string | undefined }
     CaldavPassword:             { value: string | undefined }
@@ -34,6 +35,9 @@ export function loadConfig(resources: ResourceProvider = Resource as unknown as 
             nodeEnv:  resources.NodeEnv.value,
             logLevel: resources.LogLevel.value,
             port:     resources.Port.value,
+        },
+        agent: {
+            oauthToken: resources.ClaudeCodeOAuthToken.value,
         },
         caldav: {
             url:      resources.CaldavUrl.value,

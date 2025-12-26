@@ -10,6 +10,11 @@ export const appConfigSchema = z.object({
     port:     z.coerce.number().int().positive(),
 });
 
+// Agent config: OAuth token for Claude Agent SDK
+export const agentConfigSchema = z.object({
+    oauthToken: z.string().min(1),
+});
+
 // CalDAV: url (validated), username, password (non-empty strings)
 export const caldavConfigSchema = z.object({
     url:      z.string().url(),
@@ -53,6 +58,7 @@ export const dynamoDBConfigSchema = z.object({
 // Full config schema (all sections required)
 export const configSchema = z.object({
     app:     appConfigSchema,
+    agent:   agentConfigSchema,
     caldav:  caldavConfigSchema,
     email:   emailConfigSchema,
     discord: discordConfigSchema,
@@ -62,6 +68,7 @@ export const configSchema = z.object({
 // Type exports
 export type LogLevel = z.infer<typeof logLevelSchema>;
 export type AppConfig = z.infer<typeof appConfigSchema>;
+export type AgentConfig = z.infer<typeof agentConfigSchema>;
 export type CaldavConfig = z.infer<typeof caldavConfigSchema>;
 export type EmailConfig = z.infer<typeof emailConfigSchema>;
 export type DiscordConfig = z.infer<typeof discordConfigSchema>;

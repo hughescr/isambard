@@ -26,7 +26,7 @@ Establish foundation for Isambard with working Discord bot and memory system.
 - [x] MCP-compliant memory-tool implementation
 - [x] CRUD operations (create, read, update, delete)
 - [x] Entity-relation storage pattern
-- [x] Comprehensive unit tests with 92.82% mutation coverage
+- [x] Comprehensive unit tests with 100% mutation coverage
 - [x] Integration with Claude Agent SDK via betaMemoryTool
 
 ### Discord Integration (Completed)
@@ -36,20 +36,22 @@ Establish foundation for Isambard with working Discord bot and memory system.
 - [x] Event handlers (ready, error, messageCreate)
 - [x] Bot factory with lifecycle management (start/stop)
 - [x] Message routing: DMs, @mentions, monitored channels
-- [x] Comprehensive unit tests with 90.32% mutation coverage
+- [x] Comprehensive unit tests with 100% mutation coverage
 
 ### Claude Agent Integration (Completed)
-- [x] Anthropic SDK client factory
-- [x] Claude agent with chat() method for Discord messages
-- [x] Message formatting: "User @{userId} said: {content}"
+- [x] Claude Agent SDK with OAuth authentication (Max subscription)
+- [x] Hybrid memory architecture (core identity + recent context injected)
+- [x] Memory MCP server for on-demand deep archive access
+- [x] Claude agent with chat() method using query() streaming API
+- [x] Message formatting: "User @{userId} in #{channelId}: {content}"
 - [x] Response truncation at 1900 chars for Discord limits
-- [x] Optional memory tool integration with graceful degradation
+- [x] Context builder for loading core identity and recent user context
 - [x] Application entry point with graceful startup/shutdown (SIGINT/SIGTERM)
 - [x] 20 integration tests for full bot lifecycle
-- [x] 639 total tests passing
+- [x] 910 total tests passing with 99.37% mutation coverage
 
 ## Success Criteria
 - Bot responds to Discord messages
 - Conversations persist across restarts
-- 70%+ mutation test coverage
+- 99.37% mutation test coverage
 - Zero TypeScript/lint errors

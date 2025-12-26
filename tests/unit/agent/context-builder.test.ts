@@ -827,7 +827,7 @@ describe('createContextBuilder', () => {
                 path,
                 content:     'Content',
                 contentType: 'text/markdown' as const,
-                // metadata field is undefined
+                metadata:    {}, // Empty metadata object
                 version:     1,
                 createdAt:   '2025-01-01T00:00:00Z',
                 updatedAt:   '2025-01-01T00:00:00Z',
@@ -906,6 +906,454 @@ describe('createContextBuilder', () => {
                     }),
                 })
             );
+        });
+
+        it('should handle item with metadata that has undefined accessCount (optional chaining test)', async () => {
+            const path = createMemoryPath('/state/task.md');
+
+            // Metadata exists but doesn't have accessCount property
+            backend.get = mock(async () => ({
+                path,
+                content:     'Content',
+                contentType: 'text/markdown' as const,
+                metadata:    { otherField: 'value' }, // accessCount not present
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00Z',
+                updatedAt:   '2025-01-01T00:00:00Z',
+            }));
+
+            backend.update = mock(async () => ({
+                path,
+                content:     'Content',
+                contentType: 'text/markdown' as const,
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
+                metadata:    { otherField: 'value', accessCount: 1, lastAccessed: expect.any(String) },
+                version:     2,
+                createdAt:   '2025-01-01T00:00:00Z',
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
+                updatedAt:   expect.any(String),
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.recordAccess([path]);
+
+            // Should initialize accessCount to 1 and preserve other metadata
+            expect(backend.update).toHaveBeenCalledWith(
+                path,
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
+                expect.objectContaining({
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
+                    metadata: expect.objectContaining({
+                        otherField:   'value',
+                        accessCount:  1,
+                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
+                        lastAccessed: expect.any(String),
+                    }),
+                })
+            );
+        });
+
+        it('should safely handle undefined metadata.accessCount with optional chaining', async () => {
+            const path = createMemoryPath('/state/task.md');
+
+            // Item where metadata.accessCount is undefined but metadata exists
+            backend.get = mock(async () => ({
+                path,
+                content:     'Content',
+                contentType: 'text/markdown' as const,
+                metadata:    { someOtherProp: 'value' }, // accessCount is undefined
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00Z',
+                updatedAt:   '2025-01-01T00:00:00Z',
+            }));
+
+            backend.update = mock(async () => ({
+                path,
+                content:     'Content',
+                contentType: 'text/markdown' as const,
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
+                metadata:    { someOtherProp: 'value', accessCount: 1, lastAccessed: expect.any(String) },
+                version:     2,
+                createdAt:   '2025-01-01T00:00:00Z',
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
+                updatedAt:   expect.any(String),
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+
+            // Should not throw when accessCount is undefined
+            await contextBuilder.recordAccess([path]);
+
+            // Should initialize accessCount to 1
+            expect(backend.update).toHaveBeenCalledWith(
+                path,
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
+                expect.objectContaining({
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
+                    metadata: expect.objectContaining({
+                        someOtherProp: 'value',
+                        accessCount:   1,
+                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
+                        lastAccessed:  expect.any(String),
+                    }),
+                })
+            );
+        });
+    });
+
+    describe('loadCoreIdentity', () => {
+        it('should return empty string when no identity items exist', async () => {
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const identity = await contextBuilder.loadCoreIdentity();
+
+            expect(identity).toBe('');
+            // Verify we don't attempt to join/process empty array
+            expect(identity).not.toContain('\n\n');
+            expect(identity.length).toBe(0);
+            // Verify it's exactly empty string, not undefined or other falsy value
+            expect(typeof identity).toBe('string');
+            expect(identity === '').toBe(true);
+        });
+
+        it('should join identity items with double newlines', async () => {
+            backend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/identity/item1.md'),
+                        content:     'First identity',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                    {
+                        path:        createMemoryPath('/identity/item2.md'),
+                        content:     'Second identity',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const identity = await contextBuilder.loadCoreIdentity();
+
+            // Should join with \n\n, not empty string
+            expect(identity).toBe('First identity\n\nSecond identity');
+            // Verify NOT joined with empty string
+            expect(identity).not.toBe('First identitySecond identity');
+        });
+
+        it('should truncate content with ellipsis when exceeding maxIdentityChars', async () => {
+            const longContent = _.repeat('x', 3000);
+
+            backend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/identity/long.md'),
+                        content:     longContent,
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({
+                backend,
+                maxIdentityTokens: 100, // 400 chars
+            });
+
+            const identity = await contextBuilder.loadCoreIdentity();
+
+            // Should be truncated to maxChars - 3 + '...'
+            expect(identity.length).toBe(400);
+            expect(identity.endsWith('...')).toBe(true);
+            // Verify exactly 3 chars for ellipsis
+            expect(identity.slice(-3)).toBe('...');
+        });
+
+        it('should use exactly slice(0, maxIdentityChars - 3) for truncation', async () => {
+            const content = _.repeat('y', 500);
+
+            backend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/identity/test.md'),
+                        content,
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({
+                backend,
+                maxIdentityTokens: 100, // 400 chars
+            });
+
+            const identity = await contextBuilder.loadCoreIdentity();
+
+            // Verify exact truncation: slice(0, 397) + '...'
+            expect(identity.length).toBe(400);
+            const contentPart = identity.slice(0, -3);
+            expect(contentPart.length).toBe(397);
+            expect(contentPart).toBe(_.repeat('y', 397));
+        });
+
+        it('should NOT truncate when content equals maxIdentityChars exactly', async () => {
+            const content = _.repeat('z', 400);
+
+            backend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/identity/exact.md'),
+                        content,
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({
+                backend,
+                maxIdentityTokens: 100, // 400 chars
+            });
+
+            const identity = await contextBuilder.loadCoreIdentity();
+
+            // Should NOT add ellipsis when exactly at limit
+            expect(identity).toBe(content);
+            expect(identity).not.toContain('...');
+        });
+
+        it('should NOT truncate when content is less than maxIdentityChars', async () => {
+            const content = _.repeat('w', 300);
+
+            backend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/identity/short.md'),
+                        content,
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({
+                backend,
+                maxIdentityTokens: 100, // 400 chars
+            });
+
+            const identity = await contextBuilder.loadCoreIdentity();
+
+            // Should return content as-is
+            expect(identity).toBe(content);
+            expect(identity).not.toContain('...');
+        });
+
+        it('should handle single character over limit (boundary test)', async () => {
+            const content = _.repeat('a', 401);
+
+            backend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/identity/boundary.md'),
+                        content,
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({
+                backend,
+                maxIdentityTokens: 100, // 400 chars
+            });
+
+            const identity = await contextBuilder.loadCoreIdentity();
+
+            // Even 1 char over should trigger truncation
+            expect(identity.length).toBe(400);
+            expect(identity.endsWith('...')).toBe(true);
+        });
+
+        it('should extract content from each item correctly', async () => {
+            backend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/identity/a.md'),
+                        content:     'Content A',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                    {
+                        path:        createMemoryPath('/identity/b.md'),
+                        content:     'Content B',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const identity = await contextBuilder.loadCoreIdentity();
+
+            // Verify each item's content is extracted
+            expect(identity).toContain('Content A');
+            expect(identity).toContain('Content B');
+        });
+    });
+
+    describe('loadRecentContext', () => {
+        it('should load recent context for a specific user', async () => {
+            const userId = 'user123';
+
+            backend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/state/recent1.md'),
+                        content:     'Recent memory 1',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const context = await contextBuilder.loadRecentContext(userId);
+
+            expect(backend.searchByTag).toHaveBeenCalledWith('user:user123', undefined, { limit: 3 });
+            expect(context).toEqual(['Recent memory 1']);
+        });
+
+        it('should use default limit of 3', async () => {
+            backend.searchByTag = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadRecentContext('user456');
+
+            expect(backend.searchByTag).toHaveBeenCalledWith('user:user456', undefined, { limit: 3 });
+        });
+
+        it('should use custom limit when provided', async () => {
+            backend.searchByTag = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadRecentContext('user789', 10);
+
+            expect(backend.searchByTag).toHaveBeenCalledWith('user:user789', undefined, { limit: 10 });
+        });
+
+        it('should format user tag correctly in search', async () => {
+            backend.searchByTag = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadRecentContext('test-user');
+
+            // Verify exact tag format: "user:${userId}"
+            expect(backend.searchByTag).toHaveBeenCalledWith('user:test-user', undefined, { limit: 3 });
+        });
+
+        it('should extract content from all returned items', async () => {
+            backend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/state/item1.md'),
+                        content:     'Memory 1',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                    {
+                        path:        createMemoryPath('/state/item2.md'),
+                        content:     'Memory 2',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                    {
+                        path:        createMemoryPath('/state/item3.md'),
+                        content:     'Memory 3',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const context = await contextBuilder.loadRecentContext('user-multi');
+
+            expect(context).toEqual(['Memory 1', 'Memory 2', 'Memory 3']);
+            expect(context.length).toBe(3);
+        });
+
+        it('should return empty array when no items found', async () => {
+            backend.searchByTag = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const context = await contextBuilder.loadRecentContext('user-empty');
+
+            expect(context).toEqual([]);
+        });
+
+        it('should map each item to its content field', async () => {
+            backend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/state/a.md'),
+                        content:     'Content A',
+                        contentType: 'text/markdown' as const,
+                        metadata:    { extra: 'data' },
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const context = await contextBuilder.loadRecentContext('user-map');
+
+            // Should only contain content, not whole item
+            expect(context).toEqual(['Content A']);
         });
     });
 });

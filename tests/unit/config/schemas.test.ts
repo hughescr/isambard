@@ -338,6 +338,9 @@ describe('configSchema', () => {
                 logLevel: 'info',
                 port:     3000,
             },
+            agent: {
+                oauthToken: 'test-oauth-token-12345',
+            },
             caldav: {
                 url:      'https://caldav.example.com',
                 username: 'user@example.com',
@@ -380,6 +383,9 @@ describe('configSchema', () => {
                 nodeEnv: 'production',
                 port:    8080,
                 // logLevel should default to 'info'
+            },
+            agent: {
+                oauthToken: 'test-token',
             },
             caldav: {
                 url:      'https://caldav.example.com',
@@ -431,6 +437,9 @@ describe('configSchema', () => {
                 nodeEnv:  'development',
                 logLevel: 'info',
                 port:     '3000',
+            },
+            agent: {
+                oauthToken: 'test-token',
             },
             caldav: {
                 url:      'https://caldav.example.com',

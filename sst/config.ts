@@ -41,6 +41,13 @@ export const config = {
     }),
   },
 
+  // Discord
+  discord: {
+    monitoredChannelIds: new sst.Linkable('DiscordMonitoredChannelIds', {
+      properties: { value: '' },
+    }),
+  },
+
   // DynamoDB
   dynamodb: {
     tableName: new sst.Linkable('DynamoDBTableName', {
