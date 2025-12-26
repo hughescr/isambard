@@ -3,13 +3,18 @@ export {
     memoryPathSchema,
     contentTypeSchema,
     memoryToolItemSchema,
+    layerNameSchema,
+    extractLayerFromPath,
+    layeredMemoryMetadataSchema,
     createMemoryPath,
     isMemoryPath,
     createMemoryToolKeys,
     type MemoryPath,
     type ContentType,
     type MemoryToolItemData,
-    type MemoryToolItem
+    type MemoryToolItem,
+    type LayerName,
+    type LayeredMemoryMetadata
 } from './types';
 
 // Errors
@@ -46,5 +51,17 @@ export {
     delete_memory,
     insert,
     str_replace,
-    rename
+    rename,
+    search,
+    recall,
+    list_by_layer,
+    consolidate
 } from './handlers';
+
+// Layer Configuration
+export {
+    layerConfigSchema,
+    LAYER_CONFIGS,
+    getLayerConfig,
+    type LayerConfig
+} from './layer-config';

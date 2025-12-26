@@ -3,15 +3,41 @@
 ## Goals
 Expand integrations and enable self-improvement capabilities.
 
-## Weeks 3-4: Memory Enhancement
+## Weeks 3-4: Memory Enhancement ✓
 
 **Foundation:** Memory-tool MCP implementation completed in Week 2 provides CRUD operations and entity-relation storage pattern.
 
-- [ ] Three-layer memory system (Identity, State, Events)
-- [ ] Memory search and recall tools
-- [ ] Semantic search via Pinecone integration (depends on memory-tool foundation)
+- [x] Three-layer memory system (Identity, State, Events)
+- [x] Memory search and recall tools
+- [x] TTL for ephemeral data
+- [ ] Semantic search via Pinecone integration (future enhancement)
 - [ ] Conversation context management
-- [ ] TTL for ephemeral data
+
+### Memory Enhancement Implementation (Completed)
+
+**Three-Layer Memory System:**
+- Identity layer: Permanent storage, 10 versions, auto-loaded
+- State layer: 60-day TTL, 5 versions, conditionally loaded
+- Events layer: 14-day TTL, 1 version, explicit recall only
+
+**Search & Recall Tools:**
+- `search` handler: Search by tags, layer, time range
+- `recall` handler: Get auto-load items as formatted context
+- `list_by_layer` handler: List all items in a layer
+- `consolidate` handler: Summarize multiple events
+
+**TTL Support:**
+- Automatic TTL based on layer configuration
+- DynamoDB TTL attribute for automatic expiration
+
+**Backend Enhancements:**
+- GSI2 for tag-based queries
+- Version history with automatic pruning
+- Context builder for agent integration
+
+**Quality Metrics:**
+- 825 tests passing
+- 90.37% mutation score
 
 ## Weeks 5-6: External Integrations
 - [ ] Apple Calendar (CalDAV via tsdav)

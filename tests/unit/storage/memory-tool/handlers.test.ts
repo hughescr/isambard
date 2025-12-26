@@ -1009,4 +1009,910 @@ describe('Memory Tool Handlers', () => {
             })).rejects.toThrow(InvalidPathError);
         });
     });
+
+    describe('search', () => {
+        const searchHandler = async (
+            backend: MemoryToolBackend,
+            params: { tags?: string[], layer?: string, time_range?: { start: string, end: string }, limit?: number }
+        ): Promise<string> => {
+            const { search } = await import('@/storage/memory-tool/handlers');
+            return search(backend, params as Parameters<typeof search>[1]);
+        };
+
+        it('should search by single tag', async () => {
+            mockBackend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        '/state/note.md' as MemoryPath,
+                        content:     'This is a note with some content that is longer than 100 characters to test preview truncation behavior',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                        tags:        ['tag1'],
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await searchHandler(mockBackend, { tags: ['tag1'] });
+
+            expect(result).toContain('/state/note.md');
+            expect(result).toContain('This is a note with some content');
+            expect(mockBackend.searchByTag).toHaveBeenCalledWith('tag1', undefined, { limit: undefined });
+        });
+
+        it('should search with multiple tags using AND logic', async () => {
+            mockBackend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        '/state/note1.md' as MemoryPath,
+                        content:     'Note 1',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                        tags:        ['tag1', 'tag2'],
+                    },
+                    {
+                        path:        '/state/note2.md' as MemoryPath,
+                        content:     'Note 2',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                        tags:        ['tag1'],
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await searchHandler(mockBackend, { tags: ['tag1', 'tag2'] });
+
+            expect(result).toContain('/state/note1.md');
+            expect(result).not.toContain('/state/note2.md');
+        });
+
+        it('should not filter when exactly one tag provided', async () => {
+            mockBackend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        '/state/note1.md' as MemoryPath,
+                        content:     'Note 1',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                        tags:        ['tag1'],
+                    },
+                    {
+                        path:        '/state/note2.md' as MemoryPath,
+                        content:     'Note 2',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                        tags:        ['tag1'],
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await searchHandler(mockBackend, { tags: ['tag1'] });
+
+            // Both items should be included since we only have one tag
+            expect(result).toContain('/state/note1.md');
+            expect(result).toContain('/state/note2.md');
+        });
+
+        it('should filter with three tags using AND logic', async () => {
+            mockBackend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        '/state/note1.md' as MemoryPath,
+                        content:     'Note 1',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                        tags:        ['tag1', 'tag2', 'tag3'],
+                    },
+                    {
+                        path:        '/state/note2.md' as MemoryPath,
+                        content:     'Note 2',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                        tags:        ['tag1', 'tag2'],
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await searchHandler(mockBackend, { tags: ['tag1', 'tag2', 'tag3'] });
+
+            expect(result).toContain('/state/note1.md');
+            expect(result).not.toContain('/state/note2.md');
+        });
+
+        it('should search by time range', async () => {
+            mockBackend.searchByTimeRange = mock(async () => [
+                {
+                    path:        '/events/log.md' as MemoryPath,
+                    content:     'Event log',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T00:00:00.000Z',
+                    updatedAt:   '2025-01-15T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await searchHandler(mockBackend, {
+                time_range: { start: '2025-01-10T00:00:00.000Z', end: '2025-01-20T00:00:00.000Z' },
+            });
+
+            expect(result).toContain('/events/log.md');
+            expect(mockBackend.searchByTimeRange).toHaveBeenCalledWith(
+                '2025-01-10T00:00:00.000Z',
+                '2025-01-20T00:00:00.000Z',
+                undefined,
+                { limit: undefined }
+            );
+        });
+
+        it('should search by layer only', async () => {
+            mockBackend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        '/identity/core.md' as MemoryPath,
+                        content:     'Core identity',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await searchHandler(mockBackend, { layer: 'identity' });
+
+            expect(result).toContain('/identity/core.md');
+            expect(mockBackend.listByLayer).toHaveBeenCalledWith('identity', { limit: undefined });
+        });
+
+        it('should truncate content preview to 100 characters', async () => {
+            const longContent = 'A'.repeat(200);
+            mockBackend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        '/state/long.md' as MemoryPath,
+                        content:     longContent,
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                        tags:        ['tag1'],
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await searchHandler(mockBackend, { tags: ['tag1'] });
+
+            expect(result).toContain('A'.repeat(100));
+            expect(result).toContain('...');
+            expect(result).not.toContain('A'.repeat(101));
+        });
+
+        it('should return "No results found" when search returns empty', async () => {
+            mockBackend.searchByTag = mock(async () => ({
+                items:      [],
+                nextCursor: undefined,
+            }));
+
+            const result = await searchHandler(mockBackend, { tags: ['nonexistent'] });
+
+            expect(result).toContain('No results found');
+        });
+
+        it('should return "No results found" when no search criteria provided', async () => {
+            const result = await searchHandler(mockBackend, {});
+
+            expect(result).toBe('No results found');
+        });
+
+        it('should return "No results found" when layer search returns empty', async () => {
+            mockBackend.listByLayer = mock(async () => ({
+                items:      [],
+                nextCursor: undefined,
+            }));
+
+            const result = await searchHandler(mockBackend, { layer: 'identity' });
+
+            expect(result).toBe('No results found');
+        });
+
+        it('should use empty tag array as no tags', async () => {
+            const result = await searchHandler(mockBackend, { tags: [] });
+
+            expect(result).toBe('No results found');
+        });
+
+        it('should not truncate content preview at exactly 100 characters', async () => {
+            const exactContent = 'A'.repeat(100);
+            mockBackend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        '/state/exact.md' as MemoryPath,
+                        content:     exactContent,
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                        tags:        ['tag1'],
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await searchHandler(mockBackend, { tags: ['tag1'] });
+
+            expect(result).toContain('A'.repeat(100));
+            expect(result).not.toContain('...');
+        });
+
+        it('should join search results with double newline', async () => {
+            mockBackend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        '/state/note1.md' as MemoryPath,
+                        content:     'Content 1',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                        tags:        ['tag1'],
+                    },
+                    {
+                        path:        '/state/note2.md' as MemoryPath,
+                        content:     'Content 2',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                        tags:        ['tag1'],
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await searchHandler(mockBackend, { tags: ['tag1'] });
+
+            expect(result).toContain('\n\n');
+            expect(result).toContain('note1.md');
+            expect(result).toContain('note2.md');
+        });
+
+        it('should apply limit parameter', async () => {
+            mockBackend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        '/state/note1.md' as MemoryPath,
+                        content:     'Note 1',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                        tags:        ['tag1'],
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await searchHandler(mockBackend, { tags: ['tag1'], limit: 5 });
+
+            expect(result).toContain('/state/note1.md');
+            expect(mockBackend.searchByTag).toHaveBeenCalledWith('tag1', undefined, { limit: 5 });
+        });
+
+        it('should pass undefined limit to searchByTimeRange when limit not specified', async () => {
+            mockBackend.searchByTimeRange = mock(async () => []);
+
+            await searchHandler(mockBackend, {
+                time_range: { start: '2025-01-10T00:00:00.000Z', end: '2025-01-20T00:00:00.000Z' },
+            });
+
+            expect(mockBackend.searchByTimeRange).toHaveBeenCalledWith(
+                '2025-01-10T00:00:00.000Z',
+                '2025-01-20T00:00:00.000Z',
+                undefined,
+                { limit: undefined }
+            );
+        });
+    });
+
+    describe('recall', () => {
+        const recallHandler = async (
+            backend: MemoryToolBackend,
+            params: { max_items?: number, include_layers?: string[] }
+        ): Promise<string> => {
+            const { recall } = await import('@/storage/memory-tool/handlers');
+            return recall(backend, params as Parameters<typeof recall>[1]);
+        };
+
+        it('should return auto-load items grouped by layer', async () => {
+            mockBackend.getAutoLoadItems = mock(async () => [
+                {
+                    path:        '/identity/core.md' as MemoryPath,
+                    content:     'Core identity',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                },
+                {
+                    path:        '/state/current.md' as MemoryPath,
+                    content:     'Current state',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await recallHandler(mockBackend, {});
+
+            expect(result).toContain('identity');
+            expect(result).toContain('state');
+            expect(result).toContain('/identity/core.md');
+            expect(result).toContain('/state/current.md');
+            expect(result).toContain('Core identity');
+            expect(result).toContain('Current state');
+        });
+
+        it('should filter layers based on include_layers parameter', async () => {
+            mockBackend.getAutoLoadItems = mock(async () => [
+                {
+                    path:        '/identity/core.md' as MemoryPath,
+                    content:     'Core identity',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                },
+                {
+                    path:        '/state/current.md' as MemoryPath,
+                    content:     'Current state',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await recallHandler(mockBackend, { include_layers: ['identity'] });
+
+            expect(result).toContain('identity');
+            expect(result).toContain('/identity/core.md');
+            expect(result).not.toContain('state');
+            expect(result).not.toContain('/state/current.md');
+        });
+
+        it('should skip empty layers', async () => {
+            mockBackend.getAutoLoadItems = mock(async () => [
+                {
+                    path:        '/identity/core.md' as MemoryPath,
+                    content:     'Core identity',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await recallHandler(mockBackend, {});
+
+            expect(result).toContain('identity');
+            expect(result).not.toContain('state:');
+            expect(result).not.toContain('events:');
+        });
+
+        it('should return empty message when no items', async () => {
+            mockBackend.getAutoLoadItems = mock(async () => []);
+
+            const result = await recallHandler(mockBackend, {});
+
+            expect(result).toContain('No auto-load memories found');
+        });
+
+        it('should pass max_items to getAutoLoadItems', async () => {
+            mockBackend.getAutoLoadItems = mock(async () => []);
+
+            await recallHandler(mockBackend, { max_items: 50 });
+
+            expect(mockBackend.getAutoLoadItems).toHaveBeenCalledWith({
+                maxIdentityItems: 50,
+                maxStateItems:    50,
+            });
+        });
+
+        it('should group items by "other" when layer is null', async () => {
+            mockBackend.getAutoLoadItems = mock(async () => [
+                {
+                    path:        '/unknown.md' as MemoryPath,
+                    content:     'Unknown layer',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await recallHandler(mockBackend, {});
+
+            expect(result).toContain('other:');
+            expect(result).toContain('/unknown.md');
+        });
+
+        it('should include "other" layer items when include_layers is not specified', async () => {
+            mockBackend.getAutoLoadItems = mock(async () => [
+                {
+                    path:        '/unknown.md' as MemoryPath,
+                    content:     'Unknown layer',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await recallHandler(mockBackend, {});
+
+            expect(result).toContain('other:');
+        });
+
+        it('should join layer sections with double newline', async () => {
+            mockBackend.getAutoLoadItems = mock(async () => [
+                {
+                    path:        '/identity/core.md' as MemoryPath,
+                    content:     'Core identity',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                },
+                {
+                    path:        '/state/current.md' as MemoryPath,
+                    content:     'Current state',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await recallHandler(mockBackend, {});
+
+            expect(result).toContain('\n\n');
+            expect(result).toContain('identity:');
+            expect(result).toContain('state:');
+        });
+
+        it('should join layer items with single newline', async () => {
+            mockBackend.getAutoLoadItems = mock(async () => [
+                {
+                    path:        '/identity/core.md' as MemoryPath,
+                    content:     'Core identity',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                },
+                {
+                    path:        '/identity/secondary.md' as MemoryPath,
+                    content:     'Secondary identity',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await recallHandler(mockBackend, {});
+
+            expect(result).toContain('identity:\n  /identity/core.md\n    Core identity\n  /identity/secondary.md');
+        });
+
+        it('should filter out "other" layer when include_layers is specified', async () => {
+            mockBackend.getAutoLoadItems = mock(async () => [
+                {
+                    path:        '/identity/core.md' as MemoryPath,
+                    content:     'Core identity',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                },
+                {
+                    path:        '/unknown.md' as MemoryPath,
+                    content:     'Unknown',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await recallHandler(mockBackend, { include_layers: ['identity'] });
+
+            expect(result).toContain('identity:');
+            expect(result).toContain('/identity/core.md');
+            // "other" layer should still be included even when include_layers is specified
+            expect(result).toContain('other:');
+            expect(result).toContain('/unknown.md');
+        });
+
+        it('should skip truly empty layer with zero items', async () => {
+            mockBackend.getAutoLoadItems = mock(async () => [
+                {
+                    path:        '/identity/core.md' as MemoryPath,
+                    content:     'Core identity',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await recallHandler(mockBackend, {});
+
+            expect(result).toContain('identity:');
+            // State and events layers should be completely absent, not shown as empty
+            expect(result).not.toContain('state:');
+            expect(result).not.toContain('events:');
+            // Verify result doesn't contain multiple empty sections
+            const sections = _split(result, '\n\n');
+            expect(sections.length).toBe(1); // Only identity section
+        });
+    });
+
+    describe('list_by_layer', () => {
+        const listByLayerHandler = async (
+            backend: MemoryToolBackend,
+            params: { layer: string, include_content?: boolean, limit?: number }
+        ): Promise<string> => {
+            const { list_by_layer } = await import('@/storage/memory-tool/handlers');
+            return list_by_layer(backend, params as Parameters<typeof list_by_layer>[1]);
+        };
+
+        it('should list items by layer without content', async () => {
+            mockBackend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        '/identity/core.md' as MemoryPath,
+                        content:     'Core identity',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await listByLayerHandler(mockBackend, { layer: 'identity' });
+
+            expect(result).toContain('/identity/core.md');
+            expect(result).not.toContain('Core identity');
+            expect(mockBackend.listByLayer).toHaveBeenCalledWith('identity', { limit: undefined });
+        });
+
+        it('should include content with line numbers when requested', async () => {
+            mockBackend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        '/identity/core.md' as MemoryPath,
+                        content:     'Line 1\nLine 2\nLine 3',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await listByLayerHandler(mockBackend, { layer: 'identity', include_content: true });
+
+            expect(result).toContain('/identity/core.md');
+            expect(result).toContain('1:Line 1');
+            expect(result).toContain('2:Line 2');
+            expect(result).toContain('3:Line 3');
+        });
+
+        it('should apply limit parameter', async () => {
+            mockBackend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        '/state/note.md' as MemoryPath,
+                        content:     'Note',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await listByLayerHandler(mockBackend, { layer: 'state', limit: 10 });
+
+            expect(result).toContain('/state/note.md');
+            expect(mockBackend.listByLayer).toHaveBeenCalledWith('state', { limit: 10 });
+        });
+
+        it('should return empty message when no items found', async () => {
+            mockBackend.listByLayer = mock(async () => ({
+                items:      [],
+                nextCursor: undefined,
+            }));
+
+            const result = await listByLayerHandler(mockBackend, { layer: 'identity' });
+
+            expect(result).toContain('No items found');
+        });
+
+        it('should join items with double newline when include_content is false', async () => {
+            mockBackend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        '/identity/core.md' as MemoryPath,
+                        content:     'Core identity',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                    {
+                        path:        '/identity/secondary.md' as MemoryPath,
+                        content:     'Secondary',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await listByLayerHandler(mockBackend, { layer: 'identity' });
+
+            expect(result).toBe('/identity/core.md\n\n/identity/secondary.md');
+        });
+    });
+
+    describe('consolidate', () => {
+        const consolidateHandler = async (
+            backend: MemoryToolBackend,
+            params: { source_paths: string[], target_path: string, summary: string, keep_sources?: boolean }
+        ): Promise<string> => {
+            const { consolidate } = await import('@/storage/memory-tool/handlers');
+            return consolidate(backend, params);
+        };
+
+        it('should create summary and delete sources', async () => {
+            mockBackend.get = mock(async (path: MemoryPath) => {
+                if(path === '/test/target.md') {
+                    return undefined;
+                }
+                return {
+                    path,
+                    content:     'Source content',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                };
+            });
+            mockBackend.create = mock(async () => ({
+                path:        '/test/target.md' as MemoryPath,
+                content:     'Summary of sources',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:00.000Z',
+            }));
+            mockBackend.delete = mock(async () => { /* intentionally empty */ });
+
+            const result = await consolidateHandler(mockBackend, {
+                source_paths: ['/test/source1.md', '/test/source2.md'],
+                target_path:  '/test/target.md',
+                summary:      'Summary of sources',
+            });
+
+            expect(result).toContain('consolidated');
+            expect(result).toContain('/test/target.md');
+            expect(mockBackend.create).toHaveBeenCalledWith({
+                path:        '/test/target.md',
+                content:     'Summary of sources',
+                contentType: 'text/markdown',
+            });
+            expect(mockBackend.delete).toHaveBeenCalledTimes(2);
+        });
+
+        it('should keep sources when keep_sources is true', async () => {
+            mockBackend.get = mock(async () => undefined);
+            mockBackend.create = mock(async () => ({
+                path:        '/test/target.md' as MemoryPath,
+                content:     'Summary',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:00.000Z',
+            }));
+            mockBackend.delete = mock(async () => { /* intentionally empty */ });
+
+            const result = await consolidateHandler(mockBackend, {
+                source_paths: ['/test/source1.md'],
+                target_path:  '/test/target.md',
+                summary:      'Summary',
+                keep_sources: true,
+            });
+
+            expect(result).toContain('consolidated');
+            expect(mockBackend.delete).not.toHaveBeenCalled();
+        });
+
+        it('should throw PathAlreadyExistsError when target exists', async () => {
+            mockBackend.get = mock(async () => ({
+                path:        '/test/target.md' as MemoryPath,
+                content:     'Existing content',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:00.000Z',
+            }));
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(consolidateHandler(mockBackend, {
+                source_paths: ['/test/source1.md'],
+                target_path:  '/test/target.md',
+                summary:      'Summary',
+            })).rejects.toThrow(PathAlreadyExistsError);
+        });
+
+        it('should throw InvalidPathError for invalid target path', async () => {
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(consolidateHandler(mockBackend, {
+                source_paths: ['/test/source1.md'],
+                target_path:  'bad-path',
+                summary:      'Summary',
+            })).rejects.toThrow(InvalidPathError);
+        });
+
+        it('should throw InvalidPathError for invalid source paths', async () => {
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(consolidateHandler(mockBackend, {
+                source_paths: ['bad-path'],
+                target_path:  '/test/target.md',
+                summary:      'Summary',
+            })).rejects.toThrow(InvalidPathError);
+        });
+
+        it('should log warning with error message when source delete fails', async () => {
+            const warnSpy = mock(_noop);
+            // eslint-disable-next-line no-console -- Testing console.warn behavior
+            const originalWarn = console.warn;
+            // eslint-disable-next-line no-console -- Testing console.warn behavior
+            console.warn = warnSpy;
+
+            try {
+                mockBackend.get = mock(async () => undefined);
+                mockBackend.create = mock(async () => ({
+                    path:        '/test/target.md' as MemoryPath,
+                    content:     'Summary',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                }));
+                mockBackend.delete = mock(async () => {
+                    throw new Error('Delete error message');
+                });
+
+                const result = await consolidateHandler(mockBackend, {
+                    source_paths: ['/test/source1.md'],
+                    target_path:  '/test/target.md',
+                    summary:      'Summary',
+                });
+
+                expect(result).toContain('consolidated');
+                expect(warnSpy).toHaveBeenCalledTimes(1);
+                const warnMessage = warnSpy.mock.calls[0][0] as string;
+                expect(warnMessage).toContain('Failed to delete source /test/source1.md during consolidation: Delete error message');
+            } finally {
+                // eslint-disable-next-line no-console -- Restoring console.warn
+                console.warn = originalWarn;
+            }
+        });
+
+        it('should catch and log non-Error objects thrown during source delete', async () => {
+            const warnSpy = mock(_noop);
+            // eslint-disable-next-line no-console -- Testing console.warn behavior
+            const originalWarn = console.warn;
+            // eslint-disable-next-line no-console -- Testing console.warn behavior
+            console.warn = warnSpy;
+
+            try {
+                mockBackend.get = mock(async () => undefined);
+                mockBackend.create = mock(async () => ({
+                    path:        '/test/target.md' as MemoryPath,
+                    content:     'Summary',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                }));
+                mockBackend.delete = mock(async () => {
+                    // eslint-disable-next-line @typescript-eslint/no-throw-literal -- Testing non-Error throw
+                    throw 'string error';
+                });
+
+                const result = await consolidateHandler(mockBackend, {
+                    source_paths: ['/test/source1.md'],
+                    target_path:  '/test/target.md',
+                    summary:      'Summary',
+                });
+
+                expect(result).toContain('consolidated');
+                expect(warnSpy).toHaveBeenCalledTimes(1);
+                const warnMessage = warnSpy.mock.calls[0][0] as string;
+                expect(warnMessage).toContain('string error');
+            } finally {
+                // eslint-disable-next-line no-console -- Restoring console.warn
+                console.warn = originalWarn;
+            }
+        });
+    });
 });

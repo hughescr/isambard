@@ -1,0 +1,131 @@
+/**
+ * Context Builder
+ *
+ * Builds system context from memory backend for Claude agent auto-loading.
+ * Formats identity and state layer memories into a structured context string.
+ */
+
+import { map as _map, groupBy as _groupBy, isNumber as _isNumber } from 'lodash';
+import type { MemoryToolBackend } from '../storage/memory-tool/backend';
+import type { MemoryPath } from '../storage/memory-tool/types';
+import { extractLayerFromPath } from '../storage/memory-tool/types';
+
+export interface ContextBuilderOptions {
+    backend:            MemoryToolBackend
+    maxIdentityTokens?: number   // Default: 500
+    maxStateTokens?:    number   // Default: 300
+}
+
+export interface ContextBuilder {
+    /**
+     * Build system context from memories (identity + hot state)
+     * @returns Formatted context string ready for inclusion in system prompt
+     */
+    buildSystemContext: () => Promise<string>
+
+    /**
+     * Update access stats when memories are used
+     * @param paths Memory paths that were accessed
+     */
+    recordAccess: (paths: MemoryPath[]) => Promise<void>
+}
+
+const DEFAULT_MAX_IDENTITY_TOKENS = 500;
+const DEFAULT_MAX_STATE_TOKENS = 300;
+const CHARS_PER_TOKEN = 4;
+
+/**
+ * Creates a context builder for managing agent memory context
+ */
+export function createContextBuilder(options: ContextBuilderOptions): ContextBuilder {
+    const { backend } = options;
+    const maxIdentityTokens = options.maxIdentityTokens ?? DEFAULT_MAX_IDENTITY_TOKENS;
+    const maxStateTokens = options.maxStateTokens ?? DEFAULT_MAX_STATE_TOKENS;
+
+    const maxIdentityChars = maxIdentityTokens * CHARS_PER_TOKEN;
+    const maxStateChars = maxStateTokens * CHARS_PER_TOKEN;
+
+    return {
+        buildSystemContext: async (): Promise<string> => {
+            // Get auto-load items from backend
+            const items = await backend.getAutoLoadItems();
+
+            if(items.length === 0) {
+                return '=== MEMORY CONTEXT ===\n\n(No memories loaded)';
+            }
+
+            // Group items by layer
+            const grouped = _groupBy(items, (item) => {
+                const layer = extractLayerFromPath(item.path);
+                // Stryker disable next-line StringLiteral: 'other' vs "" are equivalent since neither is rendered
+                return layer ?? 'other';
+            });
+
+            const sections: string[] = ['=== MEMORY CONTEXT ===\n'];
+
+            // Format identity layer
+            // Stryker disable next-line ConditionalExpression,EqualityOperator: lodash groupBy never creates empty arrays
+            if(grouped.identity && grouped.identity.length > 0) {
+                sections.push('## Identity');
+
+                const identityContent = _map(
+                    grouped.identity,
+                    item => `${item.path}:\n${item.content}`
+                ).join('\n\n');
+
+                // Truncate if necessary
+                if(identityContent.length > maxIdentityChars) {
+                    sections.push(identityContent.slice(0, maxIdentityChars - 3) + '...');
+                } else {
+                    sections.push(identityContent);
+                }
+            }
+
+            // Format state layer as "Current State"
+            // Stryker disable next-line ConditionalExpression,EqualityOperator: lodash groupBy never creates empty arrays
+            if(grouped.state && grouped.state.length > 0) {
+                sections.push('## Current State');
+
+                const stateContent = _map(
+                    grouped.state,
+                    item => `${item.path}:\n${item.content}`
+                ).join('\n\n');
+
+                // Truncate if necessary
+                if(stateContent.length > maxStateChars) {
+                    sections.push(stateContent.slice(0, maxStateChars - 3) + '...');
+                } else {
+                    sections.push(stateContent);
+                }
+            }
+
+            return sections.join('\n\n');
+        },
+
+        recordAccess: async (paths: MemoryPath[]): Promise<void> => {
+            for(const path of paths) {
+                // Get current item
+                const item = await backend.get(path);
+
+                if(!item) {
+                    // Skip if item doesn't exist
+                    continue;
+                }
+
+                // Get current access count from metadata
+                const currentAccessCount = _isNumber(item.metadata?.accessCount)
+                    ? item.metadata.accessCount
+                    : 0;
+
+                // Update metadata with incremented access count and timestamp
+                await backend.update(path, {
+                    metadata: {
+                        ...item.metadata,
+                        accessCount:  currentAccessCount + 1,
+                        lastAccessed: new Date().toISOString(),
+                    },
+                });
+            }
+        },
+    };
+}

@@ -44,6 +44,7 @@ export const memoryToolItemSchema = z.object({
     createdAt:   z.string().datetime(),
     updatedAt:   z.string().datetime(),
     tags:        z.array(z.string()).optional(),
+    ttl:         z.number().int().positive().optional(), // Unix timestamp for TTL expiration
 });
 
 export type MemoryToolItemData = z.infer<typeof memoryToolItemSchema>;
@@ -52,10 +53,13 @@ export type MemoryToolItemData = z.infer<typeof memoryToolItemSchema>;
  * DynamoDB item structure with keys.
  */
 export interface MemoryToolItem extends MemoryToolItemData {
-    PK:     string  // TOOL_MEMORY#{path}
-    SK:     string  // TOOL_MEMORY#{path}
-    GSI1PK: string  // TOOL_MEMORY#TAG#{tag} or TOOL_MEMORY#{path}
-    GSI1SK: string  // {updatedAt}
+    PK:      string   // DIR#{parentPath} - groups files by directory
+    SK:      string   // FILE#{filename} - identifies file within directory
+    GSI1PK:  string   // PATH#{fullPath} - allows lookup by full path
+    GSI1SK:  string   // CREATED#{timestamp} - time-based sorting
+    GSI2PK?: string   // TAG#{tag} - allows lookup by tag (optional)
+    GSI2SK?: string   // LAYER#{layer}#UPDATED#{timestamp} - tag queries with layer and time filtering (optional)
+    ttl?:    number   // Unix timestamp for TTL expiration (optional)
 }
 
 /**
@@ -73,6 +77,54 @@ export function isMemoryPath(value: unknown): value is MemoryPath {
     const result = memoryPathSchema.safeParse(value);
     return result.success;
 }
+
+/**
+ * Layer names for organizing memory in a structured hierarchy.
+ * - identity: Core beliefs, values, and self-model
+ * - state: Current context and working memory
+ * - events: Historical timeline and experiences
+ */
+export const layerNameSchema = z
+    .enum(['identity', 'state', 'events'])
+    .brand<'LayerName'>();
+
+export type LayerName = z.infer<typeof layerNameSchema>;
+
+/**
+ * Extracts the layer name from a memory path if the path starts with a valid layer.
+ * Uses word boundary matching to avoid false positives (e.g., /stateoftheart.md).
+ * @returns LayerName if path starts with a valid layer, null otherwise
+ */
+export function extractLayerFromPath(path: MemoryPath): LayerName | null {
+    // Match layer at start of path with word boundary
+    // Pattern: /^\/({layer})(?:\/|$)/
+    // Stryker disable next-line Regex: MemoryPath is guaranteed to start with /, making ^ anchor redundant but kept for clarity
+    const regex = /^\/(\w+)(?:\/|$)/;
+    const match = regex.exec(path);
+
+    if(!match) {
+        return null;
+    }
+
+    const candidate = match[1];
+    const result = layerNameSchema.safeParse(candidate);
+
+    return result.success ? result.data : null;
+}
+
+/**
+ * Metadata for layered memory organization.
+ * Enables prioritization, access tracking, and relationship mapping.
+ */
+export const layeredMemoryMetadataSchema = z.object({
+    layer:        layerNameSchema,
+    importance:   z.number().int().min(1).max(10).default(5),
+    lastAccessed: z.string().datetime().optional(),
+    accessCount:  z.number().int().min(0).default(0),
+    relatedPaths: z.array(memoryPathSchema).default([]),
+});
+
+export type LayeredMemoryMetadata = z.infer<typeof layeredMemoryMetadataSchema>;
 
 /**
  * Creates DynamoDB keys for a MemoryTool entity.

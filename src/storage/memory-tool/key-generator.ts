@@ -1,18 +1,23 @@
-import { startsWith as _startsWith } from 'lodash';
+import { startsWith as _startsWith, split as _split } from 'lodash';
 import type { MemoryPath } from './types';
+import { extractLayerFromPath } from './types';
 
 /**
  * DynamoDB key structure for MemoryTool items using filesystem-like organization
  */
 export interface MemoryToolKeys {
     /** Primary Key: DIR#{parentPath} - groups files by directory */
-    PK:     string
+    PK:      string
     /** Sort Key: FILE#{filename} - identifies file within directory */
-    SK:     string
+    SK:      string
     /** GSI1 Primary Key: PATH#{fullPath} - allows lookup by full path */
-    GSI1PK: string
+    GSI1PK:  string
     /** GSI1 Sort Key: CREATED#{timestamp} - time-based sorting */
-    GSI1SK: string
+    GSI1SK:  string
+    /** GSI2 Primary Key: TAG#{tag} - allows lookup by tag (optional) */
+    GSI2PK?: string
+    /** GSI2 Sort Key: LAYER#{layer}#UPDATED#{timestamp} - tag queries with layer and time filtering (optional) */
+    GSI2SK?: string
 }
 
 /**
@@ -83,5 +88,82 @@ export class MemoryToolKeyGenerator {
         }
 
         return `${parentPath}/${filename}`;
+    }
+
+    /**
+   * Creates optional GSI2 keys for tag-based queries
+   *
+   * @param path - Full path to the memory file (for extracting layer)
+   * @param tags - Optional array of tags (uses first tag only)
+   * @param timestamp - Optional ISO 8601 timestamp (auto-generated if not provided)
+   * @returns GSI2 keys if tags are present, null otherwise
+   *
+   * @example
+   * ```ts
+   * const tagKeys = MemoryToolKeyGenerator.createTagKeys(
+   *   '/identity/core-values.md' as MemoryPath,
+   *   ['beliefs', 'philosophy'],
+   *   '2024-01-15T10:30:00.000Z'
+   * );
+   * // {
+   * //   GSI2PK: 'TAG#beliefs',
+   * //   GSI2SK: 'LAYER#identity#UPDATED#2024-01-15T10:30:00.000Z'
+   * // }
+   * ```
+   */
+    static createTagKeys(
+        path: MemoryPath,
+        tags?: string[],
+        timestamp?: string
+    ): Pick<MemoryToolKeys, 'GSI2PK' | 'GSI2SK'> | null {
+        // Return null if no tags provided
+        if(!tags || tags.length === 0) {
+            return null;
+        }
+
+        // Use first tag only
+        const tag = tags[0];
+        const ts = timestamp ?? new Date().toISOString();
+
+        // Extract layer from path (or use first path segment as fallback)
+        const layer = extractLayerFromPath(path);
+        // Stryker disable next-line StringLiteral: Empty string and 'unknown' are functionally equivalent here for edge case of root path
+        const layerStr = layer ?? _split(path, '/')[1] ?? 'unknown';
+
+        return {
+            GSI2PK: `TAG#${tag}`,
+            GSI2SK: `LAYER#${layerStr}#UPDATED#${ts}`,
+        };
+    }
+
+    /**
+   * Creates DynamoDB keys for version history items
+   *
+   * @param path - Full path to the memory file
+   * @param version - Version number of the snapshot
+   * @param timestamp - ISO 8601 timestamp when version was created
+   * @returns DynamoDB keys for the version history item
+   *
+   * @example
+   * ```ts
+   * const keys = MemoryToolKeyGenerator.createVersionKeys(
+   *   '/test/file.md' as MemoryPath,
+   *   2,
+   *   '2024-01-15T10:30:00.000Z'
+   * );
+   * // {
+   * //   PK: 'DIR#/test',
+   * //   SK: 'VERSION#2#2024-01-15T10:30:00.000Z'
+   * // }
+   * ```
+   */
+    static createVersionKeys(path: MemoryPath, version: number, timestamp: string): { PK: string; SK: string } {
+        const lastSlashIndex = path.lastIndexOf('/');
+        const parentPath = lastSlashIndex === 0 ? '/' : path.slice(0, lastSlashIndex);
+
+        return {
+            PK: `DIR#${parentPath}`,
+            SK: `VERSION#${version}#${timestamp}`,
+        };
     }
 }

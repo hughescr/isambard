@@ -1,6 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import _ from 'lodash';
 import type { DiscordMessageContext } from '../integrations/discord/types';
+import type { ContextBuilder } from './context-builder';
 
 const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
 const MAX_TOKENS = 2048;
@@ -10,9 +11,11 @@ const MAX_RESPONSE_LENGTH = DISCORD_MAX_MESSAGE_LENGTH - TRUNCATION_BUFFER;
 
 export interface ClaudeAgentOptions {
     /** Anthropic client instance */
-    client:      Anthropic
+    client:          Anthropic
     /** Optional memory tool for persistent context (can be beta or standard tool) */
-    memoryTool?: Anthropic.Messages.Tool
+    memoryTool?:     Anthropic.Messages.Tool
+    /** Optional context builder for auto-loading memory context */
+    contextBuilder?: ContextBuilder
 }
 
 export interface ClaudeAgent {
@@ -39,13 +42,25 @@ export interface ClaudeAgent {
  * @returns Claude agent instance
  */
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
-    const { client, memoryTool } = options;
+    const { client, memoryTool, contextBuilder } = options;
 
     return {
         chat: async (context: DiscordMessageContext): Promise<string | null> => {
             try {
+                // Build system context if contextBuilder is provided
+                let systemContext = '';
+                if(contextBuilder) {
+                    systemContext = await contextBuilder.buildSystemContext();
+                }
+
                 // Format message with user context
-                const formattedMessage = `User @${context.userId} said: ${context.content}`;
+                const userMessage = `User @${context.userId} said: ${context.content}`;
+
+                // Prepend system context if available and non-empty
+                // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator: Equivalent mutants - all variations are falsy for empty string and truthy for non-empty
+                const formattedMessage = systemContext && systemContext.length > 0
+                    ? `${systemContext}\n\n${userMessage}`
+                    : userMessage;
 
                 // Build API request
                 const requestParams: Anthropic.Messages.MessageCreateParamsNonStreaming = {

@@ -492,4 +492,200 @@ describe('createClaudeAgent', () => {
         // eslint-disable-next-line no-console -- Restoring original console.error
         console.error = originalError;
     });
+
+    describe('context builder integration', () => {
+        it('should accept optional contextBuilder', () => {
+            const mockContextBuilder = {
+                buildSystemContext: mock(async () => ''),
+                // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function needs no implementation
+                recordAccess:       mock(async () => {}),
+            };
+
+            const agent = createClaudeAgent({
+                client:         mockClient,
+                contextBuilder: mockContextBuilder,
+            });
+
+            expect(agent).toBeDefined();
+        });
+
+        it('should prepend system context to user message when contextBuilder provided', async () => {
+            const mockContextBuilder = {
+                buildSystemContext: mock(async () => '=== MEMORY CONTEXT ===\n\n## Identity\nI am a helpful assistant'),
+                // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function needs no implementation
+                recordAccess:       mock(async () => {}),
+            };
+
+            const agent = createClaudeAgent({
+                client:         mockClient,
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            expect(mockContextBuilder.buildSystemContext).toHaveBeenCalled();
+            expect(mockClient.messages.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    messages: [
+                        {
+                            role:    'user',
+                            content: '=== MEMORY CONTEXT ===\n\n## Identity\nI am a helpful assistant\n\nUser @111222333 said: Hello Claude!',
+                        },
+                    ],
+                })
+            );
+        });
+
+        it('should not call buildSystemContext when contextBuilder is not provided', async () => {
+            const agent = createClaudeAgent({ client: mockClient });
+
+            await agent.chat(mockMessageContext);
+
+            // Just verify the standard message format without context
+            expect(mockClient.messages.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    messages: [
+                        {
+                            role:    'user',
+                            content: 'User @111222333 said: Hello Claude!',
+                        },
+                    ],
+                })
+            );
+        });
+
+        it('should handle empty context from buildSystemContext', async () => {
+            const mockContextBuilder = {
+                buildSystemContext: mock(async () => ''),
+                // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function needs no implementation
+                recordAccess:       mock(async () => {}),
+            };
+
+            const agent = createClaudeAgent({
+                client:         mockClient,
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            expect(mockClient.messages.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    messages: [
+                        {
+                            role:    'user',
+                            content: 'User @111222333 said: Hello Claude!',
+                        },
+                    ],
+                })
+            );
+        });
+
+        it('should not prepend empty string context (empty string should not add separator)', async () => {
+            const mockContextBuilder = {
+                buildSystemContext: mock(async () => ''),
+                // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function needs no implementation
+                recordAccess:       mock(async () => {}),
+            };
+
+            const agent = createClaudeAgent({
+                client:         mockClient,
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            // Should NOT include the '\n\n' separator when context is empty
+            // Must verify exact match - empty context should produce the same result as no contextBuilder
+            expect(mockClient.messages.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    messages: [
+                        {
+                            role:    'user',
+                            content: 'User @111222333 said: Hello Claude!',
+                        },
+                    ],
+                })
+            );
+
+            // Explicitly verify the content does NOT start with '\n\n'
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Accessing mock call args
+            const callArgs = (mockClient.messages.create as ReturnType<typeof mock>).mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing messages array
+            expect(callArgs.messages[0].content).not.toMatch(/^\n\n/);
+        });
+
+        it('should prepend non-empty context with separator', async () => {
+            const mockContextBuilder = {
+                buildSystemContext: mock(async () => 'Context'),
+                // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function needs no implementation
+                recordAccess:       mock(async () => {}),
+            };
+
+            const agent = createClaudeAgent({
+                client:         mockClient,
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            // Should include the '\n\n' separator when context is non-empty
+            expect(mockClient.messages.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    messages: [
+                        {
+                            role:    'user',
+                            content: 'Context\n\nUser @111222333 said: Hello Claude!',
+                        },
+                    ],
+                })
+            );
+        });
+
+        it('should handle whitespace-only context as empty', async () => {
+            const mockContextBuilder = {
+                buildSystemContext: mock(async () => '   '),
+                // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function needs no implementation
+                recordAccess:       mock(async () => {}),
+            };
+
+            const agent = createClaudeAgent({
+                client:         mockClient,
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            // Whitespace-only context should still be prepended (length > 0)
+            expect(mockClient.messages.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    messages: [
+                        {
+                            role:    'user',
+                            content: '   \n\nUser @111222333 said: Hello Claude!',
+                        },
+                    ],
+                })
+            );
+        });
+
+        it('should handle buildSystemContext errors gracefully', async () => {
+            const mockContextBuilder = {
+                buildSystemContext: mock(async () => {
+                    throw new Error('Context build failed');
+                }),
+                // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function needs no implementation
+                recordAccess: mock(async () => {}),
+            };
+
+            const agent = createClaudeAgent({
+                client:         mockClient,
+                contextBuilder: mockContextBuilder,
+            });
+
+            const response = await agent.chat(mockMessageContext);
+
+            // Should return null on error
+            expect(response).toBeNull();
+        });
+    });
 });
