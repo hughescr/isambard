@@ -1,6 +1,9 @@
 import type { Client, Message } from 'discord.js';
 import type { DiscordMessageContext, UserId, ChannelId } from './types';
+import type { PresenceManager } from './presence';
+import type { ClaudeAgent } from '@/agent/agent';
 import { createGuildId, createChannelId, createUserId } from './types';
+import { createStatusMiddleware } from './presence';
 
 /**
  * Creates a handler for the Discord 'clientReady' event.
@@ -67,6 +70,16 @@ export interface MessageHandlerOptions {
      * Should return a string to reply, or null to not reply.
      */
     onMessage: (context: DiscordMessageContext) => Promise<string | null>
+
+    /**
+     * Optional presence manager for status updates during message processing.
+     */
+    presenceManager?: PresenceManager
+
+    /**
+     * Optional Claude agent for status middleware integration.
+     */
+    agent?: ClaudeAgent
 }
 
 /**
@@ -103,7 +116,20 @@ export interface MessageHandlerOptions {
  * ```
  */
 export function createMessageHandler(options: MessageHandlerOptions): (message: Message) => Promise<void> {
-    const { monitoredChannelIds, botUserId, onMessage } = options;
+    const { monitoredChannelIds, botUserId, onMessage, presenceManager, agent } = options;
+
+    // Create status middleware if both presenceManager and agent are provided
+    const statusMiddleware = presenceManager && agent
+        ? createStatusMiddleware({
+            presenceManager,
+            agent,
+            logger: {
+                debug: (message: any, ...args: any[]) => console.debug(message, ...args),
+                info:  (message: any, ...args: any[]) => console.log(message, ...args),
+                error: (message: any, ...args: any[]) => console.error(message, ...args),
+            },
+        })
+        : null;
 
     return async (message: Message) => {
         // Ignore bot messages
@@ -138,8 +164,10 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         };
 
         try {
-            // Call the onMessage callback
-            const reply = await onMessage(context);
+            // Use status middleware if available, otherwise call onMessage directly
+            const reply = statusMiddleware
+                ? await statusMiddleware(context, message.channel as any)
+                : await onMessage(context);
 
             // Reply if callback returned a string
             if(reply !== null) {

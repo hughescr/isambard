@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PresenceConfigSchema } from '@/integrations/discord/presence/types';
 
 // Log level enum schema
 export const logLevelSchema = z.enum(['debug', 'info', 'warn', 'error']);
@@ -40,6 +41,7 @@ export const discordConfigSchema = z.object({
     botToken:            z.string().min(1),
     applicationId:       z.string().min(1),
     monitoredChannelIds: z.array(z.string().min(1)).default([]),
+    presence:            PresenceConfigSchema.optional(),
 });
 
 // Box config

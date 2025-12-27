@@ -2,6 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import _ from 'lodash';
 import type { DiscordMessageContext } from '../integrations/discord/types';
 import type { ContextBuilder } from './context-builder';
+import type { AgentStreamEvent } from './types';
 
 const CLAUDE_MODEL = 'claude-sonnet-4-5';
 const DISCORD_MAX_MESSAGE_LENGTH = 2000;
@@ -20,9 +21,10 @@ export interface ClaudeAgent {
      * Process a Discord message and generate a response.
      *
      * @param context Discord message context
+     * @param onStreamEvent Optional callback invoked for each stream event
      * @returns Claude's response text, or null if an error occurred
      */
-    chat: (context: DiscordMessageContext) => Promise<string | null>
+    chat: (context: DiscordMessageContext, onStreamEvent?: (event: AgentStreamEvent) => void) => Promise<string | null>
 }
 
 /**
@@ -40,7 +42,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     const { contextBuilder, memoryMcpServer } = options;
 
     return {
-        chat: async (context: DiscordMessageContext): Promise<string | null> => {
+        chat: async (context: DiscordMessageContext, onStreamEvent?: (event: AgentStreamEvent) => void): Promise<string | null> => {
             try {
                 // 1. Load core identity (cached, essential) for system prompt
                 let systemPrompt = `You are Isambard, an agentic AI assistant in a Discord server.
@@ -90,6 +92,11 @@ Always check your memories about users before responding to personalize your int
                 let lastAssistantText = '';
 
                 for await (const message of response) {
+                    // Invoke stream event callback if provided
+                    if(onStreamEvent) {
+                        onStreamEvent(message as AgentStreamEvent);
+                    }
+
                     if(message.type === 'assistant') {
                         // Keep latest assistant message (not intermediate thinking)
                         const textBlocks = message.message?.content?.filter((b: any) => b.type === 'text') || [];

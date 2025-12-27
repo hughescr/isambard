@@ -82,7 +82,7 @@ describe('createDiscordBot', () => {
         expect(mockClient.on).toHaveBeenCalledWith('error', expect.any(Function));
     });
 
-    it('should register ready handler on client', () => {
+    it('should register clientReady handler on client', () => {
         const mockClient = {
             on:      mock(() => mockClient),
             login:   mock(async () => 'mock-token'),
@@ -97,7 +97,7 @@ describe('createDiscordBot', () => {
             onMessage: mockOnMessage,
         });
 
-        expect(mockClient.on).toHaveBeenCalledWith('ready', expect.any(Function));
+        expect(mockClient.on).toHaveBeenCalledWith('clientReady', expect.any(Function));
     });
 
     it('should call client.login with bot token when start() is called', async () => {
@@ -220,12 +220,12 @@ describe('createDiscordBot', () => {
             onMessage: mockOnMessage,
         });
 
-        // Simulate ready event firing by calling the second 'ready' handler
+        // Simulate clientReady event firing by calling the second 'clientReady' handler
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-        const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'ready']);
+        const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
         expect(readyHandlerCalls.length).toBeGreaterThanOrEqual(2);
 
-        // Call the second ready handler (the one that sets up messageCreate)
+        // Call the second clientReady handler (the one that sets up messageCreate)
         const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
         messageCreateSetupHandler(mockClient);
 
@@ -278,5 +278,52 @@ describe('createDiscordBot', () => {
         });
 
         expect(errorHandlerSpy).toHaveBeenCalled();
+    });
+
+    describe('Presence Manager Integration', () => {
+        it('should accept anthropicClient and identityContext in options', () => {
+            const mockClient = {
+                on:      mock(() => mockClient),
+                login:   mock(async () => 'mock-token'),
+                destroy: mock(async () => undefined),
+                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            const mockAnthropicClient = { messages: { create: mock(async () => ({})) } };
+            const mockAgent = { chat: mock(async () => 'response') };
+
+            const bot = createDiscordBot({
+                config:            mockConfig,
+                onMessage:         mockOnMessage,
+                anthropicClient:   mockAnthropicClient as any,
+                identityContext:   'Test identity',
+                agent:             mockAgent as any,
+            });
+
+            expect(bot).toBeDefined();
+        });
+
+        it('should work without optional anthropicClient and identityContext', () => {
+            const mockClient = {
+                on:      mock(() => mockClient),
+                login:   mock(async () => 'mock-token'),
+                destroy: mock(async () => undefined),
+                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            const mockAgent = { chat: mock(async () => 'response') };
+
+            const bot = createDiscordBot({
+                config:    mockConfig,
+                onMessage: mockOnMessage,
+                agent:     mockAgent as any,
+            });
+
+            expect(bot).toBeDefined();
+        });
     });
 });

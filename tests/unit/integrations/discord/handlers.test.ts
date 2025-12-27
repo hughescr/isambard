@@ -149,9 +149,10 @@ describe('Discord Event Handlers', () => {
             } as Guild;
 
             mockTextChannel = {
-                id:   '333333333333333333',
-                type: 0, // GuildText
-            } as TextChannel;
+                id:         '333333333333333333',
+                type:       0, // GuildText
+                sendTyping: mock(async () => undefined),
+            } as unknown as TextChannel;
 
             mockDMChannel = {
                 id:   '444444444444444444',
@@ -435,6 +436,44 @@ describe('Discord Event Handlers', () => {
 
             // Some clients use <@!userId> format
             mockMessage.content = `<@!${botId}> hello`;
+
+            await handler(mockMessage);
+
+            expect(mockOnMessage).toHaveBeenCalled();
+        });
+
+        it('should accept optional presenceManager and agent in options', async () => {
+            const mockPresenceManager = {
+                start:       mock(() => undefined),
+                stop:        mock(() => undefined),
+                updatePhase: mock(async () => undefined),
+            };
+
+            const mockAgent = {
+                chat: mock(async () => 'agent response'),
+            };
+
+            const handler = createMessageHandler({
+                monitoredChannelIds: ['333333333333333333' as ChannelId],
+                botUserId:           '999999999999999999' as UserId,
+                onMessage:           mockOnMessage,
+                presenceManager:     mockPresenceManager as any,
+                agent:               mockAgent as any,
+            });
+
+            await handler(mockMessage);
+
+            // When presenceManager and agent are provided, middleware calls agent.chat instead of onMessage
+            expect(mockAgent.chat).toHaveBeenCalled();
+            expect(mockMessage.reply).toHaveBeenCalledWith('agent response');
+        });
+
+        it('should work without optional presenceManager and agent', async () => {
+            const handler = createMessageHandler({
+                monitoredChannelIds: ['333333333333333333' as ChannelId],
+                botUserId:           '999999999999999999' as UserId,
+                onMessage:           mockOnMessage,
+            });
 
             await handler(mockMessage);
 

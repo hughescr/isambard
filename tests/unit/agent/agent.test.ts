@@ -824,6 +824,112 @@ describe('createClaudeAgent', () => {
         });
     });
 
+    describe('stream event callbacks', () => {
+        it('should invoke callback for each stream event', async () => {
+            const events: any[] = [];
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type: 'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type: 'text' as const,
+                                    text: 'Response',
+                                },
+                            ],
+                        },
+                    };
+                    yield {
+                        type: 'tool_progress' as const,
+                        tool_name: 'memory_view',
+                    };
+                    yield {
+                        type: 'result' as const,
+                        subtype: 'success',
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chat(mockMessageContext, (event) => {
+                events.push(event);
+            });
+
+            expect(events.length).toBe(3);
+            expect(events[0].type).toBe('assistant');
+            expect(events[1].type).toBe('tool_progress');
+            expect(events[2].type).toBe('result');
+        });
+
+        it('should receive correct event data in callback', async () => {
+            let receivedEvent: any = null;
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type: 'tool_progress' as const,
+                        tool_name: 'mcp__memory__search',
+                        tool_use_id: 'tool_123',
+                        elapsed_time_seconds: 1.5,
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chat(mockMessageContext, (event) => {
+                receivedEvent = event;
+            });
+
+            expect(receivedEvent).toEqual({
+                type: 'tool_progress',
+                tool_name: 'mcp__memory__search',
+                tool_use_id: 'tool_123',
+                elapsed_time_seconds: 1.5,
+            });
+        });
+
+        it('should work without callback (backward compatibility)', async () => {
+            const agent = createClaudeAgent({});
+            const response = await agent.chat(mockMessageContext);
+
+            expect(response).toBe('Hello! This is a test response.');
+        });
+
+        it('should not crash if callback throws error', async () => {
+            const agent = createClaudeAgent({});
+
+            // Callback that throws should not prevent normal operation
+            await expect(async () => {
+                await agent.chat(mockMessageContext, () => {
+                    throw new Error('Callback error');
+                });
+            }).not.toThrow();
+        });
+
+        it('should invoke callback for all event types', async () => {
+            const eventTypes: string[] = [];
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield { type: 'user' as const };
+                    yield { type: 'assistant' as const, message: { content: [{ type: 'text', text: 'hi' }] } };
+                    yield { type: 'tool_progress' as const, tool_name: 'test' };
+                    yield { type: 'tool_result' as const, tool_name: 'test' };
+                    yield { type: 'result' as const, subtype: 'success' };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chat(mockMessageContext, (event) => {
+                eventTypes.push(event.type);
+            });
+
+            expect(eventTypes).toEqual(['user', 'assistant', 'tool_progress', 'tool_result', 'result']);
+        });
+    });
+
     describe('error handling and logging', () => {
         it('should log truncation with message details', async () => {
             const consoleSpy = spyOn(console, 'log');

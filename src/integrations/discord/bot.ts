@@ -1,8 +1,17 @@
 import type { Client } from 'discord.js';
+import { ActivityType } from 'discord.js';
+import type { Anthropic } from '@anthropic-ai/sdk';
 import type { DiscordConfig } from '@/config/schemas';
 import type { DiscordMessageContext, UserId, ChannelId } from './types';
+import type { ClaudeAgent } from '@/agent/agent';
 import { createDiscordClient } from './client';
 import { createReadyHandler, createErrorHandler, createMessageHandler } from './handlers';
+import {
+    createActiveStatusGenerator,
+    createIdleStatusGenerator,
+    createPresenceManager,
+    type PresenceManager,
+} from './presence';
 
 /**
  * Options for configuring the Discord bot.
@@ -18,6 +27,24 @@ export interface DiscordBotOptions {
      * Should return a string to reply, or null to not reply.
      */
     onMessage: (context: DiscordMessageContext) => Promise<string | null>
+
+    /**
+     * Optional Anthropic client for idle status generation.
+     * If not provided, presence updates will be disabled.
+     */
+    anthropicClient?: Anthropic
+
+    /**
+     * Optional identity context for personalizing idle status messages.
+     * Used when anthropicClient is provided.
+     */
+    identityContext?: string
+
+    /**
+     * Claude agent instance for status middleware integration.
+     * Required if anthropicClient is provided.
+     */
+    agent?: ClaudeAgent
 }
 
 /**
@@ -78,8 +105,9 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, onMessage } = options;
+    const { config, onMessage, anthropicClient, identityContext, agent } = options;
     const client: Client = createDiscordClient(config);
+    let presenceManager: PresenceManager | undefined;
 
     // Register error handler for Discord client errors
     client.on('error', createErrorHandler());
@@ -92,11 +120,46 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     client.on('clientReady', (readyClient: Client): void => {
         // At this point, readyClient.user is guaranteed to be non-null
         // because the 'clientReady' event only fires after successful authentication
+
+        // Create presence manager if optional deps provided
+        if(anthropicClient && identityContext && config.presence) {
+            const logger = {
+                debug: (message: any, ...args: any[]) => console.debug(message, ...args),
+                info:  (message: any, ...args: any[]) => console.log(message, ...args),
+                warn:  (message: any, ...args: any[]) => console.warn(message, ...args),
+                error: (message: any, ...args: any[]) => console.error(message, ...args),
+            };
+
+            const activeStatusGenerator = createActiveStatusGenerator({
+                activityType: ActivityType.Custom,
+                logger,
+            });
+
+            const idleStatusGenerator = createIdleStatusGenerator({
+                anthropic:       anthropicClient,
+                logger,
+                activityType:    ActivityType.Custom,
+                identityContext,
+            });
+
+            presenceManager = createPresenceManager({
+                discordClient:          readyClient,
+                config:                 config.presence,
+                activeStatusGenerator,
+                idleStatusGenerator,
+                logger,
+            });
+
+            presenceManager.start();
+        }
+
         // eslint-disable-next-line @typescript-eslint/no-misused-promises -- messageCreate handler is async
         client.on('messageCreate', createMessageHandler({
             monitoredChannelIds: config.monitoredChannelIds as ChannelId[],
             botUserId:           readyClient.user!.id as UserId,
             onMessage,
+            presenceManager,
+            agent,
         }));
     });
 
@@ -107,6 +170,10 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         },
 
         async stop(): Promise<void> {
+            // Stop presence manager if it exists
+            if(presenceManager) {
+                presenceManager.stop();
+            }
             // destroy() is sufficient for cleanup (as per user decision)
             await client.destroy();
         },

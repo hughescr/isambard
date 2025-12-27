@@ -92,7 +92,7 @@ describe('Bot Lifecycle Integration', () => {
     });
 
     describe('Component Wiring', () => {
-        it('should create App with start and stop methods', () => {
+        it('should create App with start and stop methods', async () => {
             // Mock all dependencies
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
@@ -105,14 +105,14 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
-            const app: App = createApp();
+            const app: App = await createApp();
 
             expect(app).toBeDefined();
             expect(typeof app.start).toBe('function');
             expect(typeof app.stop).toBe('function');
         });
 
-        it('should load config from Resource provider', () => {
+        it('should load config from Resource provider', async () => {
             const loadConfigSpy = spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
@@ -125,13 +125,13 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
-            createApp();
+            await createApp();
 
             expect(loadConfigSpy).toHaveBeenCalled();
             expect(loadConfigSpy).toHaveBeenCalledTimes(1);
         });
 
-        it('should set OAuth token environment variable', () => {
+        it('should set OAuth token environment variable', async () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
@@ -143,12 +143,12 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
-            createApp();
+            await createApp();
 
             expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('test-oauth-token-1234567890');
         });
 
-        it('should create Claude agent without memory when DynamoDB not configured', () => {
+        it('should create Claude agent without memory when DynamoDB not configured', async () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
@@ -161,7 +161,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(createClaudeAgentSpy);
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
-            createApp();
+            await createApp();
 
             expect(createClaudeAgentSpy).toHaveBeenCalled();
             // Should be called with empty options (no contextBuilder or memoryMcpServer)
@@ -171,7 +171,7 @@ describe('Bot Lifecycle Integration', () => {
             });
         });
 
-        it('should create Discord bot with config and agent', () => {
+        it('should create Discord bot with config and agent', async () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
@@ -184,18 +184,21 @@ describe('Bot Lifecycle Integration', () => {
             const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
             spies.push(createDiscordBotSpy);
 
-            createApp();
+            await createApp();
 
             expect(createDiscordBotSpy).toHaveBeenCalled();
             expect(createDiscordBotSpy).toHaveBeenCalledWith({
-                config:    mockDiscordConfig,
-                onMessage: expect.any(Function),
+                config:            mockDiscordConfig,
+                onMessage:         expect.any(Function),
+                anthropicClient:   expect.any(Object),
+                identityContext:   expect.any(String),
+                agent:             mockClaudeAgent,
             });
         });
     });
 
     describe('Memory System Integration', () => {
-        it('should create memory system when DynamoDB is configured', () => {
+        it('should create memory system when DynamoDB is configured', async () => {
             const mockClient = {} as DynamoDBClient;
             const mockDocClient = {} as DynamoDBDocumentClient;
             const mockContextBuilder = {} as ContextBuilder;
@@ -223,7 +226,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(createClaudeAgentSpy);
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
-            createApp();
+            await createApp();
 
             expect(createDynamoDBClientSpy).toHaveBeenCalledWith(mockDynamoDBConfig);
             expect(createContextBuilderSpy).toHaveBeenCalled();
@@ -234,7 +237,7 @@ describe('Bot Lifecycle Integration', () => {
             });
         });
 
-        it('should continue without memory when DynamoDB client creation fails', () => {
+        it('should continue without memory when DynamoDB client creation fails', async () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
@@ -248,7 +251,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(createClaudeAgentSpy);
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
-            createApp();
+            await createApp();
 
             // Should create agent without memory
             expect(createClaudeAgentSpy).toHaveBeenCalledWith({
@@ -271,7 +274,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
-            const app = createApp();
+            const app = await createApp();
             await app.start();
 
             expect(mockDiscordBot.start).toHaveBeenCalled();
@@ -297,7 +300,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockErrorBot));
 
-            const app = createApp();
+            const app = await createApp();
 
             await expect(app.start()).rejects.toThrow('Login failed');
         });
@@ -316,7 +319,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
-            const app = createApp();
+            const app = await createApp();
             await app.stop();
 
             expect(mockDiscordBot.stop).toHaveBeenCalled();
@@ -335,7 +338,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
-            const app = createApp();
+            const app = await createApp();
 
             await app.start();
             await app.stop();
@@ -361,7 +364,7 @@ describe('Bot Lifecycle Integration', () => {
             const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
             spies.push(createDiscordBotSpy);
 
-            createApp();
+            await createApp();
 
             // Extract the onMessage callback
             const botOptions = createDiscordBotSpy.mock.calls[0][0];
@@ -400,7 +403,7 @@ describe('Bot Lifecycle Integration', () => {
             const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
             spies.push(createDiscordBotSpy);
 
-            createApp();
+            await createApp();
 
             // Extract the onMessage callback
             const botOptions = createDiscordBotSpy.mock.calls[0][0];

@@ -1,5 +1,6 @@
 import { Resource } from 'sst';
 import _ from 'lodash';
+import Anthropic from '@anthropic-ai/sdk';
 import { loadConfig, loadDynamoDBConfig } from './config/loader';
 import { createDynamoDBClient } from './storage/client';
 import { MemoryToolBackend } from './storage/memory-tool';
@@ -38,7 +39,7 @@ export interface App {
  * @returns Application instance with start/stop methods
  * @throws {Error} If required configuration is missing or invalid
  */
-export function createApp(): App {
+export async function createApp(): Promise<App> {
     // Load configuration (required)
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- SST Resource type is complex
     const config = loadConfig(Resource as any);
@@ -79,12 +80,39 @@ export function createApp(): App {
         memoryMcpServer,
     });
 
+    // Create Anthropic client for presence idle status generation (if API key available)
+    let anthropicClient: Anthropic | undefined;
+    let identityContext: string | undefined;
+
+    if(config.agent.oauthToken) {
+        anthropicClient = new Anthropic({
+            apiKey: config.agent.oauthToken,
+        });
+
+        // Try to load identity context from memory system
+        if(contextBuilder) {
+            try {
+                identityContext = await contextBuilder.loadCoreIdentity() || 'Isambard - AI Assistant';
+            } catch (error) {
+                const errorMessage = _.isError(error) ? error.message : String(error);
+                // eslint-disable-next-line no-console -- Warning logging
+                console.log(`Failed to load identity context: ${errorMessage}`);
+                identityContext = 'Isambard - AI Assistant';
+            }
+        } else {
+            identityContext = 'Isambard - AI Assistant';
+        }
+    }
+
     // Create Discord bot with agent as message handler
     const bot: DiscordBot = createDiscordBot({
         config:    config.discord,
         onMessage: async (context) => {
             return await agent.chat(context);
         },
+        anthropicClient,
+        identityContext,
+        agent,
     });
 
     return {
@@ -112,7 +140,7 @@ if(import.meta.main) {
     // eslint-disable-next-line no-console -- Startup message
     console.log('Isambard starting...');
 
-    const app = createApp();
+    const app = await createApp();
 
     // Start the application
     await app.start();
