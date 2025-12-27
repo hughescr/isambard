@@ -84,14 +84,14 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // Register error handler for Discord client errors
     client.on('error', createErrorHandler());
 
-    // Register ready handler for logging
-    client.on('ready', createReadyHandler());
+    // Register clientReady handler for logging
+    client.on('clientReady', createReadyHandler());
 
-    // Register ready handler for messageCreate setup
+    // Register clientReady handler for messageCreate setup
     // This runs after the client is authenticated and ready
-    client.on('ready', (readyClient: Client): void => {
+    client.on('clientReady', (readyClient: Client): void => {
         // At this point, readyClient.user is guaranteed to be non-null
-        // because the 'ready' event only fires after successful authentication
+        // because the 'clientReady' event only fires after successful authentication
         // eslint-disable-next-line @typescript-eslint/no-misused-promises -- messageCreate handler is async
         client.on('messageCreate', createMessageHandler({
             monitoredChannelIds: config.monitoredChannelIds as ChannelId[],

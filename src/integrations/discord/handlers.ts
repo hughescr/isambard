@@ -3,16 +3,16 @@ import type { DiscordMessageContext, UserId, ChannelId } from './types';
 import { createGuildId, createChannelId, createUserId } from './types';
 
 /**
- * Creates a handler for the Discord 'ready' event.
+ * Creates a handler for the Discord 'clientReady' event.
  *
  * The handler logs when the bot successfully connects to Discord.
  *
- * @returns Event handler function for the 'ready' event
+ * @returns Event handler function for the 'clientReady' event
  *
  * @example
  * ```typescript
  * const client = new Client({ intents: [...] });
- * client.on('ready', createReadyHandler());
+ * client.on('clientReady', createReadyHandler());
  * ```
  */
 export function createReadyHandler(): (client: Client) => void {
