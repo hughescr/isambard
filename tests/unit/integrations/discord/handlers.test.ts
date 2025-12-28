@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks */
+
 /* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
 /* eslint-disable lodash/prefer-constant -- Test callbacks */
 import { describe, it, expect, beforeEach, spyOn, mock } from 'bun:test';
 import type { Client, Message, User, Guild, TextChannel, DMChannel } from 'discord.js';
+import { logger } from '@hughescr/logger';
 import {
     createReadyHandler,
     createErrorHandler,
@@ -20,7 +21,7 @@ describe('Discord Event Handlers', () => {
         });
 
         it('should log bot user tag when ready event fires', () => {
-            const consoleSpy = spyOn(console, 'log');
+            const loggerSpy = spyOn(logger, 'info');
             const handler = createReadyHandler();
 
             const mockClient = {
@@ -31,14 +32,14 @@ describe('Discord Event Handlers', () => {
 
             handler(mockClient);
 
-            expect(consoleSpy).toHaveBeenCalled();
-            const lastCall = consoleSpy.mock.calls[consoleSpy.mock.calls.length - 1];
-
-            expect(lastCall[0]).toContain('TestBot#1234');
+            expect(loggerSpy).toHaveBeenCalled();
+            const lastCall = loggerSpy.mock.calls[loggerSpy.mock.calls.length - 1] as unknown[];
+            const message = lastCall[0] as string;
+            expect(message.includes('TestBot#1234')).toBe(true);
         });
 
         it('should log "ready" or "logged in" message', () => {
-            const consoleSpy = spyOn(console, 'log');
+            const loggerSpy = spyOn(logger, 'info');
             const handler = createReadyHandler();
 
             const mockClient = {
@@ -49,16 +50,16 @@ describe('Discord Event Handlers', () => {
 
             handler(mockClient);
 
-            expect(consoleSpy).toHaveBeenCalled();
-            const logMessage = consoleSpy.mock.calls[0][0];
+            expect(loggerSpy).toHaveBeenCalled();
+            const logMessage = (loggerSpy.mock.calls[0] as unknown[])[0] as string;
             // eslint-disable-next-line lodash/prefer-lodash-method -- Simple string check
             const lower = logMessage.toLowerCase();
-            // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Boolean OR is correct here
+
             expect(lower.includes('ready') || lower.includes('logged in')).toBe(true);
         });
 
         it('should handle client without user gracefully', () => {
-            const consoleSpy = spyOn(console, 'log');
+            const loggerSpy = spyOn(logger, 'info');
             const handler = createReadyHandler();
 
             const mockClient = {
@@ -67,11 +68,11 @@ describe('Discord Event Handlers', () => {
 
             // Should not throw
             expect(() => handler(mockClient)).not.toThrow();
-            expect(consoleSpy).toHaveBeenCalled();
+            expect(loggerSpy).toHaveBeenCalled();
         });
 
         it('should log fallback message when client.user is null', () => {
-            const consoleSpy = spyOn(console, 'log');
+            const loggerSpy = spyOn(logger, 'info');
             const handler = createReadyHandler();
 
             const mockClient = {
@@ -80,9 +81,9 @@ describe('Discord Event Handlers', () => {
 
             handler(mockClient);
 
-            expect(consoleSpy).toHaveBeenCalled();
-            const lastCall = consoleSpy.mock.calls[consoleSpy.mock.calls.length - 1];
-            expect(lastCall[0]).toContain('not available');
+            expect(loggerSpy).toHaveBeenCalled();
+            const lastCall = loggerSpy.mock.calls[loggerSpy.mock.calls.length - 1] as unknown[];
+            expect((lastCall[0] as string).includes('not available')).toBe(true);
         });
     });
 
@@ -93,40 +94,46 @@ describe('Discord Event Handlers', () => {
         });
 
         it('should log error when error event fires', () => {
-            const consoleSpy = spyOn(console, 'error');
+            const loggerSpy = spyOn(logger, 'error');
             const handler = createErrorHandler();
 
             const testError = new Error('Test error message');
             handler(testError);
 
-            expect(consoleSpy).toHaveBeenCalled();
-            const firstCall = consoleSpy.mock.calls[consoleSpy.mock.calls.length - 1];
-            expect(firstCall[0]).toContain('Test error message');
+            expect(loggerSpy).toHaveBeenCalled();
+            const firstCall = loggerSpy.mock.calls[loggerSpy.mock.calls.length - 1] as unknown[];
+            // logger.error({ error, msg }) - single object with error and msg properties
+            const loggedObject = firstCall[0] as { error: Error, msg: string };
+            expect(loggedObject).toHaveProperty('error', testError);
+            expect(loggedObject.msg.includes('Test error message')).toBe(true);
         });
 
         it('should log error with context about Discord', () => {
-            const consoleSpy = spyOn(console, 'error');
+            const loggerSpy = spyOn(logger, 'error');
             const handler = createErrorHandler();
 
             const testError = new Error('Connection failed');
             handler(testError);
 
-            expect(consoleSpy).toHaveBeenCalled();
-            const errorMessage = consoleSpy.mock.calls[consoleSpy.mock.calls.length - 1][0];
+            expect(loggerSpy).toHaveBeenCalled();
+            const lastCall = loggerSpy.mock.calls[loggerSpy.mock.calls.length - 1] as unknown[];
+            // logger.error({ error, msg }) - single object with error and msg properties
+            const loggedObject = lastCall[0] as { error: Error, msg: string };
+            expect(loggedObject).toHaveProperty('error', testError);
             // eslint-disable-next-line lodash/prefer-lodash-method -- Simple string check
-            const lower = errorMessage.toLowerCase();
-            // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Boolean OR is correct here
+            const lower = loggedObject.msg.toLowerCase();
+
             expect(lower.includes('discord') || lower.includes('error')).toBe(true);
         });
 
         it('should handle non-Error objects', () => {
-            const consoleSpy = spyOn(console, 'error');
+            const loggerSpy = spyOn(logger, 'error');
             const handler = createErrorHandler();
 
             // Discord.js might emit string errors or other types
             handler('String error' as unknown as Error);
 
-            expect(consoleSpy).toHaveBeenCalled();
+            expect(loggerSpy).toHaveBeenCalled();
         });
     });
 
@@ -348,7 +355,7 @@ describe('Discord Event Handlers', () => {
         });
 
         it('should handle errors in onMessage callback gracefully', async () => {
-            const consoleSpy = spyOn(console, 'error');
+            const loggerSpy = spyOn(logger, 'error');
             mockOnMessage = mock(async () => {
                 throw new Error('Callback error');
             });
@@ -361,13 +368,15 @@ describe('Discord Event Handlers', () => {
 
             await handler(mockMessage);
 
-            expect(consoleSpy).toHaveBeenCalled();
-            const lastCall = consoleSpy.mock.calls[consoleSpy.mock.calls.length - 1];
-            expect(lastCall[0]).toContain('Callback error');
+            expect(loggerSpy).toHaveBeenCalled();
+            const lastCall = loggerSpy.mock.calls[loggerSpy.mock.calls.length - 1] as unknown[];
+            // logger.error({ error, msg }) - check msg property in object
+            const loggedObject = lastCall[0] as { error: Error, msg: string };
+            expect(loggedObject.msg.includes('Callback error')).toBe(true);
         });
 
         it('should handle errors in reply gracefully', async () => {
-            const consoleSpy = spyOn(console, 'error');
+            const loggerSpy = spyOn(logger, 'error');
             mockOnMessage = mock(async () => 'Response');
             mockMessage.reply = mock(async () => {
                 throw new Error('Reply failed');
@@ -381,9 +390,11 @@ describe('Discord Event Handlers', () => {
 
             await handler(mockMessage);
 
-            expect(consoleSpy).toHaveBeenCalled();
-            const lastCall = consoleSpy.mock.calls[consoleSpy.mock.calls.length - 1];
-            expect(lastCall[0]).toContain('Reply failed');
+            expect(loggerSpy).toHaveBeenCalled();
+            const lastCall = loggerSpy.mock.calls[loggerSpy.mock.calls.length - 1] as unknown[];
+            // logger.error({ error, msg }) - check msg property in object
+            const loggedObject = lastCall[0] as { error: Error, msg: string };
+            expect(loggedObject.msg.includes('Reply failed')).toBe(true);
         });
 
         it('should handle DM messages with null guild', async () => {
@@ -457,7 +468,9 @@ describe('Discord Event Handlers', () => {
                 monitoredChannelIds: ['333333333333333333' as ChannelId],
                 botUserId:           '999999999999999999' as UserId,
                 onMessage:           mockOnMessage,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
                 presenceManager:     mockPresenceManager as any,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
                 agent:               mockAgent as any,
             });
 

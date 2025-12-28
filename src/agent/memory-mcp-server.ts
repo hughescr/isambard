@@ -1,5 +1,6 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import _ from 'lodash';
 import type { MemoryToolBackend } from '../storage/memory-tool';
 import { ContentType, createMemoryPath } from '../storage/memory-tool/types';
 
@@ -15,9 +16,9 @@ import { ContentType, createMemoryPath } from '../storage/memory-tool/types';
  */
 export function createMemoryMCPServer(backend: MemoryToolBackend) {
     return createSdkMcpServer({
-        name: 'memory',
+        name:    'memory',
         version: '1.0.0',
-        tools: [
+        tools:   [
             tool(
                 'view',
                 'View memory by path',
@@ -37,7 +38,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                             content: [{ type: 'text' as const, text: result.content }],
                         };
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
+                        const message = _.isError(error) ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error viewing memory: ${message}` }],
                             isError: true,
@@ -64,7 +65,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                             content: [{ type: 'text' as const, text: 'Memory stored successfully' }],
                         };
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
+                        const message = _.isError(error) ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error storing memory: ${message}` }],
                             isError: true,
@@ -82,19 +83,19 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                 async (args) => {
                     try {
                         const results = await backend.searchByTag(args.query);
-                        if (results.items.length === 0) {
+                        if(results.items.length === 0) {
                             return {
                                 content: [{ type: 'text' as const, text: 'No memories found matching query' }],
                             };
                         }
-                        const formatted = results.items
-                            .map(r => `${r.path}: ${r.content.substring(0, 200)}${r.content.length > 200 ? '...' : ''}`)
-                            .join('\n\n');
+                        const formatted = _.map(results.items,
+                            r => `${r.path}: ${r.content.substring(0, 200)}${r.content.length > 200 ? '...' : ''}`
+                        ).join('\n\n');
                         return {
                             content: [{ type: 'text' as const, text: formatted }],
                         };
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
+                        const message = _.isError(error) ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error searching memories: ${message}` }],
                             isError: true,

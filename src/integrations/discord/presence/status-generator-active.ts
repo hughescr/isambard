@@ -13,28 +13,31 @@ import { ToolStatusMap } from './types.js';
  * Interface for generating status text based on current activity phase.
  */
 export interface ActiveStatusGenerator {
-  /**
+    /**
    * Generate Discord activity for the current agent activity phase.
    * This is fast and synchronous - uses pre-defined mappings.
    *
    * @param phase - Current presence phase
    * @returns Discord activity configuration
    */
-  generate(phase: PresencePhase): ActivitiesOptions;
+    generate(phase: PresencePhase): ActivitiesOptions
 }
 
 /**
  * Dependencies for creating an active status generator.
  */
 export interface ActiveStatusGeneratorDeps {
-  /** Logger instance for structured logging */
-  logger: {
-    debug: (message: any, ...args: any[]) => void;
-    warn: (message: any, ...args: any[]) => void;
-    error: (message: any, ...args: any[]) => void;
-  };
-  /** Discord activity type (e.g., ActivityType.Custom) */
-  activityType: ActivityType;
+    /** Logger instance for structured logging */
+    logger: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
+        debug: (message: any, ...args: any[]) => void
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
+        warn:  (message: any, ...args: any[]) => void
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
+        error: (message: any, ...args: any[]) => void
+    }
+    /** Discord activity type (e.g., ActivityType.Custom) */
+    activityType: ActivityType
 }
 
 /**
@@ -59,38 +62,38 @@ export interface ActiveStatusGeneratorDeps {
  * ```
  */
 export function createActiveStatusGenerator(
-  deps: ActiveStatusGeneratorDeps,
+    deps: ActiveStatusGeneratorDeps
 ): ActiveStatusGenerator {
-  const { logger, activityType } = deps;
+    const { logger, activityType } = deps;
 
-  return {
-    generate(phase: PresencePhase): ActivitiesOptions {
-      logger.debug({ phase }, 'Generating active status');
+    return {
+        generate(phase: PresencePhase): ActivitiesOptions {
+            logger.debug({ phase }, 'Generating active status');
 
-      switch (phase.type) {
-        case 'idle':
-          // Should not be called for idle - caller's responsibility
-          logger.warn('Active status generator called for idle phase');
-          return { name: 'Idle', type: activityType };
+            switch(phase.type) {
+                case 'idle':
+                    // Should not be called for idle - caller's responsibility
+                    logger.warn('Active status generator called for idle phase');
+                    return { name: 'Idle', type: activityType };
 
-        case 'thinking':
-          return { name: 'Thinking...', type: activityType };
+                case 'thinking':
+                    return { name: 'Thinking...', type: activityType };
 
-        case 'using_tool': {
-          const statusText = ToolStatusMap[phase.toolName] ?? 'Working...';
-          return { name: statusText, type: activityType };
-        }
+                case 'using_tool': {
+                    const statusText = ToolStatusMap[phase.toolName] ?? 'Working...';
+                    return { name: statusText, type: activityType };
+                }
 
-        case 'responding':
-          return { name: 'Responding...', type: activityType };
+                case 'responding':
+                    return { name: 'Responding...', type: activityType };
 
-        default: {
-          // Exhaustiveness check - TypeScript will error if we miss a case
-          const _exhaustive: never = phase;
-          logger.error({ phase: _exhaustive }, 'Unknown presence phase');
-          return { name: 'Processing...', type: activityType };
-        }
-      }
-    },
-  };
+                default: {
+                    // Exhaustiveness check - TypeScript will error if we miss a case
+                    const _exhaustive: never = phase;
+                    logger.error({ phase: _exhaustive }, 'Unknown presence phase');
+                    return { name: 'Processing...', type: activityType };
+                }
+            }
+        },
+    };
 }

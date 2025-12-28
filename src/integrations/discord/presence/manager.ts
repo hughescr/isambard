@@ -14,43 +14,46 @@ import type { IdleStatusGenerator } from './status-generator-idle.js';
  * Interface for managing Discord presence state.
  */
 export interface PresenceManager {
-  /**
+    /**
    * Update presence based on current phase.
    * Debounced to prevent rate limiting.
    *
    * @param phase - Current activity phase
    */
-  updatePhase(phase: PresencePhase): Promise<void>;
+    updatePhase(phase: PresencePhase): Promise<void>
 
-  /**
+    /**
    * Start the presence manager (enables idle refresh if idle).
    */
-  start(): void;
+    start(): void
 
-  /**
+    /**
    * Stop the presence manager (clears all timers).
    */
-  stop(): void;
+    stop(): void
 }
 
 /**
  * Dependencies for creating a presence manager.
  */
 export interface PresenceManagerDeps {
-  /** Discord client for setting presence */
-  discordClient: DiscordClient;
-  /** Generator for active status text */
-  activeStatusGenerator: ActiveStatusGenerator;
-  /** Generator for idle status text */
-  idleStatusGenerator: IdleStatusGenerator;
-  /** Configuration for timing and rate limiting */
-  config: PresenceConfig;
-  /** Logger instance */
-  logger: {
-    debug: (message: any, ...args: any[]) => void;
-    info: (message: any, ...args: any[]) => void;
-    error: (message: any, ...args: any[]) => void;
-  };
+    /** Discord client for setting presence */
+    discordClient:         DiscordClient
+    /** Generator for active status text */
+    activeStatusGenerator: ActiveStatusGenerator
+    /** Generator for idle status text */
+    idleStatusGenerator:   IdleStatusGenerator
+    /** Configuration for timing and rate limiting */
+    config:                PresenceConfig
+    /** Logger instance */
+    logger: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
+        debug: (message: any, ...args: any[]) => void
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
+        info:  (message: any, ...args: any[]) => void
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
+        error: (message: any, ...args: any[]) => void
+    }
 }
 
 /**
@@ -86,137 +89,138 @@ export interface PresenceManagerDeps {
  * ```
  */
 export function createPresenceManager(
-  deps: PresenceManagerDeps,
+    deps: PresenceManagerDeps
 ): PresenceManager {
-  const {
-    discordClient,
-    activeStatusGenerator,
-    idleStatusGenerator,
-    config,
-    logger,
-  } = deps;
+    const {
+        discordClient,
+        activeStatusGenerator,
+        idleStatusGenerator,
+        config,
+        logger,
+    } = deps;
 
-  let currentPhase: PresencePhase | null = null; // Start uninitialized
-  let lastUpdateTime = 0;
-  let pendingUpdate: NodeJS.Timeout | null = null;
-  let idleRefreshInterval: NodeJS.Timeout | null = null;
+    let currentPhase: PresencePhase | null = null; // Start uninitialized
+    let lastUpdateTime = 0;
+    let pendingUpdate: NodeJS.Timeout | null = null;
+    let idleRefreshInterval: NodeJS.Timeout | null = null;
 
-  /**
+    /**
    * Actually update Discord presence (rate-limited).
    */
-  async function applyPresenceUpdate(activity: ActivitiesOptions): Promise<void> {
-    const now = Date.now();
-    const timeSinceLastUpdate = now - lastUpdateTime;
+    async function applyPresenceUpdate(activity: ActivitiesOptions): Promise<void> {
+        const now = Date.now();
+        const timeSinceLastUpdate = now - lastUpdateTime;
 
-    if (timeSinceLastUpdate < config.updateDebounceMs) {
-      logger.debug(
-        { timeSinceLastUpdate, debounceMs: config.updateDebounceMs },
-        'Skipping presence update due to rate limit',
-      );
-      return;
+        if(timeSinceLastUpdate < config.updateDebounceMs) {
+            logger.debug(
+                { timeSinceLastUpdate, debounceMs: config.updateDebounceMs },
+                'Skipping presence update due to rate limit'
+            );
+            return;
+        }
+
+        try {
+            discordClient.user?.setActivity(activity);
+            lastUpdateTime = now;
+            logger.info({ activity }, 'Updated Discord presence');
+        } catch (error) {
+            logger.error({ error, activity }, 'Failed to update Discord presence');
+        }
     }
 
-    try {
-      discordClient.user?.setActivity(activity);
-      lastUpdateTime = now;
-      logger.info({ activity }, 'Updated Discord presence');
-    } catch (error) {
-      logger.error({ error, activity }, 'Failed to update Discord presence');
-    }
-  }
-
-  /**
+    /**
    * Generate and apply idle status.
    */
-  async function refreshIdleStatus(): Promise<void> {
-    if (!currentPhase || currentPhase.type !== 'idle') {
-      return; // No longer idle
+    async function refreshIdleStatus(): Promise<void> {
+        if(currentPhase?.type !== 'idle') {
+            return; // No longer idle
+        }
+
+        const activity = await idleStatusGenerator.generate();
+        await applyPresenceUpdate(activity);
     }
 
-    const activity = await idleStatusGenerator.generate();
-    await applyPresenceUpdate(activity);
-  }
-
-  /**
+    /**
    * Start periodic idle status refresh.
    * Returns a promise that resolves after the first refresh completes.
    */
-  async function startIdleRefresh(): Promise<void> {
-    if (idleRefreshInterval) {
-      return; // Already running
+    async function startIdleRefresh(): Promise<void> {
+        if(idleRefreshInterval) {
+            return; // Already running
+        }
+
+        // Generate immediately and wait for it
+        await refreshIdleStatus();
+
+        // Then refresh periodically
+        idleRefreshInterval = setInterval(() => {
+            void refreshIdleStatus();
+        }, config.idleRefreshIntervalMs);
+
+        logger.debug({ intervalMs: config.idleRefreshIntervalMs }, 'Started idle status refresh');
     }
 
-    // Generate immediately and wait for it
-    await refreshIdleStatus();
-
-    // Then refresh periodically
-    idleRefreshInterval = setInterval(() => {
-      void refreshIdleStatus();
-    }, config.idleRefreshIntervalMs);
-
-    logger.debug({ intervalMs: config.idleRefreshIntervalMs }, 'Started idle status refresh');
-  }
-
-  /**
+    /**
    * Stop periodic idle status refresh.
    */
-  function stopIdleRefresh(): void {
-    if (idleRefreshInterval) {
-      clearInterval(idleRefreshInterval);
-      idleRefreshInterval = null;
-      logger.debug('Stopped idle status refresh');
+    function stopIdleRefresh(): void {
+        if(idleRefreshInterval) {
+            clearInterval(idleRefreshInterval);
+            idleRefreshInterval = null;
+            logger.debug('Stopped idle status refresh');
+        }
     }
-  }
 
-  return {
-    async updatePhase(phase: PresencePhase): Promise<void> {
-      logger.debug({ phase }, 'Updating presence phase');
+    return {
+        async updatePhase(phase: PresencePhase): Promise<void> {
+            logger.debug({ phase }, 'Updating presence phase');
 
-      const wasIdle = currentPhase?.type === 'idle';
-      const nowIdle = phase.type === 'idle';
+            const wasIdle = currentPhase?.type === 'idle';
+            const nowIdle = phase.type === 'idle';
 
-      currentPhase = phase;
+            currentPhase = phase;
 
-      // Cancel any pending debounced update
-      if (pendingUpdate) {
-        clearTimeout(pendingUpdate);
-        pendingUpdate = null;
-      }
+            // Cancel any pending debounced update
+            if(pendingUpdate) {
+                clearTimeout(pendingUpdate);
+                pendingUpdate = null;
+            }
 
-      // Handle idle state transitions
-      if (nowIdle && !wasIdle) {
-        await startIdleRefresh();
-        return; // refreshIdleStatus() will update presence
-      } else if (!nowIdle && wasIdle) {
-        stopIdleRefresh();
-      }
+            // Handle idle state transitions
+            if(nowIdle && !wasIdle) {
+                await startIdleRefresh();
+                return; // refreshIdleStatus() will update presence
+            }
+            if(!nowIdle && wasIdle) {
+                stopIdleRefresh();
+            }
 
-      // Generate status for active phases
-      if (!nowIdle) {
-        const activity = activeStatusGenerator.generate(phase);
+            // Generate status for active phases
+            if(!nowIdle) {
+                const activity = activeStatusGenerator.generate(phase);
 
-        // Debounce the update
-        pendingUpdate = setTimeout(() => {
-          void applyPresenceUpdate(activity);
-          pendingUpdate = null;
-        }, config.updateDebounceMs);
-      }
-    },
+                // Debounce the update
+                pendingUpdate = setTimeout(() => {
+                    void applyPresenceUpdate(activity);
+                    pendingUpdate = null;
+                }, config.updateDebounceMs);
+            }
+        },
 
-    start(): void {
-      logger.info('Starting presence manager');
-      if (currentPhase?.type === 'idle') {
-        void startIdleRefresh();
-      }
-    },
+        start(): void {
+            logger.info('Starting presence manager');
+            if(currentPhase?.type === 'idle') {
+                void startIdleRefresh();
+            }
+        },
 
-    stop(): void {
-      logger.info('Stopping presence manager');
-      stopIdleRefresh();
-      if (pendingUpdate) {
-        clearTimeout(pendingUpdate);
-        pendingUpdate = null;
-      }
-    },
-  };
+        stop(): void {
+            logger.info('Stopping presence manager');
+            stopIdleRefresh();
+            if(pendingUpdate) {
+                clearTimeout(pendingUpdate);
+                pendingUpdate = null;
+            }
+        },
+    };
 }

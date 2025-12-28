@@ -3,7 +3,7 @@ import config from '@hughescr/eslint-config-default';
 export default [
     ...config,
     {
-        ignores: ['dist/', 'node_modules/', '.stryker-tmp/', '.sst/', 'sst.config.ts', 'sst/**/*']
+        ignores: ['dist/', 'node_modules/', '.stryker-tmp/', '.sst/', 'sst.config.ts', 'sst/**/*', 'sst-env.d.ts']
     },
     {
         rules: {

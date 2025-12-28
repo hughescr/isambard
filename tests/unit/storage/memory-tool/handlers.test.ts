@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Mock functions don't have proper this binding */
+/* eslint-disable @typescript-eslint/only-throw-error -- Some tests intentionally throw non-Error values */
 import { describe, it, expect, beforeEach, spyOn } from 'bun:test';
 import { mock } from 'bun:test';
-import { split as _split, some as _some, includes as _includes, noop as _noop } from 'lodash';
+import { split as _split, some as _some, includes as _includes, noop as _noop, repeat as _repeat } from 'lodash';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';
 import { memoryPathSchema } from '@/storage/memory-tool/types';
@@ -1192,7 +1193,7 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should truncate content preview to 100 characters', async () => {
-            const longContent = 'A'.repeat(200);
+            const longContent = _repeat('A', 200);
             mockBackend.searchByTag = mock(async () => ({
                 items: [
                     {
@@ -1211,9 +1212,9 @@ describe('Memory Tool Handlers', () => {
 
             const result = await searchHandler(mockBackend, { tags: ['tag1'] });
 
-            expect(result).toContain('A'.repeat(100));
+            expect(result).toContain(_repeat('A', 100));
             expect(result).toContain('...');
-            expect(result).not.toContain('A'.repeat(101));
+            expect(result).not.toContain(_repeat('A', 101));
         });
 
         it('should return "No results found" when search returns empty', async () => {
@@ -1251,7 +1252,7 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should not truncate content preview at exactly 100 characters', async () => {
-            const exactContent = 'A'.repeat(100);
+            const exactContent = _repeat('A', 100);
             mockBackend.searchByTag = mock(async () => ({
                 items: [
                     {
@@ -1270,7 +1271,7 @@ describe('Memory Tool Handlers', () => {
 
             const result = await searchHandler(mockBackend, { tags: ['tag1'] });
 
-            expect(result).toContain('A'.repeat(100));
+            expect(result).toContain(_repeat('A', 100));
             expect(result).not.toContain('...');
         });
 
@@ -1895,7 +1896,6 @@ describe('Memory Tool Handlers', () => {
                     updatedAt:   '2025-01-01T00:00:00.000Z',
                 }));
                 mockBackend.delete = mock(async () => {
-                    // eslint-disable-next-line @typescript-eslint/no-throw-literal -- Testing non-Error throw
                     throw 'string error';
                 });
 

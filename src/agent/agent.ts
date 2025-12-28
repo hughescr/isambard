@@ -9,11 +9,37 @@ const DISCORD_MAX_MESSAGE_LENGTH = 2000;
 const TRUNCATION_BUFFER = 100; // Leave room for "..." and safety margin
 const MAX_RESPONSE_LENGTH = DISCORD_MAX_MESSAGE_LENGTH - TRUNCATION_BUFFER;
 
+/**
+ * Extract text content from an assistant message.
+ * @param message SDK message with potential content blocks
+ * @returns Extracted text or empty string
+ */
+function extractAssistantText(message: { type: string, message?: { content?: unknown } }): string {
+    if(message.type !== 'assistant') {
+        return '';
+    }
+
+    interface ContentBlock {
+        type:  string
+        text?: string
+    }
+    const content = message.message?.content as ContentBlock[] | undefined;
+    const textBlocks = _.filter(content ?? [], { type: 'text' });
+    const text = _.chain(textBlocks).map('text').compact().join('\n').trim().value();
+    return text;
+}
+
+interface MCPServerConfig {
+    command: string
+    args:    string[]
+    env?:    Record<string, string>
+}
+
 export interface ClaudeAgentOptions {
     /** Context builder for loading memory (core identity + recent context) */
-    contextBuilder?: ContextBuilder
+    contextBuilder?:  ContextBuilder
     /** Memory MCP server instance for deep memory access */
-    memoryMcpServer?: any
+    memoryMcpServer?: MCPServerConfig
 }
 
 export interface ClaudeAgent {
@@ -67,7 +93,7 @@ Always check your memories about users before responding to personalize your int
                 if(contextBuilder) {
                     const recentMemories = await contextBuilder.loadRecentContext(context.userId, 3);
                     if(recentMemories.length > 0) {
-                        contextPrefix = `[Recent context]\n${recentMemories.map(m => `- ${m}`).join('\n')}\n\n`;
+                        contextPrefix = `[Recent context]\n${_.map(recentMemories, m => `- ${m}`).join('\n')}\n\n`;
                     }
                 }
 
@@ -76,12 +102,12 @@ Always check your memories about users before responding to personalize your int
 
                 // 4. Query with memory MCP server
                 const response = query({
-                    prompt: userMessage,
+                    prompt:  userMessage,
                     options: {
-                        model:         CLAUDE_MODEL,
+                        model:        CLAUDE_MODEL,
                         systemPrompt,
-                        mcpServers:    memoryMcpServer ? { memory: memoryMcpServer } : undefined,
-                        allowedTools:  memoryMcpServer
+                        mcpServers:   memoryMcpServer ? { memory: memoryMcpServer } : undefined,
+                        allowedTools: memoryMcpServer
                             ? ['mcp__memory__view', 'mcp__memory__store', 'mcp__memory__search']
                             : [],
                         permissionMode: 'bypassPermissions',
@@ -97,11 +123,9 @@ Always check your memories about users before responding to personalize your int
                         onStreamEvent(message as AgentStreamEvent);
                     }
 
-                    if(message.type === 'assistant') {
-                        // Keep latest assistant message (not intermediate thinking)
-                        const textBlocks = message.message?.content?.filter((b: any) => b.type === 'text') || [];
-                        const text = textBlocks.map((b: any) => b.text).join('\n').trim();
-                        if(text) lastAssistantText = text;
+                    const text = extractAssistantText(message);
+                    if(text) {
+                        lastAssistantText = text;
                     }
                 }
 

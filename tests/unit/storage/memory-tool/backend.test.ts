@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
-import { assign as _assign, isError as _isError } from 'lodash';
+import { assign as _assign, isError as _isError, some as _some, filter as _filter, startsWith as _startsWith, size as _size } from 'lodash';
 import {
     DynamoDBDocumentClient,
     GetCommand,
@@ -1324,6 +1324,7 @@ describe('MemoryToolBackend', () => {
             const result = await backend.getAutoLoadItems();
 
             expect(result.length).toBeGreaterThan(0);
+            // eslint-disable-next-line lodash/prefer-lodash-method -- Native array method is clearer
             expect(result.some(item => item.path === '/identity/values.md' as MemoryPath)).toBe(true);
         });
 
@@ -1352,6 +1353,7 @@ describe('MemoryToolBackend', () => {
             const result = await backend.getAutoLoadItems();
 
             expect(result.length).toBeGreaterThan(0);
+            // eslint-disable-next-line lodash/prefer-lodash-method -- Native array method is clearer
             expect(result.some(item => item.path === '/state/context.md' as MemoryPath)).toBe(true);
         });
 
@@ -1373,6 +1375,7 @@ describe('MemoryToolBackend', () => {
 
             const result = await backend.getAutoLoadItems({ maxIdentityItems: 3 });
 
+            // eslint-disable-next-line lodash/prefer-lodash-method -- Native array method is clearer
             const identityCount = result.filter(item => item.path.startsWith('/identity/' as MemoryPath)).length;
             expect(identityCount).toBe(3);
         });
@@ -1395,6 +1398,7 @@ describe('MemoryToolBackend', () => {
 
             const result = await backend.getAutoLoadItems({ maxStateItems: 3 });
 
+            // eslint-disable-next-line lodash/prefer-lodash-method -- Native array method is clearer
             const stateCount = result.filter(item => item.path.startsWith('/state/' as MemoryPath)).length;
             expect(stateCount).toBe(3);
         });
@@ -1443,7 +1447,9 @@ describe('MemoryToolBackend', () => {
             const result = await backend.getAutoLoadItems();
 
             expect(result).toHaveLength(2);
+            // eslint-disable-next-line lodash/prefer-lodash-method -- Native array method is clearer
             expect(result.some(item => item.path === '/identity/values.md' as MemoryPath)).toBe(true);
+            // eslint-disable-next-line lodash/prefer-lodash-method -- Native array method is clearer
             expect(result.some(item => item.path === '/state/context.md' as MemoryPath)).toBe(true);
         });
 
@@ -1954,7 +1960,7 @@ describe('MemoryToolBackend', () => {
             expect(deletedCount).toBe(0);
             const deleteCalls = ddbMock.commandCalls(DeleteCommand);
             // Filter to only count DeleteCommands after the QueryCommand
-            expect(deleteCalls.filter((_, idx) => idx >= ddbMock.commandCalls(QueryCommand).length - 1).length).toBe(0);
+            expect(_filter(deleteCalls, (_, idx) => idx >= ddbMock.commandCalls(QueryCommand).length - 1).length).toBe(0);
         });
 
         it('should return 0 when no versions exist', async () => {
@@ -2028,7 +2034,7 @@ describe('MemoryToolBackend', () => {
             const deleteCalls = ddbMock.commandCalls(DeleteCommand);
             // No deletes should occur after the query
             const queryCalls = ddbMock.commandCalls(QueryCommand);
-            expect(deleteCalls.filter((_, idx) => idx >= queryCalls.length - 1).length).toBe(0);
+            expect(_filter(deleteCalls, (_, idx) => idx >= queryCalls.length - 1).length).toBe(0);
         });
     });
 

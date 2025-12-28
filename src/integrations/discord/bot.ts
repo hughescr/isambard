@@ -1,6 +1,7 @@
 import type { Client } from 'discord.js';
 import { ActivityType } from 'discord.js';
 import type { Anthropic } from '@anthropic-ai/sdk';
+import { logger } from '@hughescr/logger';
 import type { DiscordConfig } from '@/config/schemas';
 import type { DiscordMessageContext, UserId, ChannelId } from './types';
 import type { ClaudeAgent } from '@/agent/agent';
@@ -10,7 +11,7 @@ import {
     createActiveStatusGenerator,
     createIdleStatusGenerator,
     createPresenceManager,
-    type PresenceManager,
+    type PresenceManager
 } from './presence';
 
 /**
@@ -123,28 +124,21 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
         // Create presence manager if optional deps provided
         if(anthropicClient && identityContext && config.presence) {
-            const logger = {
-                debug: (message: any, ...args: any[]) => console.debug(message, ...args),
-                info:  (message: any, ...args: any[]) => console.log(message, ...args),
-                warn:  (message: any, ...args: any[]) => console.warn(message, ...args),
-                error: (message: any, ...args: any[]) => console.error(message, ...args),
-            };
-
             const activeStatusGenerator = createActiveStatusGenerator({
                 activityType: ActivityType.Custom,
                 logger,
             });
 
             const idleStatusGenerator = createIdleStatusGenerator({
-                anthropic:       anthropicClient,
+                anthropic:    anthropicClient,
                 logger,
-                activityType:    ActivityType.Custom,
+                activityType: ActivityType.Custom,
                 identityContext,
             });
 
             presenceManager = createPresenceManager({
-                discordClient:          readyClient,
-                config:                 config.presence,
+                discordClient: readyClient,
+                config:        config.presence,
                 activeStatusGenerator,
                 idleStatusGenerator,
                 logger,

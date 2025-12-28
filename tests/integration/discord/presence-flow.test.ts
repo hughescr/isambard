@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { constant as _constant } from 'lodash';
 import { ActivityType } from 'discord.js';
 import type { Client, Message, TextChannel } from 'discord.js';
 import type { Anthropic } from '@anthropic-ai/sdk';
@@ -15,7 +16,7 @@ import { createPresenceManager } from '@/integrations/discord/presence/manager';
 import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
 import { createMessageHandler } from '@/integrations/discord/handlers';
 import type { ClaudeAgent } from '@/agent/agent';
-import type { DiscordMessageContext, ChannelId, UserId } from '@/integrations/discord/types';
+import type { DiscordMessageContext, ChannelId, UserId, GuildId } from '@/integrations/discord/types';
 import type { AgentStreamEvent } from '@/agent/types';
 
 describe('Discord Presence Flow (Integration)', () => {
@@ -83,7 +84,7 @@ describe('Discord Presence Flow (Integration)', () => {
         // Create presence manager with real implementation
         const presenceManager = createPresenceManager({
             discordClient: mockDiscordClient,
-            config: {
+            config:        {
                 updateDebounceMs:      100,
                 idleTimeoutMs:         1000,
                 idleRefreshIntervalMs: 5000,
@@ -131,19 +132,12 @@ describe('Discord Presence Flow (Integration)', () => {
             }),
         } as ClaudeAgent;
 
-        // Create status middleware
-        const statusMiddleware = createStatusMiddleware({
-            presenceManager,
-            agent: mockAgent,
-            logger,
-        });
-
         // Don't use onMessage directly if presenceManager and agent are provided
         // The middleware will call agent.chat instead
         const messageHandler = createMessageHandler({
             monitoredChannelIds: ['channel-id' as ChannelId],
             botUserId:           'bot-id' as UserId,
-            onMessage:           mock(async () => 'test response'), // This won't be called when middleware is used
+            onMessage:           mock(_constant(Promise.resolve('test response'))), // This won't be called when middleware is used
             presenceManager,
             agent:               mockAgent,
         });
@@ -152,6 +146,7 @@ describe('Discord Presence Flow (Integration)', () => {
         await messageHandler(mockMessage);
 
         // Verify typing indicator started
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest-style mocking requires accessing method reference
         expect(mockChannel.sendTyping).toHaveBeenCalled();
 
         // Verify agent was called
@@ -188,7 +183,7 @@ describe('Discord Presence Flow (Integration)', () => {
         // Create presence manager
         const presenceManager = createPresenceManager({
             discordClient: mockDiscordClient,
-            config: {
+            config:        {
                 updateDebounceMs:      100,
                 idleTimeoutMs:         1000,
                 idleRefreshIntervalMs: 5000,
@@ -216,9 +211,9 @@ describe('Discord Presence Flow (Integration)', () => {
 
         // Process message - should not throw
         const context: DiscordMessageContext = {
-            guildId:   'guild-id' as any,
-            channelId: 'channel-id' as any,
-            userId:    'user-id' as any,
+            guildId:   'guild-id' as GuildId,
+            channelId: 'channel-id' as ChannelId,
+            userId:    'user-id' as UserId,
             messageId: 'message-id',
             content:   'Hello',
             timestamp: new Date().toISOString(),
@@ -252,16 +247,18 @@ describe('Discord Presence Flow (Integration)', () => {
         const messageHandler = createMessageHandler({
             monitoredChannelIds: ['channel-id' as ChannelId],
             botUserId:           'bot-id' as UserId,
-            onMessage:           mock(async () => 'Response without presence'),
+            onMessage:           mock(_constant(Promise.resolve('Response without presence'))),
         });
 
         // Process message
         await messageHandler(testMessage);
 
         // Should still work and reply
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest-style mocking requires accessing method reference
         expect(testMessage.reply).toHaveBeenCalledWith('Response without presence');
 
         // No presence updates should occur (client wasn't even provided)
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest-style mocking requires accessing method reference
         expect(mockDiscordClient.user?.setPresence).not.toHaveBeenCalled();
     });
 
@@ -289,7 +286,7 @@ describe('Discord Presence Flow (Integration)', () => {
         // Create presence manager with SHORT idle timeout for testing
         const presenceManager = createPresenceManager({
             discordClient: mockDiscordClient,
-            config: {
+            config:        {
                 updateDebounceMs:      50,
                 idleTimeoutMs:         200, // Very short for testing
                 idleRefreshIntervalMs: 5000,

@@ -157,7 +157,7 @@ export class MemoryToolKeyGenerator {
    * // }
    * ```
    */
-    static createVersionKeys(path: MemoryPath, version: number, timestamp: string): { PK: string; SK: string } {
+    static createVersionKeys(path: MemoryPath, version: number, timestamp: string): { PK: string, SK: string } {
         const lastSlashIndex = path.lastIndexOf('/');
         const parentPath = lastSlashIndex === 0 ? '/' : path.slice(0, lastSlashIndex);
 

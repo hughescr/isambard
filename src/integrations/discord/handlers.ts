@@ -1,4 +1,6 @@
 import type { Client, Message } from 'discord.js';
+import _ from 'lodash';
+import { logger } from '@hughescr/logger';
 import type { DiscordMessageContext, UserId, ChannelId } from './types';
 import type { PresenceManager } from './presence';
 import type { ClaudeAgent } from '@/agent/agent';
@@ -21,11 +23,9 @@ import { createStatusMiddleware } from './presence';
 export function createReadyHandler(): (client: Client) => void {
     return (client: Client) => {
         if(client.user) {
-            // eslint-disable-next-line no-console -- Bot startup logging
-            console.log(`Discord bot ready: Logged in as ${client.user.tag}`);
+            logger.info(`Discord bot ready: Logged in as ${client.user.tag}`);
         } else {
-            // eslint-disable-next-line no-console -- Bot startup logging
-            console.log('Discord bot ready: Logged in (user not available)');
+            logger.info('Discord bot ready: Logged in (user not available)');
         }
     };
 }
@@ -45,8 +45,8 @@ export function createReadyHandler(): (client: Client) => void {
  */
 export function createErrorHandler(): (error: Error) => void {
     return (error: Error) => {
-        // eslint-disable-next-line no-console -- Error logging
-        console.error(`Discord client error: ${error.message}`, error);
+        // Use object spread to satisfy logger typing while maintaining structured logging
+        logger.error({ error, msg: `Discord client error: ${error.message}` });
     };
 }
 
@@ -123,11 +123,7 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         ? createStatusMiddleware({
             presenceManager,
             agent,
-            logger: {
-                debug: (message: any, ...args: any[]) => console.debug(message, ...args),
-                info:  (message: any, ...args: any[]) => console.log(message, ...args),
-                error: (message: any, ...args: any[]) => console.error(message, ...args),
-            },
+            logger,
         })
         : null;
 
@@ -165,8 +161,10 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
 
         try {
             // Use status middleware if available, otherwise call onMessage directly
+            // Discord.js channels implement sendTyping() for typing indicator support
+            const channel = message.channel as { sendTyping(): Promise<void> };
             const reply = statusMiddleware
-                ? await statusMiddleware(context, message.channel as any)
+                ? await statusMiddleware(context, channel)
                 : await onMessage(context);
 
             // Reply if callback returned a string
@@ -174,17 +172,15 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
                 try {
                     await message.reply(reply);
                 } catch (replyError) {
-                    // eslint-disable-next-line lodash/prefer-lodash-typecheck -- Error type guard
-                    const errorMessage = replyError instanceof Error ? replyError.message : String(replyError);
-                    // eslint-disable-next-line no-console -- Error logging
-                    console.error(`Failed to reply to message ${message.id}: ${errorMessage}`, replyError);
+                    const err = _.isError(replyError) ? replyError : new Error(String(replyError));
+                    // Use object spread to satisfy logger typing while maintaining structured logging
+                    logger.error({ error: err, messageId: message.id, msg: `Failed to reply to message ${message.id}: ${err.message}` });
                 }
             }
         } catch (error) {
-            // eslint-disable-next-line lodash/prefer-lodash-typecheck -- Error type guard
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            // eslint-disable-next-line no-console -- Error logging
-            console.error(`Error processing message ${message.id}: ${errorMessage}`, error);
+            const err = _.isError(error) ? error : new Error(String(error));
+            // Use object spread to satisfy logger typing while maintaining structured logging
+            logger.error({ error: err, messageId: message.id, msg: `Error processing message ${message.id}: ${err.message}` });
         }
     };
 }

@@ -11,11 +11,11 @@ import { DiscordIntegrationError } from '../errors.js';
  * Extends the Discord integration error hierarchy.
  */
 export class PresenceError extends DiscordIntegrationError {
-  constructor(message: string, code = 'PRESENCE_ERROR', cause?: unknown) {
-    super(message, code);
-    this.name = 'PresenceError';
-    this.cause = cause;
-  }
+    constructor(message: string, code = 'PRESENCE_ERROR', cause?: unknown) {
+        super(message, code);
+        this.name = 'PresenceError';
+        this.cause = cause;
+    }
 }
 
 /**
@@ -23,8 +23,8 @@ export class PresenceError extends DiscordIntegrationError {
  * This includes failures from the AI status generator (Haiku).
  */
 export class StatusGenerationError extends PresenceError {
-  constructor(message: string, cause?: unknown) {
-    super(message, 'STATUS_GENERATION_ERROR', cause);
-    this.name = 'StatusGenerationError';
-  }
+    constructor(message: string, cause?: unknown) {
+        super(message, 'STATUS_GENERATION_ERROR', cause);
+        this.name = 'StatusGenerationError';
+    }
 }

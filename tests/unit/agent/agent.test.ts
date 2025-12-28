@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
+/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any, @typescript-eslint/await-thenable -- Test mocks require unsafe type operations */
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import _ from 'lodash';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
@@ -25,15 +25,15 @@ describe('createClaudeAgent', () => {
 
         // Create mock context builder
         mockContextBuilder = {
-            loadCoreIdentity:   mock(async () => ''),
-            loadRecentContext:  mock(async () => []),
-            buildSystemContext: mock(async () => ''),
+            loadCoreIdentity:   mock(_.constant(Promise.resolve(''))),
+            loadRecentContext:  mock(_.constant(Promise.resolve([]))),
+            buildSystemContext: mock(_.constant(Promise.resolve(''))),
             // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function
             recordAccess:       mock(async () => {}),
         };
 
         // Mock query() to return an async generator with assistant message
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock needs flexible typing
+
         querySpy = spyOn(agentSdk, 'query').mockImplementation((_params: any): any => {
             async function* mockGenerator() {
                 yield {
@@ -127,7 +127,7 @@ describe('createClaudeAgent', () => {
         const mockMcpServer = { name: 'memory', version: '1.0.0' };
 
         const agent = createClaudeAgent({
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any -- Mock MCP server
+
             memoryMcpServer: mockMcpServer as any,
         });
 
@@ -147,9 +147,8 @@ describe('createClaudeAgent', () => {
 
         await agent.chat(mockMessageContext);
 
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Accessing mock call args
         const callArgs = querySpy.mock.calls[0][0];
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing options
+
         expect(callArgs.options.mcpServers).toBeUndefined();
     });
 
@@ -448,7 +447,7 @@ describe('createClaudeAgent', () => {
             const mockMcpServer = { name: 'memory', version: '1.0.0' };
 
             const agent = createClaudeAgent({
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any -- Mock MCP server
+
                 memoryMcpServer: mockMcpServer as any,
             });
 
@@ -830,7 +829,7 @@ describe('createClaudeAgent', () => {
             querySpy.mockImplementation((_params: any): any => {
                 async function* mockGenerator() {
                     yield {
-                        type: 'assistant' as const,
+                        type:    'assistant' as const,
                         message: {
                             content: [
                                 {
@@ -841,11 +840,11 @@ describe('createClaudeAgent', () => {
                         },
                     };
                     yield {
-                        type: 'tool_progress' as const,
+                        type:      'tool_progress' as const,
                         tool_name: 'memory_view',
                     };
                     yield {
-                        type: 'result' as const,
+                        type:    'result' as const,
                         subtype: 'success',
                     };
                 }
@@ -868,9 +867,9 @@ describe('createClaudeAgent', () => {
             querySpy.mockImplementation((_params: any): any => {
                 async function* mockGenerator() {
                     yield {
-                        type: 'tool_progress' as const,
-                        tool_name: 'mcp__memory__search',
-                        tool_use_id: 'tool_123',
+                        type:                 'tool_progress' as const,
+                        tool_name:            'mcp__memory__search',
+                        tool_use_id:          'tool_123',
                         elapsed_time_seconds: 1.5,
                     };
                 }
@@ -883,9 +882,9 @@ describe('createClaudeAgent', () => {
             });
 
             expect(receivedEvent).toEqual({
-                type: 'tool_progress',
-                tool_name: 'mcp__memory__search',
-                tool_use_id: 'tool_123',
+                type:                 'tool_progress',
+                tool_name:            'mcp__memory__search',
+                tool_use_id:          'tool_123',
                 elapsed_time_seconds: 1.5,
             });
         });

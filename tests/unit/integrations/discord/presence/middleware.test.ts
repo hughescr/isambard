@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @stylistic/max-statements-per-line, @typescript-eslint/no-unsafe-argument -- Test mocks */
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { constant as _constant } from 'lodash';
 import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
 import type { PresencePhase } from '@/integrations/discord/presence/types';
 import type { AgentStreamEvent } from '@/agent/types';
@@ -20,7 +22,7 @@ describe('StatusMiddleware', () => {
         };
 
         mockAgent = {
-            chat: mock(async () => 'Test response'),
+            chat: mock(_constant(Promise.resolve('Test response'))),
         };
 
         mockLogger = {
@@ -286,7 +288,7 @@ describe('StatusMiddleware', () => {
         it('should work with agents that do not support stream callbacks', async () => {
             // Agent that doesn't accept onEvent parameter
             const legacyAgent = {
-                chat: mock(async (ctx: DiscordMessageContext) => 'Response'),
+                chat: mock(_constant(Promise.resolve('Response'))),
             };
 
             const middleware = createStatusMiddleware({

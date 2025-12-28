@@ -193,9 +193,9 @@ describe('createContextBuilder', () => {
             // Should be truncated because content exceeds 400 chars
             expect(context).toContain('...');
             // Verify truncation happens at maxChars - 3
-            const identitySection = context.split('## Current State')[0];
-            const identityContent = identitySection.split('## Identity\n\n')[1] ?? '';
-            expect(identityContent.length).toBe(400); // 397 chars + '...' (3 chars)
+            const identitySection = _.split(context, '## Current State')[0];
+            const identityContent = _.split(identitySection, '## Identity\n\n')[1] ?? '';
+            expect(_.size(identityContent)).toBe(400); // 397 chars + '...' (3 chars)
         });
 
         it('should use exact token multiplication for character limits', async () => {
@@ -396,8 +396,8 @@ describe('createContextBuilder', () => {
             // State section should NOT appear because array is undefined
             expect(context).not.toContain('## Current State');
             // Verify we get header + identity only
-            const lines = context.split('\n\n');
-            expect(lines.length).toBe(3); // header, Identity, content
+            const lines = _.split(context, '\n\n');
+            expect(_.size(lines)).toBe(3); // header, Identity, content
         });
 
         it('should verify both grouped.identity exists AND has length > 0', async () => {
@@ -518,7 +518,7 @@ describe('createContextBuilder', () => {
             // Should not have empty string as a section header
             expect(context).not.toContain('## \n');
             // Count sections - should be exactly 1 (Identity)
-            const sectionCount = (context.match(/^## /gm) || []).length;
+            const sectionCount = (context.match(/^## /gm) ?? []).length;
             expect(sectionCount).toBe(1);
         });
 
@@ -548,7 +548,7 @@ describe('createContextBuilder', () => {
             const context = await contextBuilder.buildSystemContext();
 
             // Count sections - should be exactly 2
-            const sectionCount = (context.match(/^## /gm) || []).length;
+            const sectionCount = (context.match(/^## /gm) ?? []).length;
             expect(sectionCount).toBe(2);
             expect(context).toContain('## Identity');
             expect(context).toContain('## Current State');
@@ -580,13 +580,13 @@ describe('createContextBuilder', () => {
             const context = await contextBuilder.buildSystemContext();
 
             // Extract identity content
-            const identitySection = context.split('## Identity\n\n')[1] ?? '';
+            const identitySection = _.split(context, '## Identity\n\n')[1] ?? '';
 
             // Should be truncated to exactly 400 chars (397 + '...')
-            expect(identitySection.length).toBe(400);
-            expect(identitySection.endsWith('...')).toBe(true);
+            expect(_.size(identitySection)).toBe(400);
+            expect(_.endsWith(identitySection, '...')).toBe(true);
             // The content before ... should be exactly maxChars - 3
-            expect(identitySection.slice(0, -3).length).toBe(397);
+            expect(_.size(identitySection.slice(0, -3))).toBe(397);
         });
 
         it('should not truncate when content length equals maxChars exactly', async () => {
@@ -641,9 +641,9 @@ describe('createContextBuilder', () => {
 
             // Should be truncated using default limit (300 tokens = 1200 chars)
             expect(context).toContain('...');
-            const stateSection = context.split('## Current State\n\n')[1] ?? '';
+            const stateSection = _.split(context, '## Current State\n\n')[1] ?? '';
             // Should be truncated to 1200 chars (default 300 tokens * 4)
-            expect(stateSection.length).toBe(1200);
+            expect(_.size(stateSection)).toBe(1200);
         });
 
         it('should use provided maxStateTokens when explicitly set to 0', async () => {
@@ -669,9 +669,9 @@ describe('createContextBuilder', () => {
 
             // With 0 tokens (0 chars), content should be truncated with '...'
             // The path:content will still be included but truncated
-            const stateSection = context.split('## Current State\n\n')[1] ?? '';
+            const stateSection = _.split(context, '## Current State\n\n')[1] ?? '';
             expect(stateSection).toContain('...');
-            expect(stateSection.endsWith('...')).toBe(true);
+            expect(_.endsWith(stateSection, '...')).toBe(true);
         });
     });
 
@@ -706,7 +706,7 @@ describe('createContextBuilder', () => {
 
             expect(backend.update).toHaveBeenCalledWith(
                 path,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
+
                 expect.objectContaining({
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
                     metadata: expect.objectContaining({
@@ -748,7 +748,7 @@ describe('createContextBuilder', () => {
 
             expect(backend.update).toHaveBeenCalledWith(
                 path,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
+
                 expect.objectContaining({
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
                     metadata: expect.objectContaining({
@@ -853,7 +853,7 @@ describe('createContextBuilder', () => {
             // Should initialize accessCount to 1
             expect(backend.update).toHaveBeenCalledWith(
                 path,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
+
                 expect.objectContaining({
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
                     metadata: expect.objectContaining({
@@ -896,7 +896,7 @@ describe('createContextBuilder', () => {
             // Should treat non-numeric as 0 and set to 1
             expect(backend.update).toHaveBeenCalledWith(
                 path,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
+
                 expect.objectContaining({
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
                     metadata: expect.objectContaining({
@@ -940,7 +940,7 @@ describe('createContextBuilder', () => {
             // Should initialize accessCount to 1 and preserve other metadata
             expect(backend.update).toHaveBeenCalledWith(
                 path,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
+
                 expect.objectContaining({
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
                     metadata: expect.objectContaining({
@@ -987,7 +987,7 @@ describe('createContextBuilder', () => {
             // Should initialize accessCount to 1
             expect(backend.update).toHaveBeenCalledWith(
                 path,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
+
                 expect.objectContaining({
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
                     metadata: expect.objectContaining({
@@ -1075,10 +1075,10 @@ describe('createContextBuilder', () => {
             const identity = await contextBuilder.loadCoreIdentity();
 
             // Should be truncated to maxChars - 3 + '...'
-            expect(identity.length).toBe(400);
-            expect(identity.endsWith('...')).toBe(true);
+            expect(_.size(identity)).toBe(400);
+            expect(_.endsWith(identity, '...')).toBe(true);
             // Verify exactly 3 chars for ellipsis
-            expect(identity.slice(-3)).toBe('...');
+            expect(_.slice(identity, -3).join('')).toBe('...');
         });
 
         it('should use exactly slice(0, maxIdentityChars - 3) for truncation', async () => {
@@ -1195,8 +1195,8 @@ describe('createContextBuilder', () => {
             const identity = await contextBuilder.loadCoreIdentity();
 
             // Even 1 char over should trigger truncation
-            expect(identity.length).toBe(400);
-            expect(identity.endsWith('...')).toBe(true);
+            expect(_.size(identity)).toBe(400);
+            expect(_.endsWith(identity, '...')).toBe(true);
         });
 
         it('should extract content from each item correctly', async () => {

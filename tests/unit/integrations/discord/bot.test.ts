@@ -295,11 +295,13 @@ describe('createDiscordBot', () => {
             const mockAgent = { chat: mock(async () => 'response') };
 
             const bot = createDiscordBot({
-                config:            mockConfig,
-                onMessage:         mockOnMessage,
-                anthropicClient:   mockAnthropicClient as any,
-                identityContext:   'Test identity',
-                agent:             mockAgent as any,
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
+                anthropicClient: mockAnthropicClient as any,
+                identityContext: 'Test identity',
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
+                agent:           mockAgent as any,
             });
 
             expect(bot).toBeDefined();
@@ -320,6 +322,7 @@ describe('createDiscordBot', () => {
             const bot = createDiscordBot({
                 config:    mockConfig,
                 onMessage: mockOnMessage,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
                 agent:     mockAgent as any,
             });
 

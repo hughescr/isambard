@@ -69,19 +69,19 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             }
 
             // Format and truncate if needed
-            const content = _map(result.items, item => item.content).join('\n\n');
+            const content = _map(result.items, 'content').join('\n\n');
             if(content.length > maxIdentityChars) {
                 return content.slice(0, maxIdentityChars - 3) + '...';
             }
             return content;
         },
 
-        loadRecentContext: async (userId: string, limit: number = 3): Promise<string[]> => {
+        loadRecentContext: async (userId: string, limit = 3): Promise<string[]> => {
             // Load recent state/events for this user via tag search
             const result = await backend.searchByTag(`user:${userId}`, undefined, { limit });
 
             // Return in reverse chronological order (most recent first)
-            return result.items.map(item => item.content);
+            return _map(result.items, 'content');
         },
 
         buildSystemContext: async (): Promise<string> => {

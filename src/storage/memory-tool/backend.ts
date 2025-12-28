@@ -1,5 +1,5 @@
 import { DynamoDBDocumentClient, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
-import { map as _map, isObject as _isObject, orderBy as _orderBy, take as _take, drop as _drop } from 'lodash';
+import { map as _map, isObject as _isObject, orderBy as _orderBy, take as _take, drop as _drop, chain as _chain } from 'lodash';
 import { BaseRepository, type DynamoDBKey } from '../repositories/base';
 import {
     memoryToolItemSchema,
@@ -355,18 +355,16 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
             lastAccessed: (item.metadata?.lastAccessed as string | undefined) ?? item.updatedAt,
         }));
 
-        const sortedItems = _take(
-            _orderBy(
-                enrichedItems,
+        stateItems = _chain(enrichedItems)
+            .orderBy(
                 // Stryker disable next-line all: These string literals define sort fields and order
                 ['accessCount', 'lastAccessed'],
                 // Stryker disable next-line all: These string literals define sort order (descending)
                 ['desc', 'desc']
-            ),
-            maxStateItems
-        );
-
-        stateItems = _map(sortedItems, ({ item }) => item);
+            )
+            .take(maxStateItems)
+            .map(({ item }) => item)
+            .value();
 
         return [...identityItems, ...stateItems];
     }
@@ -425,7 +423,7 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         // Stryker disable next-line ArrayDeclaration: Empty array is correct default for missing Items
         const items = (result.Items ?? []) as MemoryToolItem[];
 
-        return _map(items, item => {
+        return _map(items, (item) => {
             const versionInfo: VersionInfo = {
                 version:   item.version,
                 updatedAt: item.updatedAt,
@@ -463,7 +461,7 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         );
 
         // Stryker disable next-line ArrayDeclaration: Empty array is correct default for missing Items
-        const items = result.Items ?? [];
+        const items = (result.Items ?? []) as MemoryToolItem[];
 
         // Stryker disable next-line all: Need exact <= comparison to handle both < and = cases
         if(items.length <= keepCount) {

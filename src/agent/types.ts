@@ -11,28 +11,28 @@
  * These events are emitted as the agent processes a query, allowing
  * external systems to react to different stages of processing.
  */
-export type AgentStreamEvent =
-  | AssistantEvent
-  | ToolProgressEvent
-  | ToolResultEvent
-  | ResultEvent
-  | UserEvent;
+export type AgentStreamEvent
+    = | AssistantEvent
+      | ToolProgressEvent
+      | ToolResultEvent
+      | ResultEvent
+      | UserEvent;
 
 /**
  * Event emitted when the agent generates assistant content.
  * This can include thinking (no delta) or actual response text (with delta).
  */
 export interface AssistantEvent {
-  type: 'assistant';
-  delta?: {
-    text?: string;
-  };
-  message?: {
-    content?: Array<{
-      type: string;
-      text?: string;
-    }>;
-  };
+    type:   'assistant'
+    delta?: {
+        text?: string
+    }
+    message?: {
+        content?: {
+            type:  string
+            text?: string
+        }[]
+    }
 }
 
 /**
@@ -40,10 +40,10 @@ export interface AssistantEvent {
  * Includes the tool name and ID for tracking long-running operations.
  */
 export interface ToolProgressEvent {
-  type: 'tool_progress';
-  tool_use_id?: string;
-  tool_name?: string;
-  elapsed_time_seconds?: number;
+    type:                  'tool_progress'
+    tool_use_id?:          string
+    tool_name?:            string
+    elapsed_time_seconds?: number
 }
 
 /**
@@ -51,9 +51,9 @@ export interface ToolProgressEvent {
  * Includes the tool name and result.
  */
 export interface ToolResultEvent {
-  type: 'tool_result';
-  tool_use_id?: string;
-  tool_name?: string;
+    type:         'tool_result'
+    tool_use_id?: string
+    tool_name?:   string
 }
 
 /**
@@ -61,16 +61,17 @@ export interface ToolResultEvent {
  * Includes usage statistics and final status.
  */
 export interface ResultEvent {
-  type: 'result';
-  subtype?: 'success' | 'error_during_execution' | 'error_max_turns';
-  duration_ms?: number;
-  total_cost_usd?: number;
+    type:            'result'
+    subtype?:        'success' | 'error_during_execution' | 'error_max_turns'
+    duration_ms?:    number
+    total_cost_usd?: number
 }
 
 /**
  * Event emitted for user messages (echoed back).
  */
 export interface UserEvent {
-  type: 'user';
-  message?: any;
+    type:     'user'
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Agent SDK message type is not exported
+    message?: any
 }

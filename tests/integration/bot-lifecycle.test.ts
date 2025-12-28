@@ -188,11 +188,11 @@ describe('Bot Lifecycle Integration', () => {
 
             expect(createDiscordBotSpy).toHaveBeenCalled();
             expect(createDiscordBotSpy).toHaveBeenCalledWith({
-                config:            mockDiscordConfig,
-                onMessage:         expect.any(Function),
-                anthropicClient:   expect.any(Object),
-                identityContext:   expect.any(String),
-                agent:             mockClaudeAgent,
+                config:          mockDiscordConfig,
+                onMessage:       expect.any(Function),
+                anthropicClient: expect.any(Object),
+                identityContext: expect.any(String),
+                agent:           mockClaudeAgent,
             });
         });
     });

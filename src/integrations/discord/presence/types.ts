@@ -22,11 +22,11 @@ import type { ActivitiesOptions } from 'discord.js';
  * const toolPhase: PresencePhase = { type: 'using_tool', toolName: 'memory_tool', startedAt: new Date() };
  * ```
  */
-export type PresencePhase =
-  | { type: 'idle'; since: Date }
-  | { type: 'thinking'; startedAt: Date }
-  | { type: 'using_tool'; toolName: string; startedAt: Date }
-  | { type: 'responding'; startedAt: Date };
+export type PresencePhase
+    = | { type: 'idle', since: Date }
+      | { type: 'thinking', startedAt: Date }
+      | { type: 'using_tool', toolName: string, startedAt: Date }
+      | { type: 'responding', startedAt: Date };
 
 // ============================================================================
 // Status Update - What to show users
@@ -36,10 +36,10 @@ export type PresencePhase =
  * Represents a complete status update to be applied to Discord presence.
  */
 export interface StatusUpdate {
-  /** Discord activity configuration */
-  activity: ActivitiesOptions;
-  /** If true, show typing indicator */
-  typing: boolean;
+    /** Discord activity configuration */
+    activity: ActivitiesOptions
+    /** If true, show typing indicator */
+    typing:   boolean
 }
 
 // ============================================================================
@@ -51,10 +51,10 @@ export interface StatusUpdate {
  * Extensible - add new tools here as they're integrated.
  */
 export const ToolStatusMap: Record<string, string> = {
-  mcp__memory__view: 'Remembering...',
-  mcp__memory__store: 'Recording memory...',
-  mcp__memory__search: 'Searching memories...',
-  // Future tools can be added here
+    mcp__memory__view:   'Remembering...',
+    mcp__memory__store:  'Recording memory...',
+    mcp__memory__search: 'Searching memories...',
+    // Future tools can be added here
 };
 
 // ============================================================================
@@ -66,14 +66,14 @@ export const ToolStatusMap: Record<string, string> = {
  * Defines rate limiting, refresh intervals, and timing constraints.
  */
 export const PresenceConfigSchema = z.object({
-  /** Minimum milliseconds between Discord presence updates (rate limiting) */
-  updateDebounceMs: z.number().int().positive().default(2000),
+    /** Minimum milliseconds between Discord presence updates (rate limiting) */
+    updateDebounceMs: z.number().int().positive().default(2000),
 
-  /** Milliseconds to wait before showing idle status after last activity */
-  idleTimeoutMs: z.number().int().positive().default(60000), // 1 minute
+    /** Milliseconds to wait before showing idle status after last activity */
+    idleTimeoutMs: z.number().int().positive().default(60000), // 1 minute
 
-  /** How often to refresh idle status text (milliseconds) */
-  idleRefreshIntervalMs: z.number().int().positive().default(300000), // 5 minutes
+    /** How often to refresh idle status text (milliseconds) */
+    idleRefreshIntervalMs: z.number().int().positive().default(300000), // 5 minutes
 });
 
 /**

@@ -6,6 +6,7 @@
  */
 
 import type { PresenceManager } from './manager.js';
+import type { PresencePhase } from './types.js';
 import type { ClaudeAgent } from '../../../agent/agent.js';
 import type { AgentStreamEvent } from '../../../agent/types.js';
 import type { DiscordMessageContext } from '../types.js';
@@ -27,9 +28,9 @@ export interface StatusMiddlewareDeps {
     agent:           ClaudeAgent
     /** Logger instance */
     logger: {
-        debug: (message: any, ...args: any[]) => void
-        info:  (message: any, ...args: any[]) => void
-        error: (message: any, ...args: any[]) => void
+        debug: (obj: Record<string, unknown> | string, message?: string) => void
+        info:  (obj: Record<string, unknown> | string, message?: string) => void
+        error: (obj: Record<string, unknown> | string, message?: string) => void
     }
 }
 
@@ -85,7 +86,7 @@ export function createStatusMiddleware(
             // Define stream event handler
             const onStreamEvent = (event: AgentStreamEvent): void => {
                 // Helper to handle presence update errors
-                const safeUpdatePhase = async (phase: any): Promise<void> => {
+                const safeUpdatePhase = async (phase: PresencePhase): Promise<void> => {
                     try {
                         await presenceManager.updatePhase(phase);
                     } catch (error) {
@@ -116,7 +117,7 @@ export function createStatusMiddleware(
                     // Tool usage in progress
                     void safeUpdatePhase({
                         type:      'using_tool',
-                        toolName:  event.tool_name || 'unknown',
+                        toolName:  event.tool_name ?? 'unknown',
                         startedAt: new Date(),
                     });
                 } else if(event.type === 'result') {
@@ -129,6 +130,7 @@ export function createStatusMiddleware(
             };
 
             // Process message with stream callback
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call -- Agent chat type allows stream callback
             const response = await (agent.chat as any)(context, onStreamEvent);
 
             // Ensure we transition to idle after completion
@@ -145,6 +147,7 @@ export function createStatusMiddleware(
                 );
             }
 
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- Response type matches agent return type
             return response;
         } catch (error) {
             // Handle errors gracefully
