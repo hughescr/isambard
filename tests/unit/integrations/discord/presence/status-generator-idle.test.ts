@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return -- Test mocks */
-import { describe, it, expect, afterEach, mock } from 'bun:test';
+import { describe, it, expect, mock } from 'bun:test';
 import { ActivityType } from 'discord.js';
 import _ from 'lodash';
 import { createIdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
@@ -15,15 +15,6 @@ describe('IdleStatusGenerator', () => {
         info:  mock(() => undefined),
         child: mock(() => mockLogger),
     } as any;
-
-    const spies: ReturnType<typeof spyOn>[] = [];
-
-    afterEach(() => {
-        for(const spy of spies) {
-            spy.mockRestore();
-        }
-        spies.length = 0;
-    });
 
     describe('generate', () => {
         it('should call Anthropic API with correct prompt', async () => {
@@ -160,7 +151,7 @@ describe('IdleStatusGenerator', () => {
             expect(mockLogger.error).toHaveBeenCalled();
         });
 
-        it('should throw StatusGenerationError on unexpected response type', async () => {
+        it('should fall back to "Idle" when response type is not text', async () => {
             const mockAnthropic = {
                 messages: {
                     create: mock(async () => ({

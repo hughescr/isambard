@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'bun:test';
 import {
     appConfigSchema,
+    agentConfigSchema,
     caldavConfigSchema,
     emailConfigSchema,
     discordConfigSchema,
     boxConfigSchema,
+    dynamoDBConfigSchema,
     configSchema
 } from '@/config/schemas';
 
@@ -101,6 +103,36 @@ describe('appConfigSchema', () => {
             const result = appConfigSchema.safeParse(config);
             expect(result.success).toBe(true);
         }
+    });
+});
+
+describe('agentConfigSchema', () => {
+    it('should validate valid agent configuration with oauthToken', () => {
+        const validConfig = {
+            oauthToken: 'test-oauth-token-12345',
+        };
+
+        const result = agentConfigSchema.safeParse(validConfig);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data).toEqual(validConfig);
+        }
+    });
+
+    it('should reject empty oauthToken', () => {
+        const invalidConfig = {
+            oauthToken: '',
+        };
+
+        const result = agentConfigSchema.safeParse(invalidConfig);
+        expect(result.success).toBe(false);
+    });
+
+    it('should reject missing oauthToken', () => {
+        const invalidConfig = {};
+
+        const result = agentConfigSchema.safeParse(invalidConfig);
+        expect(result.success).toBe(false);
     });
 });
 
@@ -285,6 +317,84 @@ describe('discordConfigSchema', () => {
         const result = discordConfigSchema.safeParse(emptyToken);
         expect(result.success).toBe(false);
     });
+
+    it('should accept valid presence config', () => {
+        const configWithPresence = {
+            botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
+            applicationId: '123456789012345678',
+            presence:      {
+                updateDebounceMs:      5000,
+                idleTimeoutMs:         120000,
+                idleRefreshIntervalMs: 600000,
+            },
+        };
+
+        const result = discordConfigSchema.safeParse(configWithPresence);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.presence).toEqual({
+                updateDebounceMs:      5000,
+                idleTimeoutMs:         120000,
+                idleRefreshIntervalMs: 600000,
+            });
+        }
+    });
+
+    it('should accept missing presence (optional)', () => {
+        const configWithoutPresence = {
+            botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
+            applicationId: '123456789012345678',
+        };
+
+        const result = discordConfigSchema.safeParse(configWithoutPresence);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.presence).toBeUndefined();
+        }
+    });
+
+    it('should apply presence defaults when presence is provided without values', () => {
+        const configWithEmptyPresence = {
+            botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
+            applicationId: '123456789012345678',
+            presence:      {},
+        };
+
+        const result = discordConfigSchema.safeParse(configWithEmptyPresence);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.presence).toEqual({
+                updateDebounceMs:      2000,  // default
+                idleTimeoutMs:         60000, // default
+                idleRefreshIntervalMs: 300000, // default
+            });
+        }
+    });
+
+    it('should reject monitoredChannelIds with empty strings', () => {
+        const configWithEmptyChannelId = {
+            botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
+            applicationId:       '123456789012345678',
+            monitoredChannelIds: ['valid-channel-id', ''],
+        };
+
+        const result = discordConfigSchema.safeParse(configWithEmptyChannelId);
+        expect(result.success).toBe(false);
+    });
+
+    it('should accept valid monitoredChannelIds array', () => {
+        const configWithChannelIds = {
+            botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
+            applicationId:       '123456789012345678',
+            monitoredChannelIds: ['channel-1', 'channel-2', 'channel-3'],
+        };
+
+        const result = discordConfigSchema.safeParse(configWithChannelIds);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.monitoredChannelIds).toEqual(['channel-1', 'channel-2', 'channel-3']);
+        }
+    });
 });
 
 describe('boxConfigSchema', () => {
@@ -326,6 +436,66 @@ describe('boxConfigSchema', () => {
         };
 
         const result = boxConfigSchema.safeParse(emptyStrings);
+        expect(result.success).toBe(false);
+    });
+});
+
+describe('dynamoDBConfigSchema', () => {
+    it('should validate valid DynamoDB configuration', () => {
+        const validConfig = {
+            tableName: 'my-table',
+            region:    'us-west-2',
+        };
+
+        const result = dynamoDBConfigSchema.safeParse(validConfig);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data).toEqual(validConfig);
+        }
+    });
+
+    it('should accept optional endpoint', () => {
+        const configWithEndpoint = {
+            tableName: 'my-table',
+            region:    'us-west-2',
+            endpoint:  'http://localhost:8000',
+        };
+
+        const result = dynamoDBConfigSchema.safeParse(configWithEndpoint);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.endpoint).toBe('http://localhost:8000');
+        }
+    });
+
+    it('should reject invalid endpoint URL', () => {
+        const invalidConfig = {
+            tableName: 'my-table',
+            region:    'us-west-2',
+            endpoint:  'not-a-valid-url',
+        };
+
+        const result = dynamoDBConfigSchema.safeParse(invalidConfig);
+        expect(result.success).toBe(false);
+    });
+
+    it('should reject empty tableName', () => {
+        const invalidConfig = {
+            tableName: '',
+            region:    'us-west-2',
+        };
+
+        const result = dynamoDBConfigSchema.safeParse(invalidConfig);
+        expect(result.success).toBe(false);
+    });
+
+    it('should reject empty region', () => {
+        const invalidConfig = {
+            tableName: 'my-table',
+            region:    '',
+        };
+
+        const result = dynamoDBConfigSchema.safeParse(invalidConfig);
         expect(result.success).toBe(false);
     });
 });

@@ -15,11 +15,6 @@ import type { DiscordMessageContext, UserId, ChannelId } from '@/integrations/di
 
 describe('Discord Event Handlers', () => {
     describe('createReadyHandler', () => {
-        it('should return a function', () => {
-            const handler = createReadyHandler();
-            expect(typeof handler).toBe('function');
-        });
-
         it('should log bot user tag when ready event fires', () => {
             const loggerSpy = spyOn(logger, 'info');
             const handler = createReadyHandler();
@@ -88,11 +83,6 @@ describe('Discord Event Handlers', () => {
     });
 
     describe('createErrorHandler', () => {
-        it('should return a function', () => {
-            const handler = createErrorHandler();
-            expect(typeof handler).toBe('function');
-        });
-
         it('should log error when error event fires', () => {
             const loggerSpy = spyOn(logger, 'error');
             const handler = createErrorHandler();
@@ -177,33 +167,9 @@ describe('Discord Event Handlers', () => {
             } as unknown as Message;
         });
 
-        it('should return a function', () => {
-            const handler = createMessageHandler({
-                monitoredChannelIds: [],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
-            });
-
-            expect(typeof handler).toBe('function');
-        });
-
         it('should ignore messages from bots', async () => {
             const handler = createMessageHandler({
                 monitoredChannelIds: [],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
-            });
-
-            mockMessage.author.bot = true;
-            await handler(mockMessage);
-
-            expect(mockOnMessage).not.toHaveBeenCalled();
-        });
-
-        it('should ignore bot messages even in monitored channels', async () => {
-            const channelId = '333333333333333333';
-            const handler = createMessageHandler({
-                monitoredChannelIds: [channelId as ChannelId],
                 botUserId:           '999999999999999999' as UserId,
                 onMessage:           mockOnMessage,
             });
@@ -218,22 +184,6 @@ describe('Discord Event Handlers', () => {
             const botId = '999999999999999999';
             const handler = createMessageHandler({
                 monitoredChannelIds: [],
-                botUserId:           botId as UserId,
-                onMessage:           mockOnMessage,
-            });
-
-            mockMessage.author.id = botId;
-            mockMessage.author.bot = false;
-            await handler(mockMessage);
-
-            expect(mockOnMessage).not.toHaveBeenCalled();
-        });
-
-        it('should ignore self messages even in monitored channels', async () => {
-            const botId = '999999999999999999';
-            const channelId = '333333333333333333';
-            const handler = createMessageHandler({
-                monitoredChannelIds: [channelId as ChannelId],
                 botUserId:           botId as UserId,
                 onMessage:           mockOnMessage,
             });

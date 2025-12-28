@@ -159,7 +159,7 @@ describe('createDiscordBot', () => {
         expect(bot.start()).rejects.toThrow('Invalid bot token');
     });
 
-    it('should handle destroy errors gracefully', async () => {
+    it('should propagate destroy errors to caller', async () => {
         const destroyError = new Error('Destroy failed');
         const mockClient = {
             on:      mock(() => mockClient),
@@ -175,7 +175,6 @@ describe('createDiscordBot', () => {
             onMessage: mockOnMessage,
         });
 
-        // Should not throw
         expect(bot.stop()).rejects.toThrow('Destroy failed');
     });
 
@@ -281,7 +280,7 @@ describe('createDiscordBot', () => {
     });
 
     describe('Presence Manager Integration', () => {
-        it('should accept anthropicClient and identityContext in options', () => {
+        it('should accept optional presence dependencies without errors', () => {
             const mockClient = {
                 on:      mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
@@ -294,7 +293,9 @@ describe('createDiscordBot', () => {
             const mockAnthropicClient = { messages: { create: mock(async () => ({})) } };
             const mockAgent = { chat: mock(async () => 'response') };
 
-            const bot = createDiscordBot({
+            // Should not throw when optional presence dependencies are provided
+            // (even without config.presence, which prevents actual presence creation)
+            expect(() => createDiscordBot({
                 config:          mockConfig,
                 onMessage:       mockOnMessage,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
@@ -302,12 +303,10 @@ describe('createDiscordBot', () => {
                 identityContext: 'Test identity',
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
                 agent:           mockAgent as any,
-            });
-
-            expect(bot).toBeDefined();
+            })).not.toThrow();
         });
 
-        it('should work without optional anthropicClient and identityContext', () => {
+        it('should accept agent option without anthropicClient or identityContext', () => {
             const mockClient = {
                 on:      mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
@@ -319,14 +318,13 @@ describe('createDiscordBot', () => {
 
             const mockAgent = { chat: mock(async () => 'response') };
 
-            const bot = createDiscordBot({
+            // Should not throw when only agent is provided (partial presence deps)
+            expect(() => createDiscordBot({
                 config:    mockConfig,
                 onMessage: mockOnMessage,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
                 agent:     mockAgent as any,
-            });
-
-            expect(bot).toBeDefined();
+            })).not.toThrow();
         });
     });
 });

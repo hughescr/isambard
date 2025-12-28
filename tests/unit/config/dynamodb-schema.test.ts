@@ -2,16 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import { dynamoDBConfigSchema } from '../../../src/config/schemas';
 
 describe('dynamoDBConfigSchema', () => {
-    test('validates valid DynamoDB configuration', () => {
-        const validConfig = {
-            tableName: 'isambard-conversations',
-            region:    'us-east-1',
-        };
-
-        const result = dynamoDBConfigSchema.safeParse(validConfig);
-        expect(result.success).toBe(true);
-    });
-
     test('validates valid DynamoDB configuration with endpoint', () => {
         const validConfig = {
             tableName: 'isambard-conversations',
@@ -21,6 +11,11 @@ describe('dynamoDBConfigSchema', () => {
 
         const result = dynamoDBConfigSchema.safeParse(validConfig);
         expect(result.success).toBe(true);
+        if (result.success) {
+            expect(result.data.tableName).toBe('isambard-conversations');
+            expect(result.data.region).toBe('us-east-1');
+            expect(result.data.endpoint).toBe('http://localhost:8000');
+        }
     });
 
     test('rejects empty tableName', () => {
@@ -80,5 +75,10 @@ describe('dynamoDBConfigSchema', () => {
 
         const result = dynamoDBConfigSchema.safeParse(validConfig);
         expect(result.success).toBe(true);
+        if (result.success) {
+            expect(result.data.tableName).toBe('isambard-conversations');
+            expect(result.data.region).toBe('us-east-1');
+            expect(result.data.endpoint).toBeUndefined();
+        }
     });
 });

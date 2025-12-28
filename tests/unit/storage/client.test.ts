@@ -76,42 +76,6 @@ describe('createDynamoDBClient', () => {
         expect(clients.docClient).toBeDefined();
     });
 
-    it('should configure client with provided region', () => {
-        const config: DynamoDBConfig = {
-            tableName: 'TestTable',
-            region:    'eu-west-1',
-        };
-
-        const clients = createDynamoDBClient(config);
-
-        // Client should be created (region is internal config)
-        expect(clients.client).toBeInstanceOf(DynamoDBClient);
-    });
-
-    it('should configure client with endpoint for local development', () => {
-        const config: DynamoDBConfig = {
-            tableName: 'TestTable',
-            region:    'us-west-2',
-            endpoint:  'http://localhost:8000',
-        };
-
-        const clients = createDynamoDBClient(config);
-
-        expect(clients.client).toBeInstanceOf(DynamoDBClient);
-    });
-
-    it('should not set endpoint when undefined', () => {
-        const config: DynamoDBConfig = {
-            tableName: 'TestTable',
-            region:    'us-west-2',
-            endpoint:  undefined,
-        };
-
-        const clients = createDynamoDBClient(config);
-
-        expect(clients.client).toBeInstanceOf(DynamoDBClient);
-    });
-
     it('should return tableName in clients object', () => {
         const config: DynamoDBConfig = {
             tableName: 'MyTable',

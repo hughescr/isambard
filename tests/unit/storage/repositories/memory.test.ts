@@ -584,15 +584,11 @@ describe('MemoryRepository', () => {
             it('should throw ValidationError with Zod issues when validation fails', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
 
-                try {
-                    await repository.update(testId, 'identity', { content: '' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    expect(error).toBeInstanceOf(ValidationError);
-                    expect((error as ValidationError).issues).toBeDefined();
-                    // eslint-disable-next-line lodash/prefer-lodash-method -- Native Array.isArray is idiomatic
-                    expect(Array.isArray((error as ValidationError).issues)).toBe(true);
-                }
+                const error = await repository.update(testId, 'identity', { content: '' }).catch((e: unknown) => e);
+                expect(error).toBeInstanceOf(ValidationError);
+                expect((error as ValidationError).issues).toBeDefined();
+                // eslint-disable-next-line lodash/prefer-lodash-method -- Native Array.isArray is idiomatic
+                expect(Array.isArray((error as ValidationError).issues)).toBe(true);
             });
 
             it('should include correct expectedVersion in ConflictError', async () => {
@@ -605,13 +601,9 @@ describe('MemoryRepository', () => {
                 _assign(conditionalError, { name: 'ConditionalCheckFailedException' });
                 ddbMock.on(PutCommand).rejectsOnce(conditionalError);
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    expect(error).toBeInstanceOf(ConflictError);
-                    expect((error as ConflictError).expectedVersion).toBe(3);
-                }
+                const error = await repository.update(testId, 'identity', { content: 'Updated' }).catch((e: unknown) => e);
+                expect(error).toBeInstanceOf(ConflictError);
+                expect((error as ConflictError).expectedVersion).toBe(3);
             });
 
             it('should include correct actualVersion in ConflictError', async () => {
@@ -623,13 +615,9 @@ describe('MemoryRepository', () => {
                 _assign(conditionalError, { name: 'ConditionalCheckFailedException' });
                 ddbMock.on(PutCommand).rejectsOnce(conditionalError);
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    expect(error).toBeInstanceOf(ConflictError);
-                    expect((error as ConflictError).actualVersion).toBe(7);
-                }
+                const error = await repository.update(testId, 'identity', { content: 'Updated' }).catch((e: unknown) => e);
+                expect(error).toBeInstanceOf(ConflictError);
+                expect((error as ConflictError).actualVersion).toBe(7);
             });
 
             it('should use version -1 in ConflictError when current item is undefined', async () => {
@@ -641,13 +629,9 @@ describe('MemoryRepository', () => {
                 _assign(conditionalError, { name: 'ConditionalCheckFailedException' });
                 ddbMock.on(PutCommand).rejectsOnce(conditionalError);
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    expect(error).toBeInstanceOf(ConflictError);
-                    expect((error as ConflictError).actualVersion).toBe(-1);
-                }
+                const error = await repository.update(testId, 'identity', { content: 'Updated' }).catch((e: unknown) => e);
+                expect(error).toBeInstanceOf(ConflictError);
+                expect((error as ConflictError).actualVersion).toBe(-1);
             });
 
             it('should re-throw non-ConditionalCheckFailed errors as-is', async () => {
@@ -657,14 +641,8 @@ describe('MemoryRepository', () => {
                 _assign(networkError, { name: 'NetworkingError' });
                 ddbMock.on(PutCommand).rejectsOnce(networkError);
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    expect(error).toBe(networkError);
-                    expect((error as Error).message).toBe('Network timeout');
-                    expect((error as Error).name).toBe('NetworkingError');
-                }
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toBe(networkError);
             });
 
             it('should re-throw errors that do not match object structure', async () => {
@@ -674,14 +652,9 @@ describe('MemoryRepository', () => {
                 const stringError = 'String error';
                 ddbMock.on(PutCommand).rejectsOnce(stringError);
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    // Verify it's not a ConflictError (was re-thrown as-is)
-                    expect(error).toBeInstanceOf(Error);
-                    expect((error as Error).message).toBe('String error');
-                }
+                // Verify it's not a ConflictError (was re-thrown as-is)
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toThrow('String error');
             });
 
             it('should re-throw errors without name property', async () => {
@@ -691,14 +664,9 @@ describe('MemoryRepository', () => {
                 const errorWithoutName = { message: 'Some error' };
                 ddbMock.on(PutCommand).rejectsOnce(errorWithoutName);
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    // Verify it's not a ConflictError (was re-thrown as-is)
-                    expect(error).toBeInstanceOf(Error);
-                    expect((error as Error).message).toBe('Some error');
-                }
+                // Verify it's not a ConflictError (was re-thrown as-is)
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toThrow('Some error');
             });
 
             it('should only catch ConditionalCheckFailedException specifically', async () => {
@@ -708,28 +676,19 @@ describe('MemoryRepository', () => {
                 _assign(conditionalError, { name: 'ConditionalCheckFailedExceptionTypo' });
                 ddbMock.on(PutCommand).rejectsOnce(conditionalError);
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    expect(error).toBe(conditionalError);
-                    expect((error as Error).name).toBe('ConditionalCheckFailedExceptionTypo');
-                }
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toBe(conditionalError);
             });
 
             it('should re-throw when error is undefined', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
                 ddbMock.on(PutCommand).rejectsOnce(undefined as unknown as Error);
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    // aws-sdk-client-mock normalizes undefined to Error object
-                    expect(error).toBeInstanceOf(Error);
-                    // But verify it's not a ConflictError (was re-thrown as-is)
-                    expect(error).not.toBeInstanceOf(ConflictError);
-                }
+                // aws-sdk-client-mock normalizes undefined to Error object
+                // Verify it's not a ConflictError (was re-thrown as-is)
+                const error = await repository.update(testId, 'identity', { content: 'Updated' }).catch((e: unknown) => e);
+                expect(error).toBeInstanceOf(Error);
+                expect(error).not.toBeInstanceOf(ConflictError);
             });
 
             it('should re-throw when error is an empty object', async () => {
@@ -737,13 +696,9 @@ describe('MemoryRepository', () => {
                 const emptyError = {};
                 ddbMock.on(PutCommand).rejectsOnce(emptyError);
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    // Should be the error object itself
-                    expect(error).toBeInstanceOf(Error);
-                }
+                // Should be the error object itself
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toBeInstanceOf(Error);
             });
 
             it('should re-throw when error has wrong name property value', async () => {
@@ -752,13 +707,8 @@ describe('MemoryRepository', () => {
                 _assign(wrongNameError, { name: 'SomeOtherError' });
                 ddbMock.on(PutCommand).rejectsOnce(wrongNameError);
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    expect(error).toBe(wrongNameError);
-                    expect((error as Error).name).toBe('SomeOtherError');
-                }
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toBe(wrongNameError);
             });
 
             it('should verify error is truthy before checking properties', async () => {
@@ -767,14 +717,10 @@ describe('MemoryRepository', () => {
                 const nullError = null;
                 ddbMock.on(PutCommand).rejectsOnce(nullError as unknown as Error);
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    // null gets normalized to Error by aws-sdk-client-mock
-                    expect(error).toBeInstanceOf(Error);
-                    expect(error).not.toBeInstanceOf(ConflictError);
-                }
+                // null gets normalized to Error by aws-sdk-client-mock
+                const error = await repository.update(testId, 'identity', { content: 'Updated' }).catch((e: unknown) => e);
+                expect(error).toBeInstanceOf(Error);
+                expect(error).not.toBeInstanceOf(ConflictError);
             });
 
             it('should verify error is an object before checking name property', async () => {
@@ -783,14 +729,10 @@ describe('MemoryRepository', () => {
                 const numberError = 42;
                 ddbMock.on(PutCommand).rejectsOnce(numberError as unknown as Error);
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    // Number gets normalized to Error by aws-sdk-client-mock
-                    expect(error).toBeInstanceOf(Error);
-                    expect(error).not.toBeInstanceOf(ConflictError);
-                }
+                // Number gets normalized to Error by aws-sdk-client-mock
+                const error = await repository.update(testId, 'identity', { content: 'Updated' }).catch((e: unknown) => e);
+                expect(error).toBeInstanceOf(Error);
+                expect(error).not.toBeInstanceOf(ConflictError);
             });
 
             it('should check for name property existence before accessing it', async () => {
@@ -799,13 +741,9 @@ describe('MemoryRepository', () => {
                 const noNameError = { message: 'Error without name' };
                 ddbMock.on(PutCommand).rejectsOnce(noNameError);
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    expect(error).toBeInstanceOf(Error);
-                    expect(error).not.toBeInstanceOf(ConflictError);
-                }
+                const error = await repository.update(testId, 'identity', { content: 'Updated' }).catch((e: unknown) => e);
+                expect(error).toBeInstanceOf(Error);
+                expect(error).not.toBeInstanceOf(ConflictError);
             });
 
             // Tests to kill remaining mutants at line 122
@@ -829,13 +767,9 @@ describe('MemoryRepository', () => {
                     return Promise.resolve({});
                 });
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    // Should re-throw undefined as-is
-                    expect(error).toBeUndefined();
-                }
+                // Should re-throw undefined as-is
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toBeUndefined();
 
                 sendSpy.mockRestore();
             });
@@ -856,13 +790,9 @@ describe('MemoryRepository', () => {
                     return Promise.resolve({});
                 });
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    // Should re-throw number as-is
-                    expect(error).toBe(42);
-                }
+                // Should re-throw number as-is
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toBe(42);
 
                 sendSpy.mockRestore();
             });
@@ -884,14 +814,9 @@ describe('MemoryRepository', () => {
                     return Promise.resolve({});
                 });
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    // Should re-throw object as-is
-                    expect(error).toBe(objWithoutName);
-                    expect(error).not.toBeInstanceOf(ConflictError);
-                }
+                // Should re-throw object as-is
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toBe(objWithoutName);
 
                 sendSpy.mockRestore();
             });
@@ -913,14 +838,9 @@ describe('MemoryRepository', () => {
                     return Promise.resolve({});
                 });
 
-                try {
-                    await repository.update(testId, 'identity', { content: 'Updated' });
-                    expect(true).toBe(false); // Should not reach here
-                } catch (error) {
-                    // Should re-throw error as-is
-                    expect(error).toBe(wrongNameError);
-                    expect(error).not.toBeInstanceOf(ConflictError);
-                }
+                // Should re-throw error as-is
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toBe(wrongNameError);
 
                 sendSpy.mockRestore();
             });

@@ -5,7 +5,7 @@
  * using real components (not mocks) except for Discord client and Anthropic API.
  */
 
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { constant as _constant } from 'lodash';
 import { ActivityType } from 'discord.js';
 import type { Client, Message, TextChannel } from 'discord.js';
@@ -27,6 +27,8 @@ describe('Discord Presence Flow (Integration)', () => {
     let mockChannel: TextChannel;
 
     beforeEach(() => {
+        jest.useFakeTimers();
+
         // Mock Discord client
         mockDiscordClient = {
             user: {
@@ -58,6 +60,10 @@ describe('Discord Presence Flow (Integration)', () => {
             channel:   { ...mockChannel, id: 'channel-id' },
             reply:     mock(async () => undefined),
         } as unknown as Message;
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
     });
 
     it('should update presence through full message processing lifecycle', async () => {
@@ -305,7 +311,8 @@ describe('Discord Presence Flow (Integration)', () => {
         });
 
         // Wait for idle timeout to trigger
-        await new Promise(resolve => setTimeout(resolve, 300));
+        jest.advanceTimersByTime(300);
+        await Promise.resolve();
 
         // The idle refresh should have been triggered, but due to debouncing and mock timing,
         // we just verify the system doesn't crash and cleans up properly

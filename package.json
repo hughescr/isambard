@@ -12,7 +12,7 @@
     "dev:sst": "bunx sst shell -- bun --watch src/index.ts",
     "lint": "eslint --cache --format overview .",
     "lint:fix": "eslint --cache --fix --format overview .",
-    "mutate": "bunx stryker run",
+    "mutate": "bunx stryker run --incremental",
     "sst-deploy": "bunx sst deploy",
     "sst-dev": "bunx sst dev",
     "sst-diagnostics": "bunx sst diagnostic --print-logs \"$@\"",

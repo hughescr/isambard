@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test mocks */
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import type { Client } from 'discord.js';
 import { ActivityType } from 'discord.js';
 import { createPresenceManager } from '@/integrations/discord/presence/manager';
@@ -15,6 +15,8 @@ describe('PresenceManager', () => {
     let config: PresenceConfig;
 
     beforeEach(() => {
+        jest.useFakeTimers();
+
         mockClient = {
             user: {
                 setActivity: mock(() => undefined),
@@ -49,6 +51,10 @@ describe('PresenceManager', () => {
         };
     });
 
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
     describe('updatePhase', () => {
         it('should update presence for thinking phase', async () => {
             const manager = createPresenceManager({
@@ -63,7 +69,8 @@ describe('PresenceManager', () => {
             await manager.updatePhase(phase);
 
             // Wait for debounce
-            await new Promise(resolve => setTimeout(resolve, 20));
+            jest.advanceTimersByTime(20);
+            await Promise.resolve();
 
             expect(mockActiveGenerator.generate).toHaveBeenCalledWith(phase);
             expect(mockClient.user.setActivity).toHaveBeenCalled();
@@ -82,7 +89,8 @@ describe('PresenceManager', () => {
             await manager.updatePhase({ type: 'responding', startedAt: new Date() });
 
             // Wait for debounce
-            await new Promise(resolve => setTimeout(resolve, 20));
+            jest.advanceTimersByTime(20);
+            await Promise.resolve();
 
             // Should only update once (last update wins)
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
@@ -121,7 +129,8 @@ describe('PresenceManager', () => {
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
 
             // Wait and verify idle generator not called again
-            await new Promise(resolve => setTimeout(resolve, 100));
+            jest.advanceTimersByTime(100);
+            await Promise.resolve();
             expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallCount);
         });
 
@@ -145,7 +154,8 @@ describe('PresenceManager', () => {
             // Should not throw (errors are caught internally)
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
 
-            await new Promise(resolve => setTimeout(resolve, 20));
+            jest.advanceTimersByTime(20);
+            await Promise.resolve();
             expect(mockLogger.error).toHaveBeenCalled();
         });
 
@@ -162,13 +172,15 @@ describe('PresenceManager', () => {
             });
 
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            await new Promise(resolve => setTimeout(resolve, 60));
+            jest.advanceTimersByTime(60);
+            await Promise.resolve();
 
             // First update should have gone through
             const firstCallCount = mockClient.user.setActivity.mock.calls.length;
 
             await manager.updatePhase({ type: 'responding', startedAt: new Date() });
-            await new Promise(resolve => setTimeout(resolve, 30)); // Before debounce expires
+            jest.advanceTimersByTime(30); // Before debounce expires
+            await Promise.resolve();
 
             // Second update should be skipped (too soon)
             expect(mockClient.user.setActivity.mock.calls.length).toBe(firstCallCount);
@@ -226,7 +238,8 @@ describe('PresenceManager', () => {
             manager.stop();
 
             // Wait past debounce time
-            await new Promise(resolve => setTimeout(resolve, 20));
+            jest.advanceTimersByTime(20);
+            await Promise.resolve();
 
             // Update should not have happened (cleared by stop)
             expect(mockClient.user.setActivity).not.toHaveBeenCalled();

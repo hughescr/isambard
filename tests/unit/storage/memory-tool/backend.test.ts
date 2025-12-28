@@ -499,15 +499,14 @@ describe('MemoryToolBackend', () => {
             _assign(conditionalError, { name: 'ConditionalCheckFailedException' });
             ddbMock.on(PutCommand).resolvesOnce({}).rejectsOnce(conditionalError); // Version snapshot succeeds, main item fails
 
-            try {
-                await backend.update(testPath, { content: 'Updated' });
-                expect(true).toBe(false); // Should not reach here
-            } catch (error: unknown) {
-                expect(error).toBeInstanceOf(ConflictError);
-                if(error instanceof ConflictError) {
-                    expect(error.message).toContain('-1');
-                }
-            }
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(
+                backend.update(testPath, { content: 'Updated' })
+            ).rejects.toMatchObject({
+                name:    'ConflictError',
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                message: expect.stringContaining('-1'),
+            });
         });
 
         it('should re-throw non-ConditionalCheckFailedException errors', async () => {
@@ -531,13 +530,9 @@ describe('MemoryToolBackend', () => {
                 throw null;
             });
 
-            try {
-                await backend.update(testPath, { content: 'Updated' });
-                expect(true).toBe(false); // Should not reach here
-            } catch (error: unknown) {
-                // Key test: should NOT be ConflictError
-                expect(error).not.toBeInstanceOf(ConflictError);
-            }
+            const error = await backend.update(testPath, { content: 'Updated' }).catch((e: unknown) => e);
+            // Key test: should NOT be ConflictError
+            expect(error).not.toBeInstanceOf(ConflictError);
         });
 
         it('should NOT convert to ConflictError when error is not an object (number)', async () => {
@@ -548,13 +543,9 @@ describe('MemoryToolBackend', () => {
                 throw 42;
             });
 
-            try {
-                await backend.update(testPath, { content: 'Updated' });
-                expect(true).toBe(false); // Should not reach here
-            } catch (error: unknown) {
-                // Key test: should NOT be ConflictError
-                expect(error).not.toBeInstanceOf(ConflictError);
-            }
+            const error = await backend.update(testPath, { content: 'Updated' }).catch((e: unknown) => e);
+            // Key test: should NOT be ConflictError
+            expect(error).not.toBeInstanceOf(ConflictError);
         });
 
         it('should NOT convert to ConflictError when error object has no name property', async () => {
@@ -565,15 +556,10 @@ describe('MemoryToolBackend', () => {
                 throw errorWithoutName;
             });
 
-            try {
-                await backend.update(testPath, { content: 'Updated' });
-                expect(true).toBe(false); // Should not reach here
-            } catch (error: unknown) {
-                // Key test: should NOT be ConflictError
-                expect(error).not.toBeInstanceOf(ConflictError);
-                // Verify it has the message property from our thrown object
-                expect(error).toHaveProperty('message');
-            }
+            const error = await backend.update(testPath, { content: 'Updated' }).catch((e: unknown) => e);
+            // Key test: should NOT be ConflictError and should have message property
+            expect(error).not.toBeInstanceOf(ConflictError);
+            expect(error).toHaveProperty('message');
         });
 
         it('should NOT convert to ConflictError when error name does not match', async () => {
@@ -583,17 +569,11 @@ describe('MemoryToolBackend', () => {
             _assign(differentNameError, { name: 'DifferentErrorName' });
             ddbMock.on(PutCommand).rejectsOnce(differentNameError);
 
-            try {
-                await backend.update(testPath, { content: 'Updated' });
-                expect(true).toBe(false); // Should not reach here
-            } catch (error: unknown) {
-                // Key test: should NOT be ConflictError
-                expect(error).not.toBeInstanceOf(ConflictError);
-                expect(error).toBeInstanceOf(Error);
-                if(_isError(error)) {
-                    expect(error.message).toBe('Different error');
-                }
-            }
+            const error = await backend.update(testPath, { content: 'Updated' }).catch((e: unknown) => e);
+            // Key test: should NOT be ConflictError, should be Error with correct message
+            expect(error).not.toBeInstanceOf(ConflictError);
+            expect(error).toBeInstanceOf(Error);
+            expect(error).toHaveProperty('message', 'Different error');
         });
 
         it('should handle truly falsy errors (direct spy bypass)', async () => {
@@ -607,11 +587,10 @@ describe('MemoryToolBackend', () => {
                 .mockRejectedValueOnce(null); // Main item fails
 
             try {
-                await backend.update(testPath, { content: 'Updated' });
-                expect(true).toBe(false); // Should not reach here
-            } catch (error: unknown) {
-                // Should re-throw null as-is, NOT convert to ConflictError
-                expect(error).toBe(null);
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(
+                    backend.update(testPath, { content: 'Updated' })
+                ).rejects.toBe(null); // Should re-throw null as-is, NOT convert to ConflictError
             } finally {
                 sendSpy.mockRestore();
             }
@@ -628,11 +607,10 @@ describe('MemoryToolBackend', () => {
                 .mockRejectedValueOnce(999); // Main item fails
 
             try {
-                await backend.update(testPath, { content: 'Updated' });
-                expect(true).toBe(false); // Should not reach here
-            } catch (error: unknown) {
-                // Should re-throw number as-is, NOT convert to ConflictError
-                expect(error).toBe(999);
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(
+                    backend.update(testPath, { content: 'Updated' })
+                ).rejects.toBe(999); // Should re-throw number as-is, NOT convert to ConflictError
             } finally {
                 sendSpy.mockRestore();
             }
@@ -650,9 +628,7 @@ describe('MemoryToolBackend', () => {
                 .mockRejectedValueOnce(objectWithoutName); // Main item fails
 
             try {
-                await backend.update(testPath, { content: 'Updated' });
-                expect(true).toBe(false); // Should not reach here
-            } catch (error: unknown) {
+                const error = await backend.update(testPath, { content: 'Updated' }).catch((e: unknown) => e);
                 // Should re-throw object as-is, NOT convert to ConflictError
                 expect(error).toBe(objectWithoutName);
                 expect(error).not.toBeInstanceOf(ConflictError);

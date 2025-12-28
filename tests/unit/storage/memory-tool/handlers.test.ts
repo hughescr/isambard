@@ -117,36 +117,35 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should convert ZodError to InvalidPathError with detailed message', async () => {
-            try {
-                await create(mockBackend, {
-                    path:      'invalid//path',
-                    file_text: 'content',
-                });
-                expect(true).toBe(false); // Should not reach here
-            } catch (error: unknown) {
-                expect(error).toBeInstanceOf(InvalidPathError);
-                expect((error as InvalidPathError).message).toContain('invalid//path');
-                // Verify the error message contains validation failure details
-                expect((error as InvalidPathError).message).toContain('must start with /');
-            }
+            const promise = create(mockBackend, {
+                path:      'invalid//path',
+                file_text: 'content',
+            });
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(promise).rejects.toThrow(InvalidPathError);
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(promise).rejects.toThrow('invalid//path');
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(promise).rejects.toThrow('must start with /');
         });
 
         it('should extract and join multiple ZodError messages with comma separator', async () => {
             // Path that violates multiple rules: no leading slash AND double slashes
-            try {
-                await create(mockBackend, {
-                    path:      'no-slash//double',
-                    file_text: 'content',
-                });
-                expect(true).toBe(false); // Should not reach here
-            } catch (error: unknown) {
-                expect(error).toBeInstanceOf(InvalidPathError);
-                const errorMessage = (error as InvalidPathError).message;
-                // Should contain both error messages joined with ', '
-                expect(errorMessage).toContain('must start with /');
-                expect(errorMessage).toContain('cannot contain double slashes');
-                expect(errorMessage).toContain(', ');
-            }
+            const promise = create(mockBackend, {
+                path:      'no-slash//double',
+                file_text: 'content',
+            });
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(promise).rejects.toThrow(InvalidPathError);
+            // Should contain both error messages joined with ', '
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(promise).rejects.toThrow('must start with /');
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(promise).rejects.toThrow('cannot contain double slashes');
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+            await expect(promise).rejects.toThrow(', ');
         });
 
         it('should propagate non-ZodError from schema validation', async () => {
@@ -157,15 +156,16 @@ describe('Memory Tool Handlers', () => {
             });
 
             try {
-                await create(mockBackend, {
+                const promise = create(mockBackend, {
                     path:      '/test/file.md',
                     file_text: 'content',
                 });
-                expect(true).toBe(false); // Should not reach here
-            } catch (error: unknown) {
-                // Should propagate the non-ZodError as-is, not wrap it
-                expect(error).toBe(customError);
-                expect(error).not.toBeInstanceOf(InvalidPathError);
+
+                // Should propagate the non-ZodError as-is, not wrap it in InvalidPathError
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(promise).rejects.toThrow(customError);
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(promise).rejects.not.toThrow(InvalidPathError);
             } finally {
                 parseSpy.mockRestore();
             }

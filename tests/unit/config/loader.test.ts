@@ -40,6 +40,7 @@ describe('loadConfig', () => {
 
             expect(config).toBeDefined();
             expect(config.app).toBeDefined();
+            expect(config.agent).toBeDefined();
             expect(config.caldav).toBeDefined();
             expect(config.email).toBeDefined();
             expect(config.discord).toBeDefined();
@@ -54,6 +55,9 @@ describe('loadConfig', () => {
             expect(config.app.nodeEnv).toBe('development');
             expect(config.app.logLevel).toBe('info');
             expect(config.app.port).toBe(3000);
+
+            // Agent config
+            expect(config.agent.oauthToken).toBe('test-oauth-token-12345');
 
             // CalDAV config
             expect(config.caldav.url).toBe('https://caldav.example.com');
@@ -119,6 +123,15 @@ describe('loadConfig', () => {
             expect(() => loadConfig(resources)).toThrow(/discord\.botToken|botToken/);
         });
 
+        it('should throw descriptive error when ClaudeCodeOAuthToken is undefined', () => {
+            const resources = createMockResources({
+                ClaudeCodeOAuthToken: { value: undefined },
+            });
+
+            expect(() => loadConfig(resources)).toThrow();
+            expect(() => loadConfig(resources)).toThrow(/agent\.oauthToken|oauthToken/);
+        });
+
         it('should identify which field is missing in error message', () => {
             const resources = createMockResources({
                 BoxClientSecret: { value: undefined },
@@ -172,6 +185,14 @@ describe('loadConfig', () => {
         it('should throw error for negative port', () => {
             const resources = createMockResources({
                 ImapPort: { value: '-1' },
+            });
+
+            expect(() => loadConfig(resources)).toThrow();
+        });
+
+        it('should throw error for empty ClaudeCodeOAuthToken', () => {
+            const resources = createMockResources({
+                ClaudeCodeOAuthToken: { value: '' },
             });
 
             expect(() => loadConfig(resources)).toThrow();
@@ -251,6 +272,21 @@ describe('loadConfig', () => {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 expect(errorMessage).toContain('[REDACTED]');
                 expect(errorMessage).toContain('box.clientSecret');
+            }
+        });
+
+        it('should show [REDACTED] for token field errors (agent.oauthToken)', () => {
+            const resources = createMockResources({
+                ClaudeCodeOAuthToken: { value: '' },
+            });
+
+            try {
+                loadConfig(resources);
+                expect.unreachable('Should have thrown an error');
+            } catch (error: unknown) {
+                const errorMessage = _.isError(error) ? error.message : String(error);
+                expect(errorMessage).toContain('[REDACTED]');
+                expect(errorMessage).toContain('agent.oauthToken');
             }
         });
 

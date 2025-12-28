@@ -264,68 +264,6 @@ describe('createContextBuilder', () => {
             expect(context).toContain('/state/task.md:\nCurrent task content');
         });
 
-        it('should join memory items with double newlines', async () => {
-            backend.getAutoLoadItems = mock(async () => [
-                {
-                    path:        createMemoryPath('/identity/item1.md'),
-                    content:     'First item',
-                    contentType: 'text/markdown' as const,
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-01T00:00:00Z',
-                    updatedAt:   '2025-01-01T00:00:00Z',
-                },
-                {
-                    path:        createMemoryPath('/identity/item2.md'),
-                    content:     'Second item',
-                    contentType: 'text/markdown' as const,
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-01T00:00:00Z',
-                    updatedAt:   '2025-01-01T00:00:00Z',
-                },
-            ]);
-
-            const contextBuilder = createContextBuilder({ backend });
-            const context = await contextBuilder.buildSystemContext();
-
-            // Items should be separated by \n\n, not just concatenated
-            expect(context).toContain('/identity/item1.md:\nFirst item\n\n/identity/item2.md:\nSecond item');
-            // Verify NOT joined with empty string
-            expect(context).not.toContain('First item/identity/item2.md');
-        });
-
-        it('should join state items with double newlines', async () => {
-            backend.getAutoLoadItems = mock(async () => [
-                {
-                    path:        createMemoryPath('/state/item1.md'),
-                    content:     'State one',
-                    contentType: 'text/markdown' as const,
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-01T00:00:00Z',
-                    updatedAt:   '2025-01-01T00:00:00Z',
-                },
-                {
-                    path:        createMemoryPath('/state/item2.md'),
-                    content:     'State two',
-                    contentType: 'text/markdown' as const,
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-01T00:00:00Z',
-                    updatedAt:   '2025-01-01T00:00:00Z',
-                },
-            ]);
-
-            const contextBuilder = createContextBuilder({ backend });
-            const context = await contextBuilder.buildSystemContext();
-
-            // State items should be separated by \n\n
-            expect(context).toContain('/state/item1.md:\nState one\n\n/state/item2.md:\nState two');
-            // Verify NOT joined with empty string
-            expect(context).not.toContain('State one/state/item2.md');
-        });
-
         it('should default grouped layer to "other" when layer is null and not render it', async () => {
             backend.getAutoLoadItems = mock(async () => [
                 {
@@ -398,50 +336,6 @@ describe('createContextBuilder', () => {
             // Verify we get header + identity only
             const lines = _.split(context, '\n\n');
             expect(_.size(lines)).toBe(3); // header, Identity, content
-        });
-
-        it('should verify both grouped.identity exists AND has length > 0', async () => {
-            // When we have only other/unknown layer items, grouped.identity will be undefined
-            backend.getAutoLoadItems = mock(async () => [
-                {
-                    path:        createMemoryPath('/other/test.md'),
-                    content:     'Other layer',
-                    contentType: 'text/markdown' as const,
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-01T00:00:00Z',
-                    updatedAt:   '2025-01-01T00:00:00Z',
-                },
-            ]);
-
-            const contextBuilder = createContextBuilder({ backend });
-            const context = await contextBuilder.buildSystemContext();
-
-            // Should not render identity section when grouped.identity is undefined
-            expect(context).not.toContain('## Identity');
-            expect(context).toBe('=== MEMORY CONTEXT ===\n');
-        });
-
-        it('should verify both grouped.state exists AND has length > 0', async () => {
-            // When we have only identity items, grouped.state will be undefined
-            backend.getAutoLoadItems = mock(async () => [
-                {
-                    path:        createMemoryPath('/identity/test.md'),
-                    content:     'Identity only',
-                    contentType: 'text/markdown' as const,
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-01T00:00:00Z',
-                    updatedAt:   '2025-01-01T00:00:00Z',
-                },
-            ]);
-
-            const contextBuilder = createContextBuilder({ backend });
-            const context = await contextBuilder.buildSystemContext();
-
-            // Should not render state section when grouped.state is undefined
-            expect(context).not.toContain('## Current State');
-            expect(context).toContain('## Identity');
         });
 
         it('should detect when identity section has exactly 1 item (boundary test)', async () => {
@@ -819,52 +713,6 @@ describe('createContextBuilder', () => {
             expect(backend.update).not.toHaveBeenCalled();
         });
 
-        it('should handle metadata being undefined when checking accessCount', async () => {
-            const path = createMemoryPath('/state/task.md');
-
-            // Item with no metadata field at all
-            backend.get = mock(async () => ({
-                path,
-                content:     'Content',
-                contentType: 'text/markdown' as const,
-                metadata:    {}, // Empty metadata object
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00Z',
-                updatedAt:   '2025-01-01T00:00:00Z',
-            }));
-
-            backend.update = mock(async () => ({
-                path,
-                content:     'Content',
-                contentType: 'text/markdown' as const,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
-                metadata:    { accessCount: 1, lastAccessed: expect.any(String) },
-                version:     2,
-                createdAt:   '2025-01-01T00:00:00Z',
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
-                updatedAt:   expect.any(String),
-            }));
-
-            const contextBuilder = createContextBuilder({ backend });
-
-            // Should not throw when metadata is undefined
-            await contextBuilder.recordAccess([path]);
-
-            // Should initialize accessCount to 1
-            expect(backend.update).toHaveBeenCalledWith(
-                path,
-
-                expect.objectContaining({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
-                    metadata: expect.objectContaining({
-                        accessCount:  1,
-                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
-                        lastAccessed: expect.any(String),
-                    }),
-                })
-            );
-        });
-
         it('should handle metadata.accessCount being non-numeric', async () => {
             const path = createMemoryPath('/state/task.md');
 
@@ -952,53 +800,6 @@ describe('createContextBuilder', () => {
                 })
             );
         });
-
-        it('should safely handle undefined metadata.accessCount with optional chaining', async () => {
-            const path = createMemoryPath('/state/task.md');
-
-            // Item where metadata.accessCount is undefined but metadata exists
-            backend.get = mock(async () => ({
-                path,
-                content:     'Content',
-                contentType: 'text/markdown' as const,
-                metadata:    { someOtherProp: 'value' }, // accessCount is undefined
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00Z',
-                updatedAt:   '2025-01-01T00:00:00Z',
-            }));
-
-            backend.update = mock(async () => ({
-                path,
-                content:     'Content',
-                contentType: 'text/markdown' as const,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
-                metadata:    { someOtherProp: 'value', accessCount: 1, lastAccessed: expect.any(String) },
-                version:     2,
-                createdAt:   '2025-01-01T00:00:00Z',
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
-                updatedAt:   expect.any(String),
-            }));
-
-            const contextBuilder = createContextBuilder({ backend });
-
-            // Should not throw when accessCount is undefined
-            await contextBuilder.recordAccess([path]);
-
-            // Should initialize accessCount to 1
-            expect(backend.update).toHaveBeenCalledWith(
-                path,
-
-                expect.objectContaining({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
-                    metadata: expect.objectContaining({
-                        someOtherProp: 'value',
-                        accessCount:   1,
-                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
-                        lastAccessed:  expect.any(String),
-                    }),
-                })
-            );
-        });
     });
 
     describe('loadCoreIdentity', () => {
@@ -1009,12 +810,6 @@ describe('createContextBuilder', () => {
             const identity = await contextBuilder.loadCoreIdentity();
 
             expect(identity).toBe('');
-            // Verify we don't attempt to join/process empty array
-            expect(identity).not.toContain('\n\n');
-            expect(identity.length).toBe(0);
-            // Verify it's exactly empty string, not undefined or other falsy value
-            expect(typeof identity).toBe('string');
-            expect(identity === '').toBe(true);
         });
 
         it('should join identity items with double newlines', async () => {

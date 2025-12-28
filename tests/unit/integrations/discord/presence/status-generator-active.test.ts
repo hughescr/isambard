@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access -- Test mocks */
-import { describe, it, expect, afterEach, mock } from 'bun:test';
+import { describe, it, expect, mock } from 'bun:test';
 import { ActivityType } from 'discord.js';
 import { createActiveStatusGenerator } from '@/integrations/discord/presence/status-generator-active';
 import type { PresencePhase } from '@/integrations/discord/presence/types';
@@ -13,15 +13,6 @@ describe('ActiveStatusGenerator', () => {
         info:  mock(() => undefined),
         child: mock(() => mockLogger),
     } as any;
-
-    const spies: ReturnType<typeof spyOn>[] = [];
-
-    afterEach(() => {
-        for(const spy of spies) {
-            spy.mockRestore();
-        }
-        spies.length = 0;
-    });
 
     describe('generate', () => {
         it('should return "Thinking..." for thinking phase', () => {

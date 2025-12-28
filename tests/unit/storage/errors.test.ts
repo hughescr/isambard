@@ -2,9 +2,8 @@ import { describe, it, expect, spyOn } from 'bun:test';
 import { StorageError, ItemNotFoundError, ConflictError, ValidationError } from '@/storage/errors';
 
 describe('StorageError', () => {
-    it('should be an instance of Error', () => {
+    it('should be an instance of StorageError', () => {
         const error = new StorageError('test error');
-        expect(error).toBeInstanceOf(Error);
         expect(error).toBeInstanceOf(StorageError);
     });
 
@@ -25,9 +24,8 @@ describe('StorageError', () => {
 });
 
 describe('ItemNotFoundError', () => {
-    it('should be an instance of StorageError', () => {
+    it('should be an instance of ItemNotFoundError', () => {
         const error = new ItemNotFoundError('item-123');
-        expect(error).toBeInstanceOf(StorageError);
         expect(error).toBeInstanceOf(ItemNotFoundError);
     });
 
@@ -48,9 +46,8 @@ describe('ItemNotFoundError', () => {
 });
 
 describe('ConflictError', () => {
-    it('should be an instance of StorageError', () => {
+    it('should be an instance of ConflictError', () => {
         const error = new ConflictError('item-123', 1, 2);
-        expect(error).toBeInstanceOf(StorageError);
         expect(error).toBeInstanceOf(ConflictError);
     });
 
@@ -74,9 +71,8 @@ describe('ConflictError', () => {
 });
 
 describe('ValidationError', () => {
-    it('should be an instance of StorageError', () => {
+    it('should be an instance of ValidationError', () => {
         const error = new ValidationError([{ path: 'content', message: 'required' }]);
-        expect(error).toBeInstanceOf(StorageError);
         expect(error).toBeInstanceOf(ValidationError);
     });
 

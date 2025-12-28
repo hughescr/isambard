@@ -736,13 +736,13 @@ describe('createClaudeAgent', () => {
             expect(response).toBeNull();
         });
 
-        it('should safely handle filter returning undefined with || fallback', async () => {
+        it('should handle nullish content array with fallback to empty array', async () => {
             querySpy.mockImplementation((_params: any): any => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
                         message: {
-                            content: null, // This will make filter return falsy, triggering || []
+                            content: null, // Nullish content triggers ?? [] fallback before filter
                         },
                     };
                 }
@@ -896,15 +896,15 @@ describe('createClaudeAgent', () => {
             expect(response).toBe('Hello! This is a test response.');
         });
 
-        it('should not crash if callback throws error', async () => {
+        it('should catch callback errors via outer try/catch and return null', async () => {
             const agent = createClaudeAgent({});
 
-            // Callback that throws should not prevent normal operation
-            await expect(async () => {
-                await agent.chat(mockMessageContext, () => {
-                    throw new Error('Callback error');
-                });
-            }).not.toThrow();
+            // Callback throws, but outer try/catch catches it and returns null
+            const result = await agent.chat(mockMessageContext, () => {
+                throw new Error('Callback error');
+            });
+
+            expect(result).toBeNull();
         });
 
         it('should invoke callback for all event types', async () => {
