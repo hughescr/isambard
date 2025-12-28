@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any, @typescript-eslint/await-thenable -- Test mocks require unsafe type operations */
+/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any -- Test mocks require unsafe type operations */
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import _ from 'lodash';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';

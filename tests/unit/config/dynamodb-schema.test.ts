@@ -11,7 +11,7 @@ describe('dynamoDBConfigSchema', () => {
 
         const result = dynamoDBConfigSchema.safeParse(validConfig);
         expect(result.success).toBe(true);
-        if (result.success) {
+        if(result.success) {
             expect(result.data.tableName).toBe('isambard-conversations');
             expect(result.data.region).toBe('us-east-1');
             expect(result.data.endpoint).toBe('http://localhost:8000');
@@ -75,7 +75,7 @@ describe('dynamoDBConfigSchema', () => {
 
         const result = dynamoDBConfigSchema.safeParse(validConfig);
         expect(result.success).toBe(true);
-        if (result.success) {
+        if(result.success) {
             expect(result.data.tableName).toBe('isambard-conversations');
             expect(result.data.region).toBe('us-east-1');
             expect(result.data.endpoint).toBeUndefined();

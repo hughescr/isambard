@@ -1,4 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import _ from 'lodash';
 import type { DiscordMessageContext } from '../integrations/discord/types';
 import type { ContextBuilder } from './context-builder';
@@ -29,17 +30,11 @@ function extractAssistantText(message: { type: string, message?: { content?: unk
     return text;
 }
 
-interface MCPServerConfig {
-    command: string
-    args:    string[]
-    env?:    Record<string, string>
-}
-
 export interface ClaudeAgentOptions {
     /** Context builder for loading memory (core identity + recent context) */
     contextBuilder?:  ContextBuilder
     /** Memory MCP server instance for deep memory access */
-    memoryMcpServer?: MCPServerConfig
+    memoryMcpServer?: McpServerConfig
 }
 
 export interface ClaudeAgent {

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks */
+
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return -- Test mocks */
 import { describe, it, expect, mock } from 'bun:test';
 import { ActivityType } from 'discord.js';
