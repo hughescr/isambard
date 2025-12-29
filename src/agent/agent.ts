@@ -1,5 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { logger } from '@hughescr/logger';
 import _ from 'lodash';
 import type { DiscordMessageContext } from '../integrations/discord/types';
 import type { ContextBuilder } from './context-builder';
@@ -141,7 +142,15 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 // 3. Format user message with context
                 const userMessage = `${contextPrefix}User @${context.userId} in #${context.channelId}: ${context.content}`;
 
-                // 4. Query with memory MCP server
+                // 4. Log start of processing
+                logger.info({
+                    userId:    context.userId,
+                    channelId: context.channelId,
+                    messageId: context.messageId,
+                    msg:       'Agent starting to process message',
+                });
+
+                // 5. Query with memory MCP server
                 const response = query({
                     prompt:  userMessage,
                     options: {
@@ -155,10 +164,16 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                     },
                 });
 
-                // 5. Extract final response (keep latest assistant message)
+                // 6. Extract final response (keep latest assistant message)
                 let lastAssistantText = '';
 
                 for await (const message of response) {
+                    // Debug log for stream events
+                    logger.debug({
+                        eventType: message.type,
+                        msg:       `Stream event: ${message.type}`,
+                    });
+
                     // Invoke stream event callback if provided
                     if(onStreamEvent) {
                         onStreamEvent(message as AgentStreamEvent);
@@ -170,7 +185,14 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                     }
                 }
 
-                // 6. Truncate for Discord if needed
+                // 7. Log completion
+                logger.info({
+                    messageId:      context.messageId,
+                    responseLength: lastAssistantText.length,
+                    msg:            `Agent completed processing (${lastAssistantText.length} chars)`,
+                });
+
+                // 8. Truncate for Discord if needed
                 if(lastAssistantText.length > MAX_RESPONSE_LENGTH) {
                     // eslint-disable-next-line no-console -- Logging truncation for debugging
                     console.log(`Truncating Claude response for message ${context.messageId}: ${lastAssistantText.length} -> ${MAX_RESPONSE_LENGTH}`);

@@ -5,6 +5,7 @@
  * Provides a thin coordination layer over the backend CRUD operations.
  */
 
+import { logger } from '@hughescr/logger';
 import { ZodError } from 'zod';
 import {
     split as _split,
@@ -81,6 +82,8 @@ export async function create(
     backend: MemoryToolBackend,
     params: { path: string, file_text: string }
 ): Promise<string> {
+    const { path } = params;
+    logger.debug({ path, msg: `Memory create: ${path}` });
     const memoryPath = validatePath(params.path);
     const contentType = detectContentType(params.path);
 
@@ -100,6 +103,8 @@ export async function view(
     backend: MemoryToolBackend,
     params: { path: string, view_range?: [number, number] }
 ): Promise<string> {
+    const { path } = params;
+    logger.debug({ path, msg: `Memory view: ${path}` });
     const memoryPath = validatePath(params.path);
 
     // Try to get as a file first
@@ -134,6 +139,8 @@ export async function delete_memory(
     backend: MemoryToolBackend,
     params: { path: string }
 ): Promise<string> {
+    const { path } = params;
+    logger.debug({ path, msg: `Memory delete: ${path}` });
     const memoryPath = validatePath(params.path);
 
     // Check if it's a file
@@ -176,6 +183,8 @@ export async function insert(
     backend: MemoryToolBackend,
     params: { path: string, insert_line: number, insert_text: string }
 ): Promise<string> {
+    const { path } = params;
+    logger.debug({ path, msg: `Memory insert: ${path}` });
     const memoryPath = validatePath(params.path);
 
     const item = await backend.get(memoryPath);
@@ -206,6 +215,8 @@ export async function str_replace(
     backend: MemoryToolBackend,
     params: { path: string, old_str: string, new_str: string }
 ): Promise<string> {
+    const { path } = params;
+    logger.debug({ path, msg: `Memory str_replace: ${path}` });
     const memoryPath = validatePath(params.path);
 
     const item = await backend.get(memoryPath);
@@ -319,8 +330,12 @@ export async function search(
         items = result.items;
     } else {
         // No search criteria provided
+        logger.debug({ query: '', resultCount: 0, msg: 'Memory search: "" (0 results)' });
         return 'No results found';
     }
+
+    const query = params.tags?.join(',') ?? params.layer ?? 'time_range';
+    logger.debug({ query, resultCount: items.length, msg: `Memory search: "${query}" (${items.length} results)` });
 
     if(items.length === 0) {
         return 'No results found';

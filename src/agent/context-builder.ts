@@ -5,6 +5,7 @@
  * Formats identity and state layer memories into a structured context string.
  */
 
+import { logger } from '@hughescr/logger';
 import { map as _map, groupBy as _groupBy, isNumber as _isNumber } from 'lodash';
 import type { MemoryToolBackend } from '../storage/memory-tool/backend';
 import type { MemoryPath, LayerName } from '../storage/memory-tool/types';
@@ -68,28 +69,38 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
 
     return {
         loadCoreIdentity: async (): Promise<string> => {
+            logger.debug({ msg: 'Loading core identity...' });
+
             // Load identity layer items (permanent, auto-loaded)
             const result = await backend.listByLayer('identity' as LayerName);
 
             // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant - empty array join returns ''
             if(result.items.length === 0) {
+                logger.debug({ identityLength: 0, msg: 'Core identity loaded' });
                 return '';
             }
 
             // Format and truncate if needed
             const content = _map(result.items, 'content').join('\n\n');
-            if(content.length > maxIdentityChars) {
-                return content.slice(0, maxIdentityChars - 3) + '...';
-            }
-            return content;
+            const identity = content.length > maxIdentityChars
+                ? content.slice(0, maxIdentityChars - 3) + '...'
+                : content;
+
+            logger.debug({ identityLength: identity.length, msg: 'Core identity loaded' });
+            return identity;
         },
 
         loadRecentContext: async (userId: string, limit = 3): Promise<string[]> => {
+            logger.debug({ userId, msg: 'Loading user context' });
+
             // Load recent state/events for this user via tag search
             const result = await backend.searchByTag(`user:${userId}`, undefined, { limit });
 
             // Return in reverse chronological order (most recent first)
-            return _map(result.items, 'content');
+            const memories = _map(result.items, 'content');
+
+            logger.debug({ userId, memoryCount: memories.length, msg: 'User context loaded' });
+            return memories;
         },
 
         buildSystemContext: async (): Promise<string> => {
@@ -176,6 +187,8 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         },
 
         loadRecentEvents: async (limit = 5): Promise<string[]> => {
+            logger.debug({ msg: 'Loading recent events' });
+
             // Load recent events by time range (last 24 hours)
             const now = new Date();
             const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -185,7 +198,10 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                 'events' as LayerName,
                 { limit }
             );
-            return _map(result, 'content');
+            const events = _map(result, 'content');
+
+            logger.debug({ eventCount: events.length, msg: 'Recent events loaded' });
+            return events;
         },
     };
 }

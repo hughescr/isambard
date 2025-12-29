@@ -127,7 +127,67 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         })
         : null;
 
+    // Helper function to process a message after filtering checks pass
+    async function processMessage(message: Message): Promise<void> {
+        // Convert Discord.js Message to DiscordMessageContext
+        const context: DiscordMessageContext = {
+            guildId:   createGuildId(message.guild?.id ?? 'DM'),
+            channelId: createChannelId(message.channel.id),
+            userId:    createUserId(message.author.id),
+            messageId: message.id,
+            content:   message.content,
+            timestamp: message.createdAt.toISOString(),
+            botUserId,
+        };
+
+        try {
+            logger.info({
+                userId:         message.author.id,
+                channelId:      message.channel.id,
+                messageId:      message.id,
+                contentPreview: message.content.slice(0, 50) + (message.content.length > 50 ? '...' : ''),
+                msg:            `Processing message from ${message.author.tag}`,
+            });
+
+            // Use status middleware if available, otherwise call onMessage directly
+            // Discord.js channels implement sendTyping() for typing indicator support
+            const channel = message.channel as { sendTyping(): Promise<void> };
+            const reply = statusMiddleware
+                ? await statusMiddleware(context, channel)
+                : await onMessage(context);
+
+            // Reply if callback returned a string
+            if(reply !== null) {
+                logger.info({
+                    messageId:      message.id,
+                    responseLength: reply.length,
+                    msg:            `Response generated (${reply.length} chars)`,
+                });
+
+                try {
+                    await message.reply(reply);
+                    logger.info({ messageId: message.id, msg: 'Reply sent successfully' });
+                } catch (replyError) {
+                    const err = _.isError(replyError) ? replyError : new Error(String(replyError));
+                    // Use object spread to satisfy logger typing while maintaining structured logging
+                    logger.error({ error: err, messageId: message.id, msg: `Failed to reply to message ${message.id}: ${err.message}` });
+                }
+            }
+        } catch (error) {
+            const err = _.isError(error) ? error : new Error(String(error));
+            // Use object spread to satisfy logger typing while maintaining structured logging
+            logger.error({ error: err, messageId: message.id, msg: `Error processing message ${message.id}: ${err.message}` });
+        }
+    }
+
     return async (message: Message) => {
+        logger.debug({
+            authorId:  message.author.id,
+            channelId: message.channel.id,
+            isDM:      !message.guild,
+            msg:       `Message received from ${message.author.tag}`,
+        });
+
         // Ignore bot messages
         if(message.author.bot) {
             return;
@@ -145,43 +205,18 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
 
         const shouldRespond = isDM || isMention || isMonitoredChannel;
 
+        logger.debug({
+            isDM,
+            isMention,
+            isMonitoredChannel,
+            shouldRespond,
+            msg: `Filtering: isDM=${isDM}, isMention=${isMention}, isMonitored=${isMonitoredChannel} → shouldRespond=${shouldRespond}`,
+        });
+
         if(!shouldRespond) {
             return;
         }
 
-        // Convert Discord.js Message to DiscordMessageContext
-        const context: DiscordMessageContext = {
-            guildId:   createGuildId(message.guild?.id ?? 'DM'),
-            channelId: createChannelId(message.channel.id),
-            userId:    createUserId(message.author.id),
-            messageId: message.id,
-            content:   message.content,
-            timestamp: message.createdAt.toISOString(),
-            botUserId,
-        };
-
-        try {
-            // Use status middleware if available, otherwise call onMessage directly
-            // Discord.js channels implement sendTyping() for typing indicator support
-            const channel = message.channel as { sendTyping(): Promise<void> };
-            const reply = statusMiddleware
-                ? await statusMiddleware(context, channel)
-                : await onMessage(context);
-
-            // Reply if callback returned a string
-            if(reply !== null) {
-                try {
-                    await message.reply(reply);
-                } catch (replyError) {
-                    const err = _.isError(replyError) ? replyError : new Error(String(replyError));
-                    // Use object spread to satisfy logger typing while maintaining structured logging
-                    logger.error({ error: err, messageId: message.id, msg: `Failed to reply to message ${message.id}: ${err.message}` });
-                }
-            }
-        } catch (error) {
-            const err = _.isError(error) ? error : new Error(String(error));
-            // Use object spread to satisfy logger typing while maintaining structured logging
-            logger.error({ error: err, messageId: message.id, msg: `Error processing message ${message.id}: ${err.message}` });
-        }
+        await processMessage(message);
     };
 }
