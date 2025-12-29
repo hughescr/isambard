@@ -409,46 +409,6 @@ describe('MemoryToolBackend', () => {
             ).rejects.toThrow('Network timeout');
         });
 
-        it('should NOT convert to ConflictError when error is falsy (null)', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: existingItem });
-            // Mock normalizes null to Error, but we verify it's NOT ConflictError
-            ddbMock.on(PutCommand).callsFake(() => {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Intentionally testing non-Error throw
-                throw null;
-            });
-
-            const error = await backend.update(testPath, { content: 'Updated' }).catch((e: unknown) => e);
-            // Key test: should NOT be ConflictError
-            expect(error).not.toBeInstanceOf(ConflictError);
-        });
-
-        it('should NOT convert to ConflictError when error is not an object (number)', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: existingItem });
-            // Mock normalizes number to Error, but we verify it's NOT ConflictError
-            ddbMock.on(PutCommand).callsFake(() => {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Intentionally testing non-Error throw
-                throw 42;
-            });
-
-            const error = await backend.update(testPath, { content: 'Updated' }).catch((e: unknown) => e);
-            // Key test: should NOT be ConflictError
-            expect(error).not.toBeInstanceOf(ConflictError);
-        });
-
-        it('should NOT convert to ConflictError when error object has no name property', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: existingItem });
-            const errorWithoutName = { message: 'Error without name' };
-            ddbMock.on(PutCommand).callsFake(() => {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Intentionally testing non-Error throw
-                throw errorWithoutName;
-            });
-
-            const error = await backend.update(testPath, { content: 'Updated' }).catch((e: unknown) => e);
-            // Key test: should NOT be ConflictError and should have message property
-            expect(error).not.toBeInstanceOf(ConflictError);
-            expect(error).toHaveProperty('message');
-        });
-
         it('should NOT convert to ConflictError when error name does not match', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
 
@@ -463,61 +423,24 @@ describe('MemoryToolBackend', () => {
             expect(error).toHaveProperty('message', 'Different error');
         });
 
-        it('should handle truly falsy errors (direct spy bypass)', async () => {
-            // Spy on the backend's docClient.send method directly
+        it.each([
+            { name: 'null', value: null },
+            { name: 'number', value: 999 },
+            { name: 'object without name property', value: { code: 'SomeError', message: 'No name prop' } },
+        ])('should re-throw non-Error values as-is via direct spy bypass ($name)', async ({ value }) => {
+            // Spy on the backend's docClient.send method directly to test actual rejection behavior
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Need to bypass type safety to access private docClient
             const sendSpy = spyOn((backend as any).docClient, 'send');
-            // First call (GetCommand) succeeds, second call (version PutCommand) succeeds, third call (main PutCommand) throws null
+            // First call (GetCommand) succeeds, second call (version PutCommand) succeeds, third call (main PutCommand) throws non-Error value
             sendSpy
                 .mockResolvedValueOnce({ Item: existingItem })
                 .mockResolvedValueOnce({}) // Version snapshot succeeds
-                .mockRejectedValueOnce(null); // Main item fails
-
-            try {
-                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
-                await expect(
-                    backend.update(testPath, { content: 'Updated' })
-                ).rejects.toBe(null); // Should re-throw null as-is, NOT convert to ConflictError
-            } finally {
-                sendSpy.mockRestore();
-            }
-        });
-
-        it('should handle truly primitive errors (direct spy bypass - number)', async () => {
-            // Spy on the backend's docClient.send method directly
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Need to bypass type safety to access private docClient
-            const sendSpy = spyOn((backend as any).docClient, 'send');
-            // First call (GetCommand) succeeds, second call (version PutCommand) succeeds, third call (main PutCommand) throws number
-            sendSpy
-                .mockResolvedValueOnce({ Item: existingItem })
-                .mockResolvedValueOnce({}) // Version snapshot succeeds
-                .mockRejectedValueOnce(999); // Main item fails
-
-            try {
-                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
-                await expect(
-                    backend.update(testPath, { content: 'Updated' })
-                ).rejects.toBe(999); // Should re-throw number as-is, NOT convert to ConflictError
-            } finally {
-                sendSpy.mockRestore();
-            }
-        });
-
-        it('should handle object without name property (direct spy bypass)', async () => {
-            const objectWithoutName = { code: 'SomeError', message: 'No name prop' };
-            // Spy on the backend's docClient.send method directly
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Need to bypass type safety to access private docClient
-            const sendSpy = spyOn((backend as any).docClient, 'send');
-            // First call (GetCommand) succeeds, second call (version PutCommand) succeeds, third call (main PutCommand) throws object without name
-            sendSpy
-                .mockResolvedValueOnce({ Item: existingItem })
-                .mockResolvedValueOnce({}) // Version snapshot succeeds
-                .mockRejectedValueOnce(objectWithoutName); // Main item fails
+                .mockRejectedValueOnce(value); // Main item fails
 
             try {
                 const error = await backend.update(testPath, { content: 'Updated' }).catch((e: unknown) => e);
-                // Should re-throw object as-is, NOT convert to ConflictError
-                expect(error).toBe(objectWithoutName);
+                // Should re-throw value as-is, NOT convert to ConflictError
+                expect(error).toBe(value);
                 expect(error).not.toBeInstanceOf(ConflictError);
             } finally {
                 sendSpy.mockRestore();

@@ -330,6 +330,8 @@ describe('Memory Tool Handlers', () => {
             expect(lines.length).toBeGreaterThan(2); // "Directory contents:" + at least 2 files
             expect(_some(lines, line => _includes(line, 'file1.md'))).toBe(true);
             expect(_some(lines, line => _includes(line, 'file2.txt'))).toBe(true);
+            // Verify file entries are on separate lines with proper format (file on one line, content type nearby)
+            expect(result).toMatch(/file1\.md[^\n]*\n[^\n]*file2\.txt/);
         });
 
         it('should handle root path "/" by listing with empty parent path', async () => {
@@ -1229,9 +1231,18 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should return "No results found" when no search criteria provided', async () => {
+            // Set up spies to verify backend methods are NOT called
+            mockBackend.searchByTag = mock(async () => ({ items: [], nextCursor: undefined }));
+            mockBackend.searchByTimeRange = mock(async () => []);
+            mockBackend.listByLayer = mock(async () => ({ items: [], nextCursor: undefined }));
+
             const result = await searchHandler(mockBackend, {});
 
             expect(result).toBe('No results found');
+            // Verify backend search methods were NOT called since no criteria provided
+            expect(mockBackend.searchByTag).not.toHaveBeenCalled();
+            expect(mockBackend.searchByTimeRange).not.toHaveBeenCalled();
+            expect(mockBackend.listByLayer).not.toHaveBeenCalled();
         });
 
         it('should return "No results found" when layer search returns empty', async () => {

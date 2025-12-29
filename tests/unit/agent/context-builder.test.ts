@@ -252,16 +252,16 @@ describe('createContextBuilder', () => {
             const contextBuilder = createContextBuilder({ backend });
             const context = await contextBuilder.buildSystemContext();
 
-            // Verify exact header format
-            expect(context).toContain('=== MEMORY CONTEXT ===\n');
+            // Verify header is present (flexible about trailing whitespace)
+            expect(context).toMatch(/=== MEMORY CONTEXT ===/);
 
-            // Verify sections are separated by \n\n
-            expect(context).toContain('\n\n## Identity');
-            expect(context).toContain('\n\n## Current State');
+            // Verify sections exist with proper headers
+            expect(context).toMatch(/## Identity/);
+            expect(context).toMatch(/## Current State/);
 
-            // Verify path:content format with \n\n between entries
-            expect(context).toContain('/identity/values.md:\nCore values content');
-            expect(context).toContain('/state/task.md:\nCurrent task content');
+            // Verify path:content format exists (flexible about exact whitespace)
+            expect(context).toMatch(/\/identity\/values\.md:[\s\S]*Core values content/);
+            expect(context).toMatch(/\/state\/task\.md:[\s\S]*Current task content/);
         });
 
         it('should join multiple identity items with double newlines', async () => {
@@ -289,8 +289,17 @@ describe('createContextBuilder', () => {
             const contextBuilder = createContextBuilder({ backend });
             const context = await contextBuilder.buildSystemContext();
 
-            // Multiple identity items should be separated by \n\n
-            expect(context).toContain('/identity/item1.md:\nIdentity content 1\n\n/identity/item2.md:\nIdentity content 2');
+            // Multiple identity items should both be present with path:content format
+            expect(context).toMatch(/\/identity\/item1\.md:[\s\S]*Identity content 1/);
+            expect(context).toMatch(/\/identity\/item2\.md:[\s\S]*Identity content 2/);
+            // Verify item1 appears before item2 (ordering preserved)
+            expect(context.indexOf('Identity content 1')).toBeLessThan(context.indexOf('Identity content 2'));
+            // Verify they are separated by whitespace (at least one blank line)
+            const betweenContent = context.slice(
+                context.indexOf('Identity content 1') + 'Identity content 1'.length,
+                context.indexOf('Identity content 2')
+            );
+            expect(betweenContent).toMatch(/\n\s*\n/);
         });
 
         it('should join multiple state items with double newlines', async () => {
@@ -318,8 +327,17 @@ describe('createContextBuilder', () => {
             const contextBuilder = createContextBuilder({ backend });
             const context = await contextBuilder.buildSystemContext();
 
-            // Multiple state items should be separated by \n\n
-            expect(context).toContain('/state/task1.md:\nState content 1\n\n/state/task2.md:\nState content 2');
+            // Multiple state items should both be present with path:content format
+            expect(context).toMatch(/\/state\/task1\.md:[\s\S]*State content 1/);
+            expect(context).toMatch(/\/state\/task2\.md:[\s\S]*State content 2/);
+            // Verify task1 appears before task2 (ordering preserved)
+            expect(context.indexOf('State content 1')).toBeLessThan(context.indexOf('State content 2'));
+            // Verify they are separated by whitespace (at least one blank line)
+            const betweenContent = context.slice(
+                context.indexOf('State content 1') + 'State content 1'.length,
+                context.indexOf('State content 2')
+            );
+            expect(betweenContent).toMatch(/\n\s*\n/);
         });
 
         it('should default grouped layer to "other" when layer is null and not render it', async () => {

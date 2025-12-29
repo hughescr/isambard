@@ -544,6 +544,8 @@ describe('PresenceManager', () => {
         });
 
         it('should handle stopIdleRefresh when interval is null (no error)', async () => {
+            const clearIntervalSpy = spyOn(globalThis, 'clearInterval');
+
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -555,7 +557,13 @@ describe('PresenceManager', () => {
             // Stop without ever starting idle - should not throw
             manager.stop();
 
-            expect(mockLogger.info).toHaveBeenCalledWith('Stopping presence manager');
+            // Verify clearInterval was NOT called (no interval existed to clear)
+            expect(clearIntervalSpy).not.toHaveBeenCalled();
+
+            // Also verify no idle refresh occurred
+            expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
+
+            clearIntervalSpy.mockRestore();
         });
 
         it('should run idle refresh on interval', async () => {
@@ -631,6 +639,8 @@ describe('PresenceManager', () => {
         });
 
         it('should return early from refreshIdleStatus when no longer idle', async () => {
+            const clearIntervalSpy = spyOn(globalThis, 'clearInterval');
+
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -639,23 +649,31 @@ describe('PresenceManager', () => {
                 logger:                mockLogger,
             });
 
-            // Start idle
+            // Start idle - this creates the interval
             await manager.updatePhase({ type: 'idle', since: new Date() });
             const initialIdleCount = mockIdleGenerator.generate.mock.calls.length;
+            expect(initialIdleCount).toBe(1);
 
-            // Transition to active
+            // Transition to active - this should clear the interval
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
 
-            // Manually advance time to trigger what would be idle refresh
-            // (but the interval should be cleared)
-            jest.advanceTimersByTime(config.idleRefreshIntervalMs);
+            // Verify the interval was actually cleared (guard behavior)
+            expect(clearIntervalSpy).toHaveBeenCalled();
+
+            // Advance time - since interval is cleared, no new refreshes should occur
+            jest.advanceTimersByTime(config.idleRefreshIntervalMs * 2);
+            await Promise.resolve();
             await Promise.resolve();
 
             // Idle generator should not have been called again
             expect(mockIdleGenerator.generate.mock.calls.length).toBe(initialIdleCount);
+
+            clearIntervalSpy.mockRestore();
         });
 
         it('should not start idle refresh in start() when currentPhase is null', () => {
+            const setIntervalSpy = spyOn(globalThis, 'setInterval');
+
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -669,6 +687,11 @@ describe('PresenceManager', () => {
 
             // Should not call idle generator since currentPhase is null
             expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
+
+            // Verify no interval was created (startIdleRefresh was not called)
+            expect(setIntervalSpy).not.toHaveBeenCalled();
+
+            setIntervalSpy.mockRestore();
         });
 
         it('should not start idle refresh in start() when currentPhase is active', async () => {
@@ -797,10 +820,28 @@ describe('PresenceManager', () => {
 
             // Set to idle first
             await manager.updatePhase({ type: 'idle', since: new Date() });
+            const initialIdleCount = mockIdleGenerator.generate.mock.calls.length;
+            expect(initialIdleCount).toBe(1);
 
+            // Stop it (clears the interval and sets idleRefreshInterval to null)
+            manager.stop();
+
+            // Clear mock to track new calls
+            mockIdleGenerator.generate.mockClear();
+
+            // Start again - since currentPhase is still idle, should restart idle refresh
             manager.start();
 
-            expect(mockLogger.info).toHaveBeenCalled();
+            // Allow async operations to complete (start calls void startIdleRefresh())
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Verify idle generator was called again (proves start() triggered startIdleRefresh)
+            expect(mockIdleGenerator.generate).toHaveBeenCalled();
+
+            // Verify setActivity was called (proves the full refresh flow executed)
+            const activityCallsAfterStart = mockClient.user.setActivity.mock.calls.length;
+            expect(activityCallsAfterStart).toBeGreaterThan(0);
         });
     });
 
