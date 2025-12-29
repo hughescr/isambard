@@ -1,9 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @stylistic/max-statements-per-line, @typescript-eslint/no-unsafe-argument -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks filter call */
+
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
-import { constant as _constant, filter as _filter } from 'lodash';
+import { constant as _constant, filter as _filter, find as _find, some as _some } from 'lodash';
 import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
 import type { PresencePhase } from '@/integrations/discord/presence/types';
 import type { AgentStreamEvent } from '@/agent/types';
@@ -43,6 +43,7 @@ describe('StatusMiddleware', () => {
             guildId:   'guild-101' as any,
             content:   'Test message',
             timestamp: new Date().toISOString(),
+            botUserId: 'bot-999' as any,
         };
     });
 
@@ -315,7 +316,7 @@ describe('StatusMiddleware', () => {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                     if(onEvent) {
                         onEvent({ type: 'tool_progress', tool_name: 'mcp__memory__view' });
-                        onEvent({ type: 'tool_progress', tool_name: 'mcp__memory__store' });
+                        onEvent({ type: 'tool_progress', tool_name: 'mcp__memory__storeSelf' });
                     }
                     return 'Response';
                 }),
@@ -339,7 +340,7 @@ describe('StatusMiddleware', () => {
 
             await middleware(messageContext);
 
-            expect(toolNames).toEqual(['mcp__memory__view', 'mcp__memory__store']);
+            expect(toolNames).toEqual(['mcp__memory__view', 'mcp__memory__storeSelf']);
         });
 
         it('should handle missing tool_name gracefully', async () => {
@@ -569,8 +570,8 @@ describe('StatusMiddleware', () => {
             await middleware(messageContext); // No channel
 
             // Should still update presence phases
-            expect(phases.some(p => p.type === 'responding')).toBe(true);
-            expect(phases.some(p => p.type === 'idle')).toBe(true);
+            expect(_some(phases, ['type', 'responding'])).toBe(true);
+            expect(_some(phases, ['type', 'idle'])).toBe(true);
         });
     });
 
@@ -685,7 +686,7 @@ describe('StatusMiddleware', () => {
             await flushPromises();
 
             // Should have result event idle and final idle
-            const idlePhases = phases.filter(p => p.type === 'idle');
+            const idlePhases = _filter(phases, ['type', 'idle']);
             expect(idlePhases.length).toBeGreaterThanOrEqual(1);
             // Each idle phase should have a since Date
             for(const phase of idlePhases) {
@@ -727,7 +728,7 @@ describe('StatusMiddleware', () => {
         it('should call updatePhase with idle after chat completes', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
-                chat: mock(async () => 'Response'),
+                chat: mock(_constant(Promise.resolve('Response'))),
             };
 
             const capturingPresenceManager = {
@@ -747,14 +748,14 @@ describe('StatusMiddleware', () => {
             await middleware(messageContext);
 
             // Should have at least one idle phase from final transition
-            const idlePhases = phases.filter(p => p.type === 'idle');
+            const idlePhases = _filter(phases, ['type', 'idle']);
             expect(idlePhases.length).toBeGreaterThanOrEqual(1);
         });
 
         it('should verify final idle update has since property as Date', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
-                chat: mock(async () => 'Response'),
+                chat: mock(_constant(Promise.resolve('Response'))),
             };
 
             const capturingPresenceManager = {
@@ -807,7 +808,7 @@ describe('StatusMiddleware', () => {
             await middleware(messageContext);
 
             // Should still transition to idle
-            const idlePhases = phases.filter(p => p.type === 'idle');
+            const idlePhases = _filter(phases, ['type', 'idle']);
             expect(idlePhases.length).toBeGreaterThanOrEqual(1);
         });
 
@@ -900,7 +901,7 @@ describe('StatusMiddleware', () => {
             await flushPromises();
 
             // Should have responding and idle phases, but no using_tool
-            const toolPhases = phases.filter(p => p.type === 'using_tool');
+            const toolPhases = _filter(phases, ['type', 'using_tool']);
             expect(toolPhases.length).toBe(0);
         });
     });
@@ -936,12 +937,12 @@ describe('StatusMiddleware', () => {
             await flushPromises();
 
             // Should have responding from assistant event
-            const respondingPhases = phases.filter(p => p.type === 'responding');
+            const respondingPhases = _filter(phases, ['type', 'responding']);
             expect(respondingPhases.length).toBe(1);
 
             // Should have exactly one idle phase (from final transition, not from result event)
             // The idle is added at the end by the middleware, not by a result event
-            const idlePhases = phases.filter(p => p.type === 'idle');
+            const idlePhases = _filter(phases, ['type', 'idle']);
             expect(idlePhases.length).toBe(1);
         });
 
@@ -974,7 +975,7 @@ describe('StatusMiddleware', () => {
             await flushPromises();
 
             // Should have at least 2 idle phases (one from result event, one from final transition)
-            const idlePhases = phases.filter(p => p.type === 'idle');
+            const idlePhases = _filter(phases, ['type', 'idle']);
             expect(idlePhases.length).toBeGreaterThanOrEqual(2);
         });
     });
@@ -1149,7 +1150,7 @@ describe('StatusMiddleware', () => {
             await middleware(messageContext);
             await flushPromises();
 
-            const thinkingPhase = phases.find(p => p.type === 'thinking');
+            const thinkingPhase = _find(phases, ['type', 'thinking']);
             expect(thinkingPhase).toBeDefined();
             expect(thinkingPhase!.type).toBe('thinking');
             expect(thinkingPhase!.type).not.toBe('');
@@ -1184,7 +1185,7 @@ describe('StatusMiddleware', () => {
             await middleware(messageContext);
             await flushPromises();
 
-            const respondingPhase = phases.find(p => p.type === 'responding');
+            const respondingPhase = _find(phases, ['type', 'responding']);
             expect(respondingPhase).toBeDefined();
             expect(respondingPhase!.type).toBe('responding');
             expect(respondingPhase!.type).not.toBe('');
@@ -1219,7 +1220,7 @@ describe('StatusMiddleware', () => {
             await middleware(messageContext);
             await flushPromises();
 
-            const toolPhase = phases.find(p => p.type === 'using_tool');
+            const toolPhase = _find(phases, ['type', 'using_tool']);
             expect(toolPhase).toBeDefined();
             expect(toolPhase!.type).toBe('using_tool');
             expect(toolPhase!.type).not.toBe('');
@@ -1229,7 +1230,7 @@ describe('StatusMiddleware', () => {
         it('should use exact string "idle" not empty string', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
-                chat: mock(async () => 'Response'),
+                chat: mock(_constant(Promise.resolve('Response'))),
             };
 
             const capturingPresenceManager = {
@@ -1248,7 +1249,7 @@ describe('StatusMiddleware', () => {
 
             await middleware(messageContext);
 
-            const idlePhase = phases.find(p => p.type === 'idle');
+            const idlePhase = _find(phases, ['type', 'idle']);
             expect(idlePhase).toBeDefined();
             expect(idlePhase!.type).toBe('idle');
             expect(idlePhase!.type).not.toBe('');
@@ -1285,7 +1286,7 @@ describe('StatusMiddleware', () => {
             await middleware(messageContext);
             await flushPromises();
 
-            const thinkingPhase = phases.find(p => p.type === 'thinking');
+            const thinkingPhase = _find(phases, ['type', 'thinking']);
             expect(thinkingPhase).toBeDefined();
             if(thinkingPhase?.type === 'thinking') {
                 expect(thinkingPhase.startedAt).toBeInstanceOf(Date);
@@ -1320,7 +1321,7 @@ describe('StatusMiddleware', () => {
             await middleware(messageContext);
             await flushPromises();
 
-            const respondingPhase = phases.find(p => p.type === 'responding');
+            const respondingPhase = _find(phases, ['type', 'responding']);
             expect(respondingPhase).toBeDefined();
             if(respondingPhase?.type === 'responding') {
                 expect(respondingPhase.startedAt).toBeInstanceOf(Date);
@@ -1355,7 +1356,7 @@ describe('StatusMiddleware', () => {
             await middleware(messageContext);
             await flushPromises();
 
-            const toolPhase = phases.find(p => p.type === 'using_tool');
+            const toolPhase = _find(phases, ['type', 'using_tool']);
             expect(toolPhase).toBeDefined();
             if(toolPhase?.type === 'using_tool') {
                 expect(toolPhase.startedAt).toBeInstanceOf(Date);
@@ -1390,7 +1391,7 @@ describe('StatusMiddleware', () => {
             await middleware(messageContext);
             await flushPromises();
 
-            const idlePhases = phases.filter(p => p.type === 'idle');
+            const idlePhases = _filter(phases, ['type', 'idle']);
             expect(idlePhases.length).toBeGreaterThanOrEqual(1);
             for(const phase of idlePhases) {
                 if(phase.type === 'idle') {
@@ -1469,9 +1470,9 @@ describe('StatusMiddleware', () => {
 
             expect(result).toBe(null);
             // Should have responding phase from before error
-            expect(phases.some(p => p.type === 'responding')).toBe(true);
+            expect(_some(phases, ['type', 'responding'])).toBe(true);
             // Should have idle phase from error recovery
-            expect(phases.some(p => p.type === 'idle')).toBe(true);
+            expect(_some(phases, ['type', 'idle'])).toBe(true);
         });
 
         it('should return null and log when sendTyping fails before agent.chat', async () => {
@@ -1532,8 +1533,8 @@ describe('StatusMiddleware', () => {
             await flushPromises();
 
             // Should have exactly one responding and one using_tool
-            const respondingPhases = phases.filter(p => p.type === 'responding');
-            const toolPhases = phases.filter(p => p.type === 'using_tool');
+            const respondingPhases = _filter(phases, ['type', 'responding']);
+            const toolPhases = _filter(phases, ['type', 'using_tool']);
 
             expect(respondingPhases.length).toBe(1);
             expect(toolPhases.length).toBe(1);
@@ -1569,8 +1570,8 @@ describe('StatusMiddleware', () => {
             await flushPromises();
 
             // Should have one thinking and multiple idle (from result and final)
-            const thinkingPhases = phases.filter(p => p.type === 'thinking');
-            const idlePhases = phases.filter(p => p.type === 'idle');
+            const thinkingPhases = _filter(phases, ['type', 'thinking']);
+            const idlePhases = _filter(phases, ['type', 'idle']);
 
             expect(thinkingPhases.length).toBe(1);
             expect(idlePhases.length).toBeGreaterThanOrEqual(2);

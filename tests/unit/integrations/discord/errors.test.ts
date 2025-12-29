@@ -1,3 +1,4 @@
+import _ from 'lodash';
 import { describe, it, expect, spyOn } from 'bun:test';
 import {
     DiscordIntegrationError,
@@ -48,7 +49,7 @@ describe('Discord Integration Errors', () => {
             const error = createError();
             expect(error.stack).toBeDefined();
 
-            const stackLines = error.stack!.split('\n');
+            const stackLines = _.split(error.stack, '\n');
 
             // First line is the error message
             expect(stackLines[0]).toContain('DiscordIntegrationError: Test error');
@@ -80,7 +81,7 @@ describe('Discord Integration Errors', () => {
             expect(error.stack!.length).toBeGreaterThan(0);
 
             // The stack should start with the error name and message
-            expect(error.stack!.startsWith('DiscordIntegrationError: Stack test')).toBe(true);
+            expect(_.startsWith(error.stack, 'DiscordIntegrationError: Stack test')).toBe(true);
 
             // Verify stack contains at least one file reference (indicating proper trace capture)
             expect(error.stack).toMatch(/at\s+/);

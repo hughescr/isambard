@@ -10,6 +10,70 @@ const DISCORD_MAX_MESSAGE_LENGTH = 2000;
 const TRUNCATION_BUFFER = 100; // Leave room for "..." and safety margin
 const MAX_RESPONSE_LENGTH = DISCORD_MAX_MESSAGE_LENGTH - TRUNCATION_BUFFER;
 
+const BASE_SYSTEM_PROMPT = `You are Isambard, an agentic AI assistant in a Discord server.
+
+You can use tools to accomplish tasks. You have access to:
+- Memory system (view, store, search memories)
+- File operations (if needed for tasks)
+- Command execution (if granted permission)
+- Web search and information retrieval
+
+Always check your memories about users before responding to personalize your interactions.`;
+
+/**
+ * Build system prompt with optional core identity.
+ * @param contextBuilder Optional context builder for loading identity
+ * @returns System prompt string
+ */
+async function buildSystemPrompt(contextBuilder?: ContextBuilder): Promise<string> {
+    if(!contextBuilder) {
+        return BASE_SYSTEM_PROMPT;
+    }
+
+    const coreIdentity = await contextBuilder.loadCoreIdentity();
+    if(!coreIdentity) {
+        return BASE_SYSTEM_PROMPT;
+    }
+
+    return `${BASE_SYSTEM_PROMPT}\n\n## Who You Are\n${coreIdentity}`;
+}
+
+/**
+ * Build context prefix from user memories, bot memories, and recent events.
+ * @param contextBuilder Context builder for loading memories
+ * @param context Discord message context
+ * @returns Context prefix string (empty if no context available)
+ */
+async function buildContextPrefix(contextBuilder: ContextBuilder, context: DiscordMessageContext): Promise<string> {
+    const sections: string[] = [];
+
+    // User-specific memories
+    const userMemories = await contextBuilder.loadRecentContext(context.userId, 3);
+    if(userMemories.length > 0) {
+        sections.push(`[About this user]\n${_.map(userMemories, m => `- ${m}`).join('\n')}`);
+    }
+
+    // Isambard's own memories (using botUserId from context)
+    if(context.botUserId) {
+        const isambardMemories = await contextBuilder.loadRecentContext(context.botUserId, 2);
+        if(isambardMemories.length > 0) {
+            sections.push(`[Your recent activities]\n${_.map(isambardMemories, m => `- ${m}`).join('\n')}`);
+        }
+    }
+
+    // Recent events
+    const recentEvents = await contextBuilder.loadRecentEvents(3);
+    if(recentEvents.length > 0) {
+        sections.push(`[Recent events]\n${_.map(recentEvents, m => `- ${m}`).join('\n')}`);
+    }
+
+    if(sections.length === 0) {
+        return '';
+    }
+
+    return sections.join('\n\n') + '\n\n';
+}
+
 /**
  * Extract text content from an assistant message.
  * @param message SDK message with potential content blocks
@@ -66,32 +130,13 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     return {
         chat: async (context: DiscordMessageContext, onStreamEvent?: (event: AgentStreamEvent) => void): Promise<string | null> => {
             try {
-                // 1. Load core identity (cached, essential) for system prompt
-                let systemPrompt = `You are Isambard, an agentic AI assistant in a Discord server.
+                // 1. Build system prompt with core identity
+                const systemPrompt = await buildSystemPrompt(contextBuilder);
 
-You can use tools to accomplish tasks. You have access to:
-- Memory system (view, store, search memories)
-- File operations (if needed for tasks)
-- Command execution (if granted permission)
-- Web search and information retrieval
-
-Always check your memories about users before responding to personalize your interactions.`;
-
-                if(contextBuilder) {
-                    const coreIdentity = await contextBuilder.loadCoreIdentity();
-                    if(coreIdentity) {
-                        systemPrompt += `\n\n## Who You Are\n${coreIdentity}`;
-                    }
-                }
-
-                // 2. Load recent context for this user (injected in prompt)
-                let contextPrefix = '';
-                if(contextBuilder) {
-                    const recentMemories = await contextBuilder.loadRecentContext(context.userId, 3);
-                    if(recentMemories.length > 0) {
-                        contextPrefix = `[Recent context]\n${_.map(recentMemories, m => `- ${m}`).join('\n')}\n\n`;
-                    }
-                }
+                // 2. Build context prefix from memories and events
+                const contextPrefix = contextBuilder
+                    ? await buildContextPrefix(contextBuilder, context)
+                    : '';
 
                 // 3. Format user message with context
                 const userMessage = `${contextPrefix}User @${context.userId} in #${context.channelId}: ${context.content}`;
@@ -104,7 +149,7 @@ Always check your memories about users before responding to personalize your int
                         systemPrompt,
                         mcpServers:   memoryMcpServer ? { memory: memoryMcpServer } : undefined,
                         allowedTools: memoryMcpServer
-                            ? ['mcp__memory__view', 'mcp__memory__store', 'mcp__memory__search']
+                            ? ['mcp__memory__view', 'mcp__memory__storeSelf', 'mcp__memory__storeUserMemory', 'mcp__memory__logEvent', 'mcp__memory__search']
                             : [],
                         permissionMode: 'bypassPermissions',
                     },

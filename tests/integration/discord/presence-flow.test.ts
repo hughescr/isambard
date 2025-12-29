@@ -223,6 +223,7 @@ describe('Discord Presence Flow (Integration)', () => {
             messageId: 'message-id',
             content:   'Hello',
             timestamp: new Date().toISOString(),
+            botUserId: 'bot-id' as UserId,
         };
 
         const result = await statusMiddleware(context, mockChannel);

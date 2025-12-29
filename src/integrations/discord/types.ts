@@ -41,6 +41,8 @@ export const discordMessageContextSchema = z.object({
     messageId: z.string().min(1),
     content:   z.string(),
     timestamp: z.string().datetime(),
+    /** The bot's own user ID (for self-awareness in memory operations) */
+    botUserId: userIdSchema,
 });
 
 export type DiscordMessageContext = z.infer<typeof discordMessageContextSchema>;

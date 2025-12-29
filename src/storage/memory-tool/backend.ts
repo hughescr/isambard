@@ -7,12 +7,10 @@ import {
     type ContentType,
     type MemoryToolItemData,
     type MemoryToolItem,
-    type LayerName,
-    extractLayerFromPath
+    type LayerName
 } from './types';
 import { MemoryToolKeyGenerator } from './key-generator';
 import { ItemNotFoundError, ValidationError, ConflictError } from '../errors';
-import { getLayerConfig } from './layer-config';
 
 export interface CreateMemoryToolItemInput {
     path:        MemoryPath
@@ -20,7 +18,6 @@ export interface CreateMemoryToolItemInput {
     contentType: ContentType
     metadata?:   Record<string, unknown>
     tags?:       string[]
-    ttlDays?:    number
 }
 
 export interface UpdateMemoryToolItemInput {
@@ -75,31 +72,15 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         // Create GSI2 keys if tags are present
         const tagKeys = MemoryToolKeyGenerator.createTagKeys(data.path, data.tags, data.updatedAt);
 
-        // Calculate TTL if applicable
-        let ttl: number | undefined;
-        const layer = extractLayerFromPath(data.path);
-
-        // Explicit ttlDays takes precedence over layer config
-        const ttlDays = input.ttlDays ?? (layer ? getLayerConfig(layer).ttlDays : undefined);
-
-        // Stryker disable next-line ConditionalExpression: ttlDays could be 0 which is valid, need exact undefined check
-        if(ttlDays !== undefined) {
-            // Use createdAt as base timestamp for consistency
-            const createdAtMs = new Date(data.createdAt).getTime();
-            ttl = Math.floor(createdAtMs / 1000) + (ttlDays * 24 * 60 * 60);
-        }
-
         const item: MemoryToolItem = {
             ...data,
             ...keys,
             ...(tagKeys && { GSI2PK: tagKeys.GSI2PK, GSI2SK: tagKeys.GSI2SK }),
-            ...(ttl && { ttl }),
         };
 
         await this.putItem(item as unknown as Record<string, unknown>);
 
-        // Return data with ttl included
-        return { ...data, ...(ttl && { ttl }) };
+        return data;
     }
 
     async get(path: MemoryPath): Promise<MemoryToolItemData | undefined> {

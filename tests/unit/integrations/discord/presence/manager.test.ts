@@ -2,6 +2,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks */
+import _ from 'lodash';
 import { describe, it, expect, beforeEach, afterEach, mock, jest, spyOn } from 'bun:test';
 import type { Client } from 'discord.js';
 import { ActivityType } from 'discord.js';
@@ -1842,9 +1843,7 @@ describe('PresenceManager', () => {
             expect(setIntervalSpy).not.toHaveBeenCalled();
 
             // Also verify no 'Started idle status refresh' log
-            const idleRefreshLogs = mockLogger.debug.mock.calls.filter(
-                (call: any[]) => call[1] === 'Started idle status refresh'
-            );
+            const idleRefreshLogs = _.filter(mockLogger.debug.mock.calls, [1, 'Started idle status refresh']);
             expect(idleRefreshLogs.length).toBe(0);
 
             setIntervalSpy.mockRestore();

@@ -8,9 +8,8 @@ import {
 import type { LayerName } from '@/storage/memory-tool/types';
 
 describe('layerConfigSchema', () => {
-    it('should validate config with ttlDays and all fields', () => {
+    it('should validate config with all fields', () => {
         const config = {
-            ttlDays:     60,
             maxVersions: 5,
             autoLoad:    'conditional' as const,
         };
@@ -18,19 +17,8 @@ describe('layerConfigSchema', () => {
         expect(result.success).toBe(true);
     });
 
-    it('should validate config without ttlDays (permanent)', () => {
-        const config = {
-            ttlDays:     undefined,
-            maxVersions: 10,
-            autoLoad:    true,
-        };
-        const result = layerConfigSchema.safeParse(config);
-        expect(result.success).toBe(true);
-    });
-
     it('should apply default maxVersions of 1', () => {
         const config = {
-            ttlDays:  14,
             autoLoad: false,
         };
         const result = layerConfigSchema.safeParse(config);
@@ -42,7 +30,6 @@ describe('layerConfigSchema', () => {
 
     it('should apply default autoLoad of false', () => {
         const config = {
-            ttlDays:     30,
             maxVersions: 3,
         };
         const result = layerConfigSchema.safeParse(config);
@@ -54,7 +41,6 @@ describe('layerConfigSchema', () => {
 
     it('should accept boolean autoLoad', () => {
         const configTrue = {
-            ttlDays:     30,
             maxVersions: 3,
             autoLoad:    true,
         };
@@ -62,7 +48,6 @@ describe('layerConfigSchema', () => {
         expect(resultTrue.success).toBe(true);
 
         const configFalse = {
-            ttlDays:     30,
             maxVersions: 3,
             autoLoad:    false,
         };
@@ -72,7 +57,6 @@ describe('layerConfigSchema', () => {
 
     it('should accept "conditional" for autoLoad', () => {
         const config = {
-            ttlDays:     30,
             maxVersions: 3,
             autoLoad:    'conditional' as const,
         };
@@ -82,7 +66,6 @@ describe('layerConfigSchema', () => {
 
     it('should reject invalid string for autoLoad', () => {
         const config = {
-            ttlDays:     30,
             maxVersions: 3,
             autoLoad:    'always',
         };
@@ -90,39 +73,8 @@ describe('layerConfigSchema', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should reject negative ttlDays', () => {
-        const config = {
-            ttlDays:     -1,
-            maxVersions: 3,
-            autoLoad:    false,
-        };
-        const result = layerConfigSchema.safeParse(config);
-        expect(result.success).toBe(false);
-    });
-
-    it('should reject zero ttlDays', () => {
-        const config = {
-            ttlDays:     0,
-            maxVersions: 3,
-            autoLoad:    false,
-        };
-        const result = layerConfigSchema.safeParse(config);
-        expect(result.success).toBe(false);
-    });
-
-    it('should reject non-integer ttlDays', () => {
-        const config = {
-            ttlDays:     30.5,
-            maxVersions: 3,
-            autoLoad:    false,
-        };
-        const result = layerConfigSchema.safeParse(config);
-        expect(result.success).toBe(false);
-    });
-
     it('should reject negative maxVersions', () => {
         const config = {
-            ttlDays:     30,
             maxVersions: -1,
             autoLoad:    false,
         };
@@ -132,7 +84,6 @@ describe('layerConfigSchema', () => {
 
     it('should reject zero maxVersions', () => {
         const config = {
-            ttlDays:     30,
             maxVersions: 0,
             autoLoad:    false,
         };
@@ -142,7 +93,6 @@ describe('layerConfigSchema', () => {
 
     it('should reject non-integer maxVersions', () => {
         const config = {
-            ttlDays:     30,
             maxVersions: 3.5,
             autoLoad:    false,
         };
@@ -161,21 +111,18 @@ describe('LAYER_CONFIGS', () => {
 
     it('should have identity config with correct values', () => {
         const config = getLayerConfig('identity' as LayerName);
-        expect(config.ttlDays).toBeUndefined();
         expect(config.maxVersions).toBe(10);
         expect(config.autoLoad).toBe(true);
     });
 
     it('should have state config with correct values', () => {
         const config = getLayerConfig('state' as LayerName);
-        expect(config.ttlDays).toBe(60);
         expect(config.maxVersions).toBe(5);
         expect(config.autoLoad).toBe('conditional');
     });
 
     it('should have events config with correct values', () => {
         const config = getLayerConfig('events' as LayerName);
-        expect(config.ttlDays).toBe(14);
         expect(config.maxVersions).toBe(1);
         expect(config.autoLoad).toBe(false);
     });
@@ -192,21 +139,18 @@ describe('LAYER_CONFIGS', () => {
 describe('getLayerConfig', () => {
     it('should return identity config with correct values', () => {
         const config = getLayerConfig('identity' as LayerName);
-        expect(config.ttlDays).toBeUndefined();
         expect(config.maxVersions).toBe(10);
         expect(config.autoLoad).toBe(true);
     });
 
     it('should return state config with correct values', () => {
         const config = getLayerConfig('state' as LayerName);
-        expect(config.ttlDays).toBe(60);
         expect(config.maxVersions).toBe(5);
         expect(config.autoLoad).toBe('conditional');
     });
 
     it('should return events config with correct values', () => {
         const config = getLayerConfig('events' as LayerName);
-        expect(config.ttlDays).toBe(14);
         expect(config.maxVersions).toBe(1);
         expect(config.autoLoad).toBe(false);
     });

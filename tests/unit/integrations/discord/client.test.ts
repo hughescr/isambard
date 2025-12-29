@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { Client, GatewayIntentBits } from 'discord.js';
+import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import { createDiscordClient } from '@/integrations/discord/client';
 import type { DiscordConfig } from '@/config/schemas';
 
@@ -52,21 +52,81 @@ describe('createDiscordClient', () => {
         expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
     });
 
-    it('should configure client with all three required intents', () => {
+    it('should configure client with DirectMessages intent', () => {
         const client = createDiscordClient(validConfig);
 
         const intents = client.options.intents;
         expect(intents).toBeDefined();
 
-        // Check all three intents are set together
+        // Check that DirectMessages intent is set
+        const expectedIntents = GatewayIntentBits.DirectMessages;
+        // eslint-disable-next-line no-bitwise -- Discord.js uses bitfields for intents
+        expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
+    });
+
+    it('should configure client with GuildMessageReactions intent', () => {
+        const client = createDiscordClient(validConfig);
+
+        const intents = client.options.intents;
+        expect(intents).toBeDefined();
+
+        // Check that GuildMessageReactions intent is set
+        const expectedIntents = GatewayIntentBits.GuildMessageReactions;
+        // eslint-disable-next-line no-bitwise -- Discord.js uses bitfields for intents
+        expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
+    });
+
+    it('should configure client with DirectMessageReactions intent', () => {
+        const client = createDiscordClient(validConfig);
+
+        const intents = client.options.intents;
+        expect(intents).toBeDefined();
+
+        // Check that DirectMessageReactions intent is set
+        const expectedIntents = GatewayIntentBits.DirectMessageReactions;
+        // eslint-disable-next-line no-bitwise -- Discord.js uses bitfields for intents
+        expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
+    });
+
+    it('should configure client with GuildPresences intent', () => {
+        const client = createDiscordClient(validConfig);
+
+        const intents = client.options.intents;
+        expect(intents).toBeDefined();
+
+        // Check that GuildPresences intent is set
+        const expectedIntents = GatewayIntentBits.GuildPresences;
+        // eslint-disable-next-line no-bitwise -- Discord.js uses bitfields for intents
+        expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
+    });
+
+    it('should configure client with all seven required intents', () => {
+        const client = createDiscordClient(validConfig);
+
+        const intents = client.options.intents;
+        expect(intents).toBeDefined();
+
+        // Check all seven intents are set together
         /* eslint-disable no-bitwise -- Discord.js uses bitfields for intents */
         const expectedIntents
             = Number(GatewayIntentBits.Guilds)
               | Number(GatewayIntentBits.GuildMessages)
-              | Number(GatewayIntentBits.MessageContent);
+              | Number(GatewayIntentBits.MessageContent)
+              | Number(GatewayIntentBits.DirectMessages)
+              | Number(GatewayIntentBits.GuildMessageReactions)
+              | Number(GatewayIntentBits.DirectMessageReactions)
+              | Number(GatewayIntentBits.GuildPresences);
 
         expect(Number(intents) & expectedIntents).toBe(expectedIntents);
         /* eslint-enable no-bitwise -- Re-enable after bitfield operations */
+    });
+
+    it('should configure client with Channel partial for DM support', () => {
+        const client = createDiscordClient(validConfig);
+
+        const partials = client.options.partials;
+        expect(partials).toBeDefined();
+        expect(partials).toContain(Partials.Channel);
     });
 
     it('should create client without calling login', () => {

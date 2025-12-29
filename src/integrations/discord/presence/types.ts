@@ -51,9 +51,11 @@ export interface StatusUpdate {
  * Extensible - add new tools here as they're integrated.
  */
 export const ToolStatusMap: Record<string, string> = {
-    mcp__memory__view:   'Remembering...',
-    mcp__memory__store:  'Recording memory...',
-    mcp__memory__search: 'Searching memories...',
+    mcp__memory__view:            'Remembering...',
+    mcp__memory__storeSelf:       'Recording self-knowledge...',
+    mcp__memory__storeUserMemory: 'Recording user memory...',
+    mcp__memory__logEvent:        'Logging event...',
+    mcp__memory__search:          'Searching memories...',
     // Future tools can be added here
 };
 

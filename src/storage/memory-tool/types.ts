@@ -44,7 +44,6 @@ export const memoryToolItemSchema = z.object({
     createdAt:   z.string().datetime(),
     updatedAt:   z.string().datetime(),
     tags:        z.array(z.string()).optional(),
-    ttl:         z.number().int().positive().optional(), // Unix timestamp for TTL expiration
 });
 
 export type MemoryToolItemData = z.infer<typeof memoryToolItemSchema>;
@@ -59,7 +58,6 @@ export interface MemoryToolItem extends MemoryToolItemData {
     GSI1SK:  string   // CREATED#{timestamp} - time-based sorting
     GSI2PK?: string   // TAG#{tag} - allows lookup by tag (optional)
     GSI2SK?: string   // LAYER#{layer}#UPDATED#{timestamp} - tag queries with layer and time filtering (optional)
-    ttl?:    number   // Unix timestamp for TTL expiration (optional)
 }
 
 /**

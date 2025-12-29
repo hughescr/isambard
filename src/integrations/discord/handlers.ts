@@ -157,6 +157,7 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
             messageId: message.id,
             content:   message.content,
             timestamp: message.createdAt.toISOString(),
+            botUserId,
         };
 
         try {

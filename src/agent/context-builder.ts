@@ -42,6 +42,13 @@ export interface ContextBuilder {
      * @param paths Memory paths that were accessed
      */
     recordAccess: (paths: MemoryPath[]) => Promise<void>
+
+    /**
+     * Load recent events from the timeline
+     * @param limit Maximum number of events to load
+     * @returns Array of recent event summaries
+     */
+    loadRecentEvents: (limit?: number) => Promise<string[]>
 }
 
 const DEFAULT_MAX_IDENTITY_TOKENS = 500;
@@ -166,6 +173,19 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                     },
                 });
             }
+        },
+
+        loadRecentEvents: async (limit = 5): Promise<string[]> => {
+            // Load recent events by time range (last 24 hours)
+            const now = new Date();
+            const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+            const result = await backend.searchByTimeRange(
+                dayAgo.toISOString(),
+                now.toISOString(),
+                'events' as LayerName,
+                { limit }
+            );
+            return _map(result, 'content');
         },
     };
 }

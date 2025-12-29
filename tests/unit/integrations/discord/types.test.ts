@@ -122,6 +122,7 @@ describe('discordMessageContextSchema', () => {
         guildId:   '123456789012345678' as GuildId,
         channelId: '987654321098765432' as ChannelId,
         userId:    '111222333444555666' as UserId,
+        botUserId: '999999999999999999' as UserId,
         messageId: '999888777666555444',
         content:   'Hello, world!',
         timestamp: '2024-01-15T10:30:00.000Z',

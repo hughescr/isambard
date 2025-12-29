@@ -378,6 +378,7 @@ describe('Bot Lifecycle Integration', () => {
                 channelId: createChannelId('987654321098765432'),
                 content:   'Hello bot!',
                 timestamp: new Date().toISOString(),
+                botUserId: createUserId('bot_789'),
             };
 
             const response = await onMessage(mockContext);
@@ -417,6 +418,7 @@ describe('Bot Lifecycle Integration', () => {
                 channelId: createChannelId('987654321098765432'),
                 content:   'Hello bot!',
                 timestamp: new Date().toISOString(),
+                botUserId: createUserId('bot_789'),
             };
 
             const response = await onMessage(mockContext);

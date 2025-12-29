@@ -2,6 +2,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-member-access -- Test mocks */
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import { ActivityType } from 'discord.js';
+import _ from 'lodash';
 import { createActiveStatusGenerator } from '@/integrations/discord/presence/status-generator-active';
 import type { PresencePhase } from '@/integrations/discord/presence/types';
 
@@ -31,9 +32,9 @@ describe('ActiveStatusGenerator', () => {
 
                 expect(result.name).toBe('Thinking...');
                 expect(result.name).toHaveLength(11); // "Thinking" (8) + "..." (3)
-                expect(result.name.endsWith('...')).toBe(true);
-                expect(result.name.endsWith('..')).toBe(true); // 3 dots ends with 2 dots
-                expect(result.name.endsWith('....')).toBe(false); // Not 4 dots
+                expect(_.endsWith(result.name, '...')).toBe(true);
+                expect(_.endsWith(result.name, '..')).toBe(true); // 3 dots ends with 2 dots
+                expect(_.endsWith(result.name, '....')).toBe(false); // Not 4 dots
             });
 
             it('should propagate activityType correctly', () => {
@@ -99,7 +100,7 @@ describe('ActiveStatusGenerator', () => {
 
                 expect(result.name).toBe('Responding...');
                 expect(result.name).toHaveLength(13); // "Responding" (10) + "..." (3)
-                expect(result.name.endsWith('...')).toBe(true);
+                expect(_.endsWith(result.name, '...')).toBe(true);
             });
 
             it('should propagate activityType correctly', () => {
@@ -237,7 +238,7 @@ describe('ActiveStatusGenerator', () => {
                     expect(result.type).toBe(ActivityType.Custom);
                 });
 
-                it('should return "Recording memory..." for mcp__memory__store', () => {
+                it('should return "Recording self-knowledge..." for mcp__memory__storeSelf', () => {
                     const generator = createActiveStatusGenerator({
                         logger:       mockLogger,
                         activityType: ActivityType.Custom,
@@ -245,12 +246,46 @@ describe('ActiveStatusGenerator', () => {
 
                     const phase: PresencePhase = {
                         type:      'using_tool',
-                        toolName:  'mcp__memory__store',
+                        toolName:  'mcp__memory__storeSelf',
                         startedAt: new Date(),
                     };
                     const result = generator.generate(phase);
 
-                    expect(result.name).toBe('Recording memory...');
+                    expect(result.name).toBe('Recording self-knowledge...');
+                    expect(result.type).toBe(ActivityType.Custom);
+                });
+
+                it('should return "Recording user memory..." for mcp__memory__storeUserMemory', () => {
+                    const generator = createActiveStatusGenerator({
+                        logger:       mockLogger,
+                        activityType: ActivityType.Custom,
+                    });
+
+                    const phase: PresencePhase = {
+                        type:      'using_tool',
+                        toolName:  'mcp__memory__storeUserMemory',
+                        startedAt: new Date(),
+                    };
+                    const result = generator.generate(phase);
+
+                    expect(result.name).toBe('Recording user memory...');
+                    expect(result.type).toBe(ActivityType.Custom);
+                });
+
+                it('should return "Logging event..." for mcp__memory__logEvent', () => {
+                    const generator = createActiveStatusGenerator({
+                        logger:       mockLogger,
+                        activityType: ActivityType.Custom,
+                    });
+
+                    const phase: PresencePhase = {
+                        type:      'using_tool',
+                        toolName:  'mcp__memory__logEvent',
+                        startedAt: new Date(),
+                    };
+                    const result = generator.generate(phase);
+
+                    expect(result.name).toBe('Logging event...');
                     expect(result.type).toBe(ActivityType.Custom);
                 });
 
@@ -598,7 +633,7 @@ describe('ActiveStatusGenerator', () => {
 
                 expect(result.name).toBe('Processing...');
                 expect(result.name).toHaveLength(13); // "Processing" (10) + "..." (3)
-                expect(result.name.endsWith('...')).toBe(true);
+                expect(_.endsWith(result.name, '...')).toBe(true);
             });
 
             it('should propagate activityType correctly for unknown phase', () => {
@@ -661,7 +696,7 @@ describe('ActiveStatusGenerator', () => {
                 const unknownPhase = { type: 'not_a_real_type' } as unknown as PresencePhase;
                 const result = generator.generate(unknownPhase);
 
-                expect(Object.keys(result).sort()).toEqual(['name', 'type'].sort());
+                expect(_.keys(result).sort()).toEqual(['name', 'type'].sort());
             });
 
             it('should handle different activity types with unknown phase', () => {
@@ -688,7 +723,7 @@ describe('ActiveStatusGenerator', () => {
                 const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
                 const result = generator.generate(phase);
 
-                expect(Object.keys(result).sort()).toEqual(['name', 'type'].sort());
+                expect(_.keys(result).sort()).toEqual(['name', 'type'].sort());
             });
 
             it('should return object with only name and type properties for responding', () => {
@@ -700,7 +735,7 @@ describe('ActiveStatusGenerator', () => {
                 const phase: PresencePhase = { type: 'responding', startedAt: new Date() };
                 const result = generator.generate(phase);
 
-                expect(Object.keys(result).sort()).toEqual(['name', 'type'].sort());
+                expect(_.keys(result).sort()).toEqual(['name', 'type'].sort());
             });
 
             it('should return object with only name and type properties for idle', () => {
@@ -712,7 +747,7 @@ describe('ActiveStatusGenerator', () => {
                 const phase: PresencePhase = { type: 'idle', since: new Date() };
                 const result = generator.generate(phase);
 
-                expect(Object.keys(result).sort()).toEqual(['name', 'type'].sort());
+                expect(_.keys(result).sort()).toEqual(['name', 'type'].sort());
             });
 
             it('should return object with only name and type properties for using_tool', () => {
@@ -728,7 +763,7 @@ describe('ActiveStatusGenerator', () => {
                 };
                 const result = generator.generate(phase);
 
-                expect(Object.keys(result).sort()).toEqual(['name', 'type'].sort());
+                expect(_.keys(result).sort()).toEqual(['name', 'type'].sort());
             });
         });
     });

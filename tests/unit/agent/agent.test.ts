@@ -21,6 +21,7 @@ describe('createClaudeAgent', () => {
             messageId: 'msg_999',
             content:   'Hello Claude!',
             timestamp: '2025-01-15T12:00:00Z',
+            botUserId: createUserId('bot_444555666'),
         };
 
         // Create mock context builder
@@ -30,6 +31,7 @@ describe('createClaudeAgent', () => {
             buildSystemContext: mock(_.constant(Promise.resolve(''))),
             // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function
             recordAccess:       mock(async () => {}),
+            loadRecentEvents:   mock(_.constant(Promise.resolve([]))),
         };
 
         // Mock query() to return an async generator with assistant message
@@ -422,11 +424,13 @@ describe('createClaudeAgent', () => {
         });
 
         it('should format multiple recent memories with newline-separated bullets', async () => {
-            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockResolvedValue([
-                'First memory',
-                'Second memory',
-                'Third memory',
-            ]);
+            // Mock returns memories only for user, empty for bot
+            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockImplementation((userId: string) => {
+                if(userId === '111222333') {
+                    return Promise.resolve(['First memory', 'Second memory', 'Third memory']);
+                }
+                return Promise.resolve([]);
+            });
 
             const agent = createClaudeAgent({
                 contextBuilder: mockContextBuilder,
@@ -436,9 +440,199 @@ describe('createClaudeAgent', () => {
 
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    prompt: '[Recent context]\n- First memory\n- Second memory\n- Third memory\n\nUser @111222333 in #987654321: Hello Claude!',
+                    prompt: '[About this user]\n- First memory\n- Second memory\n- Third memory\n\nUser @111222333 in #987654321: Hello Claude!',
                 })
             );
+        });
+
+        it('should include bot recent activities when botUserId is present and returns memories', async () => {
+            // Mock returns memories for BOTH user and bot
+            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockImplementation((userId: string) => {
+                if(userId === '111222333') {
+                    return Promise.resolve(['User likes TypeScript']);
+                }
+                if(userId === 'bot_444555666') {
+                    return Promise.resolve(['Helped user debug code', 'Answered question about React']);
+                }
+                return Promise.resolve([]);
+            });
+
+            const agent = createClaudeAgent({
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            // Verify loadRecentContext was called with both user ID and bot ID
+            expect(mockContextBuilder.loadRecentContext).toHaveBeenCalledWith('111222333', 3);
+            expect(mockContextBuilder.loadRecentContext).toHaveBeenCalledWith('bot_444555666', 2);
+
+            // Verify the prompt includes the [Your recent activities] section with exact format
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    prompt: expect.stringContaining('[Your recent activities]\n- Helped user debug code\n- Answered question about React'),
+                })
+            );
+        });
+
+        it('should not include bot activities section when botUserId returns empty memories', async () => {
+            // Mock returns memories for user only, empty for bot
+            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockImplementation((userId: string) => {
+                if(userId === '111222333') {
+                    return Promise.resolve(['User preference']);
+                }
+                return Promise.resolve([]);
+            });
+
+            const agent = createClaudeAgent({
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            // Verify loadRecentContext was called with bot ID
+            expect(mockContextBuilder.loadRecentContext).toHaveBeenCalledWith('bot_444555666', 2);
+
+            // Verify the prompt does NOT include [Your recent activities]
+            const callArgs = querySpy.mock.calls[0][0];
+            expect(callArgs.prompt).not.toContain('[Your recent activities]');
+        });
+
+        it('should not load bot memories when botUserId is not present', async () => {
+            // Remove botUserId from context (use partial type to test edge case)
+            const contextWithoutBot = {
+                guildId:   mockMessageContext.guildId,
+                channelId: mockMessageContext.channelId,
+                userId:    mockMessageContext.userId,
+                messageId: mockMessageContext.messageId,
+                content:   mockMessageContext.content,
+                timestamp: mockMessageContext.timestamp,
+                // botUserId intentionally omitted to test the conditional branch
+            } as DiscordMessageContext;
+
+            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockResolvedValue([]);
+
+            const agent = createClaudeAgent({
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(contextWithoutBot);
+
+            // Verify loadRecentContext was only called for user, not bot
+            expect(mockContextBuilder.loadRecentContext).toHaveBeenCalledTimes(1);
+            expect(mockContextBuilder.loadRecentContext).toHaveBeenCalledWith('111222333', 3);
+        });
+
+        it('should include recent events when loadRecentEvents returns events', async () => {
+            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockResolvedValue([]);
+            (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue([
+                'Server went online',
+                'New user joined #general',
+            ]);
+
+            const agent = createClaudeAgent({
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            // Verify loadRecentEvents was called
+            expect(mockContextBuilder.loadRecentEvents).toHaveBeenCalledWith(3);
+
+            // Verify the prompt includes [Recent events] section with exact format
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    prompt: expect.stringContaining('[Recent events]\n- Server went online\n- New user joined #general'),
+                })
+            );
+        });
+
+        it('should not include recent events section when loadRecentEvents returns empty array', async () => {
+            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockResolvedValue([]);
+            (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue([]);
+
+            const agent = createClaudeAgent({
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            // Verify the prompt does NOT include [Recent events]
+            const callArgs = querySpy.mock.calls[0][0];
+            expect(callArgs.prompt).not.toContain('[Recent events]');
+        });
+
+        it('should join all context sections with double newlines', async () => {
+            // Mock returns memories for user, bot, AND events
+            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockImplementation((userId: string) => {
+                if(userId === '111222333') {
+                    return Promise.resolve(['User memory']);
+                }
+                if(userId === 'bot_444555666') {
+                    return Promise.resolve(['Bot activity']);
+                }
+                return Promise.resolve([]);
+            });
+            (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue(['Recent event']);
+
+            const agent = createClaudeAgent({
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            // Verify the exact format with all three sections joined by \n\n
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    prompt: '[About this user]\n- User memory\n\n[Your recent activities]\n- Bot activity\n\n[Recent events]\n- Recent event\n\nUser @111222333 in #987654321: Hello Claude!',
+                })
+            );
+        });
+
+        it('should format bot activities with dash-space prefix for each memory item', async () => {
+            // Specifically test the "- " prefix format
+            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockImplementation((userId: string) => {
+                if(userId === 'bot_444555666') {
+                    return Promise.resolve(['Activity one', 'Activity two']);
+                }
+                return Promise.resolve([]);
+            });
+            (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue([]);
+
+            const agent = createClaudeAgent({
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            // Verify exact prefix format with "- " before each item
+            const callArgs = querySpy.mock.calls[0][0];
+            expect(callArgs.prompt).toContain('- Activity one');
+            expect(callArgs.prompt).toContain('- Activity two');
+            // Ensure items are joined with newlines, not other separators
+            expect(callArgs.prompt).toContain('- Activity one\n- Activity two');
+        });
+
+        it('should format recent events with dash-space prefix for each event', async () => {
+            // Specifically test the "- " prefix format for events
+            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockResolvedValue([]);
+            (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue([
+                'Event one',
+                'Event two',
+            ]);
+
+            const agent = createClaudeAgent({
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            // Verify exact prefix format with "- " before each event
+            const callArgs = querySpy.mock.calls[0][0];
+            expect(callArgs.prompt).toContain('- Event one');
+            expect(callArgs.prompt).toContain('- Event two');
+            // Ensure events are joined with newlines
+            expect(callArgs.prompt).toContain('- Event one\n- Event two');
         });
     });
 
@@ -456,7 +650,7 @@ describe('createClaudeAgent', () => {
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
                     options: expect.objectContaining({
-                        allowedTools: ['mcp__memory__view', 'mcp__memory__store', 'mcp__memory__search'],
+                        allowedTools: ['mcp__memory__view', 'mcp__memory__storeSelf', 'mcp__memory__storeUserMemory', 'mcp__memory__logEvent', 'mcp__memory__search'],
                     }),
                 })
             );

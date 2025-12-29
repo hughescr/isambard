@@ -858,7 +858,6 @@ describe('createContextBuilder', () => {
                 })
             );
         });
-
     });
 
     describe('loadCoreIdentity', () => {
@@ -1208,6 +1207,150 @@ describe('createContextBuilder', () => {
 
             // Should only contain content, not whole item
             expect(context).toEqual(['Content A']);
+        });
+    });
+
+    describe('loadRecentEvents', () => {
+        it('should call searchByTimeRange with 24-hour window', async () => {
+            backend.searchByTimeRange = mock(async () => []);
+
+            const contextBuilder = createContextBuilder({ backend });
+
+            const beforeCall = Date.now();
+            await contextBuilder.loadRecentEvents();
+            const afterCall = Date.now();
+
+            expect(backend.searchByTimeRange).toHaveBeenCalledTimes(1);
+
+            // Capture the arguments passed to searchByTimeRange
+            const [startTimeArg, endTimeArg] = (backend.searchByTimeRange as ReturnType<typeof mock>).mock.calls[0] as [string, string];
+            const startTime = new Date(startTimeArg);
+            const endTime = new Date(endTimeArg);
+
+            // Verify the time window is approximately 24 hours (within tolerance for test execution time)
+            const diffMs = endTime.getTime() - startTime.getTime();
+            const diffHours = diffMs / (1000 * 60 * 60);
+            expect(diffHours).toBeCloseTo(24, 0);
+
+            // Verify endTime is approximately "now" (within test execution window)
+            expect(endTime.getTime()).toBeGreaterThanOrEqual(beforeCall);
+            expect(endTime.getTime()).toBeLessThanOrEqual(afterCall + 1000); // Allow 1s tolerance
+        });
+
+        it('should verify 24-hour calculation uses multiplication not division', async () => {
+            backend.searchByTimeRange = mock(async () => []);
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadRecentEvents();
+
+            const [startTimeArg, endTimeArg] = (backend.searchByTimeRange as ReturnType<typeof mock>).mock.calls[0] as [string, string];
+            const startTime = new Date(startTimeArg);
+            const endTime = new Date(endTimeArg);
+
+            // Calculate the actual difference in milliseconds
+            const diffMs = endTime.getTime() - startTime.getTime();
+
+            // If mutation changes 24 * 60 * 60 * 1000 to 24 / 60 * 60 * 1000:
+            // 24 / 60 = 0.4, then 0.4 * 60 = 24, then 24 * 1000 = 24000ms = 24 seconds
+            // So we need to ensure the difference is much larger than 24 seconds
+            expect(diffMs).toBeGreaterThan(60 * 60 * 1000); // Must be more than 1 hour
+
+            // And it should be close to 24 hours (86400000 ms)
+            const expectedMs = 24 * 60 * 60 * 1000;
+            expect(diffMs).toBeGreaterThan(expectedMs - 1000); // Within 1 second
+            expect(diffMs).toBeLessThan(expectedMs + 1000);
+        });
+
+        it('should pass limit to backend with default value of 5', async () => {
+            backend.searchByTimeRange = mock(async () => []);
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadRecentEvents();
+
+            // Check the options argument (4th parameter)
+            const [, , , optionsArg] = (backend.searchByTimeRange as ReturnType<typeof mock>).mock.calls[0] as [string, string, string, { limit: number }];
+            expect(optionsArg).toEqual({ limit: 5 });
+        });
+
+        it('should pass custom limit to backend', async () => {
+            backend.searchByTimeRange = mock(async () => []);
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadRecentEvents(10);
+
+            const [, , , optionsArg] = (backend.searchByTimeRange as ReturnType<typeof mock>).mock.calls[0] as [string, string, string, { limit: number }];
+            expect(optionsArg).toEqual({ limit: 10 });
+        });
+
+        it('should pass events layer to backend', async () => {
+            backend.searchByTimeRange = mock(async () => []);
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadRecentEvents();
+
+            // Check the layer argument (3rd parameter)
+            const [, , layerArg] = (backend.searchByTimeRange as ReturnType<typeof mock>).mock.calls[0] as [string, string, string];
+            expect(layerArg).toBe('events');
+        });
+
+        it('should extract content from results', async () => {
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/event1.md'),
+                    content:     'Event 1',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00Z',
+                    updatedAt:   '2025-01-01T00:00:00Z',
+                },
+                {
+                    path:        createMemoryPath('/events/event2.md'),
+                    content:     'Event 2',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00Z',
+                    updatedAt:   '2025-01-01T00:00:00Z',
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentEvents();
+
+            expect(result).toEqual(['Event 1', 'Event 2']);
+        });
+
+        it('should return empty array when no events found', async () => {
+            backend.searchByTimeRange = mock(async () => []);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentEvents();
+
+            expect(result).toEqual([]);
+        });
+
+        it('should only extract content field not other fields', async () => {
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/event.md'),
+                    content:     'My Event Content',
+                    contentType: 'text/markdown' as const,
+                    metadata:    { important: true },
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00Z',
+                    updatedAt:   '2025-01-01T00:00:00Z',
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentEvents();
+
+            // Should only contain content strings, not objects
+            expect(result).toHaveLength(1);
+            expect(result[0]).toBe('My Event Content');
+            // Verify it's a string not an object
+            expect(typeof result[0]).toBe('string');
         });
     });
 });
