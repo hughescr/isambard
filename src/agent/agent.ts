@@ -25,6 +25,7 @@ function extractAssistantText(message: { type: string, message?: { content?: unk
         text?: string
     }
     const content = message.message?.content as ContentBlock[] | undefined;
+    // Stryker disable next-line ArrayDeclaration: Equivalent mutant - _.filter on strings returns [] same as on []
     const textBlocks = _.filter(content ?? [], { type: 'text' });
     const text = _.chain(textBlocks).map('text').compact().join('\n').trim().value();
     return text;

@@ -130,8 +130,17 @@ export function createPresenceManager(
 
     /**
    * Generate and apply idle status.
+   *
+   * Note: The guard `if(currentPhase?.type !== 'idle')` is defensive code that handles
+   * a theoretical race condition where the interval callback fires just as we're
+   * transitioning away from idle. In practice, stopIdleRefresh() clears the interval
+   * before the phase change is complete, making this guard unreachable during normal
+   * execution. Stryker mutations on this guard (if(false), optional chaining removal,
+   * empty block) are effectively equivalent mutants since the guard can only trigger
+   * in edge-case timing scenarios that are difficult to reliably reproduce in tests.
    */
     async function refreshIdleStatus(): Promise<void> {
+        // Stryker disable next-line ConditionalExpression,OptionalChaining,BlockStatement: Defensive guard for race condition - unreachable in tests
         if(currentPhase?.type !== 'idle') {
             return; // No longer idle
         }

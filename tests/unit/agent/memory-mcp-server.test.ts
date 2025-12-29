@@ -47,6 +47,13 @@ describe('createMemoryMCPServer', () => {
             expect(server.type).toBe('sdk');
         });
 
+        it('should create MCP server with version 1.0.0', () => {
+            const server = createMemoryMCPServer(mockBackend);
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing server version
+            expect((server.instance as any).server._serverInfo.version).toBe('1.0.0');
+        });
+
         it('should have view tool with description', () => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
