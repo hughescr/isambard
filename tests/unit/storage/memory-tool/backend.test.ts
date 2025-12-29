@@ -16,6 +16,8 @@ import type { MemoryToolItem, MemoryPath, ContentType, LayerName } from '@/stora
 describe('MemoryToolBackend', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let backend: MemoryToolBackend;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Spy type is complex
+    let dateNowSpy: any = null;
 
     beforeEach(() => {
         ddbMock.reset();
@@ -27,6 +29,11 @@ describe('MemoryToolBackend', () => {
 
     afterEach(() => {
         ddbMock.reset();
+        if(dateNowSpy) {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access -- Spy cleanup
+            dateNowSpy.mockRestore();
+            dateNowSpy = null;
+        }
     });
 
     describe('create', () => {
@@ -202,7 +209,7 @@ describe('MemoryToolBackend', () => {
             ddbMock.on(PutCommand).resolves({});
 
             const createdAtMs = Date.now();
-            spyOn(Date, 'now').mockReturnValue(createdAtMs);
+            dateNowSpy = spyOn(Date, 'now').mockReturnValue(createdAtMs);
 
             await backend.create({
                 path:        '/state/current-context.md' as MemoryPath,
@@ -222,7 +229,7 @@ describe('MemoryToolBackend', () => {
             ddbMock.on(PutCommand).resolves({});
 
             const createdAtMs = Date.now();
-            spyOn(Date, 'now').mockReturnValue(createdAtMs);
+            dateNowSpy = spyOn(Date, 'now').mockReturnValue(createdAtMs);
 
             await backend.create({
                 path:        '/events/meeting.md' as MemoryPath,
@@ -242,7 +249,7 @@ describe('MemoryToolBackend', () => {
             ddbMock.on(PutCommand).resolves({});
 
             const createdAtMs = Date.now();
-            spyOn(Date, 'now').mockReturnValue(createdAtMs);
+            dateNowSpy = spyOn(Date, 'now').mockReturnValue(createdAtMs);
 
             await backend.create({
                 path:        '/identity/core-values.md' as MemoryPath,
@@ -263,7 +270,7 @@ describe('MemoryToolBackend', () => {
             ddbMock.on(PutCommand).resolves({});
 
             const createdAtMs = Date.now();
-            spyOn(Date, 'now').mockReturnValue(createdAtMs);
+            dateNowSpy = spyOn(Date, 'now').mockReturnValue(createdAtMs);
 
             const result = await backend.create({
                 path:        '/state/current-context.md' as MemoryPath,

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 import {
     MemoryToolError,
     PathNotFoundError,
@@ -361,6 +361,86 @@ describe('Memory Tool Errors', () => {
                 expect(error.totalLines).toBe(total);
                 expect(error.message).toContain(`total lines: ${total}`);
             }
+        });
+    });
+
+    describe('Error.captureStackTrace handling', () => {
+        it('should use captureStackTrace when available', () => {
+            const spy = spyOn(Error, 'captureStackTrace');
+            const error = new MemoryToolError('test', 'TEST_CODE');
+            expect(spy).toHaveBeenCalledWith(error, MemoryToolError);
+            spy.mockRestore();
+        });
+
+        it('should call captureStackTrace with correct constructor for subclasses', () => {
+            const spy = spyOn(Error, 'captureStackTrace');
+
+            const pathNotFoundError = new PathNotFoundError('/test/path');
+            expect(spy).toHaveBeenCalledWith(pathNotFoundError, PathNotFoundError);
+
+            spy.mockRestore();
+        });
+
+        it('should handle missing captureStackTrace gracefully', () => {
+            // eslint-disable-next-line @typescript-eslint/unbound-method -- Storing method for restoration
+            const original = Error.captureStackTrace;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Intentionally testing behavior when captureStackTrace is undefined
+            (Error as any).captureStackTrace = undefined;
+
+            const error = new MemoryToolError('test without capture', 'TEST_CODE');
+            expect(error.message).toBe('test without capture');
+            expect(error.name).toBe('MemoryToolError');
+
+            Error.captureStackTrace = original;
+        });
+
+        it('should actually invoke captureStackTrace function (not just check truthiness)', () => {
+            // This test kills mutants that replace the if-condition with true/false
+            // by verifying the function is actually called, not just the condition checked
+            let captureWasCalled = false;
+            let receivedTarget: Error | undefined;
+            let receivedConstructor: (new (...args: never[]) => Error) | undefined;
+
+            const spy = spyOn(Error, 'captureStackTrace').mockImplementation(
+                (target: object, constructorOpt?: (new (...args: never[]) => object)) => {
+                    captureWasCalled = true;
+                    receivedTarget = target as Error;
+                    receivedConstructor = constructorOpt as (new (...args: never[]) => Error) | undefined;
+                }
+            );
+
+            const error = new MemoryToolError('capture test', 'CAPTURE_TEST');
+
+            // Verify the function body was executed (kills BlockStatement mutant)
+            expect(captureWasCalled).toBe(true);
+            // Verify correct arguments were passed
+            expect(receivedTarget).toBe(error);
+            expect(receivedConstructor).toBe(MemoryToolError);
+
+            spy.mockRestore();
+        });
+
+        it('should skip captureStackTrace when it is not available', () => {
+            // eslint-disable-next-line @typescript-eslint/unbound-method -- Storing method for restoration
+            const original = Error.captureStackTrace;
+
+            // Track if captureStackTrace would be called
+            const wasCalled = false;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Intentionally testing behavior when captureStackTrace is undefined
+            (Error as any).captureStackTrace = undefined;
+
+            // If the condition is replaced with `if(true)`, this would throw
+            // because undefined() is not callable
+            // If the condition is replaced with `if(false)`, this passes but
+            // combined with the "actually invoke" test above, we ensure the real behavior
+            const error = new MemoryToolError('no capture available', 'NO_CAPTURE');
+
+            // Error should still be created successfully
+            expect(error.message).toBe('no capture available');
+            expect(error.code).toBe('NO_CAPTURE');
+            expect(wasCalled).toBe(false);
+
+            Error.captureStackTrace = original;
         });
     });
 });

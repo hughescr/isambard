@@ -264,6 +264,64 @@ describe('createContextBuilder', () => {
             expect(context).toContain('/state/task.md:\nCurrent task content');
         });
 
+        it('should join multiple identity items with double newlines', async () => {
+            backend.getAutoLoadItems = mock(async () => [
+                {
+                    path:        createMemoryPath('/identity/item1.md'),
+                    content:     'Identity content 1',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00Z',
+                    updatedAt:   '2025-01-01T00:00:00Z',
+                },
+                {
+                    path:        createMemoryPath('/identity/item2.md'),
+                    content:     'Identity content 2',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00Z',
+                    updatedAt:   '2025-01-01T00:00:00Z',
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const context = await contextBuilder.buildSystemContext();
+
+            // Multiple identity items should be separated by \n\n
+            expect(context).toContain('/identity/item1.md:\nIdentity content 1\n\n/identity/item2.md:\nIdentity content 2');
+        });
+
+        it('should join multiple state items with double newlines', async () => {
+            backend.getAutoLoadItems = mock(async () => [
+                {
+                    path:        createMemoryPath('/state/task1.md'),
+                    content:     'State content 1',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00Z',
+                    updatedAt:   '2025-01-01T00:00:00Z',
+                },
+                {
+                    path:        createMemoryPath('/state/task2.md'),
+                    content:     'State content 2',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00Z',
+                    updatedAt:   '2025-01-01T00:00:00Z',
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const context = await contextBuilder.buildSystemContext();
+
+            // Multiple state items should be separated by \n\n
+            expect(context).toContain('/state/task1.md:\nState content 1\n\n/state/task2.md:\nState content 2');
+        });
+
         it('should default grouped layer to "other" when layer is null and not render it', async () => {
             backend.getAutoLoadItems = mock(async () => [
                 {
@@ -800,6 +858,7 @@ describe('createContextBuilder', () => {
                 })
             );
         });
+
     });
 
     describe('loadCoreIdentity', () => {

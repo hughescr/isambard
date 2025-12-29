@@ -64,6 +64,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             // Load identity layer items (permanent, auto-loaded)
             const result = await backend.listByLayer('identity' as LayerName);
 
+            // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant - empty array join returns ''
             if(result.items.length === 0) {
                 return '';
             }
@@ -151,6 +152,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                 }
 
                 // Get current access count from metadata
+                // Stryker disable next-line OptionalChaining: metadata always exists per schema, ?. is defensive
                 const currentAccessCount = _isNumber(item.metadata?.accessCount)
                     ? item.metadata.accessCount
                     : 0;

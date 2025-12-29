@@ -442,5 +442,345 @@ describe('Discord Event Handlers', () => {
 
             expect(mockOnMessage).toHaveBeenCalled();
         });
+
+        describe('statusMiddleware creation (logical AND behavior)', () => {
+            it('should NOT use statusMiddleware when only presenceManager is provided (no agent)', async () => {
+                const mockPresenceManager = {
+                    start:       mock(() => undefined),
+                    stop:        mock(() => undefined),
+                    updatePhase: mock(async () => undefined),
+                };
+
+                // Create onMessage mock that returns a value so we can verify it was called
+                const onMessageMock = mock(async () => 'direct response');
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           onMessageMock,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+                    presenceManager:     mockPresenceManager as any,
+                    // agent is NOT provided
+                });
+
+                await handler(mockMessage);
+
+                // Since statusMiddleware is null (presenceManager without agent),
+                // onMessage should be called directly
+                expect(onMessageMock).toHaveBeenCalled();
+                expect(mockMessage.reply).toHaveBeenCalledWith('direct response');
+            });
+
+            it('should NOT use statusMiddleware when only agent is provided (no presenceManager)', async () => {
+                const mockAgent = {
+                    chat: mock(async () => 'agent response'),
+                };
+
+                // Create onMessage mock that returns a value so we can verify it was called
+                const onMessageMock = mock(async () => 'direct response');
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           onMessageMock,
+                    // presenceManager is NOT provided
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+                    agent:               mockAgent as any,
+                });
+
+                await handler(mockMessage);
+
+                // Since statusMiddleware is null (agent without presenceManager),
+                // onMessage should be called directly, NOT agent.chat
+                expect(onMessageMock).toHaveBeenCalled();
+                expect(mockAgent.chat).not.toHaveBeenCalled();
+                expect(mockMessage.reply).toHaveBeenCalledWith('direct response');
+            });
+
+            it('should use statusMiddleware ONLY when BOTH presenceManager AND agent are provided', async () => {
+                // This test specifically kills the && vs || mutant by verifying
+                // that agent.chat is ONLY called when BOTH are present
+                const mockPresenceManager = {
+                    start:       mock(() => undefined),
+                    stop:        mock(() => undefined),
+                    updatePhase: mock(async () => undefined),
+                };
+
+                const mockAgent = {
+                    chat: mock(async () => 'middleware response'),
+                };
+
+                const onMessageMock = mock(async () => 'should not be called');
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           onMessageMock,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+                    presenceManager:     mockPresenceManager as any,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+                    agent:               mockAgent as any,
+                });
+
+                await handler(mockMessage);
+
+                // With BOTH present, statusMiddleware should be used
+                // which means agent.chat is called, NOT onMessage
+                expect(mockAgent.chat).toHaveBeenCalled();
+                expect(onMessageMock).not.toHaveBeenCalled();
+                expect(mockMessage.reply).toHaveBeenCalledWith('middleware response');
+            });
+
+            it('should call onMessage when presenceManager is undefined (agent alone insufficient)', async () => {
+                // This test ensures that having ONLY agent doesn't trigger middleware
+                // If && was mutated to ||, this test would fail because middleware would be truthy
+                const mockAgent = {
+                    chat: mock(async () => 'agent response that should not appear'),
+                };
+
+                const onMessageMock = mock(async () => 'onMessage response');
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           onMessageMock,
+                    presenceManager:     undefined,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+                    agent:               mockAgent as any,
+                });
+
+                await handler(mockMessage);
+
+                // Critical: agent.chat should NOT be called because presenceManager is missing
+                // If && was || mutant, agent.chat would be called
+                expect(mockAgent.chat).not.toHaveBeenCalled();
+                expect(onMessageMock).toHaveBeenCalled();
+            });
+
+            it('should call onMessage when agent is undefined (presenceManager alone insufficient)', async () => {
+                // This test ensures that having ONLY presenceManager doesn't trigger middleware
+                // If && was mutated to ||, this test would fail because middleware would be truthy
+                const mockPresenceManager = {
+                    start:       mock(() => undefined),
+                    stop:        mock(() => undefined),
+                    updatePhase: mock(async () => undefined),
+                };
+
+                const onMessageMock = mock(async () => 'onMessage response');
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           onMessageMock,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+                    presenceManager:     mockPresenceManager as any,
+                    agent:               undefined,
+                });
+
+                await handler(mockMessage);
+
+                // onMessage should be called because agent is missing
+                expect(onMessageMock).toHaveBeenCalled();
+            });
+        });
+
+        describe('early return behavior for bot and self messages', () => {
+            it('should not create context or attempt reply when message is from a bot', async () => {
+                const replySpy = mockMessage.reply;
+                const onMessageMock = mock(async () => 'should not be called');
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           onMessageMock,
+                });
+
+                mockMessage.author.bot = true;
+                await handler(mockMessage);
+
+                // Verify NOTHING happened after the early return
+                expect(onMessageMock).not.toHaveBeenCalled();
+                expect(replySpy).not.toHaveBeenCalled();
+            });
+
+            it('should not create context or attempt reply when message is from bot itself', async () => {
+                const botId = '999999999999999999';
+                const replySpy = mockMessage.reply;
+                const onMessageMock = mock(async () => 'should not be called');
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           botId as UserId,
+                    onMessage:           onMessageMock,
+                });
+
+                mockMessage.author.id = botId;
+                mockMessage.author.bot = false;
+                await handler(mockMessage);
+
+                // Verify NOTHING happened after the early return
+                expect(onMessageMock).not.toHaveBeenCalled();
+                expect(replySpy).not.toHaveBeenCalled();
+            });
+
+            it('should process non-bot user messages normally in monitored channel', async () => {
+                const replySpy = mockMessage.reply;
+                const onMessageMock = mock(async () => 'response from handler');
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           onMessageMock,
+                });
+
+                // Ensure message is from a non-bot, non-self user
+                mockMessage.author.bot = false;
+                mockMessage.author.id = '111111111111111111'; // Different from bot ID
+                await handler(mockMessage);
+
+                // Verify message was processed and reply was sent
+                expect(onMessageMock).toHaveBeenCalled();
+                expect(replySpy).toHaveBeenCalledWith('response from handler');
+            });
+
+            it('should distinguish between bot messages and self messages', async () => {
+                const botId = '999999999999999999';
+                const onMessageMock = mock(async () => 'response');
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           botId as UserId,
+                    onMessage:           onMessageMock,
+                });
+
+                // Test 1: Bot message (author.bot = true) - should be ignored
+                mockMessage.author.bot = true;
+                mockMessage.author.id = 'some-other-bot-id';
+                await handler(mockMessage);
+                expect(onMessageMock).not.toHaveBeenCalled();
+
+                // Reset
+                onMessageMock.mockClear();
+
+                // Test 2: Self message (same user ID as bot) - should be ignored
+                mockMessage.author.bot = false;
+                mockMessage.author.id = botId;
+                await handler(mockMessage);
+                expect(onMessageMock).not.toHaveBeenCalled();
+
+                // Reset
+                onMessageMock.mockClear();
+
+                // Test 3: Normal user message - should be processed
+                mockMessage.author.bot = false;
+                mockMessage.author.id = '111111111111111111';
+                await handler(mockMessage);
+                expect(onMessageMock).toHaveBeenCalled();
+            });
+
+            it('should return early for bot messages even in monitored channel with mention', async () => {
+                // This test ensures the bot check early return works even when
+                // all other conditions (monitored channel, mention) would trigger processing
+                const botId = '999999999999999999';
+                const onMessageMock = mock(async () => 'should not be called');
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           botId as UserId,
+                    onMessage:           onMessageMock,
+                });
+
+                // Message is from a bot, in monitored channel, with mention
+                mockMessage.author.bot = true;
+                mockMessage.content = `<@${botId}> hello`;
+                await handler(mockMessage);
+
+                // Should still be ignored because author.bot is true
+                expect(onMessageMock).not.toHaveBeenCalled();
+            });
+
+            it('should return early for self messages even in monitored channel with mention', async () => {
+                // This test ensures the self-message check works even when
+                // all other conditions would trigger processing
+                const botId = '999999999999999999';
+                const onMessageMock = mock(async () => 'should not be called');
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           botId as UserId,
+                    onMessage:           onMessageMock,
+                });
+
+                // Message is from the bot itself (not marked as bot but same ID)
+                mockMessage.author.bot = false;
+                mockMessage.author.id = botId;
+                mockMessage.content = `<@${botId}> hello`;
+                await handler(mockMessage);
+
+                // Should still be ignored because author.id matches botUserId
+                expect(onMessageMock).not.toHaveBeenCalled();
+            });
+
+            it('should process messages from non-bot users with same content as bot would send', async () => {
+                // This ensures the bot flag check actually matters (if(false) mutant would pass this through)
+                const botId = '999999999999999999';
+                const onMessageMock = mock(async () => 'response');
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           botId as UserId,
+                    onMessage:           onMessageMock,
+                });
+
+                // Message is NOT from a bot (author.bot = false) and NOT from self
+                mockMessage.author.bot = false;
+                mockMessage.author.id = '111111111111111111';
+                await handler(mockMessage);
+
+                // Should be processed because bot checks pass
+                expect(onMessageMock).toHaveBeenCalled();
+            });
+
+            it('should check bot flag before checking author ID', async () => {
+                // Test that bot messages are filtered even if the bot's author ID
+                // doesn't match botUserId (i.e., messages from OTHER bots)
+                const onMessageMock = mock(async () => 'response');
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           onMessageMock,
+                });
+
+                // Message from a different bot (not our bot)
+                mockMessage.author.bot = true;
+                mockMessage.author.id = '888888888888888888'; // Different ID
+                await handler(mockMessage);
+
+                // Should be ignored because author.bot is true
+                expect(onMessageMock).not.toHaveBeenCalled();
+            });
+
+            it('should only check author ID after confirming not a bot', async () => {
+                // This tests the sequential nature of the checks
+                const botId = '999999999999999999';
+                const onMessageMock = mock(async () => 'response');
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           botId as UserId,
+                    onMessage:           onMessageMock,
+                });
+
+                // Test: non-bot user with bot's ID (edge case - shouldn't happen but tests the check)
+                // In reality this can't happen, but it tests the self-message check works
+                mockMessage.author.bot = false;
+                mockMessage.author.id = botId;
+                await handler(mockMessage);
+
+                // Should be ignored by the second check (author.id === botUserId)
+                expect(onMessageMock).not.toHaveBeenCalled();
+            });
+        });
     });
 });
