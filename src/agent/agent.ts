@@ -282,6 +282,27 @@ function extractAssistantText(message: { type: string, message?: { content?: unk
     return text;
 }
 
+/**
+ * Extract tool_use blocks from an assistant message
+ * @param message Stream message to extract from
+ * @returns Array of tool use blocks or empty array
+ */
+export interface ToolUseBlock {
+    type:  'tool_use'
+    id:    string
+    name:  string
+    input: unknown
+}
+
+export function extractToolUses(message: { type: string, message?: { content?: unknown } }): ToolUseBlock[] {
+    // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent - _.filter on non-assistant messages returns [] same as early return
+    if(message.type !== 'assistant') {
+        return [];
+    }
+    const content = message.message?.content as { type: string, id?: string, name?: string, input?: unknown }[] | undefined;
+    return _.filter(content ?? [], { type: 'tool_use' }) as ToolUseBlock[];
+}
+
 export interface ClaudeAgentOptions {
     /** Context builder for loading memory (core identity + recent context) */
     contextBuilder?:  ContextBuilder
@@ -359,6 +380,16 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                         eventType: message.type,
                         msg:       `Stream event: ${message.type}`,
                     });
+
+                    // Log tool usage from assistant messages
+                    const toolUses = extractToolUses(message);
+                    for(const toolUse of toolUses) {
+                        logger.debug({
+                            toolName:  toolUse.name,
+                            toolUseId: toolUse.id,
+                            msg:       `Tool call: ${toolUse.name}`,
+                        });
+                    }
 
                     // Invoke stream event callback if provided
                     if(onStreamEvent) {

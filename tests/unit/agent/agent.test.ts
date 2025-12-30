@@ -3,11 +3,107 @@ import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:te
 import _ from 'lodash';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
-import { createClaudeAgent } from '../../../src/agent/agent';
+import { createClaudeAgent, extractToolUses } from '../../../src/agent/agent';
 import type { DiscordMessageContext } from '../../../src/integrations/discord/types';
 import { createGuildId, createChannelId, createUserId } from '../../../src/integrations/discord/types';
 import type { ContextBuilder } from '../../../src/agent/context-builder';
 import * as timeUtils from '../../../src/utils/time';
+
+describe('extractToolUses', () => {
+    it('should return empty array for non-assistant messages', () => {
+        const message = { type: 'user', message: { content: [] } };
+        expect(extractToolUses(message)).toEqual([]);
+    });
+
+    it('should return empty array for assistant messages with no content', () => {
+        const message = { type: 'assistant', message: {} };
+        expect(extractToolUses(message)).toEqual([]);
+    });
+
+    it('should return empty array for assistant messages with no tool_use blocks', () => {
+        const message = {
+            type:    'assistant',
+            message: {
+                content: [
+                    { type: 'text', text: 'Hello world' },
+                ],
+            },
+        };
+        expect(extractToolUses(message)).toEqual([]);
+    });
+
+    it('should extract single tool_use block correctly', () => {
+        const message = {
+            type:    'assistant',
+            message: {
+                content: [
+                    {
+                        type:  'tool_use',
+                        id:    'tool_123',
+                        name:  'memory_view',
+                        input: { path: '/memories/test' },
+                    },
+                ],
+            },
+        };
+        const result = extractToolUses(message);
+        expect(result).toHaveLength(1);
+        expect(result[0]).toEqual({
+            type:  'tool_use',
+            id:    'tool_123',
+            name:  'memory_view',
+            input: { path: '/memories/test' },
+        });
+    });
+
+    it('should extract multiple tool_use blocks', () => {
+        const message = {
+            type:    'assistant',
+            message: {
+                content: [
+                    { type: 'text', text: 'Let me check your memories' },
+                    {
+                        type:  'tool_use',
+                        id:    'tool_123',
+                        name:  'memory_view',
+                        input: { path: '/memories/test' },
+                    },
+                    { type: 'text', text: 'Now storing something' },
+                    {
+                        type:  'tool_use',
+                        id:    'tool_456',
+                        name:  'memory_store',
+                        input: { path: '/memories/new', content: 'data' },
+                    },
+                ],
+            },
+        };
+        const result = extractToolUses(message);
+        expect(result).toHaveLength(2);
+        expect(result[0].name).toBe('memory_view');
+        expect(result[1].name).toBe('memory_store');
+    });
+
+    it('should handle undefined content gracefully', () => {
+        const message = { type: 'assistant', message: { content: undefined } };
+        expect(extractToolUses(message)).toEqual([]);
+    });
+
+    it('should handle null content gracefully', () => {
+        const message = { type: 'assistant', message: { content: null } };
+        expect(extractToolUses(message)).toEqual([]);
+    });
+
+    it('should handle missing message property gracefully', () => {
+        const message = { type: 'assistant' };
+        expect(extractToolUses(message)).toEqual([]);
+    });
+
+    it('should handle undefined message property gracefully', () => {
+        const message = { type: 'assistant', message: undefined };
+        expect(extractToolUses(message)).toEqual([]);
+    });
+});
 
 describe('createClaudeAgent', () => {
     let mockMessageContext: DiscordMessageContext;
@@ -1167,6 +1263,125 @@ describe('createClaudeAgent', () => {
             );
 
             infoSpy.mockRestore();
+        });
+
+        it('should log tool usage from assistant messages', async () => {
+            const debugSpy = spyOn(logger, 'debug');
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type:  'tool_use' as const,
+                                    id:    'tool_123',
+                                    name:  'mcp__memory__view',
+                                    input: { path: '/memories/test' },
+                                },
+                                {
+                                    type: 'text' as const,
+                                    text: 'Checking memories...',
+                                },
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chat(mockMessageContext);
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    toolName:  'mcp__memory__view',
+                    toolUseId: 'tool_123',
+                    msg:       'Tool call: mcp__memory__view',
+                })
+            );
+
+            debugSpy.mockRestore();
+        });
+
+        it('should log multiple tool uses from a single assistant message', async () => {
+            const debugSpy = spyOn(logger, 'debug');
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type:  'tool_use' as const,
+                                    id:    'tool_123',
+                                    name:  'mcp__memory__view',
+                                    input: { path: '/memories/test' },
+                                },
+                                {
+                                    type:  'tool_use' as const,
+                                    id:    'tool_456',
+                                    name:  'mcp__memory__store',
+                                    input: { path: '/memories/new', content: 'data' },
+                                },
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chat(mockMessageContext);
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    toolName:  'mcp__memory__view',
+                    toolUseId: 'tool_123',
+                    msg:       'Tool call: mcp__memory__view',
+                })
+            );
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    toolName:  'mcp__memory__store',
+                    toolUseId: 'tool_456',
+                    msg:       'Tool call: mcp__memory__store',
+                })
+            );
+
+            debugSpy.mockRestore();
+        });
+
+        it('should not log tool usage for messages without tool_use blocks', async () => {
+            const debugSpy = spyOn(logger, 'debug');
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type: 'text' as const,
+                                    text: 'Just text, no tools',
+                                },
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chat(mockMessageContext);
+
+            // Should only have stream event log, not tool call log
+            const toolCallCalls = _.filter(
+                debugSpy.mock.calls,
+                call => call[0] && _.isObject(call[0]) && 'toolName' in call[0]
+            );
+            expect(toolCallCalls.length).toBe(0);
+
+            debugSpy.mockRestore();
         });
     });
 
