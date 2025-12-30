@@ -542,7 +542,7 @@ describe('createClaudeAgent', () => {
             await agent.chat(mockMessageContext);
 
             // Verify loadRecentEvents was called
-            expect(mockContextBuilder.loadRecentEvents).toHaveBeenCalledWith(3);
+            expect(mockContextBuilder.loadRecentEvents).toHaveBeenCalledWith(50);
 
             // Verify the prompt includes [Recent events] section with exact format
             expect(querySpy).toHaveBeenCalledWith(
