@@ -6,6 +6,7 @@ import type { PresenceManager } from './presence';
 import type { ClaudeAgent } from '@/agent/agent';
 import { createGuildId, createChannelId, createUserId } from './types';
 import { createStatusMiddleware } from './presence';
+import { splitMessage } from './messages';
 
 /**
  * Creates a handler for the Discord 'clientReady' event.
@@ -164,9 +165,22 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
                     msg:            `Response generated (${reply.length} chars)`,
                 });
 
+                // Split long messages into Discord-safe chunks
+                const chunks = splitMessage(reply);
+
                 try {
-                    await message.reply(reply);
-                    logger.info({ messageId: message.id, msg: 'Reply sent successfully' });
+                    // First chunk uses reply() to thread the response
+                    await message.reply(chunks[0]);
+                    logger.info({ messageId: message.id, chunkIndex: 0, totalChunks: chunks.length, msg: 'Reply sent successfully' });
+
+                    // Subsequent chunks use channel.send() to continue the conversation
+                    // Use interface with send method for type safety
+                    interface SendableChannel { send: (content: string) => Promise<Message> }
+                    const channel = message.channel as SendableChannel;
+                    for(let i = 1; i < chunks.length; i++) {
+                        await channel.send(chunks[i]);
+                        logger.info({ messageId: message.id, chunkIndex: i, totalChunks: chunks.length, msg: 'Continuation sent successfully' });
+                    }
                 } catch (replyError) {
                     const err = _.isError(replyError) ? replyError : new Error(String(replyError));
                     // Use object spread to satisfy logger typing while maintaining structured logging

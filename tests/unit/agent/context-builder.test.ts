@@ -1165,6 +1165,7 @@ describe('createContextBuilder', () => {
     describe('loadRecentContext', () => {
         it('should load recent context for a specific user', async () => {
             const userId = 'user123';
+            const now = new Date('2025-01-15T12:00:00.000Z');
 
             backend.searchByTag = mock(async () => ({
                 items: [
@@ -1181,10 +1182,10 @@ describe('createContextBuilder', () => {
             }));
 
             const contextBuilder = createContextBuilder({ backend });
-            const context = await contextBuilder.loadRecentContext(userId);
+            const context = await contextBuilder.loadRecentContext(userId, 3, now);
 
             expect(backend.searchByTag).toHaveBeenCalledWith('user:user123', undefined, { limit: 3 });
-            expect(context).toEqual(['Recent memory 1']);
+            expect(context).toEqual(['- /state/recent1.md (2w ago): Recent memory 1']);
         });
 
         it('should use default limit of 3', async () => {
@@ -1216,6 +1217,8 @@ describe('createContextBuilder', () => {
         });
 
         it('should extract content from all returned items', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
             backend.searchByTag = mock(async () => ({
                 items: [
                     {
@@ -1249,9 +1252,13 @@ describe('createContextBuilder', () => {
             }));
 
             const contextBuilder = createContextBuilder({ backend });
-            const context = await contextBuilder.loadRecentContext('user-multi');
+            const context = await contextBuilder.loadRecentContext('user-multi', 3, now);
 
-            expect(context).toEqual(['Memory 1', 'Memory 2', 'Memory 3']);
+            expect(context).toEqual([
+                '- /state/item1.md (2w ago): Memory 1',
+                '- /state/item2.md (2w ago): Memory 2',
+                '- /state/item3.md (2w ago): Memory 3',
+            ]);
             expect(context.length).toBe(3);
         });
 
@@ -1264,7 +1271,9 @@ describe('createContextBuilder', () => {
             expect(context).toEqual([]);
         });
 
-        it('should map each item to its content field', async () => {
+        it('should map each item to formatted string with path and content', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
             backend.searchByTag = mock(async () => ({
                 items: [
                     {
@@ -1280,10 +1289,10 @@ describe('createContextBuilder', () => {
             }));
 
             const contextBuilder = createContextBuilder({ backend });
-            const context = await contextBuilder.loadRecentContext('user-map');
+            const context = await contextBuilder.loadRecentContext('user-map', 3, now);
 
-            // Should only contain content, not whole item
-            expect(context).toEqual(['Content A']);
+            // Should contain formatted string with path and content
+            expect(context).toEqual(['- /state/a.md (2w ago): Content A']);
         });
 
         it('should log when loading user context starts', async () => {
@@ -1426,7 +1435,9 @@ describe('createContextBuilder', () => {
             expect(layerArg).toBe('events');
         });
 
-        it('should extract content from results', async () => {
+        it('should extract content from results and format with path and age', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
             backend.searchByTimeRange = mock(async () => [
                 {
                     path:        createMemoryPath('/events/event1.md'),
@@ -1434,8 +1445,8 @@ describe('createContextBuilder', () => {
                     contentType: 'text/markdown' as const,
                     metadata:    {},
                     version:     1,
-                    createdAt:   '2025-01-01T00:00:00Z',
-                    updatedAt:   '2025-01-01T00:00:00Z',
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z',
                 },
                 {
                     path:        createMemoryPath('/events/event2.md'),
@@ -1443,15 +1454,18 @@ describe('createContextBuilder', () => {
                     contentType: 'text/markdown' as const,
                     metadata:    {},
                     version:     1,
-                    createdAt:   '2025-01-01T00:00:00Z',
-                    updatedAt:   '2025-01-01T00:00:00Z',
+                    createdAt:   '2025-01-15T11:00:00.000Z',
+                    updatedAt:   '2025-01-15T11:00:00.000Z',
                 },
             ]);
 
             const contextBuilder = createContextBuilder({ backend });
-            const result = await contextBuilder.loadRecentEvents();
+            const result = await contextBuilder.loadRecentEvents(5, now);
 
-            expect(result).toEqual(['Event 1', 'Event 2']);
+            expect(result).toEqual([
+                '- /events/event1.md (2h ago): Event 1',
+                '- /events/event2.md (1h ago): Event 2',
+            ]);
         });
 
         it('should return empty array when no events found', async () => {
@@ -1463,7 +1477,9 @@ describe('createContextBuilder', () => {
             expect(result).toEqual([]);
         });
 
-        it('should only extract content field not other fields', async () => {
+        it('should format as string not object', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
             backend.searchByTimeRange = mock(async () => [
                 {
                     path:        createMemoryPath('/events/event.md'),
@@ -1471,17 +1487,17 @@ describe('createContextBuilder', () => {
                     contentType: 'text/markdown' as const,
                     metadata:    { important: true },
                     version:     1,
-                    createdAt:   '2025-01-01T00:00:00Z',
-                    updatedAt:   '2025-01-01T00:00:00Z',
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z',
                 },
             ]);
 
             const contextBuilder = createContextBuilder({ backend });
-            const result = await contextBuilder.loadRecentEvents();
+            const result = await contextBuilder.loadRecentEvents(5, now);
 
-            // Should only contain content strings, not objects
+            // Should contain formatted string, not object
             expect(result).toHaveLength(1);
-            expect(result[0]).toBe('My Event Content');
+            expect(result[0]).toBe('- /events/event.md (2h ago): My Event Content');
             // Verify it's a string not an object
             expect(typeof result[0]).toBe('string');
         });
@@ -1541,6 +1557,335 @@ describe('createContextBuilder', () => {
                     msg:        'Recent events loaded',
                 })
             );
+        });
+
+        it('should format events with path, age, and content preview', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/event1.md'),
+                    content:     'Event content here',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z',
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentEvents(5, now);
+
+            expect(result).toHaveLength(1);
+            expect(result[0]).toBe('- /events/event1.md (2h ago): Event content here');
+        });
+
+        it('should truncate event content at 100 chars with ellipsis', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            const longContent = _.repeat('x', 150);
+
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/long.md'),
+                    content:     longContent,
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z',
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentEvents(5, now);
+
+            expect(result).toHaveLength(1);
+            // Format: "- /events/long.md (2h ago): " + 100 chars + "..."
+            expect(result[0]).toContain(_.repeat('x', 100) + '...');
+            expect(result[0]).not.toContain(_.repeat('x', 101));
+        });
+
+        it('should not truncate event content at exactly 100 chars', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            const exactContent = _.repeat('y', 100);
+
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/exact.md'),
+                    content:     exactContent,
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z',
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentEvents(5, now);
+
+            expect(result).toHaveLength(1);
+            expect(result[0]).toBe(`- /events/exact.md (2h ago): ${exactContent}`);
+            expect(result[0]).not.toContain('...');
+        });
+    });
+
+    describe('loadRecentContext - new format', () => {
+        it('should format context with path, age, and content preview', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
+            backend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/state/task.md'),
+                        content:     'Working on feature',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-15T10:00:00.000Z',
+                        updatedAt:   '2025-01-15T10:00:00.000Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentContext('user123', 3, now);
+
+            expect(result).toHaveLength(1);
+            expect(result[0]).toBe('- /state/task.md (2h ago): Working on feature');
+        });
+
+        it('should truncate context content at 100 chars with ellipsis', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            const longContent = _.repeat('a', 150);
+
+            backend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/state/long.md'),
+                        content:     longContent,
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-15T10:00:00.000Z',
+                        updatedAt:   '2025-01-15T10:00:00.000Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentContext('user123', 3, now);
+
+            expect(result).toHaveLength(1);
+            expect(result[0]).toContain(_.repeat('a', 100) + '...');
+            expect(result[0]).not.toContain(_.repeat('a', 101));
+        });
+
+        it('should not truncate context content at exactly 100 chars', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            const exactContent = _.repeat('b', 100);
+
+            backend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/state/exact.md'),
+                        content:     exactContent,
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-15T10:00:00.000Z',
+                        updatedAt:   '2025-01-15T10:00:00.000Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentContext('user123', 3, now);
+
+            expect(result).toHaveLength(1);
+            expect(result[0]).toBe(`- /state/exact.md (2h ago): ${exactContent}`);
+            expect(result[0]).not.toContain('...');
+        });
+
+        it('should format multiple context items correctly', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
+            backend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/state/task1.md'),
+                        content:     'First task',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-15T11:00:00.000Z',
+                        updatedAt:   '2025-01-15T11:00:00.000Z',
+                    },
+                    {
+                        path:        createMemoryPath('/state/task2.md'),
+                        content:     'Second task',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-14T12:00:00.000Z',
+                        updatedAt:   '2025-01-14T12:00:00.000Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentContext('user123', 3, now);
+
+            expect(result).toHaveLength(2);
+            expect(result[0]).toBe('- /state/task1.md (1h ago): First task');
+            expect(result[1]).toBe('- /state/task2.md (1d ago): Second task');
+        });
+
+        it('should use current time when now parameter not provided', async () => {
+            backend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/state/recent.md'),
+                        content:     'Recent content',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   new Date(Date.now() - 30000).toISOString(),
+                        updatedAt:   new Date(Date.now() - 30000).toISOString(),
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentContext('user123');
+
+            expect(result).toHaveLength(1);
+            // Should contain "now" for very recent items
+            expect(result[0]).toMatch(/- \/state\/recent\.md \(now\): Recent content/);
+        });
+    });
+
+    describe('loadUserTimezone', () => {
+        it('should return timezone content when found', async () => {
+            const userId = 'user123';
+
+            backend.get = mock(async () => ({
+                path:        createMemoryPath('/users/user123/timezone'),
+                content:     'America/Los_Angeles',
+                contentType: 'text/plain' as const,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00Z',
+                updatedAt:   '2025-01-01T00:00:00Z',
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadUserTimezone(userId);
+
+            expect(result).toBe('America/Los_Angeles');
+        });
+
+        it('should return undefined when timezone not found', async () => {
+            const userId = 'user-no-tz';
+
+            backend.get = mock(async () => undefined);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadUserTimezone(userId);
+
+            expect(result).toBeUndefined();
+        });
+
+        it('should construct correct path from userId', async () => {
+            const userId = 'test-user-path';
+
+            backend.get = mock(async () => undefined);
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadUserTimezone(userId);
+
+            expect(backend.get).toHaveBeenCalledWith(createMemoryPath('/users/test-user-path/timezone'));
+        });
+
+        it('should log debug message when timezone not found', async () => {
+            const debugSpy = spyOn(logger, 'debug');
+            const userId = 'user-log-test';
+
+            backend.get = mock(async () => undefined);
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadUserTimezone(userId);
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    userId,
+                    msg: 'User timezone not found',
+                })
+            );
+        });
+
+        it('should not log "not found" when timezone is found', async () => {
+            const userId = 'user-found';
+
+            backend.get = mock(async () => ({
+                path:        createMemoryPath('/users/user-found/timezone'),
+                content:     'Europe/London',
+                contentType: 'text/plain' as const,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00Z',
+                updatedAt:   '2025-01-01T00:00:00Z',
+            }));
+
+            // Create a fresh mock for logger.debug
+            const originalDebug = logger.debug.bind(logger);
+            const debugCalls: unknown[][] = [];
+            /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Mocking logger for test */
+            (logger as any).debug = (arg: unknown) => {
+                debugCalls.push([arg]);
+                return logger;
+            };
+            /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Mocking complete */
+
+            try {
+                const contextBuilder = createContextBuilder({ backend });
+                await contextBuilder.loadUserTimezone(userId);
+
+                // Should not have called debug with 'User timezone not found'
+                const notFoundCalls = _.filter(
+                    debugCalls,
+                    (call: unknown[]) =>
+                        _.isObject(call[0])
+                        && call[0] !== null
+                        && 'msg' in call[0]
+                        && (call[0] as { msg: string }).msg === 'User timezone not found'
+                );
+                expect(notFoundCalls).toHaveLength(0);
+            } finally {
+                /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Restoring logger mock */
+                (logger as any).debug = originalDebug;
+                /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Restore complete */
+            }
+        });
+
+        it('should handle different timezone formats', async () => {
+            const userId = 'user-tz-format';
+
+            backend.get = mock(async () => ({
+                path:        createMemoryPath('/users/user-tz-format/timezone'),
+                content:     'Asia/Tokyo',
+                contentType: 'text/plain' as const,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00Z',
+                updatedAt:   '2025-01-01T00:00:00Z',
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadUserTimezone(userId);
+
+            expect(result).toBe('Asia/Tokyo');
         });
     });
 });

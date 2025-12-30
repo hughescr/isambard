@@ -50,6 +50,15 @@ Establish foundation for Isambard with working Discord bot and memory system.
 - [x] 20 integration tests for full bot lifecycle
 - [x] 910 total tests passing with 99.37% mutation coverage
 
+### Time Awareness (Completed)
+- [x] Time utility module (formatRelativeTime, getTimeOfDay, etc.)
+- [x] Discord message chunking (split long messages instead of truncating)
+- [x] Current time injection into context prefix (UTC + day + time of day)
+- [x] Timestamps on memory tool responses (view, search, list)
+- [x] Timestamps on auto-loaded context (user memories, bot memories, events)
+- [x] User timezone storage and loading
+- [x] Temporal reasoning guidance in system prompt
+
 ## Success Criteria
 - Bot responds to Discord messages
 - Conversations persist across restarts

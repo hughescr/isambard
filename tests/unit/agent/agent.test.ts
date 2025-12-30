@@ -7,6 +7,7 @@ import { createClaudeAgent } from '../../../src/agent/agent';
 import type { DiscordMessageContext } from '../../../src/integrations/discord/types';
 import { createGuildId, createChannelId, createUserId } from '../../../src/integrations/discord/types';
 import type { ContextBuilder } from '../../../src/agent/context-builder';
+import * as timeUtils from '../../../src/utils/time';
 
 describe('createClaudeAgent', () => {
     let mockMessageContext: DiscordMessageContext;
@@ -33,6 +34,7 @@ describe('createClaudeAgent', () => {
             // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function
             recordAccess:       mock(async () => {}),
             loadRecentEvents:   mock(_.constant(Promise.resolve([]))),
+            loadUserTimezone:   mock(_.constant(Promise.resolve(undefined))),
         };
 
         // Mock query() to return an async generator with assistant message
@@ -100,7 +102,7 @@ describe('createClaudeAgent', () => {
         expect(response).toBe('Hello! This is a test response.');
     });
 
-    it('should truncate responses longer than 1900 characters', async () => {
+    it('should return full responses without truncating (chunking handled by Discord handlers)', async () => {
         const longText = _.repeat('a', 2000);
         querySpy.mockImplementation((_params: any): any => {
             async function* mockGenerator() {
@@ -122,8 +124,9 @@ describe('createClaudeAgent', () => {
         const agent = createClaudeAgent({});
         const response = await agent.chat(mockMessageContext);
 
-        expect(response).toBe(_.repeat('a', 1897) + '...');
-        expect(response?.length).toBe(1900);
+        // Agent should return full response, chunking is done in handlers
+        expect(response).toBe(longText);
+        expect(response?.length).toBe(2000);
     });
 
     it('should include memory MCP server when provided', async () => {
@@ -294,7 +297,7 @@ describe('createClaudeAgent', () => {
         expect(response?.length).toBe(1900);
     });
 
-    it('should truncate responses exceeding MAX_RESPONSE_LENGTH by exactly 1 character', async () => {
+    it('should return full response even when just over typical Discord limit', async () => {
         const longText = _.repeat('y', 1901);
         querySpy.mockImplementation((_params: any): any => {
             async function* mockGenerator() {
@@ -316,8 +319,9 @@ describe('createClaudeAgent', () => {
         const agent = createClaudeAgent({});
         const response = await agent.chat(mockMessageContext);
 
-        expect(response).toBe(_.repeat('y', 1897) + '...');
-        expect(response?.length).toBe(1900);
+        // Agent should return full response, chunking is done in handlers
+        expect(response).toBe(longText);
+        expect(response?.length).toBe(1901);
     });
 
     describe('context builder integration', () => {
@@ -416,12 +420,11 @@ describe('createClaudeAgent', () => {
 
             await agent.chat(mockMessageContext);
 
-            // Should not have [Recent context] prefix
-            expect(querySpy).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    prompt: 'User @111222333 in #987654321: Hello Claude!',
-                })
-            );
+            // Should not have [About this user] section when no user memories
+            const callArgs = querySpy.mock.calls[0][0];
+            expect(callArgs.prompt).not.toContain('[About this user]');
+            // But should still have the user message
+            expect(callArgs.prompt).toContain('User @111222333 in #987654321: Hello Claude!');
         });
 
         it('should format multiple recent memories with newline-separated bullets', async () => {
@@ -439,9 +442,10 @@ describe('createClaudeAgent', () => {
 
             await agent.chat(mockMessageContext);
 
+            // Verify the user memories section format (time section will precede it)
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    prompt: '[About this user]\n- First memory\n- Second memory\n- Third memory\n\nUser @111222333 in #987654321: Hello Claude!',
+                    prompt: expect.stringContaining('[About this user]\n- First memory\n- Second memory\n- Third memory'),
                 })
             );
         });
@@ -582,12 +586,20 @@ describe('createClaudeAgent', () => {
 
             await agent.chat(mockMessageContext);
 
-            // Verify the exact format with all three sections joined by \n\n
-            expect(querySpy).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    prompt: '[About this user]\n- User memory\n\n[Your recent activities]\n- Bot activity\n\n[Recent events]\n- Recent event\n\nUser @111222333 in #987654321: Hello Claude!',
-                })
-            );
+            // Verify the format with all sections joined by \n\n (time section comes first)
+            const callArgs = querySpy.mock.calls[0][0];
+            const prompt = callArgs.prompt as string;
+
+            // All sections should be present and separated by double newlines
+            expect(prompt).toContain('## Current Time');
+            expect(prompt).toContain('[About this user]\n- User memory');
+            expect(prompt).toContain('[Your recent activities]\n- Bot activity');
+            expect(prompt).toContain('[Recent events]\n- Recent event');
+            expect(prompt).toContain('User @111222333 in #987654321: Hello Claude!');
+
+            // Verify double newline separation between sections
+            expect(prompt).toContain('[About this user]\n- User memory\n\n[Your recent activities]');
+            expect(prompt).toContain('[Your recent activities]\n- Bot activity\n\n[Recent events]');
         });
 
         it('should format bot activities with dash-space prefix for each memory item', async () => {
@@ -1059,8 +1071,7 @@ describe('createClaudeAgent', () => {
     });
 
     describe('error handling and logging', () => {
-        it('should log truncation with message details', async () => {
-            const consoleSpy = spyOn(console, 'log');
+        it('should return full long responses without truncation (handlers do chunking)', async () => {
             const longText = _.repeat('x', 2000);
             querySpy.mockImplementation((_params: any): any => {
                 async function* mockGenerator() {
@@ -1080,16 +1091,11 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            const response = await agent.chat(mockMessageContext);
 
-            expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('Truncating Claude response for message msg_999')
-            );
-            expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('2000 -> 1900')
-            );
-
-            consoleSpy.mockRestore();
+            // Agent returns full response; Discord handlers handle chunking
+            expect(response).toBe(longText);
+            expect(response?.length).toBe(2000);
         });
 
         it('should log error with message and user details', async () => {
@@ -1161,6 +1167,159 @@ describe('createClaudeAgent', () => {
             );
 
             infoSpy.mockRestore();
+        });
+    });
+
+    describe('time context injection', () => {
+        let timeContextSpy: ReturnType<typeof spyOn>;
+
+        beforeEach(() => {
+            // Mock getCurrentTimeContext to return predictable values
+            timeContextSpy = spyOn(timeUtils, 'getCurrentTimeContext').mockReturnValue({
+                utc:       '2025-01-15T14:30:00.000Z',
+                dayOfWeek: 'Wednesday',
+                timeOfDay: 'afternoon',
+            });
+        });
+
+        afterEach(() => {
+            timeContextSpy.mockRestore();
+        });
+
+        it('should include time section in context prefix when contextBuilder is provided', async () => {
+            const agent = createClaudeAgent({
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    prompt: expect.stringContaining('## Current Time'),
+                })
+            );
+        });
+
+        it('should format time section with UTC, day of week, and time of day', async () => {
+            const agent = createClaudeAgent({
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    prompt: expect.stringContaining('- UTC: 2025-01-15T14:30:00.000Z (Wednesday afternoon)'),
+                })
+            );
+        });
+
+        it('should include time section as the first section in context prefix', async () => {
+            // Mock user memories to have another section
+            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockImplementation((userId: string) => {
+                if(userId === '111222333') {
+                    return Promise.resolve(['User likes TypeScript']);
+                }
+                return Promise.resolve([]);
+            });
+
+            const agent = createClaudeAgent({
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            const callArgs = querySpy.mock.calls[0][0];
+            const prompt = callArgs.prompt as string;
+
+            // Time section should come before user section
+            const timeIndex = prompt.indexOf('## Current Time');
+            const userIndex = prompt.indexOf('[About this user]');
+
+            expect(timeIndex).toBeGreaterThanOrEqual(0);
+            expect(userIndex).toBeGreaterThan(timeIndex);
+        });
+
+        it('should call getCurrentTimeContext when building context prefix', async () => {
+            const agent = createClaudeAgent({
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            expect(timeContextSpy).toHaveBeenCalled();
+        });
+    });
+
+    describe('temporal reasoning in system prompt', () => {
+        it('should include temporal reasoning section in system prompt', async () => {
+            const agent = createClaudeAgent({});
+
+            await agent.chat(mockMessageContext);
+
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({
+                        systemPrompt: expect.stringContaining('## Temporal Reasoning'),
+                    }),
+                })
+            );
+        });
+
+        it('should include guidance about identity memories being stable', async () => {
+            const agent = createClaudeAgent({});
+
+            await agent.chat(mockMessageContext);
+
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({
+                        systemPrompt: expect.stringContaining('Identity memories (values, beliefs) are relatively stable over time'),
+                    }),
+                })
+            );
+        });
+
+        it('should include guidance about state memories becoming outdated', async () => {
+            const agent = createClaudeAgent({});
+
+            await agent.chat(mockMessageContext);
+
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({
+                        systemPrompt: expect.stringContaining('State memories may become outdated'),
+                    }),
+                })
+            );
+        });
+
+        it('should include guidance about event memories being historical', async () => {
+            const agent = createClaudeAgent({});
+
+            await agent.chat(mockMessageContext);
+
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({
+                        systemPrompt: expect.stringContaining('Event memories are historical records'),
+                    }),
+                })
+            );
+        });
+
+        it('should include guidance to prefer recent information', async () => {
+            const agent = createClaudeAgent({});
+
+            await agent.chat(mockMessageContext);
+
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({
+                        systemPrompt: expect.stringContaining('Prefer recent information when facts may have changed'),
+                    }),
+                })
+            );
         });
     });
 });

@@ -291,6 +291,64 @@ describe('Discord Event Handlers', () => {
             expect(mockMessage.reply).toHaveBeenCalledWith('Response message');
         });
 
+        it('should split and send multiple messages for long responses', async () => {
+            // Create a response that will be split into multiple chunks
+            const longResponse = _.repeat('a', 2000);
+            mockOnMessage = mock(async () => longResponse);
+
+            // Add a mock for channel.send
+            const sendMock = mock(async () => ({}));
+            (mockTextChannel as unknown as { send: typeof sendMock }).send = sendMock;
+
+            const handler = createMessageHandler({
+                monitoredChannelIds: ['333333333333333333' as ChannelId],
+                botUserId:           '999999999999999999' as UserId,
+                onMessage:           mockOnMessage,
+            });
+
+            await handler(mockMessage);
+
+            // First chunk should use reply()
+            expect(mockMessage.reply).toHaveBeenCalledTimes(1);
+            // Second chunk should use channel.send()
+            expect(sendMock).toHaveBeenCalledTimes(1);
+        });
+
+        it('should log chunk info when sending multiple messages', async () => {
+            const infoSpy = spyOn(logger, 'info');
+            const longResponse = _.repeat('x', 2000);
+            mockOnMessage = mock(async () => longResponse);
+
+            // Add a mock for channel.send
+            const sendMock = mock(async () => ({}));
+            (mockTextChannel as unknown as { send: typeof sendMock }).send = sendMock;
+
+            const handler = createMessageHandler({
+                monitoredChannelIds: ['333333333333333333' as ChannelId],
+                botUserId:           '999999999999999999' as UserId,
+                onMessage:           mockOnMessage,
+            });
+
+            await handler(mockMessage);
+
+            // Should log chunk index and total chunks for each message
+            expect(infoSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    chunkIndex:  0,
+                    totalChunks: expect.any(Number),
+                    msg:         'Reply sent successfully',
+                })
+            );
+
+            expect(infoSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    chunkIndex:  1,
+                    totalChunks: expect.any(Number),
+                    msg:         'Continuation sent successfully',
+                })
+            );
+        });
+
         it('should not reply when onMessage returns null', async () => {
             mockOnMessage = mock(async () => null);
 

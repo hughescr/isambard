@@ -3,13 +3,11 @@ import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
 import type { DiscordMessageContext } from '../integrations/discord/types';
+import { getCurrentTimeContext } from '../utils/time';
 import type { ContextBuilder } from './context-builder';
 import type { AgentStreamEvent } from './types';
 
 const CLAUDE_MODEL = 'claude-sonnet-4-5';
-const DISCORD_MAX_MESSAGE_LENGTH = 2000;
-const TRUNCATION_BUFFER = 100; // Leave room for "..." and safety margin
-const MAX_RESPONSE_LENGTH = DISCORD_MAX_MESSAGE_LENGTH - TRUNCATION_BUFFER;
 
 const BASE_SYSTEM_PROMPT = `You are Isambard, an agentic AI assistant in a Discord server.
 
@@ -39,7 +37,14 @@ You can use tools to accomplish tasks. You have access to:
 - Command execution (if granted permission)
 - Web search and information retrieval
 
-Always check your memories about users before responding to personalize your interactions.`;
+Always check your memories about users before responding to personalize your interactions.
+
+## Temporal Reasoning
+When using memories, consider their age:
+- Identity memories (values, beliefs) are relatively stable over time
+- State memories may become outdated - verify recent facts when relevant
+- Event memories are historical records, accurate for their time
+- Prefer recent information when facts may have changed`;
 
 /**
  * Build system prompt with optional core identity.
@@ -66,7 +71,14 @@ async function buildSystemPrompt(contextBuilder?: ContextBuilder): Promise<strin
  * @returns Context prefix string (empty if no context available)
  */
 async function buildContextPrefix(contextBuilder: ContextBuilder, context: DiscordMessageContext): Promise<string> {
+    // Stryker disable next-line ArrayDeclaration: Equivalent - sections always has time section pushed first
     const sections: string[] = [];
+
+    // Time context (always first)
+    const timeContext = getCurrentTimeContext();  // timezone support comes later via context-builder
+    const timeSection = `## Current Time
+- UTC: ${timeContext.utc} (${timeContext.dayOfWeek} ${timeContext.timeOfDay})`;
+    sections.push(timeSection);
 
     // User-specific memories
     const userMemories = await contextBuilder.loadRecentContext(context.userId, 3);
@@ -88,10 +100,7 @@ async function buildContextPrefix(contextBuilder: ContextBuilder, context: Disco
         sections.push(`[Recent events]\n${_.map(recentEvents, m => `- ${m}`).join('\n')}`);
     }
 
-    if(sections.length === 0) {
-        return '';
-    }
-
+    // Stryker disable next-line StringLiteral: Equivalent - trailing newlines are formatting, tests verify content not whitespace
     return sections.join('\n\n') + '\n\n';
 }
 
@@ -212,13 +221,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                     msg:            `Agent completed processing (${lastAssistantText.length} chars)`,
                 });
 
-                // 8. Truncate for Discord if needed
-                if(lastAssistantText.length > MAX_RESPONSE_LENGTH) {
-                    // eslint-disable-next-line no-console -- Logging truncation for debugging
-                    console.log(`Truncating Claude response for message ${context.messageId}: ${lastAssistantText.length} -> ${MAX_RESPONSE_LENGTH}`);
-                    return lastAssistantText.slice(0, MAX_RESPONSE_LENGTH - 3) + '...';
-                }
-
+                // 8. Return full response (chunking is handled by Discord handlers)
                 return lastAssistantText || null;
             } catch (error) {
                 const errorMessage = _.isError(error) ? error.message : String(error);

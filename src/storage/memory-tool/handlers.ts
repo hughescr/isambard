@@ -29,6 +29,7 @@ import {
     TextNotUniqueError,
     InvalidLineNumberError
 } from './errors';
+import { formatMemoryTimestamp, formatShortRelativeTime } from '@/utils/time';
 
 /**
  * Validates and converts a string path to a MemoryPath
@@ -111,8 +112,11 @@ export async function view(
     const item = await backend.get(memoryPath);
 
     if(item) {
-        // It's a file - return formatted content
-        return formatLineNumbers(item.content, params.view_range);
+        // It's a file - return formatted content with header
+        const timestamp = formatMemoryTimestamp(item.updatedAt);
+        const header = `File: ${params.path} ${timestamp}`;
+        const content = formatLineNumbers(item.content, params.view_range);
+        return `${header}\n${content}`;
     }
 
     // Try as a directory
@@ -341,12 +345,13 @@ export async function search(
         return 'No results found';
     }
 
-    // Format results with 100-char previews
+    // Format results with 100-char previews and compact timestamps
     const formatted = _map(items, (item) => {
         const preview = item.content.length > 100
             ? `${item.content.slice(0, 100)}...`
             : item.content;
-        return `${item.path}\n  ${preview}`;
+        const timestamp = formatShortRelativeTime(new Date(item.updatedAt));
+        return `${item.path} (${timestamp})\n  ${preview}`;
     });
 
     return formatted.join('\n\n');
@@ -428,11 +433,13 @@ export async function list_by_layer(
     }
 
     const formatted = _map(result.items, (item) => {
+        const timestamp = formatShortRelativeTime(new Date(item.updatedAt));
+        const pathWithTimestamp = `${item.path} (${timestamp})`;
         if(params.include_content) {
             const contentWithLines = formatLineNumbers(item.content);
-            return `${item.path}\n${contentWithLines}`;
+            return `${pathWithTimestamp}\n${contentWithLines}`;
         }
-        return item.path;
+        return pathWithTimestamp;
     });
 
     return formatted.join('\n\n');

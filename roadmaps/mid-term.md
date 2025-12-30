@@ -60,6 +60,11 @@ Expand integrations and enable self-improvement capabilities.
 - Agent using query() streaming API
 - Comprehensive tests: 910 passing, 99.37% mutation coverage
 
+## Discord Enhancement (Planned)
+- [ ] Discord history search tool (allow Izzy to query past channel messages)
+- [ ] Session gap tracking ("It's been 3 days since we last spoke")
+- [ ] Timezone inference (deduce user timezone from activity patterns)
+
 ## Weeks 5-6: External Integrations
 - [ ] Apple Calendar (CalDAV via tsdav)
 - [ ] IMAP Email (imapflow + nodemailer)

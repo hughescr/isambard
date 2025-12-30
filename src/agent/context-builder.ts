@@ -9,7 +9,8 @@ import { logger } from '@hughescr/logger';
 import { map as _map, groupBy as _groupBy, isNumber as _isNumber } from 'lodash';
 import type { MemoryToolBackend } from '../storage/memory-tool/backend';
 import type { MemoryPath, LayerName } from '../storage/memory-tool/types';
-import { extractLayerFromPath } from '../storage/memory-tool/types';
+import { extractLayerFromPath, createMemoryPath } from '../storage/memory-tool/types';
+import { formatShortRelativeTime } from '../utils/time';
 
 export interface ContextBuilderOptions {
     backend:            MemoryToolBackend
@@ -34,9 +35,10 @@ export interface ContextBuilder {
      * Load recent context for a specific user
      * @param userId User ID to load context for
      * @param limit Maximum number of recent memories to load
-     * @returns Array of recent memory texts
+     * @param now Optional reference time for age calculation (defaults to current time)
+     * @returns Array of formatted memory strings: "- path (age): content_preview"
      */
-    loadRecentContext: (userId: string, limit?: number) => Promise<string[]>
+    loadRecentContext: (userId: string, limit?: number, now?: Date) => Promise<string[]>
 
     /**
      * Update access stats when memories are used
@@ -47,14 +49,35 @@ export interface ContextBuilder {
     /**
      * Load recent events from the timeline
      * @param limit Maximum number of events to load
-     * @returns Array of recent event summaries
+     * @param now Optional reference time for age calculation (defaults to current time)
+     * @returns Array of formatted event strings: "- path (age): content_preview"
      */
-    loadRecentEvents: (limit?: number) => Promise<string[]>
+    loadRecentEvents: (limit?: number, now?: Date) => Promise<string[]>
+
+    /**
+     * Load user timezone preference
+     * @param userId User ID to load timezone for
+     * @returns Timezone string (e.g., "America/Los_Angeles") or undefined if not found
+     */
+    loadUserTimezone: (userId: string) => Promise<string | undefined>
 }
 
 const DEFAULT_MAX_IDENTITY_TOKENS = 500;
 const DEFAULT_MAX_STATE_TOKENS = 300;
 const CHARS_PER_TOKEN = 4;
+const CONTENT_PREVIEW_MAX_LENGTH = 100;
+
+/**
+ * Formats a memory item as a preview string with path, age, and truncated content.
+ * Format: "- path (age): content_preview"
+ */
+function formatMemoryPreview(path: MemoryPath, content: string, updatedAt: string, now: Date): string {
+    const age = formatShortRelativeTime(new Date(updatedAt), now);
+    const preview = content.length > CONTENT_PREVIEW_MAX_LENGTH
+        ? content.slice(0, CONTENT_PREVIEW_MAX_LENGTH) + '...'
+        : content;
+    return `- ${path} (${age}): ${preview}`;
+}
 
 /**
  * Creates a context builder for managing agent memory context
@@ -90,14 +113,16 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             return identity;
         },
 
-        loadRecentContext: async (userId: string, limit = 3): Promise<string[]> => {
+        loadRecentContext: async (userId: string, limit = 3, now: Date = new Date()): Promise<string[]> => {
             logger.debug({ userId, msg: 'Loading user context' });
 
             // Load recent state/events for this user via tag search
             const result = await backend.searchByTag(`user:${userId}`, undefined, { limit });
 
-            // Return in reverse chronological order (most recent first)
-            const memories = _map(result.items, 'content');
+            // Format each item with path, age, and content preview
+            const memories = _map(result.items, item =>
+                formatMemoryPreview(item.path, item.content, item.updatedAt, now)
+            );
 
             logger.debug({ userId, memoryCount: memories.length, msg: 'User context loaded' });
             return memories;
@@ -186,11 +211,10 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             }
         },
 
-        loadRecentEvents: async (limit = 5): Promise<string[]> => {
+        loadRecentEvents: async (limit = 5, now: Date = new Date()): Promise<string[]> => {
             logger.debug({ msg: 'Loading recent events' });
 
             // Load recent events by time range (last 24 hours)
-            const now = new Date();
             const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
             const result = await backend.searchByTimeRange(
                 dayAgo.toISOString(),
@@ -198,10 +222,26 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                 'events' as LayerName,
                 { limit }
             );
-            const events = _map(result, 'content');
+
+            // Format each item with path, age, and content preview
+            const events = _map(result, item =>
+                formatMemoryPreview(item.path, item.content, item.updatedAt, now)
+            );
 
             logger.debug({ eventCount: events.length, msg: 'Recent events loaded' });
             return events;
+        },
+
+        loadUserTimezone: async (userId: string): Promise<string | undefined> => {
+            const path = createMemoryPath(`/users/${userId}/timezone`);
+            const item = await backend.get(path);
+
+            if(!item) {
+                logger.debug({ userId, msg: 'User timezone not found' });
+                return undefined;
+            }
+
+            return item.content;
         },
     };
 }

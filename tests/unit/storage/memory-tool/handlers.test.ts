@@ -203,6 +203,8 @@ describe('Memory Tool Handlers', () => {
             expect(result).toContain('2:Line 2');
             expect(result).toContain('3:Line 3');
             expect(result).toContain('\n');
+            // Critical: verify lines are properly separated by newlines (kills StringLiteral mutant on join)
+            expect(result).toMatch(/1:Line 1\n2:Line 2\n3:Line 3/);
         });
 
         it('should return content with line range when view_range is provided', async () => {
@@ -395,6 +397,50 @@ describe('Memory Tool Handlers', () => {
             // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(view(mockBackend, { path: 'bad-path' }))
                 .rejects.toThrow(InvalidPathError);
+        });
+
+        it('should include file header with path and timestamp', async () => {
+            mockBackend.get = mock(async () => ({
+                path:        '/test/file.md' as MemoryPath,
+                content:     'Line 1\nLine 2',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-13T10:00:00.000Z',
+                updatedAt:   '2025-01-13T10:00:00.000Z',
+            }));
+
+            const result = await view(mockBackend, { path: '/test/file.md' });
+
+            // Should include file header with path and timestamp
+            expect(result).toContain('File: /test/file.md');
+            expect(result).toContain('2025-01-13T10:00:00.000Z');
+            // Should still have line-numbered content
+            expect(result).toContain('1:Line 1');
+            expect(result).toContain('2:Line 2');
+        });
+
+        it('should show relative time in file header', async () => {
+            // Use a date that's 2 days before now
+            const twoDaysAgo = new Date();
+            twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+            const updatedAt = twoDaysAgo.toISOString();
+
+            mockBackend.get = mock(async () => ({
+                path:        '/test/recent.md' as MemoryPath,
+                content:     'Recent content',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   updatedAt,
+                updatedAt:   updatedAt,
+            }));
+
+            const result = await view(mockBackend, { path: '/test/recent.md' });
+
+            // Should include relative time indicator
+            expect(result).toContain('2 days ago');
+            expect(result).toContain('File: /test/recent.md');
         });
     });
 
@@ -1358,6 +1404,63 @@ describe('Memory Tool Handlers', () => {
                 { limit: undefined }
             );
         });
+
+        it('should include compact timestamp in search results', async () => {
+            // Use a date that's 2 days before now
+            const twoDaysAgo = new Date();
+            twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+            const updatedAt = twoDaysAgo.toISOString();
+
+            mockBackend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        '/state/note.md' as MemoryPath,
+                        content:     'Note content',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   updatedAt,
+                        updatedAt:   updatedAt,
+                        tags:        ['tag1'],
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await searchHandler(mockBackend, { tags: ['tag1'] });
+
+            // Should include compact timestamp after path
+            expect(result).toContain('/state/note.md (2d ago)');
+            expect(result).toContain('Note content');
+        });
+
+        it('should show hours for recent search results', async () => {
+            // Use a date that's 3 hours before now
+            const threeHoursAgo = new Date();
+            threeHoursAgo.setHours(threeHoursAgo.getHours() - 3);
+            const updatedAt = threeHoursAgo.toISOString();
+
+            mockBackend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        '/state/recent.md' as MemoryPath,
+                        content:     'Recent content',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   updatedAt,
+                        updatedAt:   updatedAt,
+                        tags:        ['tag1'],
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await searchHandler(mockBackend, { tags: ['tag1'] });
+
+            // Should include compact timestamp with hours
+            expect(result).toContain('/state/recent.md (3h ago)');
+        });
     });
 
     describe('recall', () => {
@@ -1735,7 +1838,66 @@ describe('Memory Tool Handlers', () => {
 
             const result = await listByLayerHandler(mockBackend, { layer: 'identity' });
 
-            expect(result).toBe('/identity/core.md\n\n/identity/secondary.md');
+            // Results joined with double newline, each path includes timestamp
+            expect(result).toContain('/identity/core.md');
+            expect(result).toContain('/identity/secondary.md');
+            expect(result).toContain('\n\n');
+        });
+
+        it('should include compact timestamp in path listing', async () => {
+            // Use a date that's 2 days before now
+            const twoDaysAgo = new Date();
+            twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+            const updatedAt = twoDaysAgo.toISOString();
+
+            mockBackend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        '/identity/core.md' as MemoryPath,
+                        content:     'Core identity',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   updatedAt,
+                        updatedAt:   updatedAt,
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await listByLayerHandler(mockBackend, { layer: 'identity' });
+
+            // Should include compact timestamp after path
+            expect(result).toContain('/identity/core.md (2d ago)');
+        });
+
+        it('should include timestamp in path with content', async () => {
+            // Use a date that's 5 hours before now
+            const fiveHoursAgo = new Date();
+            fiveHoursAgo.setHours(fiveHoursAgo.getHours() - 5);
+            const updatedAt = fiveHoursAgo.toISOString();
+
+            mockBackend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        '/identity/core.md' as MemoryPath,
+                        content:     'Line 1\nLine 2',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   updatedAt,
+                        updatedAt:   updatedAt,
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const result = await listByLayerHandler(mockBackend, { layer: 'identity', include_content: true });
+
+            // Should include timestamp in path header
+            expect(result).toContain('/identity/core.md (5h ago)');
+            expect(result).toContain('1:Line 1');
+            expect(result).toContain('2:Line 2');
         });
     });
 
