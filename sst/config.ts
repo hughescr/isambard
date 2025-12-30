@@ -44,7 +44,7 @@ export const config = {
   // Discord
   discord: {
     monitoredChannelIds: new sst.Linkable('DiscordMonitoredChannelIds', {
-      properties: { value: '' },
+      properties: { value: ['1451694737026449581'] },
     }),
   },
 
