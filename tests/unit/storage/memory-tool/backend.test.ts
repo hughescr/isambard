@@ -1144,7 +1144,7 @@ describe('MemoryToolBackend', () => {
             expect(result[2].path).toBe('/events/newest.md' as MemoryPath);
         });
 
-        it('should sort by updatedAt before applying limit (returns oldest N items)', async () => {
+        it('should sort by updatedAt before applying limit (returns newest N items)', async () => {
             const items: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/events',
@@ -1195,10 +1195,10 @@ describe('MemoryToolBackend', () => {
                 { limit: 2 }
             );
 
-            // Should return the 2 oldest items (limit applied after sorting)
+            // Should return the 2 newest items in chronological order
             expect(result).toHaveLength(2);
-            expect(result[0].path).toBe('/events/e1.md' as MemoryPath);
-            expect(result[1].path).toBe('/events/e2.md' as MemoryPath);
+            expect(result[0].path).toBe('/events/e2.md' as MemoryPath);
+            expect(result[1].path).toBe('/events/e3.md' as MemoryPath);
         });
     });
 

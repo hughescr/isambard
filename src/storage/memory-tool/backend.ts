@@ -1,5 +1,5 @@
 import { DynamoDBDocumentClient, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
-import { map as _map, isObject as _isObject, orderBy as _orderBy, take as _take, drop as _drop, chain as _chain, sortBy as _sortBy } from 'lodash';
+import { map as _map, isObject as _isObject, orderBy as _orderBy, take as _take, takeRight as _takeRight, drop as _drop, chain as _chain, sortBy as _sortBy } from 'lodash';
 import { BaseRepository, type DynamoDBKey } from '../repositories/base';
 import {
     memoryToolItemSchema,
@@ -309,10 +309,10 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         // Sort by updatedAt ascending (oldest first, newest last)
         items = _sortBy(items, ['updatedAt']);
 
-        // Apply limit after sorting (Scan's Limit applies before FilterExpression)
+        // Apply limit after sorting - keep newest N items (Scan's Limit applies before FilterExpression)
         // Stryker disable next-line all: Need exact > comparison and both conditions checked
         if(options?.limit && items.length > options.limit) {
-            items = _take(items, options.limit);
+            items = _takeRight(items, options.limit);
         }
 
         return items;
