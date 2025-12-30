@@ -1193,4 +1193,225 @@ describe('createMemoryMCPServer', () => {
             });
         });
     });
+
+    describe('list tool', () => {
+        it('should return directory contents when items exist', async () => {
+            mockBackend.list = mock(async () => ({
+                items: [
+                    {
+                        path:        '/identity/core-values' as MemoryPath,
+                        content:     'My core values',
+                        contentType: 'text/plain' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                    {
+                        path:        '/identity/beliefs' as MemoryPath,
+                        content:     'My beliefs',
+                        contentType: 'text/plain' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'list');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/' });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content).toBeDefined();
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].type).toBe('text');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('/identity/core-values');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('/identity/beliefs');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBeUndefined();
+        });
+
+        it('should return empty message for empty directory', async () => {
+            mockBackend.list = mock(async () => ({
+                items:      [],
+                nextCursor: undefined,
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'list');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/empty' });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content).toBeDefined();
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].type).toBe('text');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Directory is empty');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBeUndefined();
+        });
+
+        it('should list specific subdirectory', async () => {
+            mockBackend.list = mock(async () => ({
+                items: [
+                    {
+                        path:        '/identity/values' as MemoryPath,
+                        content:     'Values content',
+                        contentType: 'text/plain' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'list');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/identity' });
+
+            expect(mockBackend.list).toHaveBeenCalledWith('/identity');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('/identity/values');
+        });
+
+        it('should default to root path when path not provided', async () => {
+            mockBackend.list = mock(async () => ({
+                items:      [],
+                nextCursor: undefined,
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'list');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({});
+
+            expect(mockBackend.list).toHaveBeenCalledWith('/');
+        });
+
+        it('should return error when backend.list throws Error', async () => {
+            mockBackend.list = mock(async () => {
+                throw new Error('Database connection failed');
+            });
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'list');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/' });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content).toBeDefined();
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].type).toBe('text');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Error listing directory: Database connection failed');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBe(true);
+        });
+
+        it('should return error when backend.list throws non-Error', async () => {
+            mockBackend.list = mock(async () => {
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
+                throw 'Network error';
+            });
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'list');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/' });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Error listing directory: Network error');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBe(true);
+        });
+
+        it('should join multiple paths with newlines', async () => {
+            mockBackend.list = mock(async () => ({
+                items: [
+                    {
+                        path:        '/state/goal-1' as MemoryPath,
+                        content:     'Goal 1',
+                        contentType: 'text/plain' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                    {
+                        path:        '/state/goal-2' as MemoryPath,
+                        content:     'Goal 2',
+                        contentType: 'text/plain' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'list');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/state' });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('/state/goal-1\n/state/goal-2');
+        });
+
+        it('should return content as text type with const assertion', async () => {
+            mockBackend.list = mock(async () => ({
+                items:      [],
+                nextCursor: undefined,
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'list');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/' });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].type).toBe('text');
+        });
+
+        it('should have list tool with description', () => {
+            const server = createMemoryMCPServer(mockBackend);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
+            const listTool = (server.instance as any)._registeredTools.list;
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking tool description
+            expect(listTool.description).toBe('List memories in a directory');
+        });
+
+        it('should have list tool with path input schema', () => {
+            const server = createMemoryMCPServer(mockBackend);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
+            const listTool = (server.instance as any)._registeredTools.list;
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking input schema
+            expect(listTool.inputSchema).toBeDefined();
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema properties
+            expect(listTool.inputSchema.shape).toBeDefined();
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema path
+            expect(listTool.inputSchema.shape.path).toBeDefined();
+        });
+    });
 });

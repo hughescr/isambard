@@ -846,6 +846,20 @@ describe('PresenceManager', () => {
     });
 
     describe('stop', () => {
+        it('should log the exact stopping message', () => {
+            const manager = createPresenceManager({
+                discordClient:         mockClient,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            manager.stop();
+
+            expect(mockLogger.info).toHaveBeenCalledWith('Stopping presence manager');
+        });
+
         it('should clear all timers', async () => {
             const manager = createPresenceManager({
                 discordClient:         mockClient,

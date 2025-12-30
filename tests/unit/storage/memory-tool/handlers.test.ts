@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeEach, spyOn } from 'bun:test';
 import { mock } from 'bun:test';
 import { split as _split, some as _some, includes as _includes, noop as _noop, repeat as _repeat } from 'lodash';
+import { logger } from '@hughescr/logger';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';
 import { memoryPathSchema } from '@/storage/memory-tool/types';
@@ -1924,6 +1925,304 @@ describe('Memory Tool Handlers', () => {
                 // eslint-disable-next-line no-console -- Restoring console.warn
                 console.warn = originalWarn;
             }
+        });
+    });
+
+    describe('logging', () => {
+        let debugSpy: ReturnType<typeof spyOn>;
+
+        beforeEach(() => {
+            debugSpy = spyOn(logger, 'debug');
+        });
+
+        it('should log memory create with path', async () => {
+            mockBackend.create = mock(async () => ({
+                path:        '/test/file.md' as MemoryPath,
+                content:     'content',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:00.000Z',
+            }));
+
+            await create(mockBackend, { path: '/test/file.md', file_text: 'content' });
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    path: '/test/file.md',
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                    msg:  expect.stringContaining('Memory create:'),
+                })
+            );
+        });
+
+        it('should log memory view with path', async () => {
+            mockBackend.get = mock(async () => ({
+                path:        '/test/file.md' as MemoryPath,
+                content:     'content',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:00.000Z',
+            }));
+
+            await view(mockBackend, { path: '/test/file.md' });
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    path: '/test/file.md',
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                    msg:  expect.stringContaining('Memory view:'),
+                })
+            );
+        });
+
+        it('should log memory delete with path', async () => {
+            mockBackend.get = mock(async () => ({
+                path:        '/test/file.md' as MemoryPath,
+                content:     'content',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:00.000Z',
+            }));
+            mockBackend.delete = mock(async () => { /* intentionally empty */ });
+
+            await deleteMemory(mockBackend, { path: '/test/file.md' });
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    path: '/test/file.md',
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                    msg:  expect.stringContaining('Memory delete:'),
+                })
+            );
+        });
+
+        it('should log memory insert with path', async () => {
+            mockBackend.get = mock(async () => ({
+                path:        '/test/file.md' as MemoryPath,
+                content:     'Line 1\nLine 2',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:00.000Z',
+            }));
+            mockBackend.update = mock(async () => ({
+                path:        '/test/file.md' as MemoryPath,
+                content:     'Inserted\nLine 1\nLine 2',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     2,
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:01.000Z',
+            }));
+
+            await insert(mockBackend, { path: '/test/file.md', insert_line: 0, insert_text: 'Inserted' });
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    path: '/test/file.md',
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                    msg:  expect.stringContaining('Memory insert:'),
+                })
+            );
+        });
+
+        it('should log memory str_replace with path', async () => {
+            mockBackend.get = mock(async () => ({
+                path:        '/test/file.md' as MemoryPath,
+                content:     'Hello World',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:00.000Z',
+            }));
+            mockBackend.update = mock(async () => ({
+                path:        '/test/file.md' as MemoryPath,
+                content:     'Hello Universe',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     2,
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:01.000Z',
+            }));
+
+            await strReplace(mockBackend, { path: '/test/file.md', old_str: 'World', new_str: 'Universe' });
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    path: '/test/file.md',
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                    msg:  expect.stringContaining('Memory str_replace:'),
+                })
+            );
+        });
+    });
+
+    describe('search query building and logging', () => {
+        let debugSpy: ReturnType<typeof spyOn>;
+
+        const searchHandler = async (
+            backend: MemoryToolBackend,
+            params: { tags?: string[], layer?: string, time_range?: { start: string, end: string }, limit?: number }
+        ): Promise<string> => {
+            const { search } = await import('@/storage/memory-tool/handlers');
+            return search(backend, params as Parameters<typeof search>[1]);
+        };
+
+        beforeEach(() => {
+            debugSpy = spyOn(logger, 'debug');
+        });
+
+        it('should log search with tags joined by comma as query', async () => {
+            mockBackend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        '/state/note.md' as MemoryPath,
+                        content:     'Note content',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                        tags:        ['tag1', 'tag2'],
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            await searchHandler(mockBackend, { tags: ['tag1', 'tag2'] });
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    query:       'tag1,tag2',
+                    resultCount: 1,
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                    msg:         expect.stringContaining('Memory search:'),
+                })
+            );
+        });
+
+        it('should log search with layer as query when no tags provided', async () => {
+            mockBackend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        '/identity/core.md' as MemoryPath,
+                        content:     'Core identity',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            await searchHandler(mockBackend, { layer: 'identity' });
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    query:       'identity',
+                    resultCount: 1,
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                    msg:         expect.stringContaining('Memory search:'),
+                })
+            );
+        });
+
+        it('should log search with time_range as query when no tags or layer provided', async () => {
+            mockBackend.searchByTimeRange = mock(async () => [
+                {
+                    path:        '/events/log.md' as MemoryPath,
+                    content:     'Event log',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T00:00:00.000Z',
+                    updatedAt:   '2025-01-15T00:00:00.000Z',
+                },
+            ]);
+
+            await searchHandler(mockBackend, {
+                time_range: { start: '2025-01-10T00:00:00.000Z', end: '2025-01-20T00:00:00.000Z' },
+            });
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    query:       'time_range',
+                    resultCount: 1,
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                    msg:         expect.stringContaining('Memory search:'),
+                })
+            );
+        });
+
+        it('should log search with empty query and zero results when no criteria provided', async () => {
+            await searchHandler(mockBackend, {});
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    query:       '',
+                    resultCount: 0,
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                    msg:         expect.stringContaining('Memory search:'),
+                })
+            );
+        });
+
+        it('should log correct result count in search', async () => {
+            mockBackend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        '/state/note1.md' as MemoryPath,
+                        content:     'Note 1',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                        tags:        ['tag1'],
+                    },
+                    {
+                        path:        '/state/note2.md' as MemoryPath,
+                        content:     'Note 2',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                        tags:        ['tag1'],
+                    },
+                    {
+                        path:        '/state/note3.md' as MemoryPath,
+                        content:     'Note 3',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                        tags:        ['tag1'],
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            await searchHandler(mockBackend, { tags: ['tag1'] });
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    query:       'tag1',
+                    resultCount: 3,
+                    msg:         'Memory search: "tag1" (3 results)',
+                })
+            );
         });
     });
 });

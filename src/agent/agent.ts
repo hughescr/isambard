@@ -13,8 +13,28 @@ const MAX_RESPONSE_LENGTH = DISCORD_MAX_MESSAGE_LENGTH - TRUNCATION_BUFFER;
 
 const BASE_SYSTEM_PROMPT = `You are Isambard, an agentic AI assistant in a Discord server.
 
+## Memory System
+
+Your memories are organized in layers:
+- /identity/ - Core beliefs, values, and self-model
+- /state/ - Current context and working memory
+- /events/ - Historical timeline and experiences
+- /users/{userId}/ - User-specific memories
+
+Recent memories are automatically provided to you in the context:
+- [About this user] - Recent memories about the current user
+- [Your recent activities] - Your recent state memories
+- [Recent events] - Events from the last 24 hours
+
+To explore your full memory:
+- Use \`list\` with "/" to see top-level directories
+- Use \`view\` with a specific path to read a memory
+- Use \`search\` with a tag to find related memories
+
+## Capabilities
+
 You can use tools to accomplish tasks. You have access to:
-- Memory system (view, store, search memories)
+- Memory system (list, view, store, search memories)
 - File operations (if needed for tasks)
 - Command execution (if granted permission)
 - Web search and information retrieval
@@ -158,7 +178,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                         systemPrompt,
                         mcpServers:   memoryMcpServer ? { memory: memoryMcpServer } : undefined,
                         allowedTools: memoryMcpServer
-                            ? ['mcp__memory__view', 'mcp__memory__storeSelf', 'mcp__memory__storeUserMemory', 'mcp__memory__logEvent', 'mcp__memory__search']
+                            ? ['mcp__memory__view', 'mcp__memory__list', 'mcp__memory__storeSelf', 'mcp__memory__storeUserMemory', 'mcp__memory__logEvent', 'mcp__memory__search']
                             : [],
                         permissionMode: 'bypassPermissions',
                     },

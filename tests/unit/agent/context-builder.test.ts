@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, mock, spyOn } from 'bun:test';
 import _ from 'lodash';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { logger } from '@hughescr/logger';
 import { createContextBuilder } from '../../../src/agent/context-builder';
 import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import { createMemoryPath } from '../../../src/storage/memory-tool/types';
@@ -1101,6 +1102,64 @@ describe('createContextBuilder', () => {
             expect(identity).toContain('Content A');
             expect(identity).toContain('Content B');
         });
+
+        it('should log when loading core identity starts', async () => {
+            const debugSpy = spyOn(logger, 'debug');
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadCoreIdentity();
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    msg: 'Loading core identity...',
+                })
+            );
+        });
+
+        it('should log identityLength: 0 when no identity items exist', async () => {
+            const debugSpy = spyOn(logger, 'debug');
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadCoreIdentity();
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    identityLength: 0,
+                    msg:            'Core identity loaded',
+                })
+            );
+        });
+
+        it('should log identityLength matching result length when items exist', async () => {
+            const debugSpy = spyOn(logger, 'debug');
+            const content = 'Test identity content';
+
+            backend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/identity/test.md'),
+                        content,
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadCoreIdentity();
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    identityLength: result.length,
+                    msg:            'Core identity loaded',
+                })
+            );
+        });
     });
 
     describe('loadRecentContext', () => {
@@ -1225,6 +1284,62 @@ describe('createContextBuilder', () => {
 
             // Should only contain content, not whole item
             expect(context).toEqual(['Content A']);
+        });
+
+        it('should log when loading user context starts', async () => {
+            const debugSpy = spyOn(logger, 'debug');
+            const userId = 'test-user-log';
+
+            backend.searchByTag = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadRecentContext(userId);
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    userId,
+                    msg: 'Loading user context',
+                })
+            );
+        });
+
+        it('should log userId and memoryCount when user context loaded', async () => {
+            const debugSpy = spyOn(logger, 'debug');
+            const userId = 'test-user-loaded';
+
+            backend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/state/mem1.md'),
+                        content:     'Memory 1',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                    {
+                        path:        createMemoryPath('/state/mem2.md'),
+                        content:     'Memory 2',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00Z',
+                        updatedAt:   '2025-01-01T00:00:00Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadRecentContext(userId);
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    userId,
+                    memoryCount: 2,
+                    msg:         'User context loaded',
+                })
+            );
         });
     });
 
@@ -1369,6 +1484,63 @@ describe('createContextBuilder', () => {
             expect(result[0]).toBe('My Event Content');
             // Verify it's a string not an object
             expect(typeof result[0]).toBe('string');
+        });
+
+        it('should log when loading recent events starts', async () => {
+            const debugSpy = spyOn(logger, 'debug');
+            backend.searchByTimeRange = mock(async () => []);
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadRecentEvents();
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    msg: 'Loading recent events',
+                })
+            );
+        });
+
+        it('should log eventCount when recent events loaded', async () => {
+            const debugSpy = spyOn(logger, 'debug');
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/event1.md'),
+                    content:     'Event 1',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00Z',
+                    updatedAt:   '2025-01-01T00:00:00Z',
+                },
+                {
+                    path:        createMemoryPath('/events/event2.md'),
+                    content:     'Event 2',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00Z',
+                    updatedAt:   '2025-01-01T00:00:00Z',
+                },
+                {
+                    path:        createMemoryPath('/events/event3.md'),
+                    content:     'Event 3',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00Z',
+                    updatedAt:   '2025-01-01T00:00:00Z',
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadRecentEvents();
+
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    eventCount: 3,
+                    msg:        'Recent events loaded',
+                })
+            );
         });
     });
 });

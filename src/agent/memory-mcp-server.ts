@@ -26,7 +26,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                 'View memory by path',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    path: z.string().describe('Memory path (e.g., /memories/identity/core)'),
+                    path: z.string().describe('Memory path (e.g., /identity/core-values, /users/{userId}/name, /events/{type}/{timestamp})'),
                 },
                 async (args) => {
                     try {
@@ -192,6 +192,36 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                         const message = _.isError(error) ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error searching memories: ${message}` }],
+                            isError: true,
+                        };
+                    }
+                }
+            ),
+
+            tool(
+                'list',
+                'List memories in a directory',
+                {
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    path: z.string().optional().describe('Directory path (e.g., /, /identity, /users). Defaults to root /'),
+                },
+                async (args) => {
+                    try {
+                        const dirPath = args.path ?? '/';
+                        const results = await backend.list(dirPath);
+                        if(results.items.length === 0) {
+                            return {
+                                content: [{ type: 'text' as const, text: 'Directory is empty' }],
+                            };
+                        }
+                        const formatted = _.map(results.items, 'path').join('\n');
+                        return {
+                            content: [{ type: 'text' as const, text: formatted }],
+                        };
+                    } catch (error) {
+                        const message = _.isError(error) ? error.message : String(error);
+                        return {
+                            content: [{ type: 'text' as const, text: `Error listing directory: ${message}` }],
                             isError: true,
                         };
                     }

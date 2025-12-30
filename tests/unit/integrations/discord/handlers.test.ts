@@ -3,6 +3,7 @@
 
 /* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
 /* eslint-disable lodash/prefer-constant -- Test callbacks */
+import _ from 'lodash';
 import { describe, it, expect, beforeEach, spyOn, mock } from 'bun:test';
 import type { Client, Message, User, Guild, TextChannel, DMChannel } from 'discord.js';
 import { logger } from '@hughescr/logger';
@@ -581,6 +582,444 @@ describe('Discord Event Handlers', () => {
 
                 // onMessage should be called because agent is missing
                 expect(onMessageMock).toHaveBeenCalled();
+            });
+        });
+
+        describe('content preview logging', () => {
+            it('should truncate long messages with ellipsis in log', async () => {
+                const infoSpy = spyOn(logger, 'info');
+                // Use 60 char message - must be > 50 to trigger ellipsis
+                const longContent = _.repeat('a', 60);
+                mockMessage.content = longContent;
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                });
+
+                await handler(mockMessage);
+
+                // Verify the exact contentPreview value - kills ArithmeticOperator, MethodExpression, StringLiteral mutants
+                expect(infoSpy).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        contentPreview: _.repeat('a', 50) + '...',
+                    })
+                );
+            });
+
+            it('should NOT add ellipsis for exactly 50 char messages', async () => {
+                const infoSpy = spyOn(logger, 'info');
+                mockMessage.content = _.repeat('a', 50);
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                });
+
+                await handler(mockMessage);
+
+                // Kills EqualityOperator mutant (>= 50 would add ellipsis here)
+                expect(infoSpy).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        contentPreview: _.repeat('a', 50),  // NO ellipsis
+                    })
+                );
+            });
+
+            it('should NOT add ellipsis for short messages', async () => {
+                const infoSpy = spyOn(logger, 'info');
+                mockMessage.content = _.repeat('a', 30);
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                });
+
+                await handler(mockMessage);
+
+                // Kills ConditionalExpression (true), StringLiteral ("Stryker was here!") mutants
+                expect(infoSpy).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        contentPreview: _.repeat('a', 30),  // NO ellipsis
+                    })
+                );
+            });
+
+            it('should include exactly first 50 chars for long messages', async () => {
+                const infoSpy = spyOn(logger, 'info');
+                // Use distinct chars to verify slice behavior
+                mockMessage.content = _.repeat('A', 50) + _.repeat('B', 20);
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                });
+
+                await handler(mockMessage);
+
+                // Kills MethodExpression mutant (removing slice would include Bs)
+                expect(infoSpy).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        contentPreview: _.repeat('A', 50) + '...',  // Only As, no Bs
+                    })
+                );
+            });
+
+            it('should add ellipsis for 51 char messages (boundary test)', async () => {
+                const infoSpy = spyOn(logger, 'info');
+                mockMessage.content = _.repeat('a', 51);
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                });
+
+                await handler(mockMessage);
+
+                // Kills EqualityOperator mutant (<= 50 would NOT add ellipsis for 51)
+                expect(infoSpy).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        contentPreview: _.repeat('a', 50) + '...',
+                    })
+                );
+            });
+        });
+
+        describe('isDM detection logging', () => {
+            it('should log isDM as true when guild is null (DM)', async () => {
+                // Save original debug function
+                const originalDebug = logger.debug;
+                const capturedCalls: unknown[] = [];
+
+                // Replace debug with capturing mock
+                logger.debug = (obj: unknown) => {
+                    capturedCalls.push(obj);
+                    return originalDebug.call(logger, obj as object);
+                };
+
+                try {
+                    const dmMessage = {
+                        ...mockMessage,
+                        guild:   null,
+                        channel: mockDMChannel,
+                    } as unknown as Message;
+
+                    const handler = createMessageHandler({
+                        monitoredChannelIds: [],
+                        botUserId:           '999999999999999999' as UserId,
+                        onMessage:           mockOnMessage,
+                    });
+
+                    await handler(dmMessage);
+
+                    // Find the "Message received" log call
+                    const messageReceivedCall = _.find(capturedCalls, (call) => {
+                        const obj = call as { msg?: string };
+                        return obj.msg?.includes('Message received');
+                    });
+
+                    expect(messageReceivedCall).toBeDefined();
+                    // Kills BooleanLiteral mutant (!message.guild → message.guild)
+                    expect((messageReceivedCall as { isDM: boolean }).isDM).toBe(true);
+                } finally {
+                    // Restore original
+                    logger.debug = originalDebug;
+                }
+            });
+
+            it('should log isDM as false when guild exists', async () => {
+                // Save original debug function
+                const originalDebug = logger.debug;
+                const capturedCalls: unknown[] = [];
+
+                // Replace debug with capturing mock
+                logger.debug = (obj: unknown) => {
+                    capturedCalls.push(obj);
+                    return originalDebug.call(logger, obj as object);
+                };
+
+                try {
+                    const handler = createMessageHandler({
+                        monitoredChannelIds: ['333333333333333333' as ChannelId],
+                        botUserId:           '999999999999999999' as UserId,
+                        onMessage:           mockOnMessage,
+                    });
+
+                    await handler(mockMessage);
+
+                    // Find the "Message received" log call
+                    const messageReceivedCall = _.find(capturedCalls, (call) => {
+                        const obj = call as { msg?: string };
+                        return obj.msg?.includes('Message received');
+                    });
+
+                    expect(messageReceivedCall).toBeDefined();
+                    // Verify isDM is false when guild exists
+                    expect((messageReceivedCall as { isDM: boolean }).isDM).toBe(false);
+                } finally {
+                    // Restore original
+                    logger.debug = originalDebug;
+                }
+            });
+        });
+
+        describe('logging message content', () => {
+            it('should log "Processing message from" with author tag', async () => {
+                const infoSpy = spyOn(logger, 'info');
+                Object.defineProperty(mockMessage.author, 'tag', { value: 'TestUser#1234', writable: true });
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                });
+
+                await handler(mockMessage);
+
+                // Kills ObjectLiteral and StringLiteral mutants on logger.info
+                expect(infoSpy).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        msg: expect.stringContaining('Processing message from TestUser#1234'),
+                    })
+                );
+            });
+
+            it('should NOT log "Response generated" or errors when onMessage returns null', async () => {
+                // Save original logger functions
+                const originalInfo = logger.info;
+                const originalError = logger.error;
+                const capturedInfoCalls: unknown[] = [];
+                const capturedErrorCalls: unknown[] = [];
+
+                // Replace info with capturing mock
+                logger.info = (obj: unknown) => {
+                    capturedInfoCalls.push(obj);
+                    return originalInfo.call(logger, obj as object);
+                };
+
+                // Replace error with capturing mock
+                logger.error = (obj: unknown) => {
+                    capturedErrorCalls.push(obj);
+                    return originalError.call(logger, obj as object);
+                };
+
+                try {
+                    const onMessageMock = mock(async () => null);
+
+                    const handler = createMessageHandler({
+                        monitoredChannelIds: ['333333333333333333' as ChannelId],
+                        botUserId:           '999999999999999999' as UserId,
+                        onMessage:           onMessageMock,
+                    });
+
+                    await handler(mockMessage);
+
+                    // Kills ConditionalExpression mutant (if(reply !== null) → if(true))
+                    // When reply is null, we should NOT log "Response generated"
+                    const responseGeneratedCall = _.find(capturedInfoCalls, (call) => {
+                        const obj = call as { msg?: string };
+                        return obj.msg?.includes('Response generated');
+                    });
+
+                    expect(responseGeneratedCall).toBeUndefined();
+
+                    // Also should NOT log "Reply sent successfully"
+                    const replySentCall = _.find(capturedInfoCalls, (call) => {
+                        const obj = call as { msg?: string };
+                        return obj.msg?.includes('Reply sent successfully');
+                    });
+
+                    expect(replySentCall).toBeUndefined();
+
+                    // CRITICAL: Should NOT log any errors either
+                    // If if(reply !== null) was mutated to if(true), reply.length would throw
+                    // and an error would be logged
+                    const processingError = _.find(capturedErrorCalls, (call) => {
+                        const obj = call as { msg?: string };
+                        return obj.msg?.includes('Error processing message');
+                    });
+
+                    expect(processingError).toBeUndefined();
+                } finally {
+                    // Restore original
+                    logger.info = originalInfo;
+                    logger.error = originalError;
+                }
+            });
+
+            it('should log "Message received from" with author tag on debug', async () => {
+                const debugSpy = spyOn(logger, 'debug');
+                Object.defineProperty(mockMessage.author, 'tag', { value: 'TestUser#5678', writable: true });
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                });
+
+                await handler(mockMessage);
+
+                // Kills StringLiteral mutant on debug msg
+                expect(debugSpy).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        msg: expect.stringContaining('Message received from TestUser#5678'),
+                    })
+                );
+            });
+
+            it('should log response length and message in info', async () => {
+                const infoSpy = spyOn(logger, 'info');
+                const onMessageMock = mock(async () => 'Hello World');
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           onMessageMock,
+                });
+
+                await handler(mockMessage);
+
+                // Kills ObjectLiteral and StringLiteral mutants on response logging
+                expect(infoSpy).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        responseLength: 11,
+                        msg:            expect.stringContaining('Response generated'),
+                    })
+                );
+            });
+
+            it('should log "Reply sent successfully" after successful reply', async () => {
+                const infoSpy = spyOn(logger, 'info');
+                const onMessageMock = mock(async () => 'Response');
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           onMessageMock,
+                });
+
+                await handler(mockMessage);
+
+                // Kills ObjectLiteral and StringLiteral mutants
+                expect(infoSpy).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        msg: 'Reply sent successfully',
+                    })
+                );
+            });
+        });
+
+        describe('filtering debug logging', () => {
+            it('should log filtering decision with mention info when bot mentioned', async () => {
+                // Save original debug function
+                const originalDebug = logger.debug;
+                const capturedCalls: unknown[] = [];
+
+                // Replace debug with capturing mock
+                logger.debug = (obj: unknown) => {
+                    capturedCalls.push(obj);
+                    return originalDebug.call(logger, obj as object);
+                };
+
+                try {
+                    // Create message with explicit guild to ensure isDM=false
+                    const guildMessage = {
+                        ...mockMessage,
+                        guild:   { id: '222222222222222222' },
+                        channel: mockTextChannel,
+                        content: '<@999999999999999999> hello',
+                    } as unknown as Message;
+
+                    const handler = createMessageHandler({
+                        monitoredChannelIds: ['333333333333333333' as ChannelId],
+                        botUserId:           '999999999999999999' as UserId,
+                        onMessage:           mockOnMessage,
+                    });
+
+                    await handler(guildMessage);
+
+                    // Find the filtering call from our captured calls
+                    const filteringCall = _.find(capturedCalls, (call) => {
+                        const obj = call as { msg?: string, isMention?: boolean };
+                        return obj.msg?.includes('Filtering:') && obj.isMention === true;
+                    });
+
+                    expect(filteringCall).toBeDefined();
+                    const logObj = filteringCall as {
+                        isDM:               boolean
+                        isMention:          boolean
+                        isMonitoredChannel: boolean
+                        shouldRespond:      boolean
+                        msg:                string
+                    };
+
+                    expect(logObj.isDM).toBe(false);
+                    expect(logObj.isMention).toBe(true);
+                    expect(logObj.isMonitoredChannel).toBe(true);
+                    expect(logObj.shouldRespond).toBe(true);
+                    expect(logObj.msg).toContain('isDM=false');
+                    expect(logObj.msg).toContain('isMention=true');
+                    expect(logObj.msg).toContain('isMonitored=true');
+                    expect(logObj.msg).toContain('shouldRespond=true');
+                } finally {
+                    // Restore original
+                    logger.debug = originalDebug;
+                }
+            });
+
+            it('should log filtering for DM channel correctly', async () => {
+                // Save original debug function
+                const originalDebug = logger.debug;
+                const capturedCalls: unknown[] = [];
+
+                // Replace debug with capturing mock
+                logger.debug = (obj: unknown) => {
+                    capturedCalls.push(obj);
+                    return originalDebug.call(logger, obj as object);
+                };
+
+                try {
+                    const dmMessage = {
+                        ...mockMessage,
+                        guild:   null,
+                        channel: mockDMChannel,
+                        content: 'hello',
+                    } as unknown as Message;
+
+                    const handler = createMessageHandler({
+                        monitoredChannelIds: [],
+                        botUserId:           '999999999999999999' as UserId,
+                        onMessage:           mockOnMessage,
+                    });
+
+                    await handler(dmMessage);
+
+                    // Find the filtering call from our captured calls
+                    const filteringCall = _.find(capturedCalls, (call) => {
+                        const obj = call as { msg?: string, isDM?: boolean };
+                        return obj.msg?.includes('Filtering:') && obj.isDM === true;
+                    });
+
+                    expect(filteringCall).toBeDefined();
+                    const logObj = filteringCall as {
+                        isDM:               boolean
+                        isMention:          boolean
+                        isMonitoredChannel: boolean
+                        shouldRespond:      boolean
+                        msg:                string
+                    };
+
+                    expect(logObj.isDM).toBe(true);
+                    expect(logObj.msg).toContain('isDM=true');
+                } finally {
+                    // Restore original
+                    logger.debug = originalDebug;
+                }
             });
         });
 
