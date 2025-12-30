@@ -9,6 +9,65 @@ import type { AgentStreamEvent } from './types';
 
 const CLAUDE_MODEL = 'claude-sonnet-4-5';
 
+/**
+ * Explicit list of tools available to Isambard.
+ * Excludes NotebookEdit (not useful for Discord bot) and AskUserQuestion
+ * (Izzy decides autonomously based on context and memories).
+ * Memory tools are added via mcpServers configuration.
+ */
+const EXPLICIT_TOOLS = [
+    // File operations
+    'Read',
+    'Write',
+    'Edit',
+    // Search
+    'Glob',
+    'Grep',
+    // Web
+    'WebFetch',
+    'WebSearch',
+    // Execution
+    'Bash',
+    // Agent spawning
+    'Task',
+    // Task management
+    'TodoWrite',
+    // Plan mode
+    'EnterPlanMode',
+    'ExitPlanMode',
+];
+
+/**
+ * Explicit sub-agent definitions.
+ * Excludes statusline-setup (useless for Discord bot, saves context tokens).
+ * Agent description/prompt strings are configuration - correctness validated by integration tests.
+ */
+const EXPLICIT_AGENTS = {
+    'general-purpose': {
+        // Stryker disable next-line StringLiteral: Configuration string for Claude SDK
+        description: 'General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks',
+        // Stryker disable next-line StringLiteral: Configuration string for Claude SDK
+        prompt:      'You are a general-purpose assistant helping with software engineering tasks.',
+        model:       'sonnet' as const,
+    },
+    Explore: {
+        // Stryker disable next-line StringLiteral: Configuration string for Claude SDK
+        description: 'Fast agent specialized for exploring codebases. Use for finding files, searching code, or answering questions about the codebase.',
+        // Stryker disable next-line StringLiteral: Configuration string for Claude SDK
+        prompt:      'You are a codebase exploration specialist. Focus on finding relevant files and understanding code structure.',
+        tools:       ['Read', 'Glob', 'Grep'],
+        model:       'haiku' as const,
+    },
+    Plan: {
+        // Stryker disable next-line StringLiteral: Configuration string for Claude SDK
+        description: 'Software architect agent for designing implementation plans.',
+        // Stryker disable next-line StringLiteral: Configuration string for Claude SDK
+        prompt:      'You are a software architect. Analyze requirements and design implementation approaches.',
+        tools:       ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch'],
+        model:       'sonnet' as const,
+    },
+};
+
 const BASE_SYSTEM_PROMPT = `You are Isambard, an agentic AI assistant in a Discord server.
 
 ## Memory System
@@ -38,6 +97,36 @@ You can use tools to accomplish tasks. You have access to:
 - Web search and information retrieval
 
 Always check your memories about users before responding to personalize your interactions.
+
+## Operating Environment
+
+You are running in a **sandboxed environment** with the following characteristics:
+
+### Filesystem Access
+- **Read access**: You can read files throughout the system to understand context
+- **Write access**: You can only write to the current working directory and its subdirectories
+- Attempts to write outside the sandbox will fail at the OS level
+- Sensitive files (.env, .git/hooks, shell configs) are protected even within the sandbox
+
+### Network Access
+- You have full network access for web searches, API calls, and fetching resources
+- No domain restrictions apply
+
+### Command Execution
+- Bash commands are automatically approved within the sandbox
+- Commands that attempt to modify files outside the sandbox will fail
+- You can freely use bash for builds, tests, git operations, and other development tasks
+
+### What This Means for You
+- Feel confident using file editing and bash commands within the project
+- Don't waste time asking for permission - the sandbox protects against mistakes
+- If a command fails due to sandbox restrictions, it means you tried to access something outside your allowed scope
+- Focus on the task at hand knowing the environment is safe
+
+### Available Tools
+You have access to: Read, Write, Edit, Glob, Grep, Bash, Task (sub-agents), TodoWrite, WebFetch, WebSearch, EnterPlanMode, ExitPlanMode, and your memory tools.
+
+You do NOT have: NotebookEdit, AskUserQuestion (you decide autonomously based on context and memories).
 
 ## Temporal Reasoning
 When using memories, consider their age:
@@ -357,16 +446,16 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                     msg:       'Agent starting to process message',
                 });
 
-                // 5. Query with memory MCP server
+                // 5. Query with memory MCP server and sandboxed execution
                 const response = query({
                     prompt:  userMessage,
                     options: {
-                        model:        CLAUDE_MODEL,
+                        model:          CLAUDE_MODEL,
                         systemPrompt,
-                        mcpServers:   memoryMcpServer ? { memory: memoryMcpServer } : undefined,
-                        allowedTools: memoryMcpServer
-                            ? ['mcp__memory__view', 'mcp__memory__list', 'mcp__memory__storeSelf', 'mcp__memory__storeUserMemory', 'mcp__memory__logEvent', 'mcp__memory__search']
-                            : [],
+                        tools:          EXPLICIT_TOOLS,
+                        agents:         EXPLICIT_AGENTS,
+                        mcpServers:     memoryMcpServer ? { memory: memoryMcpServer } : undefined,
+                        sandbox:        { enabled: true, autoAllowBashIfSandboxed: true },
                         permissionMode: 'bypassPermissions',
                     },
                 });

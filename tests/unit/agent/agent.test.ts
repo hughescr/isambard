@@ -746,26 +746,47 @@ describe('createClaudeAgent', () => {
     });
 
     describe('tool configuration', () => {
-        it('should include memory tools when MCP server provided', async () => {
-            const mockMcpServer = { name: 'memory', version: '1.0.0' };
-
-            const agent = createClaudeAgent({
-
-                memoryMcpServer: mockMcpServer as any,
-            });
+        it('should include explicit tools list', async () => {
+            const agent = createClaudeAgent({});
 
             await agent.chat(mockMessageContext);
 
-            expect(querySpy).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    options: expect.objectContaining({
-                        allowedTools: ['mcp__memory__view', 'mcp__memory__list', 'mcp__memory__storeSelf', 'mcp__memory__storeUserMemory', 'mcp__memory__logEvent', 'mcp__memory__search'],
-                    }),
-                })
-            );
+            const callArgs = querySpy.mock.calls[0][0];
+            expect(callArgs.options.tools).toEqual([
+                'Read', 'Write', 'Edit', 'Glob', 'Grep',
+                'WebFetch', 'WebSearch', 'Bash', 'Task',
+                'TodoWrite', 'EnterPlanMode', 'ExitPlanMode',
+            ]);
         });
 
-        it('should use empty array for allowedTools when no MCP server', async () => {
+        it('should include explicit agents without statusline-setup', async () => {
+            const agent = createClaudeAgent({});
+
+            await agent.chat(mockMessageContext);
+
+            const callArgs = querySpy.mock.calls[0][0];
+            expect(callArgs.options.agents).toEqual({
+                'general-purpose': expect.objectContaining({
+                    description: expect.any(String),
+                    prompt:      expect.any(String),
+                    model:       'sonnet',
+                }),
+                Explore: expect.objectContaining({
+                    description: expect.any(String),
+                    prompt:      expect.any(String),
+                    tools:       ['Read', 'Glob', 'Grep'],
+                    model:       'haiku',
+                }),
+                Plan: expect.objectContaining({
+                    description: expect.any(String),
+                    prompt:      expect.any(String),
+                    tools:       ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch'],
+                    model:       'sonnet',
+                }),
+            });
+        });
+
+        it('should enable sandbox with autoAllowBashIfSandboxed', async () => {
             const agent = createClaudeAgent({});
 
             await agent.chat(mockMessageContext);
@@ -773,7 +794,7 @@ describe('createClaudeAgent', () => {
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
                     options: expect.objectContaining({
-                        allowedTools: [],
+                        sandbox: { enabled: true, autoAllowBashIfSandboxed: true },
                     }),
                 })
             );
@@ -791,6 +812,33 @@ describe('createClaudeAgent', () => {
                     }),
                 })
             );
+        });
+
+        it('should include memory MCP server when provided', async () => {
+            const mockMcpServer = { name: 'memory', version: '1.0.0' };
+
+            const agent = createClaudeAgent({
+                memoryMcpServer: mockMcpServer as any,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({
+                        mcpServers: { memory: mockMcpServer },
+                    }),
+                })
+            );
+        });
+
+        it('should not include mcpServers when no MCP server provided', async () => {
+            const agent = createClaudeAgent({});
+
+            await agent.chat(mockMessageContext);
+
+            const callArgs = querySpy.mock.calls[0][0];
+            expect(callArgs.options.mcpServers).toBeUndefined();
         });
     });
 
