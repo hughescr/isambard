@@ -786,32 +786,50 @@ describe('createClaudeAgent', () => {
             });
         });
 
-        it('should enable sandbox with autoAllowBashIfSandboxed', async () => {
+        it('should include allowedTools for auto-approved tools', async () => {
             const agent = createClaudeAgent({});
 
             await agent.chat(mockMessageContext);
 
-            expect(querySpy).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    options: expect.objectContaining({
-                        sandbox: { enabled: true, autoAllowBashIfSandboxed: true },
-                    }),
-                })
-            );
+            const callArgs = querySpy.mock.calls[0][0];
+            expect(callArgs.options.allowedTools).toEqual([
+                // Memory MCP tools
+                'mcp__memory__view',
+                'mcp__memory__list',
+                'mcp__memory__storeSelf',
+                'mcp__memory__storeUserMemory',
+                'mcp__memory__logEvent',
+                'mcp__memory__search',
+                // Read-only and safe tools
+                'Read',
+                'Glob',
+                'Grep',
+                'WebFetch',
+                'WebSearch',
+                'TodoWrite',
+                'EnterPlanMode',
+                'ExitPlanMode',
+                'Task',
+            ]);
         });
 
-        it('should use bypassPermissions mode', async () => {
+        it('should use acceptEdits permission mode without allowDangerouslySkipPermissions', async () => {
             const agent = createClaudeAgent({});
 
             await agent.chat(mockMessageContext);
 
-            expect(querySpy).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    options: expect.objectContaining({
-                        permissionMode: 'bypassPermissions',
-                    }),
-                })
-            );
+            const callArgs = querySpy.mock.calls[0][0];
+            expect(callArgs.options.permissionMode).toBe('acceptEdits');
+            expect(callArgs.options.allowDangerouslySkipPermissions).toBeUndefined();
+        });
+
+        it('should provide stderr callback in options', async () => {
+            const agent = createClaudeAgent({});
+
+            await agent.chat(mockMessageContext);
+
+            const callArgs = querySpy.mock.calls[0][0];
+            expect(typeof callArgs.options.stderr).toBe('function');
         });
 
         it('should include memory MCP server when provided', async () => {
