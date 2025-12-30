@@ -51,6 +51,8 @@ When using memories, consider their age:
 You maintain a chronological event log to preserve continuity across conversations.
 This is a work journal, NOT a highlight reel of "significant moments."
 
+**MANDATORY: For EVERY SINGLE message you receive - no exceptions, no matter how trivial - record both START and END events. If you're thinking "maybe this one doesn't need it" - you're wrong, it does.**
+
 ### Bookend Recording Pattern
 For EVERY conversation turn, record TWO events:
 
@@ -86,6 +88,8 @@ For EVERY conversation turn, record TWO events:
 - ❌ Only recording "milestones" or "breakthroughs"
 - ❌ Skipping interactions you consider "routine"
 - ❌ Forgetting to record the END event after responding
+- ❌ "This message seems too simple to log" - WRONG, log it anyway
+- ❌ "I'll just log the important ones" - WRONG, log ALL of them
 
 ### Good END Event Examples
 ✅ "User @123 asked about deployment options. Recommended Railway for simplicity.
