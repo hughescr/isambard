@@ -40,9 +40,35 @@ export interface App {
  * @throws {Error} If required configuration is missing or invalid
  */
 export async function createApp(): Promise<App> {
+    // Debug: Log raw SST Resource values before processing
+    try {
+        // eslint-disable-next-line no-console, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Debug startup logging
+        console.log('Raw SST Resource.DiscordMonitoredChannels:', (Resource as any).DiscordMonitoredChannels);
+    } catch{
+        // SST links not active (e.g., in tests)
+    }
+
     // Load configuration (required)
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- SST Resource type is complex
     const config = loadConfig(Resource as any);
+
+    // Debug: Log linkable values to verify SST configuration
+    // eslint-disable-next-line no-console -- Debug startup logging
+    console.log('SST Linkable values:', {
+        discord: {
+            applicationId:       config.discord?.applicationId,
+            monitoredChannelIds: config.discord?.monitoredChannelIds,
+        },
+        caldav: {
+            username: config.caldav?.username,
+        },
+        email: {
+            user: config.email?.user,
+        },
+        box: {
+            clientId: config.box?.clientId,
+        },
+    });
 
     // Set OAuth token for Agent SDK
     process.env.CLAUDE_CODE_OAUTH_TOKEN = config.agent.oauthToken;

@@ -10,24 +10,24 @@ function createMockResources(
     overrides?: Partial<Record<keyof ResourceProvider, { value: string | undefined }>>
 ): ResourceProvider {
     const defaults: ResourceProvider = {
-        NodeEnv:                    { value: 'development' },
-        LogLevel:                   { value: 'info' },
-        Port:                       { value: '3000' },
-        CaldavUrl:                  { value: 'https://caldav.example.com' },
-        CaldavUsername:             { value: 'user' },
-        CaldavPassword:             { value: 'password' },
-        ImapHost:                   { value: 'mail.example.com' },
-        ImapPort:                   { value: '993' },
-        SmtpHost:                   { value: 'mail.example.com' },
-        SmtpPort:                   { value: '587' },
-        EmailUser:                  { value: 'user@example.com' },
-        EmailPassword:              { value: 'emailpass' },
-        DiscordBotToken:            { value: 'bot-token-123' },
-        DiscordApplicationId:       { value: 'app-id-456' },
-        DiscordMonitoredChannelIds: { value: undefined },
-        BoxClientId:                { value: 'box-client-id' },
-        BoxClientSecret:            { value: 'box-secret' },
-        ClaudeCodeOAuthToken:       { value: 'test-oauth-token-12345' },
+        NodeEnv:                  { value: 'development' },
+        LogLevel:                 { value: 'info' },
+        Port:                     { value: '3000' },
+        CaldavUrl:                { value: 'https://caldav.example.com' },
+        CaldavUsername:           { value: 'user' },
+        CaldavPassword:           { value: 'password' },
+        ImapHost:                 { value: 'mail.example.com' },
+        ImapPort:                 { value: '993' },
+        SmtpHost:                 { value: 'mail.example.com' },
+        SmtpPort:                 { value: '587' },
+        EmailUser:                { value: 'user@example.com' },
+        EmailPassword:            { value: 'emailpass' },
+        DiscordBotToken:          { value: 'bot-token-123' },
+        DiscordApplicationId:     { value: 'app-id-456' },
+        DiscordMonitoredChannels: { value: undefined },
+        BoxClientId:              { value: 'box-client-id' },
+        BoxClientSecret:          { value: 'box-secret' },
+        ClaudeCodeOAuthToken:     { value: 'test-oauth-token-12345' },
     };
     return { ...defaults, ...overrides };
 }
@@ -428,7 +428,7 @@ describe('loadConfig', () => {
     describe('Comma-Separated Values (Discord Channel IDs)', () => {
         it('should split comma-separated monitored channel IDs', () => {
             const resources = createMockResources({
-                DiscordMonitoredChannelIds: { value: 'channel1,channel2,channel3' },
+                DiscordMonitoredChannels: { value: 'channel1,channel2,channel3' },
             });
             const config = loadConfig(resources);
             expect(config.discord.monitoredChannelIds).toEqual(['channel1', 'channel2', 'channel3']);
@@ -436,7 +436,7 @@ describe('loadConfig', () => {
 
         it('should trim whitespace from monitored channel IDs', () => {
             const resources = createMockResources({
-                DiscordMonitoredChannelIds: { value: '  channel1 , channel2  ,  channel3  ' },
+                DiscordMonitoredChannels: { value: '  channel1 , channel2  ,  channel3  ' },
             });
             const config = loadConfig(resources);
             expect(config.discord.monitoredChannelIds).toEqual(['channel1', 'channel2', 'channel3']);
@@ -444,7 +444,7 @@ describe('loadConfig', () => {
 
         it('should handle single channel ID', () => {
             const resources = createMockResources({
-                DiscordMonitoredChannelIds: { value: 'channel1' },
+                DiscordMonitoredChannels: { value: 'channel1' },
             });
             const config = loadConfig(resources);
             expect(config.discord.monitoredChannelIds).toEqual(['channel1']);
@@ -452,7 +452,7 @@ describe('loadConfig', () => {
 
         it('should return empty array when monitored channel IDs are not provided', () => {
             const resources = createMockResources({
-                DiscordMonitoredChannelIds: { value: undefined },
+                DiscordMonitoredChannels: { value: undefined },
             });
             const config = loadConfig(resources);
             expect(config.discord.monitoredChannelIds).toEqual([]);

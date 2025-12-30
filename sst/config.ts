@@ -22,7 +22,9 @@ export const config = {
     url: new sst.Linkable('CaldavUrl', {
       properties: { value: 'https://caldav.icloud.com' },
     }),
-    // Username is stage-specific (set per deployment)
+    username: new sst.Linkable('CaldavUsername', {
+      properties: { value: 'hughescr@mac.com' },
+    }),
   },
 
   // Email (IMAP/SMTP)
@@ -39,12 +41,25 @@ export const config = {
     smtpPort: new sst.Linkable('SmtpPort', {
       properties: { value: '587' },
     }),
+    user: new sst.Linkable('EmailUser', {
+      properties: { value: 'craig@hughes-family.org' },
+    }),
   },
 
   // Discord
   discord: {
-    monitoredChannelIds: new sst.Linkable('DiscordMonitoredChannelIds', {
+    applicationId: new sst.Linkable('DiscordApplicationId', {
+      properties: { value: '1451687588418293861' },
+    }),
+    monitoredChannelIds: new sst.Linkable('DiscordMonitoredChannels', {
       properties: { value: '1451694737026449581' },
+    }),
+  },
+
+  // Box
+  box: {
+    clientId: new sst.Linkable('BoxClientId', {
+      properties: { value: 'gtjvegjnaewwrydnsgxy1wahfx8hxvsv' },
     }),
   },
 

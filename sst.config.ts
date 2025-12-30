@@ -16,16 +16,18 @@ export default $config({
   },
   async run() {
     // Import secrets first to ensure they exist
-    await import('./sst/secrets');
+    const secrets = await import('./sst/secrets');
 
     // Import non-secret configuration
-    await import('./sst/config');
+    const { config } = await import('./sst/config');
 
     // Import infrastructure
     const { memoryTable } = await import('./sst/dynamo');
 
     return {
       memoryTable: memoryTable.name,
+      secrets,
+      config,
     };
   },
 });

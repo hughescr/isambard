@@ -6,7 +6,7 @@
 declare module "sst" {
   export interface Resource {
     "BoxClientId": {
-      "type": "sst.sst.Secret"
+      "type": "sst.sst.Linkable"
       "value": string
     }
     "BoxClientSecret": {
@@ -22,7 +22,7 @@ declare module "sst" {
       "value": string
     }
     "CaldavUsername": {
-      "type": "sst.sst.Secret"
+      "type": "sst.sst.Linkable"
       "value": string
     }
     "ClaudeCodeOAuthToken": {
@@ -30,14 +30,14 @@ declare module "sst" {
       "value": string
     }
     "DiscordApplicationId": {
-      "type": "sst.sst.Secret"
+      "type": "sst.sst.Linkable"
       "value": string
     }
     "DiscordBotToken": {
       "type": "sst.sst.Secret"
       "value": string
     }
-    "DiscordMonitoredChannelIds": {
+    "DiscordMonitoredChannels": {
       "type": "sst.sst.Linkable"
       "value": string
     }
@@ -57,7 +57,7 @@ declare module "sst" {
       "value": string
     }
     "EmailUser": {
-      "type": "sst.sst.Secret"
+      "type": "sst.sst.Linkable"
       "value": string
     }
     "ImapHost": {
