@@ -6,7 +6,7 @@
  */
 
 import { logger } from '@hughescr/logger';
-import { map as _map, groupBy as _groupBy, isNumber as _isNumber } from 'lodash';
+import { map as _map, groupBy as _groupBy, isNumber as _isNumber, sortBy as _sortBy } from 'lodash';
 import type { MemoryToolBackend } from '../storage/memory-tool/backend';
 import type { MemoryPath, LayerName } from '../storage/memory-tool/types';
 import { extractLayerFromPath, createMemoryPath } from '../storage/memory-tool/types';
@@ -211,22 +211,38 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             }
         },
 
-        loadRecentEvents: async (limit = 5, now: Date = new Date()): Promise<string[]> => {
+        loadRecentEvents: async (limit = 50, now: Date = new Date()): Promise<string[]> => {
             logger.debug({ msg: 'Loading recent events' });
 
-            // Load recent events by time range (last 24 hours)
-            const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-            const result = await backend.searchByTimeRange(
-                dayAgo.toISOString(),
+            // Load recent events by time range (last 14 days)
+            const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+            let result = await backend.searchByTimeRange(
+                twoWeeksAgo.toISOString(),
                 now.toISOString(),
                 'events' as LayerName,
                 { limit }
             );
 
+            // Fallback: if no events in 14 days, get most recent regardless of age
+            let showingOlderEventsNote = false;
+            if(result.length === 0) {
+                const fallbackResult = await backend.listByLayer('events' as LayerName, { limit });
+                result = fallbackResult.items;
+                showingOlderEventsNote = result.length > 0;
+            }
+
+            // Sort by updatedAt ascending (oldest first, newest last)
+            result = _sortBy(result, ['updatedAt']);
+
             // Format each item with path, age, and content preview
             const events = _map(result, item =>
                 formatMemoryPreview(item.path, item.content, item.updatedAt, now)
             );
+
+            // Prepend warning note if showing older events
+            if(showingOlderEventsNote) {
+                events.unshift('⚠️ No activity in the last 14 days. Showing older events:');
+            }
 
             logger.debug({ eventCount: events.length, msg: 'Recent events loaded' });
             return events;

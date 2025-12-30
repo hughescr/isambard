@@ -1,5 +1,5 @@
 import { DynamoDBDocumentClient, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
-import { map as _map, isObject as _isObject, orderBy as _orderBy, take as _take, drop as _drop, chain as _chain } from 'lodash';
+import { map as _map, isObject as _isObject, orderBy as _orderBy, take as _take, drop as _drop, chain as _chain, sortBy as _sortBy } from 'lodash';
 import { BaseRepository, type DynamoDBKey } from '../repositories/base';
 import {
     memoryToolItemSchema,
@@ -208,7 +208,10 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
             })
         );
 
-        const items = _map((result.Items ?? []) as MemoryToolItem[], item => this.stripKeys(item));
+        let items = _map((result.Items ?? []) as MemoryToolItem[], item => this.stripKeys(item));
+
+        // Sort by createdAt ascending (oldest first, newest last)
+        items = _sortBy(items, ['createdAt']);
 
         let nextCursor: string | undefined;
         if(result.LastEvaluatedKey) {
@@ -303,7 +306,10 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
 
         let items = _map((result.Items ?? []) as MemoryToolItem[], item => this.stripKeys(item));
 
-        // Apply limit after filtering (Scan's Limit applies before FilterExpression)
+        // Sort by updatedAt ascending (oldest first, newest last)
+        items = _sortBy(items, ['updatedAt']);
+
+        // Apply limit after sorting (Scan's Limit applies before FilterExpression)
         // Stryker disable next-line all: Need exact > comparison and both conditions checked
         if(options?.limit && items.length > options.limit) {
             items = _take(items, options.limit);

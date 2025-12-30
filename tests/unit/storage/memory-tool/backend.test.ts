@@ -1086,6 +1086,120 @@ describe('MemoryToolBackend', () => {
 
             expect(result).toHaveLength(10);
         });
+
+        it('should sort results by updatedAt ascending (oldest first, newest last)', async () => {
+            // Items returned from DynamoDB in random order
+            const items: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/events',
+                    SK:          'FILE#newest.md',
+                    GSI1PK:      'PATH#/events/newest.md',
+                    GSI1SK:      'CREATED#2024-01-20T00:00:00.000Z',
+                    path:        '/events/newest.md' as MemoryPath,
+                    content:     'Newest event',
+                    contentType: 'text/markdown',
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2024-01-20T00:00:00.000Z',
+                    updatedAt:   '2024-01-20T00:00:00.000Z', // Newest
+                },
+                {
+                    PK:          'DIR#/events',
+                    SK:          'FILE#oldest.md',
+                    GSI1PK:      'PATH#/events/oldest.md',
+                    GSI1SK:      'CREATED#2024-01-10T00:00:00.000Z',
+                    path:        '/events/oldest.md' as MemoryPath,
+                    content:     'Oldest event',
+                    contentType: 'text/markdown',
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2024-01-10T00:00:00.000Z',
+                    updatedAt:   '2024-01-10T00:00:00.000Z', // Oldest
+                },
+                {
+                    PK:          'DIR#/events',
+                    SK:          'FILE#middle.md',
+                    GSI1PK:      'PATH#/events/middle.md',
+                    GSI1SK:      'CREATED#2024-01-15T00:00:00.000Z',
+                    path:        '/events/middle.md' as MemoryPath,
+                    content:     'Middle event',
+                    contentType: 'text/markdown',
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2024-01-15T00:00:00.000Z',
+                    updatedAt:   '2024-01-15T00:00:00.000Z', // Middle
+                },
+            ];
+            ddbMock.on(ScanCommand).resolves({ Items: items });
+
+            const result = await backend.searchByTimeRange(
+                '2024-01-01T00:00:00.000Z',
+                '2024-01-25T00:00:00.000Z'
+            );
+
+            expect(result).toHaveLength(3);
+            // Verify ascending order: oldest first, newest last
+            expect(result[0].path).toBe('/events/oldest.md' as MemoryPath);
+            expect(result[1].path).toBe('/events/middle.md' as MemoryPath);
+            expect(result[2].path).toBe('/events/newest.md' as MemoryPath);
+        });
+
+        it('should sort by updatedAt before applying limit (returns oldest N items)', async () => {
+            const items: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/events',
+                    SK:          'FILE#e3.md',
+                    GSI1PK:      'PATH#/events/e3.md',
+                    GSI1SK:      'CREATED#2024-01-25T00:00:00.000Z',
+                    path:        '/events/e3.md' as MemoryPath,
+                    content:     'Event 3 (newest)',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2024-01-25T00:00:00.000Z',
+                    updatedAt:   '2024-01-25T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/events',
+                    SK:          'FILE#e1.md',
+                    GSI1PK:      'PATH#/events/e1.md',
+                    GSI1SK:      'CREATED#2024-01-10T00:00:00.000Z',
+                    path:        '/events/e1.md' as MemoryPath,
+                    content:     'Event 1 (oldest)',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2024-01-10T00:00:00.000Z',
+                    updatedAt:   '2024-01-10T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/events',
+                    SK:          'FILE#e2.md',
+                    GSI1PK:      'PATH#/events/e2.md',
+                    GSI1SK:      'CREATED#2024-01-15T00:00:00.000Z',
+                    path:        '/events/e2.md' as MemoryPath,
+                    content:     'Event 2 (middle)',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2024-01-15T00:00:00.000Z',
+                    updatedAt:   '2024-01-15T00:00:00.000Z',
+                },
+            ];
+            ddbMock.on(ScanCommand).resolves({ Items: items });
+
+            const result = await backend.searchByTimeRange(
+                '2024-01-01T00:00:00.000Z',
+                '2024-01-30T00:00:00.000Z',
+                undefined,
+                { limit: 2 }
+            );
+
+            // Should return the 2 oldest items (limit applied after sorting)
+            expect(result).toHaveLength(2);
+            expect(result[0].path).toBe('/events/e1.md' as MemoryPath);
+            expect(result[1].path).toBe('/events/e2.md' as MemoryPath);
+        });
     });
 
     describe('getAutoLoadItems', () => {
@@ -1409,6 +1523,60 @@ describe('MemoryToolBackend', () => {
 
             expect(result.items[0]).not.toHaveProperty('PK');
             expect(result.items[0]).not.toHaveProperty('GSI1PK');
+        });
+
+        it('should sort results by createdAt ascending (oldest first, newest last)', async () => {
+            // Items returned from DynamoDB in random order
+            const items: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/test',
+                    SK:          'FILE#newest.md',
+                    GSI1PK:      'PATH#/test/newest.md',
+                    GSI1SK:      'CREATED#2024-01-20T00:00:00.000Z',
+                    path:        '/test/newest.md' as MemoryPath,
+                    content:     'Newest',
+                    contentType: 'text/plain',
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2024-01-20T00:00:00.000Z', // Newest
+                    updatedAt:   '2024-01-20T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/test',
+                    SK:          'FILE#oldest.md',
+                    GSI1PK:      'PATH#/test/oldest.md',
+                    GSI1SK:      'CREATED#2024-01-05T00:00:00.000Z',
+                    path:        '/test/oldest.md' as MemoryPath,
+                    content:     'Oldest',
+                    contentType: 'text/plain',
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2024-01-05T00:00:00.000Z', // Oldest
+                    updatedAt:   '2024-01-05T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/test',
+                    SK:          'FILE#middle.md',
+                    GSI1PK:      'PATH#/test/middle.md',
+                    GSI1SK:      'CREATED#2024-01-10T00:00:00.000Z',
+                    path:        '/test/middle.md' as MemoryPath,
+                    content:     'Middle',
+                    contentType: 'text/plain',
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2024-01-10T00:00:00.000Z', // Middle
+                    updatedAt:   '2024-01-10T00:00:00.000Z',
+                },
+            ];
+            ddbMock.on(QueryCommand).resolves({ Items: items });
+
+            const result = await backend.list('/test');
+
+            expect(result.items).toHaveLength(3);
+            // Verify ascending order by createdAt: oldest first, newest last
+            expect(result.items[0].path).toBe('/test/oldest.md' as MemoryPath);
+            expect(result.items[1].path).toBe('/test/middle.md' as MemoryPath);
+            expect(result.items[2].path).toBe('/test/newest.md' as MemoryPath);
         });
     });
 

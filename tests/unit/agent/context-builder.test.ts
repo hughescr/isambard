@@ -1353,8 +1353,9 @@ describe('createContextBuilder', () => {
     });
 
     describe('loadRecentEvents', () => {
-        it('should call searchByTimeRange with 24-hour window', async () => {
+        it('should call searchByTimeRange with 14-day window', async () => {
             backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
 
             const contextBuilder = createContextBuilder({ backend });
 
@@ -1369,18 +1370,19 @@ describe('createContextBuilder', () => {
             const startTime = new Date(startTimeArg);
             const endTime = new Date(endTimeArg);
 
-            // Verify the time window is approximately 24 hours (within tolerance for test execution time)
+            // Verify the time window is approximately 14 days (336 hours) (within tolerance for test execution time)
             const diffMs = endTime.getTime() - startTime.getTime();
             const diffHours = diffMs / (1000 * 60 * 60);
-            expect(diffHours).toBeCloseTo(24, 0);
+            expect(diffHours).toBeCloseTo(336, 0);
 
             // Verify endTime is approximately "now" (within test execution window)
             expect(endTime.getTime()).toBeGreaterThanOrEqual(beforeCall);
             expect(endTime.getTime()).toBeLessThanOrEqual(afterCall + 1000); // Allow 1s tolerance
         });
 
-        it('should verify 24-hour calculation uses multiplication not division', async () => {
+        it('should verify 14-day calculation uses multiplication not division', async () => {
             backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
 
             const contextBuilder = createContextBuilder({ backend });
             await contextBuilder.loadRecentEvents();
@@ -1392,30 +1394,32 @@ describe('createContextBuilder', () => {
             // Calculate the actual difference in milliseconds
             const diffMs = endTime.getTime() - startTime.getTime();
 
-            // If mutation changes 24 * 60 * 60 * 1000 to 24 / 60 * 60 * 1000:
-            // 24 / 60 = 0.4, then 0.4 * 60 = 24, then 24 * 1000 = 24000ms = 24 seconds
-            // So we need to ensure the difference is much larger than 24 seconds
-            expect(diffMs).toBeGreaterThan(60 * 60 * 1000); // Must be more than 1 hour
+            // If mutation changes 14 * 24 * 60 * 60 * 1000 to 14 / 24 * 60 * 60 * 1000:
+            // 14 / 24 = 0.583..., then * 60 = 35, then * 60 = 2100, then * 1000 = 2100000ms = 35 minutes
+            // So we need to ensure the difference is much larger than 35 minutes
+            expect(diffMs).toBeGreaterThan(24 * 60 * 60 * 1000); // Must be more than 1 day
 
-            // And it should be close to 24 hours (86400000 ms)
-            const expectedMs = 24 * 60 * 60 * 1000;
+            // And it should be close to 14 days (1209600000 ms)
+            const expectedMs = 14 * 24 * 60 * 60 * 1000;
             expect(diffMs).toBeGreaterThan(expectedMs - 1000); // Within 1 second
             expect(diffMs).toBeLessThan(expectedMs + 1000);
         });
 
-        it('should pass limit to backend with default value of 5', async () => {
+        it('should pass limit to backend with default value of 50', async () => {
             backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
 
             const contextBuilder = createContextBuilder({ backend });
             await contextBuilder.loadRecentEvents();
 
             // Check the options argument (4th parameter)
             const [, , , optionsArg] = (backend.searchByTimeRange as ReturnType<typeof mock>).mock.calls[0] as [string, string, string, { limit: number }];
-            expect(optionsArg).toEqual({ limit: 5 });
+            expect(optionsArg).toEqual({ limit: 50 });
         });
 
         it('should pass custom limit to backend', async () => {
             backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
 
             const contextBuilder = createContextBuilder({ backend });
             await contextBuilder.loadRecentEvents(10);
@@ -1426,6 +1430,7 @@ describe('createContextBuilder', () => {
 
         it('should pass events layer to backend', async () => {
             backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
 
             const contextBuilder = createContextBuilder({ backend });
             await contextBuilder.loadRecentEvents();
@@ -1470,6 +1475,7 @@ describe('createContextBuilder', () => {
 
         it('should return empty array when no events found', async () => {
             backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
 
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.loadRecentEvents();
@@ -1505,6 +1511,7 @@ describe('createContextBuilder', () => {
         it('should log when loading recent events starts', async () => {
             const debugSpy = spyOn(logger, 'debug');
             backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
 
             const contextBuilder = createContextBuilder({ backend });
             await contextBuilder.loadRecentEvents();
@@ -1628,6 +1635,191 @@ describe('createContextBuilder', () => {
             expect(result).toHaveLength(1);
             expect(result[0]).toBe(`- /events/exact.md (2h ago): ${exactContent}`);
             expect(result[0]).not.toContain('...');
+        });
+
+        it('should fallback to listByLayer when no events in 14-day window', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
+            // searchByTimeRange returns empty (no events in 14 days)
+            backend.searchByTimeRange = mock(async () => []);
+
+            // listByLayer returns older events
+            backend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/events/old-event.md'),
+                        content:     'Old event from last month',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2024-12-01T00:00:00.000Z',
+                        updatedAt:   '2024-12-01T00:00:00.000Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentEvents(50, now);
+
+            // Should have called listByLayer as fallback
+            expect(backend.listByLayer).toHaveBeenCalledWith('events', { limit: 50 });
+
+            // Result should include warning note as first element
+            expect(result[0]).toBe('⚠️ No activity in the last 14 days. Showing older events:');
+            expect(result[1]).toContain('/events/old-event.md');
+            expect(result[1]).toContain('Old event from last month');
+            expect(result).toHaveLength(2);
+        });
+
+        it('should not add warning note when events found within 14-day window', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/recent.md'),
+                    content:     'Recent event',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z',
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentEvents(50, now);
+
+            // Should NOT contain warning note
+            expect(result[0]).not.toContain('⚠️');
+            expect(result[0]).toContain('/events/recent.md');
+            expect(result).toHaveLength(1);
+        });
+
+        it('should not call listByLayer when events found within 14-day window', async () => {
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/recent.md'),
+                    content:     'Recent event',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z',
+                },
+            ]);
+
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadRecentEvents();
+
+            // listByLayer should NOT have been called
+            expect(backend.listByLayer).not.toHaveBeenCalled();
+        });
+
+        it('should not add warning note when fallback also returns empty', async () => {
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentEvents();
+
+            // Result should be empty with no warning note
+            expect(result).toEqual([]);
+        });
+
+        it('should pass limit to listByLayer in fallback', async () => {
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadRecentEvents(25);
+
+            expect(backend.listByLayer).toHaveBeenCalledWith('events', { limit: 25 });
+        });
+
+        it('should sort events by updatedAt ascending (oldest first, newest last)', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
+            // Events returned from backend in random order (not sorted)
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/newest.md'),
+                    content:     'Newest event',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T11:00:00.000Z',
+                    updatedAt:   '2025-01-15T11:00:00.000Z', // 1h ago (newest)
+                },
+                {
+                    path:        createMemoryPath('/events/oldest.md'),
+                    content:     'Oldest event',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T08:00:00.000Z',
+                    updatedAt:   '2025-01-15T08:00:00.000Z', // 4h ago (oldest)
+                },
+                {
+                    path:        createMemoryPath('/events/middle.md'),
+                    content:     'Middle event',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z', // 2h ago (middle)
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentEvents(50, now);
+
+            expect(result).toHaveLength(3);
+            // Verify ascending order: oldest first, newest last
+            expect(result[0]).toBe('- /events/oldest.md (4h ago): Oldest event');
+            expect(result[1]).toBe('- /events/middle.md (2h ago): Middle event');
+            expect(result[2]).toBe('- /events/newest.md (1h ago): Newest event');
+        });
+
+        it('should sort fallback results by updatedAt ascending', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
+            // Primary search returns empty (triggers fallback)
+            backend.searchByTimeRange = mock(async () => []);
+
+            // Fallback returns unsorted items
+            backend.listByLayer = mock(async () => ({
+                items: [
+                    {
+                        path:        createMemoryPath('/events/newest.md'),
+                        content:     'Newest',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2024-12-15T00:00:00.000Z',
+                        updatedAt:   '2024-12-15T00:00:00.000Z', // Newest (1 month ago)
+                    },
+                    {
+                        path:        createMemoryPath('/events/oldest.md'),
+                        content:     'Oldest',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2024-11-15T00:00:00.000Z',
+                        updatedAt:   '2024-11-15T00:00:00.000Z', // Oldest (2 months ago)
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentEvents(50, now);
+
+            expect(result).toHaveLength(3); // Warning note + 2 events
+            expect(result[0]).toBe('⚠️ No activity in the last 14 days. Showing older events:');
+            // After sorting: oldest first
+            expect(result[1]).toContain('/events/oldest.md');
+            expect(result[2]).toContain('/events/newest.md');
         });
     });
 
