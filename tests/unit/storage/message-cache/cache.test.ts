@@ -1,0 +1,407 @@
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { mockClient } from 'aws-sdk-client-mock';
+import {
+    DynamoDBDocumentClient,
+    PutCommand,
+    QueryCommand,
+    DeleteCommand,
+    BatchWriteCommand
+} from '@aws-sdk/lib-dynamodb';
+import { MessageCache } from '@/storage/message-cache/cache';
+import type { MessageId, CachedSegmentItem, CachedMessage } from '@/storage/message-cache/types';
+import type { ChannelId } from '@/integrations/discord/types';
+
+describe('MessageCache', () => {
+    const ddbMock = mockClient(DynamoDBDocumentClient);
+    let cache: MessageCache;
+
+    const channelId = '123456789012345678' as ChannelId;
+
+    beforeEach(() => {
+        ddbMock.reset();
+        cache = new MessageCache(
+            ddbMock as unknown as DynamoDBDocumentClient,
+            'TestTable'
+        );
+    });
+
+    afterEach(() => {
+        ddbMock.reset();
+    });
+
+    describe('getMessagesInRange', () => {
+        it('should return messages from cache when fully covered', async () => {
+            const mockMessages: CachedMessage[] = [
+                { id: '120' as MessageId, content: 'First', authorId: 'a', timestamp: '2024-01-15T10:00:00.000Z' },
+                { id: '150' as MessageId, content: 'Second', authorId: 'a', timestamp: '2024-01-15T10:10:00.000Z' },
+                { id: '180' as MessageId, content: 'Third', authorId: 'a', timestamp: '2024-01-15T10:20:00.000Z' },
+            ];
+
+            const mockItem: CachedSegmentItem = {
+                PK:             'CHANNEL#123456789012345678',
+                SK:             'SEGMENT#100#200',
+                channelId,
+                startSnowflake: '100' as MessageId,
+                endSnowflake:   '200' as MessageId,
+                messages:       mockMessages,
+                fetchedAt:      '2024-01-15T10:30:00.000Z',
+            };
+
+            ddbMock.on(QueryCommand).resolves({ Items: [mockItem] });
+
+            const result = await cache.getMessagesInRange(
+                channelId,
+                '100' as MessageId,
+                '200' as MessageId
+            );
+
+            expect(result.messages).toHaveLength(3);
+            expect(result.gaps).toHaveLength(0);
+            expect(result.fullyResolved).toBe(true);
+        });
+
+        it('should identify gaps when cache is incomplete', async () => {
+            const mockItem: CachedSegmentItem = {
+                PK:             'CHANNEL#123456789012345678',
+                SK:             'SEGMENT#130#170',
+                channelId,
+                startSnowflake: '130' as MessageId,
+                endSnowflake:   '170' as MessageId,
+                messages:       [
+                    { id: '150' as MessageId, content: 'Middle', authorId: 'a', timestamp: '2024-01-15T10:10:00.000Z' },
+                ],
+                fetchedAt: '2024-01-15T10:30:00.000Z',
+            };
+
+            ddbMock.on(QueryCommand).resolves({ Items: [mockItem] });
+
+            const result = await cache.getMessagesInRange(
+                channelId,
+                '100' as MessageId,
+                '200' as MessageId
+            );
+
+            expect(result.messages).toHaveLength(1);
+            expect(result.gaps).toHaveLength(2);
+            expect(result.gaps[0].start).toBe('100' as MessageId);
+            expect(result.gaps[0].end).toBe('129' as MessageId);
+            expect(result.gaps[1].start).toBe('171' as MessageId);
+            expect(result.gaps[1].end).toBe('200' as MessageId);
+            expect(result.fullyResolved).toBe(false);
+        });
+
+        it('should return full range as gap when no cache exists', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            const result = await cache.getMessagesInRange(
+                channelId,
+                '100' as MessageId,
+                '200' as MessageId
+            );
+
+            expect(result.messages).toHaveLength(0);
+            expect(result.gaps).toHaveLength(1);
+            expect(result.gaps[0].start).toBe('100' as MessageId);
+            expect(result.gaps[0].end).toBe('200' as MessageId);
+            expect(result.fullyResolved).toBe(false);
+        });
+
+        it('should merge messages from multiple overlapping segments', async () => {
+            const mockItems: CachedSegmentItem[] = [
+                {
+                    PK:             'CHANNEL#123456789012345678',
+                    SK:             'SEGMENT#100#150',
+                    channelId,
+                    startSnowflake: '100' as MessageId,
+                    endSnowflake:   '150' as MessageId,
+                    messages:       [
+                        { id: '120' as MessageId, content: 'First', authorId: 'a', timestamp: '2024-01-15T10:00:00.000Z' },
+                    ],
+                    fetchedAt: '2024-01-15T10:30:00.000Z',
+                },
+                {
+                    PK:             'CHANNEL#123456789012345678',
+                    SK:             'SEGMENT#140#200',
+                    channelId,
+                    startSnowflake: '140' as MessageId,
+                    endSnowflake:   '200' as MessageId,
+                    messages:       [
+                        { id: '180' as MessageId, content: 'Second', authorId: 'a', timestamp: '2024-01-15T10:20:00.000Z' },
+                    ],
+                    fetchedAt: '2024-01-15T10:35:00.000Z',
+                },
+            ];
+
+            ddbMock.on(QueryCommand).resolves({ Items: mockItems });
+
+            const result = await cache.getMessagesInRange(
+                channelId,
+                '100' as MessageId,
+                '200' as MessageId
+            );
+
+            expect(result.messages).toHaveLength(2);
+            expect(result.messages[0].id).toBe('120' as MessageId);
+            expect(result.messages[1].id).toBe('180' as MessageId);
+            expect(result.fullyResolved).toBe(true);
+        });
+
+        it('should deduplicate messages from overlapping segments', async () => {
+            const mockItems: CachedSegmentItem[] = [
+                {
+                    PK:             'CHANNEL#123456789012345678',
+                    SK:             'SEGMENT#100#160',
+                    channelId,
+                    startSnowflake: '100' as MessageId,
+                    endSnowflake:   '160' as MessageId,
+                    messages:       [
+                        { id: '150' as MessageId, content: 'Duplicate', authorId: 'a', timestamp: '2024-01-15T10:10:00.000Z' },
+                    ],
+                    fetchedAt: '2024-01-15T10:30:00.000Z',
+                },
+                {
+                    PK:             'CHANNEL#123456789012345678',
+                    SK:             'SEGMENT#140#200',
+                    channelId,
+                    startSnowflake: '140' as MessageId,
+                    endSnowflake:   '200' as MessageId,
+                    messages:       [
+                        { id: '150' as MessageId, content: 'Duplicate again', authorId: 'a', timestamp: '2024-01-15T10:10:00.000Z' },
+                    ],
+                    fetchedAt: '2024-01-15T10:35:00.000Z',
+                },
+            ];
+
+            ddbMock.on(QueryCommand).resolves({ Items: mockItems });
+
+            const result = await cache.getMessagesInRange(
+                channelId,
+                '100' as MessageId,
+                '200' as MessageId
+            );
+
+            expect(result.messages).toHaveLength(1);
+            expect(result.messages[0].id).toBe('150' as MessageId);
+        });
+    });
+
+    describe('storeMessages', () => {
+        it('should store messages as a segment', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            const messages: CachedMessage[] = [
+                { id: '120' as MessageId, content: 'First', authorId: 'a', timestamp: '2024-01-15T10:00:00.000Z' },
+                { id: '180' as MessageId, content: 'Second', authorId: 'a', timestamp: '2024-01-15T10:20:00.000Z' },
+            ];
+
+            await cache.storeMessages(
+                channelId,
+                '100' as MessageId,
+                '200' as MessageId,
+                messages
+            );
+
+            const calls = ddbMock.commandCalls(PutCommand);
+            expect(calls).toHaveLength(1);
+            const item = calls[0].args[0].input.Item as CachedSegmentItem;
+            expect(item.channelId).toBe(channelId);
+            expect(item.startSnowflake).toBe('100' as MessageId);
+            expect(item.endSnowflake).toBe('200' as MessageId);
+            expect(item.messages).toHaveLength(2);
+        });
+
+        it('should store empty messages array', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            await cache.storeMessages(
+                channelId,
+                '100' as MessageId,
+                '200' as MessageId,
+                []
+            );
+
+            const calls = ddbMock.commandCalls(PutCommand);
+            expect(calls).toHaveLength(1);
+            const item = calls[0].args[0].input.Item as CachedSegmentItem;
+            expect(item.messages).toHaveLength(0);
+        });
+    });
+
+    describe('findGaps', () => {
+        it('should return gaps for uncached range', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            const gaps = await cache.findGaps(
+                channelId,
+                '100' as MessageId,
+                '200' as MessageId
+            );
+
+            expect(gaps).toHaveLength(1);
+            expect(gaps[0].start).toBe('100' as MessageId);
+            expect(gaps[0].end).toBe('200' as MessageId);
+        });
+
+        it('should return empty array when fully covered', async () => {
+            const mockItem: CachedSegmentItem = {
+                PK:             'CHANNEL#123456789012345678',
+                SK:             'SEGMENT#50#250',
+                channelId,
+                startSnowflake: '50' as MessageId,
+                endSnowflake:   '250' as MessageId,
+                messages:       [],
+                fetchedAt:      '2024-01-15T10:30:00.000Z',
+            };
+
+            ddbMock.on(QueryCommand).resolves({ Items: [mockItem] });
+
+            const gaps = await cache.findGaps(
+                channelId,
+                '100' as MessageId,
+                '200' as MessageId
+            );
+
+            expect(gaps).toHaveLength(0);
+        });
+    });
+
+    describe('isRangeFullyCached', () => {
+        it('should return true when range is fully covered', async () => {
+            const mockItem: CachedSegmentItem = {
+                PK:             'CHANNEL#123456789012345678',
+                SK:             'SEGMENT#50#250',
+                channelId,
+                startSnowflake: '50' as MessageId,
+                endSnowflake:   '250' as MessageId,
+                messages:       [],
+                fetchedAt:      '2024-01-15T10:30:00.000Z',
+            };
+
+            ddbMock.on(QueryCommand).resolves({ Items: [mockItem] });
+
+            const isCached = await cache.isRangeFullyCached(
+                channelId,
+                '100' as MessageId,
+                '200' as MessageId
+            );
+
+            expect(isCached).toBe(true);
+        });
+
+        it('should return false when range has gaps', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            const isCached = await cache.isRangeFullyCached(
+                channelId,
+                '100' as MessageId,
+                '200' as MessageId
+            );
+
+            expect(isCached).toBe(false);
+        });
+    });
+
+    describe('listSegments', () => {
+        it('should return segments from backend', async () => {
+            // This tests the block at line 160-162
+            const mockItems: CachedSegmentItem[] = [
+                {
+                    PK:             'CHANNEL#123456789012345678',
+                    SK:             'SEGMENT#100#200',
+                    channelId,
+                    startSnowflake: '100' as MessageId,
+                    endSnowflake:   '200' as MessageId,
+                    messages:       [],
+                    fetchedAt:      '2024-01-15T10:30:00.000Z',
+                },
+                {
+                    PK:             'CHANNEL#123456789012345678',
+                    SK:             'SEGMENT#300#400',
+                    channelId,
+                    startSnowflake: '300' as MessageId,
+                    endSnowflake:   '400' as MessageId,
+                    messages:       [],
+                    fetchedAt:      '2024-01-15T10:35:00.000Z',
+                },
+            ];
+
+            ddbMock.on(QueryCommand).resolves({ Items: mockItems });
+
+            const result = await cache.listSegments(channelId);
+
+            expect(result).toHaveLength(2);
+            expect(result[0].startSnowflake).toBe('100' as MessageId);
+            expect(result[1].startSnowflake).toBe('300' as MessageId);
+        });
+
+        it('should return empty array when no segments exist', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            const result = await cache.listSegments(channelId);
+
+            expect(result).toHaveLength(0);
+            expect(result).toEqual([]);
+        });
+    });
+
+    describe('deleteSegment', () => {
+        it('should call backend to delete segment', async () => {
+            // This tests the block at line 175-177
+            ddbMock.on(DeleteCommand).resolves({});
+
+            await cache.deleteSegment(
+                channelId,
+                '100' as MessageId,
+                '200' as MessageId
+            );
+
+            const calls = ddbMock.commandCalls(DeleteCommand);
+            expect(calls).toHaveLength(1);
+            expect(calls[0].args[0].input.Key).toEqual({
+                PK: 'CHANNEL#123456789012345678',
+                SK: 'SEGMENT#100#200',
+            });
+        });
+    });
+
+    describe('clearChannel', () => {
+        it('should delete all segments and return count', async () => {
+            // This tests the block at line 185-187
+            const mockItems: CachedSegmentItem[] = [
+                {
+                    PK:             'CHANNEL#123456789012345678',
+                    SK:             'SEGMENT#100#200',
+                    channelId,
+                    startSnowflake: '100' as MessageId,
+                    endSnowflake:   '200' as MessageId,
+                    messages:       [],
+                    fetchedAt:      '2024-01-15T10:30:00.000Z',
+                },
+                {
+                    PK:             'CHANNEL#123456789012345678',
+                    SK:             'SEGMENT#300#400',
+                    channelId,
+                    startSnowflake: '300' as MessageId,
+                    endSnowflake:   '400' as MessageId,
+                    messages:       [],
+                    fetchedAt:      '2024-01-15T10:35:00.000Z',
+                },
+            ];
+
+            ddbMock.on(QueryCommand).resolves({ Items: mockItems });
+            ddbMock.on(BatchWriteCommand).resolves({});
+
+            const count = await cache.clearChannel(channelId);
+
+            expect(count).toBe(2);
+        });
+
+        it('should return 0 when no segments exist', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            const count = await cache.clearChannel(channelId);
+
+            expect(count).toBe(0);
+        });
+    });
+});
