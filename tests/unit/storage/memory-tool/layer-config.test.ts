@@ -8,6 +8,7 @@ import {
 import type { LayerName } from '@/storage/memory-tool/types';
 
 describe('layerConfigSchema', () => {
+    // First Zod parse has slight cold-start, allow 5ms
     it('should validate config with all fields', () => {
         const config = {
             maxVersions: 5,
@@ -15,7 +16,7 @@ describe('layerConfigSchema', () => {
         };
         const result = layerConfigSchema.safeParse(config);
         expect(result.success).toBe(true);
-    });
+    }, { timeout: 5 });
 
     it('should apply default maxVersions of 1', () => {
         const config = {
