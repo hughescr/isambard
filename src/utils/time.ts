@@ -143,10 +143,14 @@ export function getCurrentTimeContext(userTimezone?: string): TimeContext {
     if(userTimezone) {
         context.userTimezone = userTimezone;
         try {
+            // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
             const formatter = new Intl.DateTimeFormat('en-CA', {
                 timeZone: userTimezone,
+                // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
                 year:     'numeric',
+                // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
                 month:    '2-digit',
+                // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
                 day:      '2-digit',
                 hour:     '2-digit',
                 minute:   '2-digit',

@@ -2,7 +2,6 @@
 /* eslint-disable @typescript-eslint/only-throw-error -- Some tests intentionally throw non-Error values */
 import { describe, it, expect, beforeEach, spyOn } from 'bun:test';
 import { mock } from 'bun:test';
-import { noop as _noop } from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';
@@ -144,11 +143,7 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
         });
 
         it('should log warning with error message when source delete fails', async () => {
-            const warnSpy = mock(_noop);
-            // eslint-disable-next-line no-console -- Testing console.warn behavior
-            const originalWarn = console.warn;
-            // eslint-disable-next-line no-console -- Testing console.warn behavior
-            console.warn = warnSpy;
+            const warnSpy = spyOn(logger, 'warn');
 
             try {
                 mockBackend.get = mock(async () => undefined);
@@ -173,20 +168,19 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
 
                 expect(result).toContain('consolidated');
                 expect(warnSpy).toHaveBeenCalledTimes(1);
-                const warnMessage = warnSpy.mock.calls[0][0] as string;
-                expect(warnMessage).toContain('Failed to delete source /test/source1.md during consolidation: Delete error message');
+                expect(warnSpy).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                        msg: expect.stringContaining('Failed to delete source /test/source1.md during consolidation'),
+                    })
+                );
             } finally {
-                // eslint-disable-next-line no-console -- Restoring console.warn
-                console.warn = originalWarn;
+                warnSpy.mockRestore();
             }
         });
 
         it('should catch and log non-Error objects thrown during source delete', async () => {
-            const warnSpy = mock(_noop);
-            // eslint-disable-next-line no-console -- Testing console.warn behavior
-            const originalWarn = console.warn;
-            // eslint-disable-next-line no-console -- Testing console.warn behavior
-            console.warn = warnSpy;
+            const warnSpy = spyOn(logger, 'warn');
 
             try {
                 mockBackend.get = mock(async () => undefined);
@@ -211,11 +205,14 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
 
                 expect(result).toContain('consolidated');
                 expect(warnSpy).toHaveBeenCalledTimes(1);
-                const warnMessage = warnSpy.mock.calls[0][0] as string;
-                expect(warnMessage).toContain('string error');
+                expect(warnSpy).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                        msg: expect.stringContaining('string error'),
+                    })
+                );
             } finally {
-                // eslint-disable-next-line no-console -- Restoring console.warn
-                console.warn = originalWarn;
+                warnSpy.mockRestore();
             }
         });
     });

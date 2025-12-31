@@ -940,7 +940,7 @@ describe('createClaudeAgent context integration', () => {
         });
 
         it('should log error with message and user details', async () => {
-            const consoleErrorSpy = spyOn(console, 'error');
+            const errorSpy = spyOn(logger, 'error');
             const testError = new Error('Test error message');
             querySpy.mockImplementation((_params: any): any => {
                 throw testError;
@@ -949,12 +949,14 @@ describe('createClaudeAgent context integration', () => {
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);
 
-            expect(consoleErrorSpy).toHaveBeenCalledWith(
-                expect.stringContaining('Failed to get Claude response for message msg_999 from user 111222333'),
-                testError
+            expect(errorSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    error:     testError,
+                    userId:    '111222333',
+                    messageId: 'msg_999',
+                    msg:       expect.stringContaining('Failed to get Claude response for message msg_999 from user 111222333'),
+                })
             );
-
-            consoleErrorSpy.mockRestore();
         });
     });
 

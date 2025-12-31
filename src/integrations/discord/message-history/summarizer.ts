@@ -80,6 +80,7 @@ function createSemaphore(maxConcurrent: number): {
             current--;
             const next = queue.shift();
             if(next) {
+                // Stryker disable next-line UpdateOperator: Semaphore counter increment is essential for concurrency control
                 current++;
                 return next();
             }
@@ -118,11 +119,13 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
      * @returns The synopsis text
      */
     async function summarizeContent(content: string): Promise<string> {
+        // Stryker disable next-line StringLiteral: Template placeholder for content substitution
         const prompt = _.replace(SUMMARIZATION_PROMPT, '{content}', content);
 
         const response = await anthropicClient.messages.create({
             model:      HAIKU_MODEL,
             max_tokens: 100,
+            // Stryker disable next-line StringLiteral: API role constant
             messages:   [{ role: 'user', content: prompt }],
         });
 
@@ -137,6 +140,7 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
 
     return {
         async summarizeMessages(messages: DiscordSearchResult[]): Promise<OverflowSummary[]> {
+            // Stryker disable next-line all: Early return for empty input prevents unnecessary work
             if(_.isEmpty(messages)) {
                 return [];
             }

@@ -563,6 +563,14 @@ describe('createClaudeAgent', () => {
             // Should have discord but NOT memory
             expect(callArgs.options.mcpServers).toEqual({ discord: mockDiscordMcpServer });
             expect(callArgs.options.mcpServers.memory).toBeUndefined();
+            // This catches the mutant that changes 'if(memoryMcpServer)' to 'if(true)'
+            // which would add a 'memory: undefined' property to the object.
+            // toEqual ignores undefined properties, but 'in' operator detects them.
+            expect('memory' in callArgs.options.mcpServers).toBe(false);
+            // Additional assertion: Object.keys should NOT include 'memory'
+            expect(_.keys(callArgs.options.mcpServers)).toEqual(['discord']);
+            // hasOwnProperty also checks for property existence
+            expect(_.has(callArgs.options.mcpServers, 'memory')).toBe(false);
         });
 
         it('should NOT include discord MCP server when only memory MCP server provided', async () => {
@@ -578,6 +586,14 @@ describe('createClaudeAgent', () => {
             // Should have memory but NOT discord
             expect(callArgs.options.mcpServers).toEqual({ memory: mockMemoryMcpServer });
             expect(callArgs.options.mcpServers.discord).toBeUndefined();
+            // This catches the mutant that changes 'if(discordMcpServer)' to 'if(true)'
+            // which would add a 'discord: undefined' property to the object.
+            // toEqual ignores undefined properties, but 'in' operator detects them.
+            expect('discord' in callArgs.options.mcpServers).toBe(false);
+            // Additional assertion: Object.keys should NOT include 'discord'
+            expect(_.keys(callArgs.options.mcpServers)).toEqual(['memory']);
+            // hasOwnProperty also checks for property existence
+            expect(_.has(callArgs.options.mcpServers, 'discord')).toBe(false);
         });
 
         it('should include both memory and discord MCP servers when both provided', async () => {

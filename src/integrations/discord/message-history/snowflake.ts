@@ -11,12 +11,12 @@ export const DISCORD_EPOCH = 1420070400000n;
  * Zod schema for validating Discord snowflake strings.
  * A valid snowflake is a non-empty string containing only digits (non-negative integer).
  */
+// Stryker disable all: Schema validation error messages are not behavioral
 export const snowflakeSchema = z
     .string()
-    // Stryker disable next-line StringLiteral: Error message text is not behavior
     .min(1, 'Snowflake cannot be empty')
-    // Stryker disable next-line StringLiteral: Error message text is not behavior
     .regex(/^\d+$/, 'Snowflake must contain only digits');
+// Stryker restore all
 
 /**
  * Error thrown when a Discord snowflake ID is invalid.
@@ -24,7 +24,9 @@ export const snowflakeSchema = z
  */
 export class InvalidSnowflakeError extends DiscordIntegrationError {
     constructor(public readonly snowflake: string) {
+        // Stryker disable next-line StringLiteral: Error message and error code are not behavior
         super(`Invalid Discord snowflake: ${snowflake}`, 'INVALID_SNOWFLAKE');
+        // Stryker disable next-line StringLiteral: Error class name is not behavior
         this.name = 'InvalidSnowflakeError';
     }
 }

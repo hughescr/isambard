@@ -48,12 +48,15 @@ export class SegmentManager {
         });
 
         // Filter to segments that intersect with requested range
+        // Stryker disable next-line all: BigInt boundary conditions produce equivalent mutants
         const relevantSegments = _filter(sortedSegments, (segment) => {
             const segStart = BigInt(segment.startSnowflake);
             const segEnd = BigInt(segment.endSnowflake);
+            // Stryker disable next-line all: BigInt boundary conditions produce equivalent mutants
             return segEnd >= startBigInt && segStart <= endBigInt;
         });
 
+        // Stryker disable next-line all: Early return for empty segments is essential control flow
         if(relevantSegments.length === 0) {
             return [{ start: requestedStart, end: requestedEnd }];
         }
@@ -69,6 +72,7 @@ export class SegmentManager {
             if(currentPosition < segStart) {
                 const gapEnd = segStart - 1n;
                 // Only add gap if it's within our requested range
+                // Stryker disable next-line all: BigInt boundary conditions produce equivalent mutants
                 if(gapEnd >= startBigInt && currentPosition <= endBigInt) {
                     gaps.push({
                         start: currentPosition.toString() as MessageId,

@@ -292,6 +292,34 @@ describe('createMessageFetcher', () => {
                 });
             });
 
+            it('should NOT include title in embed when embed.title is null', async () => {
+                // This test specifically targets the mutant that changes
+                // `if(embed.title)` to `if(true)` at line 99.
+                // If the mutation survives, the embed would have `title: null`
+                // instead of omitting the title property entirely.
+                const message = createMockMessage({
+                    id:     '100000000000000000',
+                    embeds: [
+                        { title: null, description: 'Description only', url: null },
+                    ],
+                });
+
+                const channel = createMockChannel('123456789012345678', [message]);
+                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+                const client = createMockClient(channels);
+
+                const fetcher = createMessageFetcher(client);
+                const result = await fetcher.fetchMessages({ channelId: '123456789012345678' });
+
+                // Verify the embed only has description, not title or url
+                expect(result.messages[0].embeds).toHaveLength(1);
+                expect(result.messages[0].embeds[0]).toEqual({ description: 'Description only' });
+                // These assertions catch the `if(true)` mutation which would add null properties
+                expect('title' in result.messages[0].embeds[0]).toBe(false);
+                expect('url' in result.messages[0].embeds[0]).toBe(false);
+                expect(_.has(result.messages[0].embeds[0], 'title')).toBe(false);
+            });
+
             it('should include reactions in transformed message', async () => {
                 const message = createMockMessage({
                     id:        '100000000000000000',
@@ -891,6 +919,32 @@ describe('createMessageFetcher', () => {
                     expect(true).toBe(false); // Should not reach here
                 } catch (error) {
                     expect((error as ChannelNotAccessibleError).channelId).toBe('123456789012345678');
+                }
+            });
+
+            it('should use "Unknown error" as reason when non-Error value is thrown', async () => {
+                const channel = {
+                    id:          '123456789012345678',
+                    isTextBased: _.constant(true),
+                    messages:    {
+                        fetch: mock(async () => {
+                            // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw to trigger 'Unknown error' branch
+                            throw 'network failure';
+                        }),
+                    },
+                } as unknown as TextChannel;
+
+                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+                const client = createMockClient(channels);
+
+                const fetcher = createMessageFetcher(client);
+
+                try {
+                    await fetcher.fetchMessages({ channelId: '123456789012345678' });
+                    expect(true).toBe(false); // Should not reach here
+                } catch (error) {
+                    expect(error).toBeInstanceOf(MessageFetchError);
+                    expect((error as MessageFetchError).message).toContain('Unknown error');
                 }
             });
         });

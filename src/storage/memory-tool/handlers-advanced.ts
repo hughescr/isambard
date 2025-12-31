@@ -98,8 +98,7 @@ export async function rename(
         await backend.delete(oldPath);
     } catch (error: unknown) {
         const errorMessage = _isError(error) ? error.message : String(error);
-        // eslint-disable-next-line no-console -- Logging rename cleanup failures
-        console.warn(`Failed to delete original memory at ${params.path} after rename: ${errorMessage}`);
+        logger.warn({ path: params.path, error: errorMessage, msg: `Failed to delete original memory at ${params.path} after rename: ${errorMessage}` });
     }
 
     return `Memory renamed from ${params.path} to ${params.new_path}`;
@@ -297,8 +296,7 @@ export async function consolidate(
                 await backend.delete(sourcePath);
             } catch (error: unknown) {
                 const errorMessage = _isError(error) ? error.message : String(error);
-                // eslint-disable-next-line no-console -- Logging consolidation cleanup failures
-                console.warn(`Failed to delete source ${sourcePath} during consolidation: ${errorMessage}`);
+                logger.warn({ path: sourcePath, error: errorMessage, msg: `Failed to delete source ${sourcePath} during consolidation: ${errorMessage}` });
             }
         }
     }

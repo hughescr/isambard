@@ -160,8 +160,7 @@ export async function delete_memory(
                 deleteCount++;
             } catch (error: unknown) {
                 const errorMessage = _isError(error) ? error.message : String(error);
-                // eslint-disable-next-line no-console -- Logging deletion failures
-                console.warn(`Failed to delete ${item.path}: ${errorMessage}`);
+                logger.warn({ path: item.path, error: errorMessage, msg: `Failed to delete ${item.path}: ${errorMessage}` });
             }
         }
         return `Recursively deleted ${deleteCount} memories under ${params.path}`;

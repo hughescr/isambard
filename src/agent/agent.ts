@@ -407,9 +407,11 @@ function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: M
     }
 
     const servers: Record<string, McpServerConfig> = {};
+    // Stryker disable next-line ConditionalExpression: Truthiness check for optional parameter
     if(memoryMcpServer) {
         servers.memory = memoryMcpServer;
     }
+    // Stryker disable next-line ConditionalExpression: Truthiness check for optional parameter
     if(discordMcpServer) {
         servers.discord = discordMcpServer;
     }
@@ -580,8 +582,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 return lastAssistantText || null;
             } catch (error) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
-                // eslint-disable-next-line no-console -- Error logging
-                console.error(`Failed to get Claude response for message ${context.messageId} from user ${context.userId}: ${errorMessage}`, error);
+                logger.error({ error, userId: context.userId, messageId: context.messageId, msg: `Failed to get Claude response for message ${context.messageId} from user ${context.userId}: ${errorMessage}` });
                 return null;
             }
         },

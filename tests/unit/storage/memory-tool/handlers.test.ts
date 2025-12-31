@@ -2,7 +2,8 @@
 
 import { describe, it, expect, beforeEach, spyOn } from 'bun:test';
 import { mock } from 'bun:test';
-import { split as _split, some as _some, includes as _includes, noop as _noop } from 'lodash';
+import { split as _split, some as _some, includes as _includes } from 'lodash';
+import { logger } from '@hughescr/logger';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';
 import { memoryPathSchema } from '@/storage/memory-tool/types';
@@ -591,56 +592,55 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should log warning when individual file delete fails in directory', async () => {
-            const warnSpy = mock(_noop);
-            // eslint-disable-next-line no-console -- Testing console.warn behavior
-            const originalWarn = console.warn;
-            // eslint-disable-next-line no-console -- Testing console.warn behavior
-            console.warn = warnSpy;
+            const warnSpy = spyOn(logger, 'warn');
 
-            try {
-                mockBackend.get = mock(async () => undefined);
-                mockBackend.list = mock(async () => ({
-                    items: [
-                        {
-                            path:        '/test/dir/file1.md' as MemoryPath,
-                            content:     'content1',
-                            contentType: 'text/markdown' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
-                        },
-                        {
-                            path:        '/test/dir/file2.txt' as MemoryPath,
-                            content:     'content2',
-                            contentType: 'text/plain' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
-                        },
-                    ],
-                    nextCursor: undefined,
-                }));
+            mockBackend.get = mock(async () => undefined);
+            mockBackend.list = mock(async () => ({
+                items: [
+                    {
+                        path:        '/test/dir/file1.md' as MemoryPath,
+                        content:     'content1',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                    {
+                        path:        '/test/dir/file2.txt' as MemoryPath,
+                        content:     'content2',
+                        contentType: 'text/plain' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                ],
+                nextCursor: undefined,
+            }));
 
-                let callCount = 0;
-                mockBackend.delete = mock(async (_path: MemoryPath) => {
-                    callCount++;
-                    if(callCount === 2) {
-                        throw new Error('Delete failed');
-                    }
-                });
+            let callCount = 0;
+            mockBackend.delete = mock(async (_path: MemoryPath) => {
+                callCount++;
+                if(callCount === 2) {
+                    throw new Error('Delete failed');
+                }
+            });
 
-                const result = await deleteMemory(mockBackend, { path: '/test/dir' });
+            const result = await deleteMemory(mockBackend, { path: '/test/dir' });
 
-                expect(result).toContain('1 memories');
-                expect(warnSpy).toHaveBeenCalledTimes(1);
-                expect(warnSpy.mock.calls[0][0]).toContain('Failed to delete');
-                expect(warnSpy.mock.calls[0][0]).toContain('file2.txt');
-            } finally {
-                // eslint-disable-next-line no-console -- Restoring console.warn
-                console.warn = originalWarn;
-            }
+            expect(result).toContain('1 memories');
+            expect(warnSpy).toHaveBeenCalledTimes(1);
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    path:  '/test/dir/file2.txt',
+                    error: 'Delete failed',
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                    msg:   expect.stringContaining('Failed to delete'),
+                })
+            );
+
+            warnSpy.mockRestore();
         });
 
         it('should throw PathNotFoundError when path does not exist', async () => {
@@ -955,53 +955,52 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should log warning when cleanup delete fails after rename', async () => {
-            const warnSpy = mock(_noop);
-            // eslint-disable-next-line no-console -- Testing console.warn behavior
-            const originalWarn = console.warn;
-            // eslint-disable-next-line no-console -- Testing console.warn behavior
-            console.warn = warnSpy;
+            const warnSpy = spyOn(logger, 'warn');
 
-            try {
-                mockBackend.get = mock(async (path: MemoryPath) => {
-                    if(path === '/test/old.md') {
-                        return {
-                            path:        '/test/old.md' as MemoryPath,
-                            content:     'Content',
-                            contentType: 'text/markdown' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
-                        };
-                    }
-                    return undefined;
-                });
-                mockBackend.create = mock(async () => ({
-                    path:        '/test/new.md' as MemoryPath,
-                    content:     'Content',
-                    contentType: 'text/markdown' as ContentType,
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-01T00:00:01.000Z',
-                    updatedAt:   '2025-01-01T00:00:01.000Z',
-                }));
-                mockBackend.delete = mock(async () => {
-                    throw new Error('Cleanup failed');
-                });
+            mockBackend.get = mock(async (path: MemoryPath) => {
+                if(path === '/test/old.md') {
+                    return {
+                        path:        '/test/old.md' as MemoryPath,
+                        content:     'Content',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    };
+                }
+                return undefined;
+            });
+            mockBackend.create = mock(async () => ({
+                path:        '/test/new.md' as MemoryPath,
+                content:     'Content',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:01.000Z',
+                updatedAt:   '2025-01-01T00:00:01.000Z',
+            }));
+            mockBackend.delete = mock(async () => {
+                throw new Error('Cleanup failed');
+            });
 
-                const result = await rename(mockBackend, {
-                    path:     '/test/old.md',
-                    new_path: '/test/new.md',
-                });
+            const result = await rename(mockBackend, {
+                path:     '/test/old.md',
+                new_path: '/test/new.md',
+            });
 
-                expect(result).toContain('renamed');
-                expect(warnSpy).toHaveBeenCalledTimes(1);
-                expect(warnSpy.mock.calls[0][0]).toContain('Failed to delete original');
-                expect(warnSpy.mock.calls[0][0]).toContain('/test/old.md');
-            } finally {
-                // eslint-disable-next-line no-console -- Restoring console.warn
-                console.warn = originalWarn;
-            }
+            expect(result).toContain('renamed');
+            expect(warnSpy).toHaveBeenCalledTimes(1);
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    path:  '/test/old.md',
+                    error: 'Cleanup failed',
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                    msg:   expect.stringContaining('Failed to delete original'),
+                })
+            );
+
+            warnSpy.mockRestore();
         });
 
         it('should throw PathNotFoundError when source path does not exist', async () => {
