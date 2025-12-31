@@ -12,3 +12,5 @@ coveragePathIgnorePatterns = [
     "tests/**",
     "src/index.ts"
 ]
+onlyFailures = true
+
