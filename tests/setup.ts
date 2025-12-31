@@ -1,5 +1,6 @@
 // Test setup and configuration
 import { mock } from 'bun:test';
+import { assign, replace, padStart, isDate, isArray } from 'lodash';
 
 // Mock AWS SDK before any imports - we test OUR code, not AWS SDK
 // This eliminates cold-start costs entirely
@@ -35,7 +36,7 @@ class MockDynamoDBDocumentClient {
 }
 // Add sinon-compatible properties for aws-sdk-client-mock
 // eslint-disable-next-line @typescript-eslint/unbound-method -- Intentionally modifying prototype
-Object.assign(MockDynamoDBDocumentClient.prototype.send, {
+assign(MockDynamoDBDocumentClient.prototype.send, {
     isSinonProxy: false,
     restore:      undefined,
 });
@@ -116,7 +117,7 @@ Intl.DateTimeFormat = class MockDateTimeFormat {
 
     format(date?: Date | number): string {
         const d = this.applyOffset(date);
-        return d.toISOString().replace('Z', '');
+        return replace(d.toISOString(), 'Z', '');
     }
 
     formatToParts(date?: Date | number): Intl.DateTimeFormatPart[] {
@@ -124,20 +125,20 @@ Intl.DateTimeFormat = class MockDateTimeFormat {
         return [
             { type: 'year', value: String(d.getUTCFullYear()) },
             { type: 'literal', value: '-' },
-            { type: 'month', value: String(d.getUTCMonth() + 1).padStart(2, '0') },
+            { type: 'month', value: padStart(String(d.getUTCMonth() + 1), 2, '0') },
             { type: 'literal', value: '-' },
-            { type: 'day', value: String(d.getUTCDate()).padStart(2, '0') },
+            { type: 'day', value: padStart(String(d.getUTCDate()), 2, '0') },
             { type: 'literal', value: ', ' },
-            { type: 'hour', value: String(d.getUTCHours()).padStart(2, '0') },
+            { type: 'hour', value: padStart(String(d.getUTCHours()), 2, '0') },
             { type: 'literal', value: ':' },
-            { type: 'minute', value: String(d.getUTCMinutes()).padStart(2, '0') },
+            { type: 'minute', value: padStart(String(d.getUTCMinutes()), 2, '0') },
             { type: 'literal', value: ':' },
-            { type: 'second', value: String(d.getUTCSeconds()).padStart(2, '0') },
+            { type: 'second', value: padStart(String(d.getUTCSeconds()), 2, '0') },
         ];
     }
 
     private applyOffset(date?: Date | number): Date {
-        const d = date instanceof Date ? new Date(date) : new Date(date ?? Date.now());
+        const d = isDate(date) ? new Date(date) : new Date(date ?? Date.now());
         d.setUTCHours(d.getUTCHours() + this.tzOffset);
         return d;
     }
@@ -152,7 +153,7 @@ Intl.DateTimeFormat = class MockDateTimeFormat {
     }
 
     static supportedLocalesOf(locales: string | string[]): string[] {
-        return Array.isArray(locales) ? locales : [locales];
+        return isArray(locales) ? locales : [locales];
     }
 };
 

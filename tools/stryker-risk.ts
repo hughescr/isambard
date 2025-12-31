@@ -17,10 +17,18 @@ import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import ts from 'typescript';
+import _ from 'lodash';
 
 // ============================================================================
 // Types
 // ============================================================================
+
+class CliError extends Error {
+    constructor(message: string, public readonly exitCode = 1) {
+        super(message);
+        this.name = 'CliError';
+    }
+}
 
 interface LiteralInfo {
     line:       number
@@ -106,8 +114,7 @@ function parseArgs(): CLIArgs {
                 args.help = true;
                 break;
             default:
-                console.error(`Unknown argument: ${arg}`);
-                process.exit(1);
+                throw new CliError(`Unknown argument: ${arg}`, 1);
         }
     }
 
@@ -115,6 +122,7 @@ function parseArgs(): CLIArgs {
 }
 
 function printHelp(): void {
+    // eslint-disable-next-line no-console -- CLI tool needs console output
     console.log(`
 Stryker Risk Analysis Tool
 
@@ -154,11 +162,11 @@ RISK THRESHOLDS:
 // Stryker Log Parsing
 // ============================================================================
 
-const INSTRUMENTED_REGEX = /Instrumented\s+(.+?)\s+\((\d+)\s+mutant/;
+const INSTRUMENTED_REGEX = /Instrumented\s+([^\s(]+(?:\s+[^\s(]+)*?)\s+\((\d+)\s+mutant/;
 
 function parseMutantCounts(logContent: string): Record<string, number> {
     const counts: Record<string, number> = {};
-    const lines = logContent.split('\n');
+    const lines = _.split(logContent, '\n');
 
     for(const line of lines) {
         const match = INSTRUMENTED_REGEX.exec(line);
@@ -166,7 +174,7 @@ function parseMutantCounts(logContent: string): Record<string, number> {
             const filePath = match[1];
             const mutantCount = parseInt(match[2], 10);
             // Normalize path relative to project root
-            const normalizedPath = filePath.startsWith('/')
+            const normalizedPath = _.startsWith(filePath, '/')
                 ? path.relative(PROJECT_ROOT, filePath)
                 : filePath;
             counts[normalizedPath] = mutantCount;
@@ -221,16 +229,16 @@ async function runStryker(): Promise<string> {
 // ============================================================================
 
 function getSourceFiles(): string[] {
-    const configPath = ts.findConfigFile(PROJECT_ROOT, ts.sys.fileExists, 'tsconfig.json');
+    const configPath = ts.findConfigFile(PROJECT_ROOT, fileName => ts.sys.fileExists(fileName), 'tsconfig.json');
     if(!configPath) {
         throw new Error('Could not find tsconfig.json');
     }
 
-    const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+    const configFile = ts.readConfigFile(configPath, fileName => ts.sys.readFile(fileName));
     const parsedConfig = ts.parseJsonConfigFileContent(configFile.config, ts.sys, PROJECT_ROOT);
 
     // Filter to only src files
-    return parsedConfig.fileNames.filter(f => f.includes('/src/'));
+    return _.filter(parsedConfig.fileNames, f => f.includes('/src/'));
 }
 
 function estimateObjectSize(node: ts.ObjectLiteralExpression, sourceFile: ts.SourceFile): number {
@@ -244,7 +252,7 @@ function estimateArraySize(node: ts.ArrayLiteralExpression, sourceFile: ts.Sourc
     return text.length;
 }
 
-function getTemplateStaticSize(node: ts.TemplateExpression, sourceFile: ts.SourceFile): number {
+function getTemplateStaticSize(node: ts.TemplateExpression, _sourceFile: ts.SourceFile): number {
     let size = node.head.text.length;
     for(const span of node.templateSpans) {
         size += span.literal.text.length;
@@ -253,7 +261,7 @@ function getTemplateStaticSize(node: ts.TemplateExpression, sourceFile: ts.Sourc
 }
 
 function createPreview(text: string, maxLength = 50): string {
-    const cleaned = text.replace(/\s+/g, ' ').trim();
+    const cleaned = _.trim(_.replace(text, /\s+/g, ' '));
     if(cleaned.length <= maxLength) {
         return cleaned;
     }
@@ -280,8 +288,9 @@ function analyzeFile(filePath: string): {
     largeArrays:    LiteralInfo[]
 } {
     const absolutePath = path.isAbsolute(filePath) ? filePath : path.join(PROJECT_ROOT, filePath);
+    // eslint-disable-next-line n/no-sync -- CLI tool uses sync for simplicity
     const content = fs.readFileSync(absolutePath, 'utf-8');
-    const lines = content.split('\n').length;
+    const lines = _.split(content, '\n').length;
     const bytes = Buffer.byteLength(content, 'utf-8');
 
     const sourceFile = ts.createSourceFile(
@@ -419,9 +428,15 @@ function calculateRiskScore(metrics: Omit<FileMetrics, 'riskScore' | 'action'>):
 }
 
 function getAction(score: number): ActionType {
-    if(score <= 30) { return 'Leave'; }
-    if(score <= 50) { return 'Monitor'; }
-    if(score <= 70) { return 'Refactor'; }
+    if(score <= 30) {
+        return 'Leave';
+    }
+    if(score <= 50) {
+        return 'Monitor';
+    }
+    if(score <= 70) {
+        return 'Refactor';
+    }
     return 'Critical';
 }
 
@@ -431,11 +446,13 @@ function getAction(score: number): ActionType {
 
 function loadCache(): CacheData | null {
     const cachePath = path.join(PROJECT_ROOT, CACHE_FILE);
+    // eslint-disable-next-line n/no-sync -- CLI tool uses sync for simplicity
     if(!fs.existsSync(cachePath)) {
         return null;
     }
 
     try {
+        // eslint-disable-next-line n/no-sync -- CLI tool uses sync for simplicity
         const content = fs.readFileSync(cachePath, 'utf-8');
         return JSON.parse(content) as CacheData;
     } catch{
@@ -445,6 +462,7 @@ function loadCache(): CacheData | null {
 
 function saveCache(data: CacheData): void {
     const cachePath = path.join(PROJECT_ROOT, CACHE_FILE);
+    // eslint-disable-next-line n/no-sync -- CLI tool uses sync for simplicity
     fs.writeFileSync(cachePath, JSON.stringify(data, null, 2));
 }
 
@@ -453,6 +471,7 @@ function isCacheValid(cache: CacheData, sourceFiles: string[]): boolean {
     for(const file of sourceFiles) {
         const absolutePath = path.isAbsolute(file) ? file : path.join(PROJECT_ROOT, file);
         try {
+            // eslint-disable-next-line n/no-sync -- CLI tool uses sync for simplicity
             const stat = fs.statSync(absolutePath);
             if(stat.mtimeMs > cache.timestamp) {
                 return false;
@@ -482,10 +501,10 @@ Generated: ${timestamp}
 | Metric | Value |
 |--------|-------|
 | Total Files | ${metrics.length} |
-| Critical Files | ${metrics.filter(m => m.action === 'Critical').length} |
-| Refactor Files | ${metrics.filter(m => m.action === 'Refactor').length} |
-| Monitor Files | ${metrics.filter(m => m.action === 'Monitor').length} |
-| Healthy Files | ${metrics.filter(m => m.action === 'Leave').length} |
+| Critical Files | ${_.filter(metrics, { action: 'Critical' }).length} |
+| Refactor Files | ${_.filter(metrics, { action: 'Refactor' }).length} |
+| Monitor Files | ${_.filter(metrics, { action: 'Monitor' }).length} |
+| Healthy Files | ${_.filter(metrics, { action: 'Leave' }).length} |
 
 ## Risk Analysis
 
@@ -499,12 +518,13 @@ Generated: ${timestamp}
               + m.largeTemplates.length
               + m.largeObjects.length
               + m.largeArrays.length;
-        const relativePath = m.path.replace(/^src\//, '');
+        const relativePath = _.replace(m.path, /^src\//, '');
         report += `| ${relativePath} | ${m.lines} | ${m.mutants} | ${m.mutantsPerLine.toFixed(1)} | ${m.mutantsPerKB.toFixed(1)} | ${largeLiterals} | ${m.riskScore.toFixed(1)} | ${m.action} |\n`;
     }
 
     // Large Literals Detail section
-    const filesWithLargeLiterals = sorted.filter(
+    const filesWithLargeLiterals = _.filter(
+        sorted,
         m =>
             m.largeStrings.length > 0
             || m.largeTemplates.length > 0
@@ -576,10 +596,10 @@ function generateJsonReport(metrics: FileMetrics[]): string {
             generated: new Date().toISOString(),
             summary:   {
                 totalFiles: metrics.length,
-                critical:   metrics.filter(m => m.action === 'Critical').length,
-                refactor:   metrics.filter(m => m.action === 'Refactor').length,
-                monitor:    metrics.filter(m => m.action === 'Monitor').length,
-                healthy:    metrics.filter(m => m.action === 'Leave').length,
+                critical:   _.filter(metrics, { action: 'Critical' }).length,
+                refactor:   _.filter(metrics, { action: 'Refactor' }).length,
+                monitor:    _.filter(metrics, { action: 'Monitor' }).length,
+                healthy:    _.filter(metrics, { action: 'Leave' }).length,
             },
             files: sorted,
         },
@@ -589,63 +609,64 @@ function generateJsonReport(metrics: FileMetrics[]): string {
 }
 
 // ============================================================================
-// Main
+// Main - Helper Functions
 // ============================================================================
 
-async function main(): Promise<void> {
-    const args = parseArgs();
-
-    if(args.help) {
-        printHelp();
-        process.exit(0);
-    }
-
-    // Get source files
-    const sourceFiles = getSourceFiles();
-    console.error(`Found ${sourceFiles.length} source files`);
-
-    // Get mutant counts
-    let mutantCounts: Record<string, number> = {};
-    const cache = loadCache();
-
+async function getMutantCounts(
+    args: CLIArgs,
+    cache: CacheData | null,
+    sourceFiles: string[]
+): Promise<Record<string, number>> {
     if(args.cached) {
         if(!cache) {
-            console.error('Error: No cache file found');
-            process.exit(1);
+            throw new CliError('No cache file found', 1);
         }
         if(!isCacheValid(cache, sourceFiles)) {
-            console.error('Error: Cache is stale (source files modified)');
-            process.exit(1);
+            throw new CliError('Cache is stale (source files modified)', 1);
         }
-        mutantCounts = cache.mutantCounts;
+        // eslint-disable-next-line no-console -- CLI tool needs console output
         console.error('Using cached mutant data');
-    } else if(args.logFile) {
+        return cache.mutantCounts;
+    }
+
+    if(args.logFile) {
+        // eslint-disable-next-line n/no-sync -- CLI tool uses sync for simplicity
         if(!fs.existsSync(args.logFile)) {
-            console.error(`Error: Log file not found: ${args.logFile}`);
-            process.exit(1);
+            throw new CliError(`Log file not found: ${args.logFile}`, 1);
         }
+        // eslint-disable-next-line n/no-sync -- CLI tool uses sync for simplicity
         const logContent = fs.readFileSync(args.logFile, 'utf-8');
-        mutantCounts = parseMutantCounts(logContent);
-        console.error(`Parsed ${Object.keys(mutantCounts).length} files from log`);
-    } else if(args.runStryker) {
+        const mutantCounts = parseMutantCounts(logContent);
+        // eslint-disable-next-line no-console -- CLI tool needs console output
+        console.error(`Parsed ${_.keys(mutantCounts).length} files from log`);
+        return mutantCounts;
+    }
+
+    if(args.runStryker) {
+        // eslint-disable-next-line no-console -- CLI tool needs console output
         console.error('Running Stryker with debug logging...');
         try {
             const output = await runStryker();
-            mutantCounts = parseMutantCounts(output);
-            console.error(`\nCollected mutant counts for ${Object.keys(mutantCounts).length} files`);
+            const mutantCounts = parseMutantCounts(output);
+            // eslint-disable-next-line no-console -- CLI tool needs console output
+            console.error(`\nCollected mutant counts for ${_.keys(mutantCounts).length} files`);
+            return mutantCounts;
         } catch (error) {
-            console.error('Error running Stryker:', error);
-            process.exit(1);
+            const errorMessage = _.isError(error) ? error.message : String(error);
+            throw new CliError(`Error running Stryker: ${errorMessage}`, 1);
         }
-    } else if(cache && isCacheValid(cache, sourceFiles)) {
-        mutantCounts = cache.mutantCounts;
-        console.error('Using cached mutant data (cache is valid)');
-    } else {
-        console.error('No mutant data available. Use --run-stryker or --log <file>');
-        process.exit(1);
     }
 
-    // Analyze all files
+    if(cache && isCacheValid(cache, sourceFiles)) {
+        // eslint-disable-next-line no-console -- CLI tool needs console output
+        console.error('Using cached mutant data (cache is valid)');
+        return cache.mutantCounts;
+    }
+
+    throw new CliError('No mutant data available. Use --run-stryker or --log <file>', 1);
+}
+
+function analyzeAllFiles(sourceFiles: string[], mutantCounts: Record<string, number>): FileMetrics[] {
     const fileMetrics: FileMetrics[] = [];
 
     for(const file of sourceFiles) {
@@ -679,6 +700,45 @@ async function main(): Promise<void> {
         });
     }
 
+    return fileMetrics;
+}
+
+function outputReport(report: string, outputPath?: string): void {
+    if(outputPath) {
+        // eslint-disable-next-line n/no-sync -- CLI tool uses sync for simplicity
+        fs.writeFileSync(outputPath, report);
+        // eslint-disable-next-line no-console -- CLI tool needs console output
+        console.error(`Report written to ${outputPath}`);
+    } else {
+        // eslint-disable-next-line no-console -- CLI tool needs console output
+        console.log(report);
+    }
+}
+
+// ============================================================================
+// Main
+// ============================================================================
+
+async function main(): Promise<void> {
+    const args = parseArgs();
+
+    if(args.help) {
+        printHelp();
+        throw new CliError('Help displayed', 0);
+    }
+
+    // Get source files
+    const sourceFiles = getSourceFiles();
+    // eslint-disable-next-line no-console -- CLI tool needs console output
+    console.error(`Found ${sourceFiles.length} source files`);
+
+    // Get mutant counts
+    const cache = loadCache();
+    const mutantCounts = await getMutantCounts(args, cache, sourceFiles);
+
+    // Analyze all files
+    const fileMetrics = analyzeAllFiles(sourceFiles, mutantCounts);
+
     // Save cache
     saveCache({
         timestamp: Date.now(),
@@ -686,19 +746,21 @@ async function main(): Promise<void> {
         fileMetrics,
     });
 
-    // Generate report
+    // Generate and output report
     const report = args.json ? generateJsonReport(fileMetrics) : generateMarkdownReport(fileMetrics);
-
-    // Output
-    if(args.output) {
-        fs.writeFileSync(args.output, report);
-        console.error(`Report written to ${args.output}`);
-    } else {
-        console.log(report);
-    }
+    outputReport(report, args.output);
 }
 
 main().catch((error) => {
-    console.error('Fatal error:', error);
-    process.exit(1);
+    if(error instanceof CliError) {
+        if(error.exitCode !== 0) {
+            // eslint-disable-next-line no-console -- CLI tool needs console output
+            console.error('Error:', error.message);
+        }
+        process.exitCode = error.exitCode;
+    } else {
+        // eslint-disable-next-line no-console -- CLI tool needs console output
+        console.error('Fatal error:', error);
+        process.exitCode = 1;
+    }
 });

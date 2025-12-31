@@ -2,7 +2,7 @@ import _ from 'lodash';
 import { describe, it, expect } from 'bun:test';
 import {
     splitMessage,
-    DISCORD_SAFE_LENGTH
+    DISCORD_SAFE_LENGTH as _DISCORD_SAFE_LENGTH
 } from '@/integrations/discord/messages';
 
 describe('Discord Message Splitting', () => {

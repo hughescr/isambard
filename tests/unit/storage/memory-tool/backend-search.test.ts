@@ -1,16 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, spyOn as _spyOn } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import { assign as _assign, isError as _isError, some as _some, filter as _filter, startsWith as _startsWith, size as _size } from 'lodash';
 import {
     DynamoDBDocumentClient,
-    GetCommand,
-    PutCommand,
-    DeleteCommand,
+    GetCommand as _GetCommand,
+    PutCommand as _PutCommand,
+    DeleteCommand as _DeleteCommand,
     QueryCommand,
     ScanCommand
 } from '@aws-sdk/lib-dynamodb';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
-import { ItemNotFoundError, ConflictError, ValidationError } from '@/storage/errors';
+import { ItemNotFoundError as _ItemNotFoundError, ConflictError as _ConflictError, ValidationError as _ValidationError } from '@/storage/errors';
 import type { MemoryToolItem, MemoryPath, ContentType, LayerName } from '@/storage/memory-tool/types';
 
 describe('MemoryToolBackend - Search Operations', () => {

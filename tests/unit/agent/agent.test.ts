@@ -105,7 +105,7 @@ describe('extractToolUses', () => {
 
 describe('createClaudeAgent', () => {
     let mockMessageContext: DiscordMessageContext;
-    let mockContextBuilder: ContextBuilder;
+    let _mockContextBuilder: ContextBuilder;
     let querySpy: ReturnType<typeof spyOn>;
 
     beforeEach(() => {
@@ -121,7 +121,7 @@ describe('createClaudeAgent', () => {
         };
 
         // Create mock context builder
-        mockContextBuilder = {
+        _mockContextBuilder = {
             loadCoreIdentity:   mock(_.constant(Promise.resolve(''))),
             loadRecentContext:  mock(_.constant(Promise.resolve([]))),
             buildSystemContext: mock(_.constant(Promise.resolve(''))),

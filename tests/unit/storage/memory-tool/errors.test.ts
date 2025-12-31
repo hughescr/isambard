@@ -4,10 +4,10 @@ import {
     PathNotFoundError,
     PathAlreadyExistsError,
     InvalidPathError,
-    TextNotFoundError,
-    ContentTooLargeError,
-    TextNotUniqueError,
-    InvalidLineNumberError
+    TextNotFoundError as _TextNotFoundError,
+    ContentTooLargeError as _ContentTooLargeError,
+    TextNotUniqueError as _TextNotUniqueError,
+    InvalidLineNumberError as _InvalidLineNumberError
 } from '../../../../src/storage/memory-tool/errors';
 
 describe('Memory Tool Errors', () => {

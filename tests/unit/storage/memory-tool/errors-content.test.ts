@@ -2,8 +2,8 @@ import { describe, expect, it, spyOn } from 'bun:test';
 import {
     MemoryToolError,
     PathNotFoundError,
-    PathAlreadyExistsError,
-    InvalidPathError,
+    PathAlreadyExistsError as _PathAlreadyExistsError,
+    InvalidPathError as _InvalidPathError,
     TextNotFoundError,
     ContentTooLargeError,
     TextNotUniqueError,

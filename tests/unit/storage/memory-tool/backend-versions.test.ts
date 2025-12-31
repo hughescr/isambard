@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, spyOn as _spyOn } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import { assign as _assign, isError as _isError, some as _some, filter as _filter, startsWith as _startsWith, size as _size } from 'lodash';
 import {
@@ -7,11 +7,11 @@ import {
     PutCommand,
     DeleteCommand,
     QueryCommand,
-    ScanCommand
+    ScanCommand as _ScanCommand
 } from '@aws-sdk/lib-dynamodb';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
-import { ItemNotFoundError, ConflictError, ValidationError } from '@/storage/errors';
-import type { MemoryToolItem, MemoryPath, ContentType, LayerName } from '@/storage/memory-tool/types';
+import { ItemNotFoundError as _ItemNotFoundError, ConflictError as _ConflictError, ValidationError as _ValidationError } from '@/storage/errors';
+import type { MemoryToolItem, MemoryPath, ContentType, LayerName as _LayerName } from '@/storage/memory-tool/types';
 
 describe('MemoryToolBackend - Version Operations', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);

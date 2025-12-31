@@ -6,12 +6,12 @@ import {
     GetCommand,
     PutCommand,
     DeleteCommand,
-    QueryCommand,
-    ScanCommand
+    QueryCommand as _QueryCommand,
+    ScanCommand as _ScanCommand
 } from '@aws-sdk/lib-dynamodb';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import { ItemNotFoundError, ConflictError, ValidationError } from '@/storage/errors';
-import type { MemoryToolItem, MemoryPath, ContentType, LayerName } from '@/storage/memory-tool/types';
+import type { MemoryToolItem, MemoryPath, ContentType, LayerName as _LayerName } from '@/storage/memory-tool/types';
 
 describe('MemoryToolBackend', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
