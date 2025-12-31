@@ -1039,6 +1039,70 @@ describe('createDiscordBot', () => {
         });
     });
 
+    describe('Optional client parameter', () => {
+        it('should use provided client instead of creating a new one', () => {
+            const mockProvidedClient = {
+                on:      mock(() => mockProvidedClient),
+                login:   mock(async () => 'mock-token'),
+                destroy: mock(async () => undefined),
+                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+            } as unknown as Client;
+
+            const createClientSpy = spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockProvidedClient);
+            spies.push(createClientSpy);
+
+            createDiscordBot({
+                config:    mockConfig,
+                onMessage: mockOnMessage,
+                client:    mockProvidedClient,
+            });
+
+            // Should NOT call createDiscordClient when client is provided
+            expect(createClientSpy).not.toHaveBeenCalled();
+        });
+
+        it('should create new client when client is not provided', () => {
+            const mockClient = {
+                on:      mock(() => mockClient),
+                login:   mock(async () => 'mock-token'),
+                destroy: mock(async () => undefined),
+                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+            } as unknown as Client;
+
+            const createClientSpy = spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient);
+            spies.push(createClientSpy);
+
+            createDiscordBot({
+                config:    mockConfig,
+                onMessage: mockOnMessage,
+                // No client provided
+            });
+
+            // Should call createDiscordClient when client is not provided
+            expect(createClientSpy).toHaveBeenCalledWith(mockConfig);
+        });
+
+        it('should use the provided client for login', async () => {
+            const mockProvidedClient = {
+                on:      mock(() => mockProvidedClient),
+                login:   mock(async () => 'mock-token'),
+                destroy: mock(async () => undefined),
+                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+            } as unknown as Client;
+
+            // Don't spy on createDiscordClient - we want to verify we're using the provided client
+            const bot = createDiscordBot({
+                config:    mockConfig,
+                onMessage: mockOnMessage,
+                client:    mockProvidedClient,
+            });
+
+            await bot.start();
+
+            expect(mockProvidedClient.login).toHaveBeenCalledWith('test-bot-token');
+        });
+    });
+
     describe('Handler registration', () => {
         it('should register TWO clientReady handlers', () => {
             const mockClient = {

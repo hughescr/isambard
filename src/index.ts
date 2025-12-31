@@ -1,14 +1,22 @@
 import { Resource } from 'sst';
 import _ from 'lodash';
+import type { Client } from 'discord.js';
 import Anthropic from '@anthropic-ai/sdk';
+import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { loadConfig, loadDynamoDBConfig } from './config/loader';
 import { createDynamoDBClient } from './storage/client';
 import { MemoryToolBackend } from './storage/memory-tool';
+import { MessageCache } from './storage/message-cache/cache';
 import { createContextBuilder } from './agent/context-builder';
 import { createMemoryMCPServer } from './agent/memory-mcp-server';
+import { createDiscordMCPServer } from './agent/discord-mcp-server';
 import { createClaudeAgent } from './agent/agent';
 import { createDiscordBot } from './integrations/discord/bot';
 import type { DiscordBot } from './integrations/discord/bot';
+import { createDiscordClient } from './integrations/discord/client';
+import { createMessageFetcher } from './integrations/discord/message-history/fetcher';
+import { createMessageSummarizer } from './integrations/discord/message-history/summarizer';
+import { createMessageSearchService } from './integrations/discord/message-history/search';
 
 export interface App {
     /**
@@ -47,9 +55,11 @@ export async function createApp(): Promise<App> {
     // Set OAuth token for Agent SDK
     process.env.CLAUDE_CODE_OAUTH_TOKEN = config.agent.oauthToken;
 
-    // Try to create memory system (optional)
+    // Try to create memory system and Discord MCP (optional - requires DynamoDB)
     let contextBuilder;
-    let memoryMcpServer;
+    let memoryMcpServer: McpServerConfig | undefined;
+    let discordClient: Client | undefined;
+    let discordMcpServer: McpServerConfig | undefined;
 
     try {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- SST Resource type is complex
@@ -67,6 +77,32 @@ export async function createApp(): Promise<App> {
 
         // eslint-disable-next-line no-console -- Startup logging
         console.log(`Memory system initialized with DynamoDB: ${tableName} in ${dynamoDBConfig.region}`);
+
+        // Create Discord client early (shared with bot)
+        discordClient = createDiscordClient(config.discord);
+
+        // Create Anthropic client for message summarizer
+        const summarizerAnthropicClient = new Anthropic({
+            apiKey: config.agent.oauthToken,
+        });
+
+        // Create message history components
+        const messageFetcher = createMessageFetcher(discordClient);
+        const messageCache = new MessageCache(docClient, tableName);
+        const messageSummarizer = createMessageSummarizer({ anthropicClient: summarizerAnthropicClient });
+
+        // Create message search service
+        const messageSearchService = createMessageSearchService({
+            fetcher:    messageFetcher,
+            cache:      messageCache,
+            summarizer: messageSummarizer,
+        });
+
+        // Create Discord MCP server
+        discordMcpServer = createDiscordMCPServer(messageSearchService);
+
+        // eslint-disable-next-line no-console -- Startup logging
+        console.log('Discord message history enabled');
     } catch (error) {
         const errorMessage = _.isError(error) ? error.message : String(error);
         // eslint-disable-next-line no-console -- Warning about degraded functionality
@@ -78,6 +114,7 @@ export async function createApp(): Promise<App> {
     const agent = createClaudeAgent({
         contextBuilder,
         memoryMcpServer,
+        discordMcpServer,
     });
 
     // Create Anthropic client for presence idle status generation (if API key available)
@@ -105,6 +142,7 @@ export async function createApp(): Promise<App> {
     }
 
     // Create Discord bot with agent as message handler
+    // Use the pre-created client if available (shared with message fetcher)
     const bot: DiscordBot = createDiscordBot({
         config:    config.discord,
         onMessage: async (context) => {
@@ -113,6 +151,7 @@ export async function createApp(): Promise<App> {
         anthropicClient,
         identityContext,
         agent,
+        client: discordClient,
     });
 
     return {

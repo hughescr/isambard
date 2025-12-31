@@ -369,9 +369,11 @@ export function extractToolUses(message: { type: string, message?: { content?: u
 
 export interface ClaudeAgentOptions {
     /** Context builder for loading memory (core identity + recent context) */
-    contextBuilder?:  ContextBuilder
+    contextBuilder?:   ContextBuilder
     /** Memory MCP server instance for deep memory access */
-    memoryMcpServer?: McpServerConfig
+    memoryMcpServer?:  McpServerConfig
+    /** Discord MCP server instance for message history access */
+    discordMcpServer?: McpServerConfig
 }
 
 export interface ClaudeAgent {
@@ -396,8 +398,109 @@ export interface ClaudeAgent {
  * @param options Agent configuration
  * @returns Claude agent instance
  */
+/**
+ * Builds the mcpServers configuration object based on provided servers.
+ */
+function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: McpServerConfig): Record<string, McpServerConfig> | undefined {
+    if(!memoryMcpServer && !discordMcpServer) {
+        return undefined;
+    }
+
+    const servers: Record<string, McpServerConfig> = {};
+    if(memoryMcpServer) {
+        servers.memory = memoryMcpServer;
+    }
+    if(discordMcpServer) {
+        servers.discord = discordMcpServer;
+    }
+    return servers;
+}
+
+/**
+ * Builds the allowedTools list based on which MCP servers are configured.
+ */
+function buildAllowedTools(discordMcpServer?: McpServerConfig): string[] {
+    const baseTools = [
+        // Memory MCP tools (auto-approved)
+        'mcp__memory__view',
+        'mcp__memory__list',
+        'mcp__memory__storeSelf',
+        'mcp__memory__storeUserMemory',
+        'mcp__memory__logEvent',
+        'mcp__memory__search',
+        // Read-only and safe tools (auto-approved)
+        'Read',
+        'Glob',
+        'Grep',
+        'WebFetch',
+        'WebSearch',
+        'TodoWrite',
+        'EnterPlanMode',
+        'ExitPlanMode',
+        'Task',
+    ];
+
+    if(discordMcpServer) {
+        return [
+            ...baseTools,
+            // Discord MCP tools (auto-approved)
+            'mcp__discord__searchMessages',
+            'mcp__discord__getRecentMessages',
+            'mcp__discord__getMessageById',
+        ];
+    }
+
+    return baseTools;
+}
+
+/**
+ * Logs error details from result events in the stream.
+ * @param message Stream message to check for errors
+ */
+// Stryker disable all: Observability - error logging doesn't affect return value
+function logResultErrors(message: { type: string, is_error?: boolean, subtype?: string, errors?: unknown[] }): void {
+    if(message.type === 'result' && 'is_error' in message && message.is_error) {
+        logger.error({
+            subtype: 'subtype' in message ? message.subtype : undefined,
+            errors:  'errors' in message ? message.errors : [],
+            msg:     'Agent SDK returned error result',
+        });
+    }
+}
+// Stryker restore all
+
+/**
+ * Logs error details from assistant events in the stream.
+ * @param message Stream message to check for errors
+ */
+// Stryker disable all: Observability - error logging doesn't affect return value
+function logAssistantErrors(message: { type: string, error?: unknown }): void {
+    if(message.type === 'assistant' && 'error' in message && message.error) {
+        logger.error({
+            error: message.error,
+            msg:   'Agent SDK assistant message error',
+        });
+    }
+}
+// Stryker restore all
+
+/**
+ * Logs tool usage from assistant messages.
+ * @param message Stream message to extract tool uses from
+ */
+function logToolUsage(message: { type: string, message?: { content?: unknown } }): void {
+    const toolUses = extractToolUses(message);
+    for(const toolUse of toolUses) {
+        logger.debug({
+            toolName:  toolUse.name,
+            toolUseId: toolUse.id,
+            msg:       `Tool call: ${toolUse.name}`,
+        });
+    }
+}
+
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
-    const { contextBuilder, memoryMcpServer } = options;
+    const { contextBuilder, memoryMcpServer, discordMcpServer } = options;
 
     return {
         chat: async (context: DiscordMessageContext, onStreamEvent?: (event: AgentStreamEvent) => void): Promise<string | null> => {
@@ -421,7 +524,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                     msg:       'Agent starting to process message',
                 });
 
-                // 5. Query with memory MCP server and sandboxed execution
+                // 5. Query with MCP servers and sandboxed execution
                 const response = query({
                     prompt:  userMessage,
                     options: {
@@ -429,29 +532,11 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                         systemPrompt,
                         tools:          EXPLICIT_TOOLS,
                         agents:         EXPLICIT_AGENTS,
-                        mcpServers:     memoryMcpServer ? { memory: memoryMcpServer } : undefined,
+                        mcpServers:     buildMcpServers(memoryMcpServer, discordMcpServer),
                         permissionMode: 'acceptEdits',
-                        allowedTools:   [
-                            // Memory MCP tools (auto-approved)
-                            'mcp__memory__view',
-                            'mcp__memory__list',
-                            'mcp__memory__storeSelf',
-                            'mcp__memory__storeUserMemory',
-                            'mcp__memory__logEvent',
-                            'mcp__memory__search',
-                            // Read-only and safe tools (auto-approved)
-                            'Read',
-                            'Glob',
-                            'Grep',
-                            'WebFetch',
-                            'WebSearch',
-                            'TodoWrite',
-                            'EnterPlanMode',
-                            'ExitPlanMode',
-                            'Task',
-                        ],
+                        allowedTools:   buildAllowedTools(discordMcpServer),
                         // Stryker disable all: Observability - stderr logging doesn't affect behavior
-                        stderr: (data: string) => {
+                        stderr:         (data: string) => {
                             logger.error({ stderr: data, msg: 'Agent SDK stderr' });
                         },
                         // Stryker restore all
@@ -468,36 +553,10 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                         msg:       `Stream event: ${message.type}`,
                     });
 
-                    // Check for result errors
-                    // Stryker disable all: Observability - error logging doesn't affect return value
-                    if(message.type === 'result' && 'is_error' in message && message.is_error) {
-                        logger.error({
-                            subtype: 'subtype' in message ? message.subtype : undefined,
-                            errors:  'errors' in message ? message.errors : [],
-                            msg:     'Agent SDK returned error result',
-                        });
-                    }
-                    // Stryker restore all
-
-                    // Check for assistant message errors
-                    // Stryker disable all: Observability - error logging doesn't affect return value
-                    if(message.type === 'assistant' && 'error' in message && message.error) {
-                        logger.error({
-                            error: message.error,
-                            msg:   'Agent SDK assistant message error',
-                        });
-                    }
-                    // Stryker restore all
-
-                    // Log tool usage from assistant messages
-                    const toolUses = extractToolUses(message);
-                    for(const toolUse of toolUses) {
-                        logger.debug({
-                            toolName:  toolUse.name,
-                            toolUseId: toolUse.id,
-                            msg:       `Tool call: ${toolUse.name}`,
-                        });
-                    }
+                    // Log errors from stream events
+                    logResultErrors(message as { type: string, is_error?: boolean, subtype?: string, errors?: unknown[] });
+                    logAssistantErrors(message as { type: string, error?: unknown });
+                    logToolUsage(message);
 
                     // Invoke stream event callback if provided
                     if(onStreamEvent) {

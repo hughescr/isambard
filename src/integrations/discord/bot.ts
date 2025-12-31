@@ -46,6 +46,13 @@ export interface DiscordBotOptions {
      * Required if anthropicClient is provided.
      */
     agent?: ClaudeAgent
+
+    /**
+     * Optional pre-created Discord client.
+     * If provided, this client will be used instead of creating a new one.
+     * Useful when the client needs to be shared with other components.
+     */
+    client?: Client
 }
 
 /**
@@ -106,8 +113,8 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, onMessage, anthropicClient, identityContext, agent } = options;
-    const client: Client = createDiscordClient(config);
+    const { config, onMessage, anthropicClient, identityContext, agent, client: providedClient } = options;
+    const client: Client = providedClient ?? createDiscordClient(config);
     let presenceManager: PresenceManager | undefined;
 
     // Register error handler for Discord client errors
