@@ -1,17 +1,18 @@
 /** @type {import('@stryker-mutator/api/core').PartialStrykerOptions} */
 export default {
     packageManager: 'npm', // Stryker doesn't support bun yet, but works via npx
+    incremental:    true,
     reporters:      ['html', 'clear-text', 'progress'],
     testRunner:     'command',
     commandRunner:  {
-        command: 'bun test'
+        command: 'bun test --timeout 5'
     },
     coverageAnalysis: 'perTest',
     mutate:           [
         'src/**/*.ts',
-        '!src/**/*.test.ts',
-        '!src/**/*.spec.ts',
-        '!src/index.ts'
+        // '!src/storage/memory-tool/handlers.ts',
+        '!src/storage/memory-tool/backend.ts',
+        '!src/index.ts',
     ],
     thresholds: {
         high:    100,

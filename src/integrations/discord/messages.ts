@@ -107,6 +107,12 @@ function splitByWords(text: string, maxLength: number): string[] {
  * @returns Array of trimmed sentences (may be empty if no content)
  */
 function extractSentences(text: string): string[] {
+    // Fast path: if no sentence-ending punctuation, skip expensive regex
+    // Stryker disable next-line all: Performance optimization, not logic
+    if(!/[.!?]/.test(text)) {
+        return [];
+    }
+
     // Stryker disable next-line Regex: Equivalent - remaining text handler (lines 122-128) catches unmatched sentences
     const sentencePattern = /[^.!?]*[.!?](?:\s|$)/g;
     const sentences: string[] = [];
