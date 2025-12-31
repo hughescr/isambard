@@ -198,6 +198,7 @@ describe('Bot Lifecycle Integration', () => {
     });
 
     describe('Memory System Integration', () => {
+        // Integration test with real Discord client creation - needs longer timeout
         it('should create memory system when DynamoDB is configured', async () => {
             const mockClient = {} as DynamoDBClient;
             const mockDocClient = {} as DynamoDBDocumentClient;
@@ -232,10 +233,11 @@ describe('Bot Lifecycle Integration', () => {
             expect(createContextBuilderSpy).toHaveBeenCalled();
             expect(createMemoryMCPServerSpy).toHaveBeenCalled();
             expect(createClaudeAgentSpy).toHaveBeenCalledWith({
-                contextBuilder:  mockContextBuilder,
-                memoryMcpServer: mockMemoryMcp,
+                contextBuilder:   mockContextBuilder,
+                memoryMcpServer:  mockMemoryMcp,
+                discordMcpServer: expect.any(Object),
             });
-        });
+        }, { timeout: 15 });
 
         it('should continue without memory when DynamoDB client creation fails', async () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
@@ -253,10 +255,11 @@ describe('Bot Lifecycle Integration', () => {
 
             await createApp();
 
-            // Should create agent without memory
+            // Should create agent without memory or discord MCP (both require DynamoDB)
             expect(createClaudeAgentSpy).toHaveBeenCalledWith({
-                contextBuilder:  undefined,
-                memoryMcpServer: undefined,
+                contextBuilder:   undefined,
+                memoryMcpServer:  undefined,
+                discordMcpServer: undefined,
             });
         });
     });

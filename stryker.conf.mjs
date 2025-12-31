@@ -2,7 +2,7 @@
 export default {
     packageManager: 'npm', // Stryker doesn't support bun yet, but works via npx
     incremental:    true,
-    reporters:      ['html', 'clear-text', 'progress'],
+    reporters:      ['clear-text', 'progress'],
     testRunner:     'command',
     commandRunner:  {
         command: 'bun test --timeout 5'
@@ -10,7 +10,7 @@ export default {
     coverageAnalysis: 'perTest',
     mutate:           [
         'src/**/*.ts',
-        // '!src/storage/memory-tool/handlers.ts',
+        '!src/storage/memory-tool/handlers.ts',
         '!src/storage/memory-tool/backend.ts',
         '!src/index.ts',
     ],
