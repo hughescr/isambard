@@ -466,14 +466,7 @@ describe('createClaudeAgent', () => {
 
             const callArgs = querySpy.mock.calls[0][0];
             expect(callArgs.options.allowedTools).toEqual([
-                // Memory MCP tools
-                'mcp__memory__view',
-                'mcp__memory__list',
-                'mcp__memory__storeSelf',
-                'mcp__memory__storeUserMemory',
-                'mcp__memory__logEvent',
-                'mcp__memory__search',
-                // Read-only and safe tools
+                'mcp__memory__*',
                 'Read',
                 'Glob',
                 'Grep',
@@ -629,9 +622,7 @@ describe('createClaudeAgent', () => {
             await agent.chat(mockMessageContext);
 
             const callArgs = querySpy.mock.calls[0][0];
-            expect(callArgs.options.allowedTools).toContain('mcp__discord__searchMessages');
-            expect(callArgs.options.allowedTools).toContain('mcp__discord__getRecentMessages');
-            expect(callArgs.options.allowedTools).toContain('mcp__discord__getMessageById');
+            expect(callArgs.options.allowedTools).toContain('mcp__discord__*');
         });
     });
 });

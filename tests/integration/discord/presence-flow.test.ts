@@ -9,7 +9,6 @@ import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:tes
 import { constant as _constant } from 'lodash';
 import { ActivityType } from 'discord.js';
 import type { Client, Message, TextChannel } from 'discord.js';
-import type { Anthropic } from '@anthropic-ai/sdk';
 import { createActiveStatusGenerator } from '@/integrations/discord/presence/status-generator-active';
 import { createIdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
 import { createPresenceManager } from '@/integrations/discord/presence/manager';
@@ -19,15 +18,22 @@ import type { ClaudeAgent } from '@/agent/agent';
 import type { DiscordMessageContext, ChannelId, UserId, GuildId } from '@/integrations/discord/types';
 import type { AgentStreamEvent } from '@/agent/types';
 
+// Mock generateText module for idle status generator
+const mockGenerateText = mock(_constant(Promise.resolve('Contemplating digital dreams')));
+void mock.module('@/agent/text-generator', () => ({
+    generateText: mockGenerateText,
+}));
+
 describe('Discord Presence Flow (Integration)', () => {
     let mockDiscordClient: Client;
-    let mockAnthropicClient: Anthropic;
     let mockAgent: ClaudeAgent;
     let mockMessage: Message;
     let mockChannel: TextChannel;
 
     beforeEach(() => {
         jest.useFakeTimers();
+        mockGenerateText.mockReset();
+        mockGenerateText.mockImplementation(_constant(Promise.resolve('Contemplating digital dreams')));
 
         // Mock Discord client
         mockDiscordClient = {
@@ -35,15 +41,6 @@ describe('Discord Presence Flow (Integration)', () => {
                 setPresence: mock(async () => undefined),
             },
         } as unknown as Client;
-
-        // Mock Anthropic client for idle status generation
-        mockAnthropicClient = {
-            messages: {
-                create: mock(async () => ({
-                    content: [{ type: 'text', text: 'Contemplating digital dreams' }],
-                })),
-            },
-        } as unknown as Anthropic;
 
         // Mock channel with typing indicator
         mockChannel = {
@@ -81,7 +78,6 @@ describe('Discord Presence Flow (Integration)', () => {
         });
 
         const idleStatusGenerator = createIdleStatusGenerator({
-            anthropic:       mockAnthropicClient,
             logger,
             activityType:    ActivityType.Custom,
             identityContext: 'Test Bot',
@@ -180,7 +176,6 @@ describe('Discord Presence Flow (Integration)', () => {
         });
 
         const idleStatusGenerator = createIdleStatusGenerator({
-            anthropic:       mockAnthropicClient,
             logger,
             activityType:    ActivityType.Custom,
             identityContext: 'Test Bot',
@@ -284,7 +279,6 @@ describe('Discord Presence Flow (Integration)', () => {
         });
 
         const idleStatusGenerator = createIdleStatusGenerator({
-            anthropic:       mockAnthropicClient,
             logger,
             activityType:    ActivityType.Custom,
             identityContext: 'Test Bot',

@@ -1,6 +1,5 @@
 import type { Client } from 'discord.js';
 import { ActivityType } from 'discord.js';
-import type { Anthropic } from '@anthropic-ai/sdk';
 import { logger } from '@hughescr/logger';
 import type { DiscordConfig } from '@/config/schemas';
 import type { DiscordMessageContext, UserId, ChannelId } from './types';
@@ -30,20 +29,13 @@ export interface DiscordBotOptions {
     onMessage: (context: DiscordMessageContext) => Promise<string | null>
 
     /**
-     * Optional Anthropic client for idle status generation.
-     * If not provided, presence updates will be disabled.
-     */
-    anthropicClient?: Anthropic
-
-    /**
      * Optional identity context for personalizing idle status messages.
-     * Used when anthropicClient is provided.
+     * Used for generating creative idle status messages.
      */
     identityContext?: string
 
     /**
      * Claude agent instance for status middleware integration.
-     * Required if anthropicClient is provided.
      */
     agent?: ClaudeAgent
 
@@ -113,7 +105,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, onMessage, anthropicClient, identityContext, agent, client: providedClient } = options;
+    const { config, onMessage, identityContext, agent, client: providedClient } = options;
     const client: Client = providedClient ?? createDiscordClient(config);
     let presenceManager: PresenceManager | undefined;
 
@@ -130,14 +122,13 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         // because the 'clientReady' event only fires after successful authentication
 
         // Create presence manager if optional deps provided
-        if(anthropicClient && identityContext && config.presence) {
+        if(identityContext && config.presence) {
             const activeStatusGenerator = createActiveStatusGenerator({
                 activityType: ActivityType.Custom,
                 logger,
             });
 
             const idleStatusGenerator = createIdleStatusGenerator({
-                anthropic:    anthropicClient,
                 logger,
                 activityType: ActivityType.Custom,
                 identityContext,

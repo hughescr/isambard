@@ -1,7 +1,6 @@
 import { Resource } from 'sst';
 import _ from 'lodash';
 import type { Client } from 'discord.js';
-import Anthropic from '@anthropic-ai/sdk';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { loadConfig, loadDynamoDBConfig } from './config/loader';
 import { createDynamoDBClient } from './storage/client';
@@ -81,15 +80,10 @@ export async function createApp(): Promise<App> {
         // Create Discord client early (shared with bot)
         discordClient = createDiscordClient(config.discord);
 
-        // Create Anthropic client for message summarizer
-        const summarizerAnthropicClient = new Anthropic({
-            apiKey: config.agent.oauthToken,
-        });
-
         // Create message history components
         const messageFetcher = createMessageFetcher(discordClient);
         const messageCache = new MessageCache(docClient, tableName);
-        const messageSummarizer = createMessageSummarizer({ anthropicClient: summarizerAnthropicClient });
+        const messageSummarizer = createMessageSummarizer({});
 
         // Create message search service
         const messageSearchService = createMessageSearchService({
@@ -115,15 +109,10 @@ export async function createApp(): Promise<App> {
         discordMcpServer,
     });
 
-    // Create Anthropic client for presence idle status generation (if API key available)
-    let anthropicClient: Anthropic | undefined;
+    // Load identity context for presence idle status generation (if API key available)
     let identityContext: string | undefined;
 
     if(config.agent.oauthToken) {
-        anthropicClient = new Anthropic({
-            apiKey: config.agent.oauthToken,
-        });
-
         // Try to load identity context from memory system
         if(contextBuilder) {
             try {
@@ -145,7 +134,6 @@ export async function createApp(): Promise<App> {
         onMessage: async (context) => {
             return await agent.chat(context);
         },
-        anthropicClient,
         identityContext,
         agent,
         client: discordClient,

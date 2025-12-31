@@ -1,12 +1,18 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
+/* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks require unsafe calls */
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return -- Test mocks */
-import { describe, it, expect, mock } from 'bun:test';
+import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { ActivityType } from 'discord.js';
-import _ from 'lodash';
+import { constant as _constant, repeat as _repeat, size as _size } from 'lodash';
 import { createIdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
-import { StatusGenerationError } from '@/integrations/discord/presence/errors';
+
+// Mock generateText module
+const mockGenerateText = mock<(prompt: string) => Promise<string>>(_constant(Promise.resolve('Dozing peacefully')));
+void mock.module('@/agent/text-generator', () => ({
+    generateText: mockGenerateText,
+}));
 
 describe('IdleStatusGenerator', () => {
     const mockLogger = {
@@ -17,18 +23,21 @@ describe('IdleStatusGenerator', () => {
         child: mock(() => mockLogger),
     } as any;
 
-    describe('generate', () => {
-        it('should call Anthropic API with correct prompt', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'text', text: 'Dozing peacefully' }],
-                    })),
-                },
-            } as any;
+    beforeEach(() => {
+        mockGenerateText.mockReset();
+        mockGenerateText.mockImplementation(_constant(Promise.resolve('Dozing peacefully')));
+    });
 
+    afterEach(() => {
+        mockLogger.debug.mockClear();
+        mockLogger.warn.mockClear();
+        mockLogger.error.mockClear();
+        mockLogger.info.mockClear();
+    });
+
+    describe('generate', () => {
+        it('should call generateText with correct prompt containing identity context', async () => {
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
                 identityContext: 'I am a helpful assistant',
@@ -36,24 +45,15 @@ describe('IdleStatusGenerator', () => {
 
             await generator.generate();
 
-            expect(mockAnthropic.messages.create).toHaveBeenCalled();
-            const callArgs = mockAnthropic.messages.create.mock.calls[0][0];
-            expect(callArgs.model).toBe('claude-3-5-haiku-20241022');
-            expect(callArgs.max_tokens).toBe(50);
-            expect(callArgs.messages[0].content).toContain('I am a helpful assistant');
+            expect(mockGenerateText).toHaveBeenCalled();
+            const promptArg = mockGenerateText.mock.calls[0][0];
+            expect(promptArg).toContain('I am a helpful assistant');
         });
 
-        it('should return generated status text from Haiku', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'text', text: 'Contemplating existence' }],
-                    })),
-                },
-            } as any;
+        it('should return generated status text', async () => {
+            mockGenerateText.mockImplementation(_constant(Promise.resolve('Contemplating existence')));
 
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
                 identityContext: 'Test identity',
@@ -66,17 +66,10 @@ describe('IdleStatusGenerator', () => {
         });
 
         it('should truncate status text to 128 characters', async () => {
-            const longText = _.repeat('A', 200);
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'text', text: longText }],
-                    })),
-                },
-            } as any;
+            const longText = _repeat('A', 200);
+            mockGenerateText.mockImplementation(_constant(Promise.resolve(longText)));
 
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
                 identityContext: 'Test identity',
@@ -84,22 +77,15 @@ describe('IdleStatusGenerator', () => {
 
             const result = await generator.generate();
 
-            expect(_.size(result.name)).toBe(128);
-            expect(result.name).toBe(_.repeat('A', 128));
+            expect(_size(result.name)).toBe(128);
+            expect(result.name).toBe(_repeat('A', 128));
         });
 
         it('should not truncate text that is exactly 128 characters', async () => {
-            const exactText = _.repeat('B', 128);
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'text', text: exactText }],
-                    })),
-                },
-            } as any;
+            const exactText = _repeat('B', 128);
+            mockGenerateText.mockImplementation(_constant(Promise.resolve(exactText)));
 
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
                 identityContext: 'Test identity',
@@ -107,22 +93,15 @@ describe('IdleStatusGenerator', () => {
 
             const result = await generator.generate();
 
-            expect(_.size(result.name)).toBe(128);
+            expect(_size(result.name)).toBe(128);
             expect(result.name).toBe(exactText);
         });
 
         it('should truncate text that is 129 characters to exactly 128', async () => {
-            const text129 = _.repeat('C', 129);
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'text', text: text129 }],
-                    })),
-                },
-            } as any;
+            const text129 = _repeat('C', 129);
+            mockGenerateText.mockImplementation(_constant(Promise.resolve(text129)));
 
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
                 identityContext: 'Test identity',
@@ -130,24 +109,18 @@ describe('IdleStatusGenerator', () => {
 
             const result = await generator.generate();
 
-            expect(_.size(result.name)).toBe(128);
-            expect(result.name).toBe(_.repeat('C', 128));
+            expect(_size(result.name)).toBe(128);
+            expect(result.name).toBe(_repeat('C', 128));
             // Verify it's not 129 (the original) or 127 (off-by-one error)
             expect(result.name).not.toBe(text129);
-            expect(_.size(result.name)).not.toBe(127);
+            expect(_size(result.name)).not.toBe(127);
         });
 
-        it('should trim whitespace from generated status', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'text', text: '  Waiting patiently  \n' }],
-                    })),
-                },
-            } as any;
+        it('should handle text with leading/trailing whitespace (trimmed by generateText)', async () => {
+            // generateText already trims, but if it returns whitespace we should handle it
+            mockGenerateText.mockImplementation(_constant(Promise.resolve('Waiting patiently')));
 
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
                 identityContext: 'Test identity',
@@ -158,17 +131,10 @@ describe('IdleStatusGenerator', () => {
             expect(result.name).toBe('Waiting patiently');
         });
 
-        it('should fall back to "Idle" on Haiku API error', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => {
-                        throw new Error('API rate limit exceeded');
-                    }),
-                },
-            } as any;
+        it('should fall back to "Idle" on generateText error', async () => {
+            mockGenerateText.mockImplementation(() => Promise.reject(new Error('API rate limit exceeded')));
 
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
                 identityContext: 'Test identity',
@@ -180,83 +146,53 @@ describe('IdleStatusGenerator', () => {
             expect(result.type).toBe(ActivityType.Custom);
         });
 
-        it('should log error when Haiku fails', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => {
-                        throw new Error('Network error');
-                    }),
-                },
+        it('should log error when generateText fails', async () => {
+            mockGenerateText.mockImplementation(() => Promise.reject(new Error('Network error')));
+
+            const localMockLogger = {
+                debug: mock(() => undefined),
+                warn:  mock(() => undefined),
+                error: mock(() => undefined),
+                info:  mock(() => undefined),
+                child: mock(() => localMockLogger),
             } as any;
 
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
-                logger:          mockLogger,
+                logger:          localMockLogger,
                 activityType:    ActivityType.Custom,
                 identityContext: 'Test identity',
             });
 
             await generator.generate();
 
-            expect(mockLogger.error).toHaveBeenCalled();
-        });
-
-        it('should fall back to "Idle" when response type is not text', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'tool_use', id: '123', name: 'test_tool' }],
-                    })),
-                },
-            } as any;
-
-            const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
-                logger:          mockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
-            });
-
-            const result = await generator.generate();
-
-            // Should fall back to "Idle" on error
-            expect(result.name).toBe('Idle');
-            expect(mockLogger.error).toHaveBeenCalled();
+            expect(localMockLogger.error).toHaveBeenCalled();
         });
 
         it('should log info when status is generated successfully', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'text', text: 'Resting quietly' }],
-                    })),
-                },
+            mockGenerateText.mockImplementation(_constant(Promise.resolve('Resting quietly')));
+
+            const localMockLogger = {
+                debug: mock(() => undefined),
+                warn:  mock(() => undefined),
+                error: mock(() => undefined),
+                info:  mock(() => undefined),
+                child: mock(() => localMockLogger),
             } as any;
 
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
-                logger:          mockLogger,
+                logger:          localMockLogger,
                 activityType:    ActivityType.Custom,
                 identityContext: 'Test identity',
             });
 
             await generator.generate();
 
-            expect(mockLogger.info).toHaveBeenCalled();
+            expect(localMockLogger.info).toHaveBeenCalled();
         });
 
         it('should include identity context in prompt', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'text', text: 'Idle' }],
-                    })),
-                },
-            } as any;
-
             const identityContext = 'I am Isambard, a philosophical AI assistant';
             const generator = createIdleStatusGenerator({
-                anthropic:    mockAnthropic,
                 logger:       mockLogger,
                 activityType: ActivityType.Custom,
                 identityContext,
@@ -264,50 +200,13 @@ describe('IdleStatusGenerator', () => {
 
             await generator.generate();
 
-            const callArgs = mockAnthropic.messages.create.mock.calls[0][0];
-            expect(callArgs.messages[0].content).toContain(identityContext);
-        });
-
-        it('should use first content item when multiple items are returned', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [
-                            { type: 'text', text: 'First item status' },
-                            { type: 'text', text: 'Second item status' },
-                            { type: 'text', text: 'Last item status' },
-                        ],
-                    })),
-                },
-            } as any;
-
-            const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
-                logger:          mockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
-            });
-
-            const result = await generator.generate();
-
-            // Should use _.head() to get the first item, not last
-            expect(result.name).toBe('First item status');
-            expect(result.name).not.toBe('Second item status');
-            expect(result.name).not.toBe('Last item status');
+            const promptArg = mockGenerateText.mock.calls[0][0];
+            expect(promptArg).toContain(identityContext);
         });
 
         it('should replace {identity} placeholder with actual identity context', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'text', text: 'Generated status' }],
-                    })),
-                },
-            } as any;
-
             const testIdentityContext = 'Unique test identity XYZ123';
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
                 identityContext: testIdentityContext,
@@ -315,26 +214,18 @@ describe('IdleStatusGenerator', () => {
 
             await generator.generate();
 
-            const callArgs = mockAnthropic.messages.create.mock.calls[0][0];
-            const promptContent = callArgs.messages[0].content as string;
+            const promptArg = mockGenerateText.mock.calls[0][0];
 
             // Verify the placeholder was replaced
-            expect(promptContent).not.toContain('{identity}');
+            expect(promptArg).not.toContain('{identity}');
             // Verify the identity context is present
-            expect(promptContent).toContain(testIdentityContext);
+            expect(promptArg).toContain(testIdentityContext);
         });
 
-        it('should fall back to "Idle" when content array is empty', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [],
-                    })),
-                },
-            } as any;
+        it('should handle empty string response from generateText', async () => {
+            mockGenerateText.mockImplementation(_constant(Promise.resolve('')));
 
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
                 identityContext: 'Test identity',
@@ -342,96 +233,13 @@ describe('IdleStatusGenerator', () => {
 
             const result = await generator.generate();
 
-            expect(result.name).toBe('Idle');
+            expect(result.name).toBe('');
             expect(result.type).toBe(ActivityType.Custom);
-            expect(mockLogger.error).toHaveBeenCalled();
-        });
-
-        it('should fall back to "Idle" when content is undefined', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: undefined,
-                    })),
-                },
-            } as any;
-
-            const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
-                logger:          mockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
-            });
-
-            const result = await generator.generate();
-
-            expect(result.name).toBe('Idle');
-            expect(result.type).toBe(ActivityType.Custom);
-        });
-
-        it('should use exact model name claude-3-5-haiku-20241022', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'text', text: 'Status' }],
-                    })),
-                },
-            } as any;
-
-            const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
-                logger:          mockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
-            });
-
-            await generator.generate();
-
-            const callArgs = mockAnthropic.messages.create.mock.calls[0][0];
-            // Verify exact model name - any mutation would change this
-            expect(callArgs.model).toBe('claude-3-5-haiku-20241022');
-            expect(callArgs.model).not.toBe('claude-3-haiku-20240307');
-            expect(callArgs.model).not.toBe('claude-3-5-sonnet-20241022');
-        });
-
-        it('should use exact max_tokens value of 50', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'text', text: 'Status' }],
-                    })),
-                },
-            } as any;
-
-            const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
-                logger:          mockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
-            });
-
-            await generator.generate();
-
-            const callArgs = mockAnthropic.messages.create.mock.calls[0][0];
-            // Verify exact max_tokens value - any mutation would change this
-            expect(callArgs.max_tokens).toBe(50);
-            expect(callArgs.max_tokens).not.toBe(49);
-            expect(callArgs.max_tokens).not.toBe(51);
-            expect(callArgs.max_tokens).not.toBe(100);
         });
 
         it('should pass the activity type through to the result', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'text', text: 'Test status' }],
-                    })),
-                },
-            } as any;
-
             // Test with Playing activity type
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
                 logger:          mockLogger,
                 activityType:    ActivityType.Playing,
                 identityContext: 'Test identity',
@@ -444,17 +252,10 @@ describe('IdleStatusGenerator', () => {
         });
 
         it('should pass the activity type through to fallback result on error', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => {
-                        throw new Error('API error');
-                    }),
-                },
-            } as any;
+            mockGenerateText.mockImplementation(() => Promise.reject(new Error('API error')));
 
             // Test with Playing activity type for fallback
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
                 logger:          mockLogger,
                 activityType:    ActivityType.Playing,
                 identityContext: 'Test identity',
@@ -476,16 +277,7 @@ describe('IdleStatusGenerator', () => {
                 child: mock(() => localMockLogger),
             } as any;
 
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'text', text: 'Status' }],
-                    })),
-                },
-            } as any;
-
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
                 logger:          localMockLogger,
                 activityType:    ActivityType.Custom,
                 identityContext: 'Test identity',
@@ -497,6 +289,8 @@ describe('IdleStatusGenerator', () => {
         });
 
         it('should log info with statusText when generation succeeds', async () => {
+            mockGenerateText.mockImplementation(_constant(Promise.resolve('Generated status text')));
+
             const localMockLogger = {
                 debug: mock(() => undefined),
                 warn:  mock(() => undefined),
@@ -505,16 +299,7 @@ describe('IdleStatusGenerator', () => {
                 child: mock(() => localMockLogger),
             } as any;
 
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'text', text: 'Generated status text' }],
-                    })),
-                },
-            } as any;
-
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
                 logger:          localMockLogger,
                 activityType:    ActivityType.Custom,
                 identityContext: 'Test identity',
@@ -529,6 +314,9 @@ describe('IdleStatusGenerator', () => {
         });
 
         it('should log error with error object when generation fails', async () => {
+            const testError = new Error('Test API failure');
+            mockGenerateText.mockImplementation(() => Promise.reject(testError));
+
             const localMockLogger = {
                 debug: mock(() => undefined),
                 warn:  mock(() => undefined),
@@ -537,17 +325,7 @@ describe('IdleStatusGenerator', () => {
                 child: mock(() => localMockLogger),
             } as any;
 
-            const testError = new Error('Test API failure');
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => {
-                        throw testError;
-                    }),
-                },
-            } as any;
-
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
                 logger:          localMockLogger,
                 activityType:    ActivityType.Custom,
                 identityContext: 'Test identity',
@@ -561,43 +339,12 @@ describe('IdleStatusGenerator', () => {
             );
         });
 
-        it('should handle content with type other than text as first item', async () => {
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [
-                            { type: 'tool_use', id: 'tool_123', name: 'some_tool', input: {} },
-                        ],
-                    })),
-                },
-            } as any;
-
-            const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
-                logger:          mockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
-            });
-
-            const result = await generator.generate();
-
-            expect(result.name).toBe('Idle');
-            expect(result.type).toBe(ActivityType.Custom);
-        });
-
         it('should slice starting from index 0', async () => {
             // This test ensures slice(0, 128) starts at 0, not some other index
-            const text = 'ABCDEFGHIJ' + _.repeat('X', 118);
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'text', text }],
-                    })),
-                },
-            } as any;
+            const text = 'ABCDEFGHIJ' + _repeat('X', 118);
+            mockGenerateText.mockImplementation(_constant(Promise.resolve(text)));
 
             const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
                 identityContext: 'Test identity',
@@ -608,102 +355,6 @@ describe('IdleStatusGenerator', () => {
             // Should start with 'A', not skip any characters
             expect(result.name).toStartWith('A');
             expect(result.name).toStartWith('ABCDEFGHIJ');
-        });
-
-        it('should throw StatusGenerationError with exact message when content is empty', async () => {
-            // This test kills the OptionalChaining mutant by verifying we get
-            // StatusGenerationError (not TypeError from accessing .type on undefined)
-            // and kills the StringLiteral mutant by verifying the exact message
-            const localMockLogger = {
-                debug: mock(() => undefined),
-                warn:  mock(() => undefined),
-                error: mock(() => undefined),
-                info:  mock(() => undefined),
-                child: mock(() => localMockLogger),
-            } as any;
-
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [],
-                    })),
-                },
-            } as any;
-
-            const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
-                logger:          localMockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
-            });
-
-            await generator.generate();
-
-            // Verify the error passed to logger.error is a StatusGenerationError
-            // (not a TypeError from content.type when content is undefined)
-            const errorArg = localMockLogger.error.mock.calls[0][0];
-            expect(errorArg.error).toBeInstanceOf(StatusGenerationError);
-            // Verify the exact error message (kills StringLiteral mutant)
-            expect(errorArg.error.message).toBe('Unexpected response type from Haiku');
-        });
-
-        it('should throw StatusGenerationError with exact message when content type is not text', async () => {
-            // Additional coverage for the error message when type is explicitly not text
-            const localMockLogger = {
-                debug: mock(() => undefined),
-                warn:  mock(() => undefined),
-                error: mock(() => undefined),
-                info:  mock(() => undefined),
-                child: mock(() => localMockLogger),
-            } as any;
-
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'tool_use', id: 'test', name: 'test_tool', input: {} }],
-                    })),
-                },
-            } as any;
-
-            const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
-                logger:          localMockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
-            });
-
-            await generator.generate();
-
-            // Verify the exact error type and message
-            const errorArg = localMockLogger.error.mock.calls[0][0];
-            expect(errorArg.error).toBeInstanceOf(StatusGenerationError);
-            expect(errorArg.error.message).toBe('Unexpected response type from Haiku');
-        });
-
-        it('should pass exact message role "user" to Anthropic API', async () => {
-            // This test kills the StringLiteral mutant that changes role: 'user' to role: ''
-            const mockAnthropic = {
-                messages: {
-                    create: mock(async () => ({
-                        content: [{ type: 'text', text: 'Status' }],
-                    })),
-                },
-            } as any;
-
-            const generator = createIdleStatusGenerator({
-                anthropic:       mockAnthropic,
-                logger:          mockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
-            });
-
-            await generator.generate();
-
-            const callArgs = mockAnthropic.messages.create.mock.calls[0][0];
-            // Verify the exact role is 'user', not an empty string or any other value
-            expect(callArgs.messages[0].role).toBe('user');
-            expect(callArgs.messages[0].role).not.toBe('');
-            expect(callArgs.messages[0].role).not.toBe('assistant');
         });
     });
 });

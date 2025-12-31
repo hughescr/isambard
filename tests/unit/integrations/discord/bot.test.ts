@@ -291,7 +291,6 @@ describe('createDiscordBot', () => {
 
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
-            const mockAnthropicClient = { messages: { create: mock(async () => ({})) } };
             const mockAgent = { chat: mock(async () => 'response') };
 
             // Should not throw when optional presence dependencies are provided
@@ -299,8 +298,6 @@ describe('createDiscordBot', () => {
             expect(() => createDiscordBot({
                 config:          mockConfig,
                 onMessage:       mockOnMessage,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
-                anthropicClient: mockAnthropicClient as any,
                 identityContext: 'Test identity',
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
                 agent:           mockAgent as any,
@@ -329,7 +326,7 @@ describe('createDiscordBot', () => {
         });
 
         describe('Presence manager creation conditions', () => {
-            it('should NOT create presence manager when anthropicClient is missing', () => {
+            it('should NOT create presence manager when identityContext is missing (without anthropicClient)', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -351,10 +348,9 @@ describe('createDiscordBot', () => {
                 spies.push(presenceManagerSpy);
 
                 createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    // anthropicClient missing
-                    identityContext: 'Test identity',
+                    config:    configWithPresence,
+                    onMessage: mockOnMessage,
+                    // identityContext missing - presence manager should not be created
                 });
 
                 // Simulate clientReady event
@@ -387,13 +383,9 @@ describe('createDiscordBot', () => {
                 const presenceManagerSpy = spyOn(presenceModule, 'createPresenceManager');
                 spies.push(presenceManagerSpy);
 
-                const mockAnthropicClient = { messages: { create: mock(async () => ({})) } };
-
                 createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
-                    anthropicClient: mockAnthropicClient as any,
+                    config:    configWithPresence,
+                    onMessage: mockOnMessage,
                     // identityContext missing
                 });
 
@@ -418,13 +410,9 @@ describe('createDiscordBot', () => {
                 const presenceManagerSpy = spyOn(presenceModule, 'createPresenceManager');
                 spies.push(presenceManagerSpy);
 
-                const mockAnthropicClient = { messages: { create: mock(async () => ({})) } };
-
                 createDiscordBot({
                     config:          mockConfig, // no presence config
                     onMessage:       mockOnMessage,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
-                    anthropicClient: mockAnthropicClient as any,
                     identityContext: 'Test identity',
                 });
 
@@ -474,13 +462,9 @@ describe('createDiscordBot', () => {
                 });
                 spies.push(idleGenSpy);
 
-                const mockAnthropicClient = { messages: { create: mock(async () => ({})) } };
-
                 createDiscordBot({
                     config:          configWithPresence,
                     onMessage:       mockOnMessage,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
-                    anthropicClient: mockAnthropicClient as any,
                     identityContext: 'Test identity',
                 });
 
@@ -529,13 +513,9 @@ describe('createDiscordBot', () => {
                     generate: mock(async () => ({ name: 'Idle', type: 4 })),
                 }));
 
-                const mockAnthropicClient = { messages: { create: mock(async () => ({})) } };
-
                 createDiscordBot({
                     config:          configWithPresence,
                     onMessage:       mockOnMessage,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
-                    anthropicClient: mockAnthropicClient as any,
                     identityContext: 'Test identity',
                 });
 
@@ -582,13 +562,9 @@ describe('createDiscordBot', () => {
                     generate: mock(async () => ({ name: 'Idle', type: 4 })),
                 }));
 
-                const mockAnthropicClient = { messages: { create: mock(async () => ({})) } };
-
                 const bot = createDiscordBot({
                     config:          configWithPresence,
                     onMessage:       mockOnMessage,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
-                    anthropicClient: mockAnthropicClient as any,
                     identityContext: 'Test identity',
                 });
 
@@ -663,13 +639,9 @@ describe('createDiscordBot', () => {
                     generate: mock(async () => ({ name: 'Idle', type: 4 })),
                 }));
 
-                const mockAnthropicClient = { messages: { create: mock(async () => ({})) } };
-
                 const bot = createDiscordBot({
                     config:          configWithPresence,
                     onMessage:       mockOnMessage,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
-                    anthropicClient: mockAnthropicClient as any,
                     identityContext: 'Test identity',
                 });
 
@@ -721,13 +693,9 @@ describe('createDiscordBot', () => {
                     generate: mock(async () => ({ name: 'Idle', type: 4 })),
                 }));
 
-                const mockAnthropicClient = { messages: { create: mock(async () => ({})) } };
-
                 createDiscordBot({
                     config:          configWithPresence,
                     onMessage:       mockOnMessage,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
-                    anthropicClient: mockAnthropicClient as any,
                     identityContext: 'Test identity',
                 });
 
@@ -742,7 +710,7 @@ describe('createDiscordBot', () => {
                 }));
             });
 
-            it('should create idle status generator with anthropicClient and identityContext', () => {
+            it('should create idle status generator with identityContext', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -777,13 +745,9 @@ describe('createDiscordBot', () => {
                 });
                 spies.push(idleGenSpy);
 
-                const mockAnthropicClient = { messages: { create: mock(async () => ({})) } };
-
                 createDiscordBot({
                     config:          configWithPresence,
                     onMessage:       mockOnMessage,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
-                    anthropicClient: mockAnthropicClient as any,
                     identityContext: 'Test identity',
                 });
 
@@ -794,7 +758,6 @@ describe('createDiscordBot', () => {
                 messageCreateSetupHandler(mockClient);
 
                 expect(idleGenSpy).toHaveBeenCalledWith(expect.objectContaining({
-                    anthropic:       mockAnthropicClient,
                     identityContext: 'Test identity',
                     activityType:    4,
                 }));
@@ -835,13 +798,9 @@ describe('createDiscordBot', () => {
                     generate: mock(async () => ({ name: 'Idle', type: 4 })),
                 }));
 
-                const mockAnthropicClient = { messages: { create: mock(async () => ({})) } };
-
                 createDiscordBot({
                     config:          configWithPresence,
                     onMessage:       mockOnMessage,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
-                    anthropicClient: mockAnthropicClient as any,
                     identityContext: 'Test identity',
                 });
 
@@ -896,13 +855,9 @@ describe('createDiscordBot', () => {
                 const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockReturnValue(mock(async () => undefined));
                 spies.push(messageHandlerSpy);
 
-                const mockAnthropicClient = { messages: { create: mock(async () => ({})) } };
-
                 createDiscordBot({
                     config:          configWithPresence,
                     onMessage:       mockOnMessage,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
-                    anthropicClient: mockAnthropicClient as any,
                     identityContext: 'Test identity',
                 });
 
@@ -954,14 +909,11 @@ describe('createDiscordBot', () => {
                 const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockReturnValue(mock(async () => undefined));
                 spies.push(messageHandlerSpy);
 
-                const mockAnthropicClient = { messages: { create: mock(async () => ({})) } };
                 const mockAgent = { chat: mock(async () => 'response') };
 
                 createDiscordBot({
                     config:          configWithPresence,
                     onMessage:       mockOnMessage,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
-                    anthropicClient: mockAnthropicClient as any,
                     identityContext: 'Test identity',
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
                     agent:           mockAgent as any,

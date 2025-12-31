@@ -6,9 +6,8 @@
  */
 
 import type { ActivitiesOptions, ActivityType } from 'discord.js';
-import type { Anthropic } from '@anthropic-ai/sdk';
 import _ from 'lodash';
-import { StatusGenerationError } from './errors.js';
+import { generateText } from '@/agent/text-generator';
 
 /**
  * Interface for generating idle status text using AI.
@@ -27,8 +26,6 @@ export interface IdleStatusGenerator {
  * Dependencies for creating an idle status generator.
  */
 export interface IdleStatusGeneratorDeps {
-    /** Anthropic API client for Haiku calls */
-    anthropic: Anthropic
     /** Logger instance for structured logging */
     logger: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
@@ -66,13 +63,12 @@ Output ONLY the status text, nothing else.`;
  * The generator uses Claude Haiku to create personality-driven idle status messages.
  * On failure (API error, timeout, etc.), it falls back to a simple "Idle" status.
  *
- * @param deps - Dependencies including Anthropic client, logger, and identity context
+ * @param deps - Dependencies including logger and identity context
  * @returns IdleStatusGenerator instance
  *
  * @example
  * ```typescript
  * const generator = createIdleStatusGenerator({
- *   anthropic: myAnthropicClient,
  *   logger: myLogger,
  *   activityType: ActivityType.Custom,
  *   identityContext: 'I am a helpful AI assistant'
@@ -85,7 +81,7 @@ Output ONLY the status text, nothing else.`;
 export function createIdleStatusGenerator(
     deps: IdleStatusGeneratorDeps
 ): IdleStatusGenerator {
-    const { anthropic, logger, activityType, identityContext } = deps;
+    const { logger, activityType, identityContext } = deps;
 
     return {
         async generate(): Promise<ActivitiesOptions> {
@@ -93,21 +89,10 @@ export function createIdleStatusGenerator(
                 logger.debug('Generating idle status with Haiku');
 
                 const prompt = _.replace(IDLE_STATUS_PROMPT, '{identity}', identityContext);
+                const text = await generateText(prompt);
+                const statusText = text.slice(0, 128);
 
-                const response = await anthropic.messages.create({
-                    model:      'claude-3-5-haiku-20241022',
-                    max_tokens: 50,
-                    messages:   [{ role: 'user', content: prompt }],
-                });
-
-                const content = _.head(response.content);
-                if(content?.type !== 'text') {
-                    throw new StatusGenerationError('Unexpected response type from Haiku');
-                }
-
-                const statusText = _.trim(content.text).slice(0, 128);
                 logger.info({ statusText }, 'Generated idle status');
-
                 return { name: statusText, type: activityType };
             } catch (error) {
                 logger.error({ error }, 'Failed to generate idle status, using fallback');

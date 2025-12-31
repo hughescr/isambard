@@ -8,29 +8,16 @@
  * This prevents any possibility of ID hallucination or mangling.
  */
 
-import type Anthropic from '@anthropic-ai/sdk';
 import _ from 'lodash';
+import { generateText } from '@/agent/text-generator';
 import type { DiscordSearchResult, OverflowSummary } from './types';
-
-/**
- * Error thrown when Haiku returns an unexpected response format.
- */
-export class SummarizerResponseError extends Error {
-    constructor(message: string) {
-        super(message);
-        // Stryker disable next-line StringLiteral: Error class name is not behavior
-        this.name = 'SummarizerResponseError';
-    }
-}
 
 /**
  * Options for creating a message summarizer.
  */
 export interface SummarizerOptions {
-    /** Anthropic API client for Haiku calls */
-    anthropicClient: Anthropic
     /** Maximum concurrent Haiku requests (default: 10) */
-    maxConcurrent?:  number
+    maxConcurrent?: number
 }
 
 /**
@@ -46,9 +33,6 @@ export interface MessageSummarizer {
      */
     summarizeMessages(messages: DiscordSearchResult[]): Promise<OverflowSummary[]>
 }
-
-// Stryker disable next-line StringLiteral: Configuration string for Haiku model
-const HAIKU_MODEL = 'claude-3-5-haiku-20241022';
 
 // Stryker disable next-line StringLiteral: Configuration prompt template
 const SUMMARIZATION_PROMPT = `Summarize this Discord message in 1-2 sentences (~50 words max).
@@ -102,7 +86,6 @@ function createSemaphore(maxConcurrent: number): {
  * @example
  * ```typescript
  * const summarizer = createMessageSummarizer({
- *   anthropicClient: myAnthropicClient,
  *   maxConcurrent: 5,
  * });
  *
@@ -111,7 +94,7 @@ function createSemaphore(maxConcurrent: number): {
  * ```
  */
 export function createMessageSummarizer(options: SummarizerOptions): MessageSummarizer {
-    const { anthropicClient, maxConcurrent = 10 } = options;
+    const { maxConcurrent = 10 } = options;
 
     /**
      * Summarize a single message using Haiku.
@@ -121,21 +104,7 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
     async function summarizeContent(content: string): Promise<string> {
         // Stryker disable next-line StringLiteral: Template placeholder for content substitution
         const prompt = _.replace(SUMMARIZATION_PROMPT, '{content}', content);
-
-        const response = await anthropicClient.messages.create({
-            model:      HAIKU_MODEL,
-            max_tokens: 100,
-            // Stryker disable next-line StringLiteral: API role constant
-            messages:   [{ role: 'user', content: prompt }],
-        });
-
-        const firstContent = _.head(response.content);
-        if(firstContent?.type !== 'text') {
-            // Stryker disable next-line StringLiteral: Error message text is not behavior
-            throw new SummarizerResponseError('Unexpected response type from Haiku');
-        }
-
-        return _.trim(firstContent.text);
+        return await generateText(prompt);
     }
 
     return {
