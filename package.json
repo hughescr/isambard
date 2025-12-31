@@ -6,7 +6,6 @@
   "main": "src/index.ts",
   "scripts": {
     "build": "bun build src/index.ts --outdir dist --target bun",
-    "db:setup": "bun run scripts/migrate-db.ts",
     "dev": "bun --watch src/index.ts",
     "dev:docker": "docker compose -f docker/docker-compose.yml up --build",
     "dev:sst": "bunx sst shell -- bun --watch src/index.ts",
