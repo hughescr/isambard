@@ -17,6 +17,7 @@ import { createDiscordClient } from './integrations/discord/client';
 import { createMessageFetcher } from './integrations/discord/message-history/fetcher';
 import { createMessageSummarizer } from './integrations/discord/message-history/summarizer';
 import { createMessageSearchService } from './integrations/discord/message-history/search';
+import { logger } from '@hughescr/logger';
 
 export interface App {
     /**
@@ -75,8 +76,7 @@ export async function createApp(): Promise<App> {
         // Create MCP server (for deep memory access)
         memoryMcpServer = createMemoryMCPServer(memoryBackend);
 
-        // eslint-disable-next-line no-console -- Startup logging
-        console.log(`Memory system initialized with DynamoDB: ${tableName} in ${dynamoDBConfig.region}`);
+        logger.info(`Memory system initialized with DynamoDB: ${tableName} in ${dynamoDBConfig.region}`);
 
         // Create Discord client early (shared with bot)
         discordClient = createDiscordClient(config.discord);
@@ -101,12 +101,10 @@ export async function createApp(): Promise<App> {
         // Create Discord MCP server
         discordMcpServer = createDiscordMCPServer(messageSearchService);
 
-        // eslint-disable-next-line no-console -- Startup logging
-        console.log('Discord message history enabled');
+        logger.info('Discord message history enabled');
     } catch (error) {
         const errorMessage = _.isError(error) ? error.message : String(error);
-        // eslint-disable-next-line no-console -- Warning about degraded functionality
-        console.log(`Memory not configured, continuing without persistent memory: ${errorMessage}`);
+        logger.warn(`Memory not configured, continuing without persistent memory: ${errorMessage}`);
         // Continue without memory system
     }
 
@@ -132,8 +130,7 @@ export async function createApp(): Promise<App> {
                 identityContext = await contextBuilder.loadCoreIdentity() || 'Isambard - AI Assistant';
             } catch (error) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
-                // eslint-disable-next-line no-console -- Warning logging
-                console.log(`Failed to load identity context: ${errorMessage}`);
+                logger.warn(`Failed to load identity context: ${errorMessage}`);
                 identityContext = 'Isambard - AI Assistant';
             }
         } else {
@@ -156,19 +153,15 @@ export async function createApp(): Promise<App> {
 
     return {
         start: async () => {
-            // eslint-disable-next-line no-console -- Startup logging
-            console.log('Starting Isambard application...');
+            logger.info('Starting Isambard application...');
             await bot.start();
-            // eslint-disable-next-line no-console -- Startup logging
-            console.log('Isambard application started successfully');
+            logger.info('Isambard application started successfully');
         },
 
         stop: async () => {
-            // eslint-disable-next-line no-console -- Shutdown logging
-            console.log('Stopping Isambard application...');
+            logger.info('Stopping Isambard application...');
             await bot.stop();
-            // eslint-disable-next-line no-console -- Shutdown logging
-            console.log('Isambard application stopped');
+            logger.info('Isambard application stopped');
         },
     };
 }
@@ -176,8 +169,7 @@ export async function createApp(): Promise<App> {
 // Application entry point - only run if this is the main module
 // eslint-disable-next-line n/no-unsupported-features/node-builtins -- import.meta.main is required for Bun
 if(import.meta.main) {
-    // eslint-disable-next-line no-console -- Startup message
-    console.log('Isambard starting...');
+    logger.info('Isambard starting...');
 
     const app = await createApp();
 
@@ -187,8 +179,7 @@ if(import.meta.main) {
     // Handle graceful shutdown
     // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async shutdown handler is intentional
     process.on('SIGINT', async () => {
-        // eslint-disable-next-line no-console -- Shutdown logging
-        console.log('Received SIGINT, shutting down gracefully...');
+        logger.info('Received SIGINT, shutting down gracefully...');
         await app.stop();
         // eslint-disable-next-line n/no-process-exit -- Graceful shutdown requires exit
         process.exit(0);
@@ -196,8 +187,7 @@ if(import.meta.main) {
 
     // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async shutdown handler is intentional
     process.on('SIGTERM', async () => {
-        // eslint-disable-next-line no-console -- Shutdown logging
-        console.log('Received SIGTERM, shutting down gracefully...');
+        logger.info('Received SIGTERM, shutting down gracefully...');
         await app.stop();
         // eslint-disable-next-line n/no-process-exit -- Graceful shutdown requires exit
         process.exit(0);
