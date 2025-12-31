@@ -42,6 +42,7 @@ lerna-debug.log*
 
 # Cache
 .cache/
+.stryker-risk-cache.json
 
 # Docker
 neo4j_db/

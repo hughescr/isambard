@@ -10,8 +10,6 @@ export default {
     coverageAnalysis: 'perTest',
     mutate:           [
         'src/**/*.ts',
-        '!src/storage/memory-tool/handlers.ts',
-        '!src/storage/memory-tool/backend.ts',
         '!src/index.ts',
     ],
     thresholds: {
