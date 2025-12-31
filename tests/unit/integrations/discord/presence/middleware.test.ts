@@ -10,7 +10,7 @@ import type { AgentStreamEvent } from '@/agent/types';
 import type { DiscordMessageContext } from '@/integrations/discord/types';
 
 // Helper to wait for async safeUpdatePhase promises to settle
-const flushPromises = (): Promise<void> => new Promise((resolve) => { setTimeout(resolve, 0); });
+const flushPromises = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve); });
 
 describe('StatusMiddleware', () => {
     let mockPresenceManager: any;
