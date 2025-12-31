@@ -424,12 +424,7 @@ function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: M
 function buildAllowedTools(discordMcpServer?: McpServerConfig): string[] {
     const baseTools = [
         // Memory MCP tools (auto-approved)
-        'mcp__memory__view',
-        'mcp__memory__list',
-        'mcp__memory__storeSelf',
-        'mcp__memory__storeUserMemory',
-        'mcp__memory__logEvent',
-        'mcp__memory__search',
+        'mcp__memory__*',
         // Read-only and safe tools (auto-approved)
         'Read',
         'Glob',
@@ -446,9 +441,7 @@ function buildAllowedTools(discordMcpServer?: McpServerConfig): string[] {
         return [
             ...baseTools,
             // Discord MCP tools (auto-approved)
-            'mcp__discord__searchMessages',
-            'mcp__discord__getRecentMessages',
-            'mcp__discord__getMessageById',
+            'mcp__discord__*',
         ];
     }
 
