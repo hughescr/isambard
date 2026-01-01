@@ -1,15 +1,23 @@
 # Isambard
 
+[![Mutation testing badge](https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fhughescr%2Fisambard%2Fdevelop)](https://dashboard.stryker-mutator.io/reports/github.com/hughescr/isambard/develop)
+
 A self-improving agentic thought partner built with the Claude Agent SDK.
 
 Named after Isambard Kingdom Brunel, the visionary Victorian engineer, and from Germanic roots meaning "iron-bright" (isan + beraht) - symbolizing strength and illumination.
 
 ## Features
 
-- **Discord Interface** - Communicate via Discord
-- **Persistent Memory** - DynamoDB-backed three-layer memory system
+- **Discord Interface** - Communicate via Discord with dynamic presence status updates
+- **Persistent Memory** - DynamoDB-backed three-layer memory system (identity/state/events)
+- **Message History** - Search and cache Discord message history for context
+- **Time Awareness** - Temporal context injection and relative time formatting
 - **Self-Improvement** - Proposes enhancements via PRs (requires human approval)
-- **Integrations** - Apple Calendar, Email, Box Documents
+
+### Planned Integrations (Not Yet Implemented)
+- Apple Calendar (CalDAV)
+- Email (IMAP/SMTP)
+- Box Documents
 
 ## Authentication
 
@@ -66,18 +74,21 @@ Isambard uses OAuth authentication via Claude Max subscription:
    # Discord
    bunx sst secret set DiscordBotToken <token>
    bunx sst secret set DiscordApplicationId <app-id>
+   ```
 
-   # Apple Calendar
-   bunx sst secret set CaldavUsername <apple-id@icloud.com>
-   bunx sst secret set CaldavPassword <app-specific-password>
+   **Future integrations (not yet implemented):**
+   ```bash
+   # Apple Calendar (planned)
+   # bunx sst secret set CaldavUsername <apple-id@icloud.com>
+   # bunx sst secret set CaldavPassword <app-specific-password>
 
-   # Email
-   bunx sst secret set EmailUser <email@icloud.com>
-   bunx sst secret set EmailPassword <app-specific-password>
+   # Email (planned)
+   # bunx sst secret set EmailUser <email@icloud.com>
+   # bunx sst secret set EmailPassword <app-specific-password>
 
-   # Box
-   bunx sst secret set BoxClientId <client-id>
-   bunx sst secret set BoxClientSecret <client-secret>
+   # Box (planned)
+   # bunx sst secret set BoxClientId <client-id>
+   # bunx sst secret set BoxClientSecret <client-secret>
    ```
 
 4. **Start development**
@@ -126,18 +137,31 @@ See [.claude/CLAUDE.md](.claude/CLAUDE.md) for full development instructions.
 
 ```
 src/
-├── agent/          # Claude Agent SDK core
-│   ├── agent.ts           # Main agent with chat() method
-│   ├── context-builder.ts # Memory context loading
-│   └── memory-mcp-server.ts # MCP server for memory tools
-├── integrations/   # External services
-│   └── discord/    # Discord bot integration
-├── storage/        # DynamoDB layer
-│   ├── memory-tool/  # Three-layer memory system
-│   ├── models/       # Entity definitions
-│   └── repositories/ # Data access
-├── config/         # Zod-validated configuration
-└── utils/          # Shared utilities
+├── agent/                    # Claude Agent SDK integration
+│   ├── agent.ts              # Main agent with chat() method
+│   ├── types.ts              # Agent stream event types
+│   ├── context-builder.ts    # Memory context loading
+│   ├── memory-mcp-server.ts  # MCP server for memory tools
+│   ├── discord-mcp-server.ts # MCP server for message history
+│   └── text-generator.ts     # Lightweight LLM text generation
+├── integrations/             # External services
+│   └── discord/              # Discord bot integration
+│       ├── presence/         # Dynamic status updates
+│       │   ├── manager.ts    # Presence state management
+│       │   ├── middleware.ts # Activity state transitions
+│       │   └── status-generator-*.ts  # Status text generators
+│       └── message-history/  # Message search/caching
+│           ├── search.ts     # Search service
+│           ├── fetcher.ts    # Discord API fetcher
+│           └── summarizer.ts # Overflow summarization
+├── storage/                  # DynamoDB layer
+│   ├── memory-tool/          # Three-layer memory system
+│   ├── message-cache/        # Discord message cache
+│   ├── models/               # Entity definitions
+│   └── repositories/         # Data access
+├── config/                   # Zod-validated configuration
+└── utils/                    # Shared utilities
+    └── time.ts               # Time formatting utilities
 ```
 
 ## Roadmaps
