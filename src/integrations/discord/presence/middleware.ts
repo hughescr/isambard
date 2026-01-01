@@ -7,6 +7,7 @@
 
 import type { PresenceManager } from './manager.js';
 import type { PresencePhase } from './types.js';
+import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
 import type { ClaudeAgent } from '../../../agent/agent.js';
 import type { AgentStreamEvent } from '../../../agent/types.js';
 import type { DiscordMessageContext } from '../types.js';
@@ -32,6 +33,8 @@ export interface StatusMiddlewareDeps {
         info:  (obj: Record<string, unknown> | string, message?: string) => void
         error: (obj: Record<string, unknown> | string, message?: string) => void
     }
+    /** Optional dynamic status generator for LLM-generated synopses */
+    dynamicStatusGenerator?: DynamicStatusGenerator
 }
 
 /**
@@ -70,17 +73,46 @@ export type StatusMiddleware = (
 export function createStatusMiddleware(
     deps: StatusMiddlewareDeps
 ): StatusMiddleware {
-    const { presenceManager, agent, logger } = deps;
+    const { presenceManager, agent, logger, dynamicStatusGenerator } = deps;
 
     return async (
         context: DiscordMessageContext,
         channel?: TypingChannel
     ): Promise<string | null> => {
+        // Track typing interval for cleanup
+        let typingInterval: ReturnType<typeof setInterval> | null = null;
+
+        // Track current phase for transition detection
+        let currentPhase: 'thinking' | 'using_tool' | 'responding' | null = null;
+        let lastToolName: string | undefined;
+        const userMessage = context.content;
+
+        // Pre-generate thinking synopsis at start (before agent.chat).
+        // This allows immediate status display without waiting for the first stream event.
+        // The synopsis is cached and reused when transitioning to 'thinking' phase.
+        let thinkingSynopsis: string | undefined;
+        // Stryker disable next-line ConditionalExpression: Equivalent - try/catch swallows TypeError when undefined
+        if(dynamicStatusGenerator) {
+            try {
+                thinkingSynopsis = await dynamicStatusGenerator.generateSynopsis({
+                    phase: 'thinking',
+                    userMessage,
+                });
+            } catch{
+                // Fallback handled by active generator - empty catch is intentional
+            }
+        }
+
         try {
             // Start typing indicator
             if(channel) {
                 await channel.sendTyping();
                 logger.debug({ messageId: context.messageId }, 'Started typing indicator');
+
+                // Refresh typing every 8 seconds (Discord timeout is ~10s)
+                typingInterval = setInterval(() => {
+                    void channel.sendTyping();
+                }, 8000);
             }
 
             // Define stream event handler
@@ -100,26 +132,90 @@ export function createStatusMiddleware(
 
                 // Map stream events to presence phases
                 if(event.type === 'assistant') {
-                    if(event.delta?.text) {
-                        // Assistant generating response text
-                        void safeUpdatePhase({
-                            type:      'responding',
-                            startedAt: new Date(),
-                        });
-                    } else {
-                        // Assistant thinking (no text delta)
-                        void safeUpdatePhase({
-                            type:      'thinking',
-                            startedAt: new Date(),
-                        });
+                    const newPhase = event.delta?.text ? 'responding' : 'thinking';
+
+                    if(newPhase !== currentPhase) {
+                        currentPhase = newPhase;
+
+                        if(newPhase === 'thinking') {
+                            // Use pre-generated thinking synopsis
+                            void safeUpdatePhase({
+                                type:            'thinking',
+                                startedAt:       new Date(),
+                                userMessage,
+                                generatedStatus: thinkingSynopsis,
+                            });
+                        } else {
+                            // Generate responding synopsis asynchronously
+                            if(dynamicStatusGenerator) {
+                                void (async () => {
+                                    try {
+                                        const synopsis = await dynamicStatusGenerator.generateSynopsis({
+                                            phase:            'responding',
+                                            userMessage,
+                                            // Stryker disable next-line OptionalChaining: Equivalent - try/catch swallows TypeError when text is undefined
+                                            responseFragment: event.delta?.text?.slice(0, 100),
+                                        });
+                                        void safeUpdatePhase({
+                                            type:            'responding',
+                                            startedAt:       new Date(),
+                                            generatedStatus: synopsis,
+                                        });
+                                    } catch{
+                                        void safeUpdatePhase({
+                                            type:      'responding',
+                                            startedAt: new Date(),
+                                        });
+                                    }
+                                })();
+                            } else {
+                                void safeUpdatePhase({
+                                    type:      'responding',
+                                    startedAt: new Date(),
+                                });
+                            }
+                        }
                     }
                 } else if(event.type === 'tool_progress') {
-                    // Tool usage in progress
-                    void safeUpdatePhase({
-                        type:      'using_tool',
-                        toolName:  event.tool_name ?? 'unknown',
-                        startedAt: new Date(),
-                    });
+                    // Track tool invocations to show which tool is currently executing.
+                    // Only update presence when transitioning to a new tool to minimize API calls.
+                    const toolName = event.tool_name ?? 'unknown';
+
+                    if(currentPhase !== 'using_tool' || toolName !== lastToolName) {
+                        currentPhase = 'using_tool';
+                        lastToolName = toolName;
+
+                        // Stryker disable next-line ConditionalExpression: Equivalent - try/catch swallows TypeError when undefined
+                        if(dynamicStatusGenerator) {
+                            void (async () => {
+                                try {
+                                    const synopsis = await dynamicStatusGenerator.generateSynopsis({
+                                        phase: 'using_tool',
+                                        userMessage,
+                                        toolName,
+                                    });
+                                    void safeUpdatePhase({
+                                        type:            'using_tool',
+                                        toolName,
+                                        startedAt:       new Date(),
+                                        generatedStatus: synopsis,
+                                    });
+                                } catch{
+                                    void safeUpdatePhase({
+                                        type:      'using_tool',
+                                        toolName,
+                                        startedAt: new Date(),
+                                    });
+                                }
+                            })();
+                        } else {
+                            void safeUpdatePhase({
+                                type:      'using_tool',
+                                toolName,
+                                startedAt: new Date(),
+                            });
+                        }
+                    }
                 } else if(event.type === 'result') {
                     // Processing complete, go idle
                     void safeUpdatePhase({
@@ -170,6 +266,12 @@ export function createStatusMiddleware(
             }
 
             return null;
+        } finally {
+            // Clean up typing interval
+            if(typingInterval) {
+                clearInterval(typingInterval);
+                logger.debug({ messageId: context.messageId }, 'Stopped typing indicator');
+            }
         }
     };
 }

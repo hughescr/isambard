@@ -358,6 +358,107 @@ export interface ToolUseBlock {
     input: unknown
 }
 
+/**
+ * Parsed tool name with module and tool components.
+ */
+export interface ParsedToolName {
+    module: string
+    tool:   string
+}
+
+/**
+ * Parse tool name into module and tool components.
+ * Converts MCP tool names from 'mcp__module__tool' to { module: 'module', tool: 'tool' }.
+ * Regular tool names use 'claude' as the module.
+ * @param toolName The tool name to parse
+ * @returns ParsedToolName with module and tool components
+ */
+export function parseToolName(toolName: string | undefined): ParsedToolName {
+    if(toolName === undefined) {
+        return { module: 'claude', tool: 'unknown' };
+    }
+    // Stryker disable next-line ConditionalExpression: Empty string check is defensive coding for edge case
+    if(toolName === '') {
+        return { module: 'claude', tool: '' };
+    }
+
+    // MCP tools have format: mcp__module__tool (e.g., mcp__DevTools__find_symbol)
+    if(_.startsWith(toolName, 'mcp__')) {
+        const parts = _.split(toolName.slice(5), '__');
+        if(parts.length >= 2) {
+            const module = parts[0];
+            const tool = parts.slice(1).join('__');
+            return { module, tool };
+        }
+    }
+
+    // Regular tools or malformed MCP names use 'claude' module
+    return { module: 'claude', tool: toolName };
+}
+
+/**
+ * Sensitive key patterns for redaction (case-insensitive).
+ * Matches common credential-related key names.
+ */
+const SENSITIVE_KEY_PATTERNS = [
+    /apikey/i,
+    /privatekey/i,
+    /secretkey/i,
+    /accesskey/i,
+    /authkey/i,
+    /password/i,
+    /passwd/i,
+    /secret/i,
+    /token/i,
+    /credential/i,
+    /auth/i,
+    /key/i,  // Broad match - security over convenience
+];
+
+/**
+ * Check if a key name matches any sensitive pattern.
+ * @param key The key name to check
+ * @returns true if the key matches a sensitive pattern
+ */
+function isSensitiveKey(key: string): boolean {
+    return _.some(SENSITIVE_KEY_PATTERNS, pattern => pattern.test(key));
+}
+
+/**
+ * Recursively redact sensitive values from an object.
+ * Replaces values of keys matching sensitive patterns with '[REDACTED]'.
+ * @param input The value to redact
+ * @returns A new value with sensitive keys redacted
+ */
+export function redactSensitiveArgs(input: unknown): unknown {
+    // Handle null/undefined
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: null/undefined check is defensive coding, both branches return input unchanged
+    if(input === null || input === undefined) {
+        return input;
+    }
+
+    // Handle arrays - map over elements
+    if(_.isArray(input)) {
+        return _.map(input, item => redactSensitiveArgs(item));
+    }
+
+    // Handle objects - check keys and recurse
+    if(_.isPlainObject(input)) {
+        const result: Record<string, unknown> = {};
+        for(const [key, value] of _.toPairs(input as Record<string, unknown>)) {
+            if(isSensitiveKey(key)) {
+                result[key] = '[REDACTED]';
+            } else {
+                result[key] = redactSensitiveArgs(value);
+            }
+        }
+        return result;
+    }
+
+    // Return primitives unchanged
+    return input;
+}
+
 export function extractToolUses(message: { type: string, message?: { content?: unknown } }): ToolUseBlock[] {
     // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent - _.filter on non-assistant messages returns [] same as early return
     if(message.type !== 'assistant') {
@@ -480,19 +581,79 @@ function logAssistantErrors(message: { type: string, error?: unknown }): void {
 // Stryker restore all
 
 /**
- * Logs tool usage from assistant messages.
+ * Logs tool usage from assistant messages with redacted sensitive args.
  * @param message Stream message to extract tool uses from
  */
+// Stryker disable all: Observability - debug logging doesn't affect return value
 function logToolUsage(message: { type: string, message?: { content?: unknown } }): void {
     const toolUses = extractToolUses(message);
     for(const toolUse of toolUses) {
+        const parsed = parseToolName(toolUse.name);
         logger.debug({
-            toolName:  toolUse.name,
-            toolUseId: toolUse.id,
-            msg:       `Tool call: ${toolUse.name}`,
+            module: parsed.module,
+            tool:   parsed.tool,
+            args:   redactSensitiveArgs(toolUse.input),
         });
     }
 }
+// Stryker restore all
+
+/**
+ * Logs stream events with descriptive messages based on event type.
+ * @param message Stream event to log
+ */
+// Stryker disable all: Observability - debug logging doesn't affect return value
+export function logStreamEvent(message: AgentStreamEvent): void {
+    switch(message.type) {
+        case 'user':
+            logger.debug({
+                eventType: 'user',
+                msg:       'Sending message to Claude LLM',
+            });
+            break;
+
+        case 'assistant': {
+            const hasText = Boolean(extractAssistantText(message));
+            logger.debug({
+                eventType: 'assistant',
+                hasText,
+                msg:       hasText ? 'Claude LLM responding' : 'Claude LLM thinking',
+            });
+            break;
+        }
+
+        case 'tool_progress': {
+            const parsed = parseToolName(message.tool_name);
+            logger.debug({
+                eventType: 'tool_progress',
+                module:    parsed.module,
+                tool:      parsed.tool,
+                msg:       'Tool execution started',
+            });
+            break;
+        }
+
+        case 'tool_result': {
+            const parsed = parseToolName(message.tool_name);
+            logger.debug({
+                eventType: 'tool_result',
+                module:    parsed.module,
+                tool:      parsed.tool,
+                msg:       'Tool execution complete',
+            });
+            break;
+        }
+
+        case 'result':
+            logger.debug({
+                eventType: 'result',
+                status:    message.subtype,
+                msg:       'Claude LLM stream complete',
+            });
+            break;
+    }
+}
+// Stryker restore all
 
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     const { contextBuilder, memoryMcpServer, discordMcpServer } = options;
@@ -542,11 +703,8 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 let lastAssistantText = '';
 
                 for await (const message of response) {
-                    // Debug log for stream events
-                    logger.debug({
-                        eventType: message.type,
-                        msg:       `Stream event: ${message.type}`,
-                    });
+                    // Log descriptive stream events
+                    logStreamEvent(message as AgentStreamEvent);
 
                     // Log errors from stream events
                     logResultErrors(message as { type: string, is_error?: boolean, subtype?: string, errors?: unknown[] });

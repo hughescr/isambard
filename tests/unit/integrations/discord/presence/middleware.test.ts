@@ -1,13 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @stylistic/max-statements-per-line, @typescript-eslint/no-unsafe-argument -- Test mocks */
+/* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks */
+/* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
 
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
-import { constant as _constant, filter as _filter, find as _find, some as _some } from 'lodash';
+import { constant as _constant, filter as _filter, find as _find, repeat as _repeat, some as _some } from 'lodash';
 import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
 import type { PresencePhase } from '@/integrations/discord/presence/types';
 import type { AgentStreamEvent } from '@/agent/types';
 import type { DiscordMessageContext } from '@/integrations/discord/types';
+import type { DynamicStatusGenerator } from '@/integrations/discord/presence/status-generator-dynamic';
 
 // Helper to wait for async safeUpdatePhase promises to settle
 const flushPromises = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve); });
@@ -844,6 +847,185 @@ describe('StatusMiddleware', () => {
         });
     });
 
+    describe('typing indicator refresh interval', () => {
+        it('should set up interval to refresh typing every 8 seconds', async () => {
+            const mockChannel = {
+                sendTyping: mock(async () => undefined),
+            };
+
+            // Mock setInterval
+            const originalSetInterval = globalThis.setInterval;
+            const setIntervalSpy = mock((fn: () => void, ms: number) => originalSetInterval(fn, ms));
+            globalThis.setInterval = setIntervalSpy as any;
+
+            try {
+                const middleware = createStatusMiddleware({
+                    presenceManager: mockPresenceManager,
+                    agent:           mockAgent,
+                    logger:          mockLogger,
+                });
+
+                await middleware(messageContext, mockChannel as any);
+
+                // Should have called setInterval with 8000ms
+                expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 8000);
+            } finally {
+                globalThis.setInterval = originalSetInterval;
+            }
+        });
+
+        it('should clear interval in finally block after successful completion', async () => {
+            const mockChannel = {
+                sendTyping: mock(async () => undefined),
+            };
+
+            // Track interval ID and clearInterval calls
+            const originalSetInterval = globalThis.setInterval;
+            const originalClearInterval = globalThis.clearInterval;
+            let capturedIntervalId: ReturnType<typeof setInterval> | null = null;
+            const clearIntervalSpy = mock((id: ReturnType<typeof setInterval>) => {
+                originalClearInterval(id);
+            });
+
+            globalThis.setInterval = ((fn: () => void, ms: number) => {
+                capturedIntervalId = originalSetInterval(fn, ms);
+                return capturedIntervalId;
+            }) as any;
+            globalThis.clearInterval = clearIntervalSpy as any;
+
+            try {
+                const middleware = createStatusMiddleware({
+                    presenceManager: mockPresenceManager,
+                    agent:           mockAgent,
+                    logger:          mockLogger,
+                });
+
+                await middleware(messageContext, mockChannel as any);
+
+                // Should have cleared the interval
+                expect(clearIntervalSpy).toHaveBeenCalled();
+                expect(capturedIntervalId).not.toBeNull();
+            } finally {
+                globalThis.setInterval = originalSetInterval;
+                globalThis.clearInterval = originalClearInterval;
+            }
+        });
+
+        it('should clear interval in finally block even when agent.chat throws', async () => {
+            const mockChannel = {
+                sendTyping: mock(async () => undefined),
+            };
+
+            const errorAgent = {
+                chat: mock(async () => {
+                    throw new Error('Agent error');
+                }),
+            };
+
+            // Track clearInterval calls
+            const originalSetInterval = globalThis.setInterval;
+            const originalClearInterval = globalThis.clearInterval;
+            const clearIntervalSpy = mock((id: ReturnType<typeof setInterval>) => {
+                originalClearInterval(id);
+            });
+
+            globalThis.setInterval = ((fn: () => void, ms: number) => {
+                return originalSetInterval(fn, ms);
+            }) as any;
+            globalThis.clearInterval = clearIntervalSpy as any;
+
+            try {
+                const middleware = createStatusMiddleware({
+                    presenceManager: mockPresenceManager,
+                    agent:           errorAgent as any,
+                    logger:          mockLogger,
+                });
+
+                await middleware(messageContext, mockChannel as any);
+
+                // Should still clear the interval even on error
+                expect(clearIntervalSpy).toHaveBeenCalled();
+            } finally {
+                globalThis.setInterval = originalSetInterval;
+                globalThis.clearInterval = originalClearInterval;
+            }
+        });
+
+        it('should not set interval when channel is undefined', async () => {
+            const originalSetInterval = globalThis.setInterval;
+            const setIntervalSpy = mock((fn: () => void, ms: number) => originalSetInterval(fn, ms));
+            globalThis.setInterval = setIntervalSpy as any;
+
+            try {
+                const middleware = createStatusMiddleware({
+                    presenceManager: mockPresenceManager,
+                    agent:           mockAgent,
+                    logger:          mockLogger,
+                });
+
+                await middleware(messageContext); // No channel
+
+                // Should NOT have called setInterval
+                expect(setIntervalSpy).not.toHaveBeenCalled();
+            } finally {
+                globalThis.setInterval = originalSetInterval;
+            }
+        });
+
+        it('should log when stopping typing indicator', async () => {
+            const mockChannel = {
+                sendTyping: mock(async () => undefined),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager: mockPresenceManager,
+                agent:           mockAgent,
+                logger:          mockLogger,
+            });
+
+            await middleware(messageContext, mockChannel as any);
+
+            expect(mockLogger.debug).toHaveBeenCalledWith(
+                { messageId: 'msg-123' },
+                'Stopped typing indicator'
+            );
+        });
+
+        it('should call sendTyping when interval fires', async () => {
+            const mockChannel = {
+                sendTyping: mock(async () => undefined),
+            };
+
+            // Capture the interval callback
+            const originalSetInterval = globalThis.setInterval;
+            let capturedCallback: (() => void) | null = null;
+
+            globalThis.setInterval = ((fn: () => void, _ms: number) => {
+                capturedCallback = fn;
+                return originalSetInterval(fn, 999999); // Use a very long interval so it doesn't fire automatically
+            }) as any;
+
+            try {
+                const middleware = createStatusMiddleware({
+                    presenceManager: mockPresenceManager,
+                    agent:           mockAgent,
+                    logger:          mockLogger,
+                });
+
+                await middleware(messageContext, mockChannel as any);
+
+                // Manually invoke the captured callback to simulate interval firing
+                expect(capturedCallback).not.toBeNull();
+                capturedCallback!();
+
+                // Should have called sendTyping twice: once initially, once from interval callback
+                expect(mockChannel.sendTyping).toHaveBeenCalledTimes(2);
+            } finally {
+                globalThis.setInterval = originalSetInterval;
+            }
+        });
+    });
+
     describe('sendTyping error handling', () => {
         it('should handle sendTyping errors gracefully and return null', async () => {
             const typingError = new Error('Typing failed');
@@ -903,6 +1085,149 @@ describe('StatusMiddleware', () => {
             // Should have responding and idle phases, but no using_tool
             const toolPhases = _filter(phases, ['type', 'using_tool']);
             expect(toolPhases.length).toBe(0);
+        });
+
+        it('should transition to using_tool when currentPhase is thinking (not using_tool)', async () => {
+            // This test kills the ConditionalExpression mutant at line 178 which changes:
+            // `currentPhase !== 'using_tool' || toolName !== lastToolName` to
+            // `false || toolName !== lastToolName`
+            //
+            // The mutant would skip the phase update when transitioning FROM a non-tool phase
+            // (e.g., thinking) to using_tool with the first tool_progress event.
+            const phases: PresencePhase[] = [];
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // First event: assistant without delta.text → thinking phase
+                        onEvent({ type: 'assistant' });
+                        // Second event: tool_progress → should transition to using_tool
+                        // even though it's the first tool (no lastToolName to compare)
+                        onEvent({ type: 'tool_progress', tool_name: 'first_tool' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const capturingPresenceManager = {
+                updatePhase: mock(async (phase: PresencePhase) => {
+                    phases.push(phase);
+                }),
+                start: mock(() => undefined),
+                stop:  mock(() => undefined),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager: capturingPresenceManager as any,
+                agent:           wrappedAgent as any,
+                logger:          mockLogger,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Should have thinking phase first
+            const thinkingPhases = _filter(phases, ['type', 'thinking']);
+            expect(thinkingPhases.length).toBe(1);
+
+            // Should transition to using_tool even when lastToolName is undefined
+            // (this is what the mutant would break - it would skip this transition)
+            const toolPhases = _filter(phases, ['type', 'using_tool']);
+            expect(toolPhases.length).toBe(1);
+            expect((toolPhases[0] as any).toolName).toBe('first_tool');
+        });
+
+        it('should transition to using_tool when returning to same tool after thinking phase', async () => {
+            // This test SPECIFICALLY kills the ConditionalExpression mutant at line 180 which changes:
+            // `currentPhase !== 'using_tool' || toolName !== lastToolName` to
+            // `false || toolName !== lastToolName`
+            //
+            // Sequence:
+            // 1. tool_progress 'tool_A' → sets lastToolName='tool_A', currentPhase='using_tool'
+            // 2. assistant (no text) → sets currentPhase='thinking', lastToolName stays 'tool_A'
+            // 3. tool_progress 'tool_A' → toolName === lastToolName, but currentPhase !== 'using_tool'
+            //
+            // Original: 'thinking' !== 'using_tool' is TRUE → enters block, updatePhase called
+            // Mutant: false || ('tool_A' !== 'tool_A') = false || false = FALSE → skips block
+            const phases: PresencePhase[] = [];
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Step 1: First tool use
+                        onEvent({ type: 'tool_progress', tool_name: 'tool_A' });
+                        // Step 2: Transition to thinking
+                        onEvent({ type: 'assistant' });
+                        // Step 3: Return to same tool - this is where the mutant fails
+                        onEvent({ type: 'tool_progress', tool_name: 'tool_A' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const capturingPresenceManager = {
+                updatePhase: mock(async (phase: PresencePhase) => {
+                    phases.push(phase);
+                }),
+                start: mock(() => undefined),
+                stop:  mock(() => undefined),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager: capturingPresenceManager as any,
+                agent:           wrappedAgent as any,
+                logger:          mockLogger,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Should have: tool_A (1st) → thinking → tool_A (2nd)
+            // The mutant would only have: tool_A (1st) → thinking (missing second tool_A)
+            const toolPhases = _filter(phases, ['type', 'using_tool']);
+            expect(toolPhases.length).toBe(2); // Both tool_A calls should trigger updates
+            expect((toolPhases[0] as any).toolName).toBe('tool_A');
+            expect((toolPhases[1] as any).toolName).toBe('tool_A');
+
+            const thinkingPhases = _filter(phases, ['type', 'thinking']);
+            expect(thinkingPhases.length).toBe(1);
+        });
+
+        it('should transition to using_tool from null currentPhase on first event', async () => {
+            // This test verifies that when currentPhase starts as null (initial state),
+            // receiving a tool_progress event triggers phase update.
+            // The mutant would skip this because `null !== 'using_tool'` is true,
+            // but mutating it to `false` would prevent the update.
+            const phases: PresencePhase[] = [];
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // First event is tool_progress - currentPhase is null
+                        onEvent({ type: 'tool_progress', tool_name: 'immediate_tool' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const capturingPresenceManager = {
+                updatePhase: mock(async (phase: PresencePhase) => {
+                    phases.push(phase);
+                }),
+                start: mock(() => undefined),
+                stop:  mock(() => undefined),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager: capturingPresenceManager as any,
+                agent:           wrappedAgent as any,
+                logger:          mockLogger,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Should have using_tool phase from the first event
+            const toolPhases = _filter(phases, ['type', 'using_tool']);
+            expect(toolPhases.length).toBe(1);
+            expect((toolPhases[0] as any).toolName).toBe('immediate_tool');
         });
     });
 
@@ -1122,6 +1447,80 @@ describe('StatusMiddleware', () => {
     });
 
     describe('phase type string literal verification', () => {
+        it('should use "responding" when delta.text is truthy, not empty string', async () => {
+            // This test specifically targets the ternary: event.delta?.text ? 'responding' : 'thinking'
+            const phases: PresencePhase[] = [];
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        onEvent({ type: 'assistant', delta: { text: 'X' } }); // truthy text
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const capturingPresenceManager = {
+                updatePhase: mock(async (phase: PresencePhase) => {
+                    phases.push(phase);
+                }),
+                start: mock(() => undefined),
+                stop:  mock(() => undefined),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager: capturingPresenceManager as any,
+                agent:           wrappedAgent as any,
+                logger:          mockLogger,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // The ternary should choose 'responding' since delta.text is truthy
+            const respondingPhase = _find(phases, ['type', 'responding']);
+            expect(respondingPhase).toBeDefined();
+            expect(respondingPhase!.type).toBe('responding');
+            // Verify it's not empty (kills mutant that changes 'responding' to '')
+            expect(respondingPhase!.type.length).toBeGreaterThan(0);
+        });
+
+        it('should use "thinking" when delta.text is falsy, not empty string', async () => {
+            // This test specifically targets the ternary: event.delta?.text ? 'responding' : 'thinking'
+            const phases: PresencePhase[] = [];
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        onEvent({ type: 'assistant' }); // no delta.text
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const capturingPresenceManager = {
+                updatePhase: mock(async (phase: PresencePhase) => {
+                    phases.push(phase);
+                }),
+                start: mock(() => undefined),
+                stop:  mock(() => undefined),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager: capturingPresenceManager as any,
+                agent:           wrappedAgent as any,
+                logger:          mockLogger,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // The ternary should choose 'thinking' since delta.text is falsy
+            const thinkingPhase = _find(phases, ['type', 'thinking']);
+            expect(thinkingPhase).toBeDefined();
+            expect(thinkingPhase!.type).toBe('thinking');
+            // Verify it's not empty (kills mutant that changes 'thinking' to '')
+            expect(thinkingPhase!.type.length).toBeGreaterThan(0);
+        });
+
         it('should use exact string "thinking" not empty string', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
@@ -1575,6 +1974,802 @@ describe('StatusMiddleware', () => {
 
             expect(thinkingPhases.length).toBe(1);
             expect(idlePhases.length).toBeGreaterThanOrEqual(2);
+        });
+    });
+
+    describe('dynamic status generation', () => {
+        let mockDynamicStatusGenerator: DynamicStatusGenerator;
+
+        beforeEach(() => {
+            mockDynamicStatusGenerator = {
+                generateSynopsis: mock(_constant(Promise.resolve('Generated status...'))),
+            };
+        });
+
+        describe('synopsis generation on phase transitions', () => {
+            it('should call generateSynopsis for thinking phase on first assistant event', async () => {
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'assistant' });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        mockPresenceManager,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        phase:       'thinking',
+                        userMessage: 'Test message',
+                    })
+                );
+            });
+
+            it('should call generateSynopsis for responding phase with responseFragment', async () => {
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'assistant', delta: { text: 'Hello world' } });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        mockPresenceManager,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        phase:            'responding',
+                        userMessage:      'Test message',
+                        responseFragment: 'Hello world',
+                    })
+                );
+            });
+
+            it('should call generateSynopsis for using_tool phase with toolName', async () => {
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'tool_progress', tool_name: 'mcp__memory__search' });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        mockPresenceManager,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        phase:       'using_tool',
+                        userMessage: 'Test message',
+                        toolName:    'mcp__memory__search',
+                    })
+                );
+            });
+        });
+
+        describe('generatedStatus passed to updatePhase', () => {
+            it('should pass generatedStatus to updatePhase for thinking phase', async () => {
+                const phases: PresencePhase[] = [];
+                (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
+                    _constant(Promise.resolve('Pondering deeply...'))
+                );
+
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'assistant' });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const capturingPresenceManager = {
+                    updatePhase: mock(async (phase: PresencePhase) => {
+                        phases.push(phase);
+                    }),
+                    start: mock(() => undefined),
+                    stop:  mock(() => undefined),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        capturingPresenceManager as any,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                const thinkingPhase = _find(phases, ['type', 'thinking']);
+                expect(thinkingPhase).toBeDefined();
+                if(thinkingPhase?.type === 'thinking') {
+                    expect(thinkingPhase.generatedStatus).toBe('Pondering deeply...');
+                }
+            });
+
+            it('should pass generatedStatus to updatePhase for responding phase', async () => {
+                const phases: PresencePhase[] = [];
+                (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
+                    _constant(Promise.resolve('Crafting response...'))
+                );
+
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'assistant', delta: { text: 'Hi' } });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const capturingPresenceManager = {
+                    updatePhase: mock(async (phase: PresencePhase) => {
+                        phases.push(phase);
+                    }),
+                    start: mock(() => undefined),
+                    stop:  mock(() => undefined),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        capturingPresenceManager as any,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                const respondingPhase = _find(phases, ['type', 'responding']);
+                expect(respondingPhase).toBeDefined();
+                if(respondingPhase?.type === 'responding') {
+                    expect(respondingPhase.generatedStatus).toBe('Crafting response...');
+                }
+            });
+
+            it('should pass generatedStatus to updatePhase for using_tool phase', async () => {
+                const phases: PresencePhase[] = [];
+                (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
+                    _constant(Promise.resolve('Searching memories...'))
+                );
+
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'tool_progress', tool_name: 'mcp__memory__search' });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const capturingPresenceManager = {
+                    updatePhase: mock(async (phase: PresencePhase) => {
+                        phases.push(phase);
+                    }),
+                    start: mock(() => undefined),
+                    stop:  mock(() => undefined),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        capturingPresenceManager as any,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                const toolPhase = _find(phases, ['type', 'using_tool']);
+                expect(toolPhase).toBeDefined();
+                if(toolPhase?.type === 'using_tool') {
+                    expect(toolPhase.generatedStatus).toBe('Searching memories...');
+                }
+            });
+        });
+
+        describe('fallback behavior', () => {
+            it('should use exact type "using_tool" in fallback when generateSynopsis throws for tool_progress', async () => {
+                const phases: PresencePhase[] = [];
+                (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
+                    () => Promise.reject(new Error('Synopsis generation failed'))
+                );
+
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'tool_progress', tool_name: 'test_tool' });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const capturingPresenceManager = {
+                    updatePhase: mock(async (phase: PresencePhase) => {
+                        phases.push(phase);
+                    }),
+                    start: mock(() => undefined),
+                    stop:  mock(() => undefined),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        capturingPresenceManager as any,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                // Verify fallback phase has exact type 'using_tool', not empty string
+                const toolPhase = _find(phases, ['type', 'using_tool']);
+                expect(toolPhase).toBeDefined();
+                expect(toolPhase!.type).toBe('using_tool');
+                expect(toolPhase!.type).not.toBe('');
+                expect(toolPhase!.type.length).toBe(10); // 'using_tool' has 10 chars
+                // generatedStatus should be undefined on error
+                if(toolPhase?.type === 'using_tool') {
+                    expect(toolPhase.generatedStatus).toBeUndefined();
+                }
+            });
+
+            it('should work without dynamicStatusGenerator (backwards compatibility)', async () => {
+                const phases: PresencePhase[] = [];
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'assistant' });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const capturingPresenceManager = {
+                    updatePhase: mock(async (phase: PresencePhase) => {
+                        phases.push(phase);
+                    }),
+                    start: mock(() => undefined),
+                    stop:  mock(() => undefined),
+                };
+
+                // No dynamicStatusGenerator provided
+                const middleware = createStatusMiddleware({
+                    presenceManager: capturingPresenceManager as any,
+                    agent:           wrappedAgent as any,
+                    logger:          mockLogger,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                // Should still work and update phases
+                const thinkingPhase = _find(phases, ['type', 'thinking']);
+                expect(thinkingPhase).toBeDefined();
+                // generatedStatus should be undefined when no generator is provided
+                if(thinkingPhase?.type === 'thinking') {
+                    expect(thinkingPhase.generatedStatus).toBeUndefined();
+                }
+            });
+
+            it('should update phase without generatedStatus when generateSynopsis throws', async () => {
+                const phases: PresencePhase[] = [];
+                (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
+                    () => Promise.reject(new Error('Synopsis generation failed'))
+                );
+
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'assistant', delta: { text: 'Hi' } });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const capturingPresenceManager = {
+                    updatePhase: mock(async (phase: PresencePhase) => {
+                        phases.push(phase);
+                    }),
+                    start: mock(() => undefined),
+                    stop:  mock(() => undefined),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        capturingPresenceManager as any,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                // Should still have responding phase (fallback without generatedStatus)
+                const respondingPhase = _find(phases, ['type', 'responding']);
+                expect(respondingPhase).toBeDefined();
+                // generatedStatus should be undefined on error
+                if(respondingPhase?.type === 'responding') {
+                    expect(respondingPhase.generatedStatus).toBeUndefined();
+                }
+            });
+        });
+
+        describe('phase transition detection', () => {
+            it('should not call generateSynopsis for duplicate thinking events', async () => {
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            // Multiple thinking events in a row
+                            onEvent({ type: 'assistant' });
+                            onEvent({ type: 'assistant' });
+                            onEvent({ type: 'assistant' });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        mockPresenceManager,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                // Should only call generateSynopsis once for thinking phase
+                const thinkingCalls = _filter(
+                    (mockDynamicStatusGenerator.generateSynopsis as any).mock.calls,
+                    (call: any[]) => call[0]?.phase === 'thinking'
+                );
+                expect(thinkingCalls.length).toBe(1);
+            });
+
+            it('should not call generateSynopsis for duplicate responding events', async () => {
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            // Multiple responding events in a row
+                            onEvent({ type: 'assistant', delta: { text: 'Hello' } });
+                            onEvent({ type: 'assistant', delta: { text: ' world' } });
+                            onEvent({ type: 'assistant', delta: { text: '!' } });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        mockPresenceManager,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                // Should only call generateSynopsis once for responding phase
+                const respondingCalls = _filter(
+                    (mockDynamicStatusGenerator.generateSynopsis as any).mock.calls,
+                    (call: any[]) => call[0]?.phase === 'responding'
+                );
+                expect(respondingCalls.length).toBe(1);
+            });
+
+            it('should call generateSynopsis when tool name changes', async () => {
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'tool_progress', tool_name: 'tool_a' });
+                            onEvent({ type: 'tool_progress', tool_name: 'tool_b' });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        mockPresenceManager,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                // Should call generateSynopsis twice for different tools
+                const toolCalls = _filter(
+                    (mockDynamicStatusGenerator.generateSynopsis as any).mock.calls,
+                    (call: any[]) => call[0]?.phase === 'using_tool'
+                );
+                expect(toolCalls.length).toBe(2);
+                expect(toolCalls[0][0].toolName).toBe('tool_a');
+                expect(toolCalls[1][0].toolName).toBe('tool_b');
+            });
+
+            it('should not call generateSynopsis for duplicate tool_progress with same tool', async () => {
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'tool_progress', tool_name: 'same_tool' });
+                            onEvent({ type: 'tool_progress', tool_name: 'same_tool' });
+                            onEvent({ type: 'tool_progress', tool_name: 'same_tool' });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        mockPresenceManager,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                // Should only call generateSynopsis once for same tool
+                const toolCalls = _filter(
+                    (mockDynamicStatusGenerator.generateSynopsis as any).mock.calls,
+                    (call: any[]) => call[0]?.phase === 'using_tool'
+                );
+                expect(toolCalls.length).toBe(1);
+            });
+
+            it('should call generateSynopsis when transitioning between phases', async () => {
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'assistant' }); // thinking
+                            onEvent({ type: 'tool_progress', tool_name: 'test' }); // using_tool
+                            onEvent({ type: 'assistant', delta: { text: 'Hi' } }); // responding
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        mockPresenceManager,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                // Should have exactly 3 calls - one for each phase
+                expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledTimes(3);
+            });
+        });
+
+        describe('pre-generation of thinking synopsis', () => {
+            it('should pre-generate thinking synopsis before agent.chat is called', async () => {
+                let generateSynopsisCalledBeforeChat = false;
+                let chatCalled = false;
+
+                (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(async () => {
+                    if(!chatCalled) {
+                        generateSynopsisCalledBeforeChat = true;
+                    }
+                    return 'Pre-generated thinking...';
+                });
+
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        chatCalled = true;
+                        if(onEvent) {
+                            onEvent({ type: 'assistant' });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        mockPresenceManager,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                expect(generateSynopsisCalledBeforeChat).toBe(true);
+            });
+
+            it('should use pre-generated thinking synopsis when thinking event occurs', async () => {
+                const phases: PresencePhase[] = [];
+                let callCount = 0;
+
+                (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(async () => {
+                    callCount++;
+                    return callCount === 1 ? 'Pre-generated thinking...' : 'Other status...';
+                });
+
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'assistant' });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const capturingPresenceManager = {
+                    updatePhase: mock(async (phase: PresencePhase) => {
+                        phases.push(phase);
+                    }),
+                    start: mock(() => undefined),
+                    stop:  mock(() => undefined),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        capturingPresenceManager as any,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                const thinkingPhase = _find(phases, ['type', 'thinking']);
+                expect(thinkingPhase).toBeDefined();
+                if(thinkingPhase?.type === 'thinking') {
+                    expect(thinkingPhase.generatedStatus).toBe('Pre-generated thinking...');
+                }
+            });
+
+            it('should pass userMessage to pre-generation call', async () => {
+                const wrappedAgent = {
+                    chat: mock(_constant(Promise.resolve('Response'))),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        mockPresenceManager,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                // First call should be pre-generation for thinking phase
+                expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith({
+                    phase:       'thinking',
+                    userMessage: 'Test message',
+                });
+            });
+        });
+
+        describe('responseFragment optional chaining behavior', () => {
+            it('should pass undefined responseFragment when event.delta is undefined', async () => {
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            // First trigger thinking, then responding with delta but no text
+                            onEvent({ type: 'assistant' }); // thinking - delta undefined
+                            onEvent({ type: 'assistant', delta: { text: 'Hi' } }); // responding
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        mockPresenceManager,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                // Thinking call should not have responseFragment
+                const thinkingCall = _find(
+                    (mockDynamicStatusGenerator.generateSynopsis as any).mock.calls,
+                    (call: any[]) => call[0]?.phase === 'thinking'
+                );
+                expect(thinkingCall).toBeDefined();
+                expect(thinkingCall[0].responseFragment).toBeUndefined();
+            });
+
+            it('should pass undefined responseFragment when event.delta.text is undefined', async () => {
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            // delta exists but text is undefined - this goes to thinking branch
+                            onEvent({ type: 'assistant', delta: {} }); // thinking
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        mockPresenceManager,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                // Should be thinking phase (no responseFragment)
+                const thinkingCall = _find(
+                    (mockDynamicStatusGenerator.generateSynopsis as any).mock.calls,
+                    (call: any[]) => call[0]?.phase === 'thinking'
+                );
+                expect(thinkingCall).toBeDefined();
+                expect(thinkingCall[0].responseFragment).toBeUndefined();
+            });
+
+            it('should correctly slice responseFragment from event.delta.text', async () => {
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'assistant', delta: { text: 'Hello world' } });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        mockPresenceManager,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                const respondingCall = _find(
+                    (mockDynamicStatusGenerator.generateSynopsis as any).mock.calls,
+                    (call: any[]) => call[0]?.phase === 'responding'
+                );
+                expect(respondingCall).toBeDefined();
+                expect(respondingCall[0].responseFragment).toBe('Hello world');
+            });
+        });
+
+        describe('truncation of responseFragment', () => {
+            it('should truncate responseFragment to 100 characters', async () => {
+                const longText = _repeat('A', 200);
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'assistant', delta: { text: longText } });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        mockPresenceManager,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                const respondingCall = _find(
+                    (mockDynamicStatusGenerator.generateSynopsis as any).mock.calls,
+                    (call: any[]) => call[0]?.phase === 'responding'
+                );
+                expect(respondingCall).toBeDefined();
+                expect(respondingCall[0].responseFragment.length).toBe(100);
+                expect(respondingCall[0].responseFragment).toBe(_repeat('A', 100));
+            });
+        });
+
+        describe('pre-chat synopsis generation guard', () => {
+            it('should not attempt to call generateSynopsis when dynamicStatusGenerator is undefined', async () => {
+                // This test kills the mutation: if(dynamicStatusGenerator) → if(true)
+                // If the guard is mutated to always true, calling undefined.generateSynopsis() would throw
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        // The pre-chat synopsis generation happens BEFORE agent.chat is called
+                        // If dynamicStatusGenerator is undefined and guard is mutated to if(true),
+                        // the middleware would crash before reaching this point
+                        if(onEvent) {
+                            onEvent({ type: 'assistant' });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                // No dynamicStatusGenerator provided - middleware should NOT crash
+                const middleware = createStatusMiddleware({
+                    presenceManager: mockPresenceManager,
+                    agent:           wrappedAgent as any,
+                    logger:          mockLogger,
+                    // dynamicStatusGenerator intentionally omitted (undefined)
+                });
+
+                // Should complete successfully without throwing
+                const result = await middleware(messageContext);
+                expect(result).toBe('Response');
+
+                // Agent chat should have been called (proves we got past the guard)
+                expect(wrappedAgent.chat).toHaveBeenCalledTimes(1);
+            });
+
+            it('should skip pre-chat synopsis generation without crashing when generator is undefined', async () => {
+                // Explicit test: undefined dynamicStatusGenerator should skip generateSynopsis call
+                // With mutation if(dynamicStatusGenerator) → if(true), this would throw:
+                // "TypeError: Cannot read properties of undefined (reading 'generateSynopsis')"
+                const phases: PresencePhase[] = [];
+
+                const wrappedAgent = {
+                    chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'assistant' });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const capturingPresenceManager = {
+                    updatePhase: mock(async (phase: PresencePhase) => {
+                        phases.push(phase);
+                    }),
+                    start: mock(() => undefined),
+                    stop:  mock(() => undefined),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager: capturingPresenceManager as any,
+                    agent:           wrappedAgent as any,
+                    logger:          mockLogger,
+                    // No dynamicStatusGenerator
+                });
+
+                await middleware(messageContext);
+                await flushPromises();
+
+                // Should have thinking phase with undefined generatedStatus
+                const thinkingPhase = _find(phases, ['type', 'thinking']);
+                expect(thinkingPhase).toBeDefined();
+                if(thinkingPhase?.type === 'thinking') {
+                    expect(thinkingPhase.generatedStatus).toBeUndefined();
+                }
+            });
         });
     });
 });

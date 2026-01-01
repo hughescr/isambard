@@ -979,16 +979,18 @@ describe('createClaudeAgent context integration', () => {
             infoSpy.mockRestore();
         });
 
-        it('should log stream events with event type', async () => {
+        it('should log stream events with descriptive messages', async () => {
             const debugSpy = spyOn(logger, 'debug');
 
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);
 
+            // Should log assistant event with hasText indicator
             expect(debugSpy).toHaveBeenCalledWith(
                 expect.objectContaining({
                     eventType: 'assistant',
-                    msg:       expect.stringContaining('Stream event:'),
+                    hasText:   true,
+                    msg:       'Claude LLM responding',
                 })
             );
 
@@ -1042,9 +1044,9 @@ describe('createClaudeAgent context integration', () => {
 
             expect(debugSpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    toolName:  'mcp__memory__view',
-                    toolUseId: 'tool_123',
-                    msg:       'Tool call: mcp__memory__view',
+                    module: 'memory',
+                    tool:   'view',
+                    args:   { path: '/memories/test' },
                 })
             );
 
@@ -1083,16 +1085,16 @@ describe('createClaudeAgent context integration', () => {
 
             expect(debugSpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    toolName:  'mcp__memory__view',
-                    toolUseId: 'tool_123',
-                    msg:       'Tool call: mcp__memory__view',
+                    module: 'memory',
+                    tool:   'view',
+                    args:   { path: '/memories/test' },
                 })
             );
             expect(debugSpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    toolName:  'mcp__memory__store',
-                    toolUseId: 'tool_456',
-                    msg:       'Tool call: mcp__memory__store',
+                    module: 'memory',
+                    tool:   'store',
+                    args:   { path: '/memories/new', content: 'data' },
                 })
             );
 

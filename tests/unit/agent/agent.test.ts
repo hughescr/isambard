@@ -2,10 +2,494 @@
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import _ from 'lodash';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
-import { createClaudeAgent, extractToolUses } from '../../../src/agent/agent';
+import { createClaudeAgent, extractToolUses, parseToolName, logStreamEvent, redactSensitiveArgs } from '../../../src/agent/agent';
+import type { ParsedToolName } from '../../../src/agent/agent';
+import type { AgentStreamEvent } from '../../../src/agent/types';
+import { logger } from '@hughescr/logger';
 import type { DiscordMessageContext } from '../../../src/integrations/discord/types';
 import { createGuildId, createChannelId, createUserId } from '../../../src/integrations/discord/types';
 import type { ContextBuilder } from '../../../src/agent/context-builder';
+
+describe('parseToolName', () => {
+    it('should convert MCP tool names to ParsedToolName with module and tool', () => {
+        const result1: ParsedToolName = parseToolName('mcp__memory__view');
+        expect(result1).toEqual({ module: 'memory', tool: 'view' });
+
+        const result2: ParsedToolName = parseToolName('mcp__discord__get_messages');
+        expect(result2).toEqual({ module: 'discord', tool: 'get_messages' });
+    });
+
+    it('should return regular tool names with module "claude"', () => {
+        expect(parseToolName('Read')).toEqual({ module: 'claude', tool: 'Read' });
+        expect(parseToolName('WebFetch')).toEqual({ module: 'claude', tool: 'WebFetch' });
+        expect(parseToolName('TodoWrite')).toEqual({ module: 'claude', tool: 'TodoWrite' });
+    });
+
+    it('should handle tool names with multiple underscores in the tool part', () => {
+        expect(parseToolName('mcp__memory__get_all_items')).toEqual({ module: 'memory', tool: 'get_all_items' });
+    });
+
+    it('should preserve double underscores in tool part when joining', () => {
+        // This tests the '__' separator at line 390: parts.slice(1).join('__')
+        // Tool names like 'mcp__module__sub__tool' should preserve the double underscore
+        // If the mutation changes '__' to '', the tool would become 'subtool' instead of 'sub__tool'
+        const result = parseToolName('mcp__discord__search__messages');
+        expect(result).toEqual({ module: 'discord', tool: 'search__messages' });
+
+        // More complex case with multiple double underscore segments
+        const complexResult = parseToolName('mcp__server__a__b__c');
+        expect(complexResult).toEqual({ module: 'server', tool: 'a__b__c' });
+    });
+
+    it('should handle empty tool name', () => {
+        expect(parseToolName('')).toEqual({ module: 'claude', tool: '' });
+    });
+
+    it('should treat empty string differently from non-empty strings', () => {
+        // This test ensures the empty string check is essential and not just a fallback
+        // If the mutation changes '' to 'Stryker was here!', this would fail because
+        // 'Stryker was here!' would be treated as a regular non-MCP tool
+        const emptyResult = parseToolName('');
+        const nonEmptyResult = parseToolName('Stryker was here!');
+
+        // Both should have claude module but for different reasons:
+        // - Empty string: special case handling at line 381
+        // - Non-empty: regular tool fallback at line 396
+        expect(emptyResult).toEqual({ module: 'claude', tool: '' });
+        expect(nonEmptyResult).toEqual({ module: 'claude', tool: 'Stryker was here!' });
+
+        // The key difference is in the tool name itself
+        expect(emptyResult.tool).toBe('');
+        expect(nonEmptyResult.tool).not.toBe('');
+    });
+
+    it('should handle undefined tool name', () => {
+        expect(parseToolName(undefined)).toEqual({ module: 'claude', tool: 'unknown' });
+    });
+
+    it('should treat malformed MCP names (missing tool part) as non-MCP tools', () => {
+        // mcp__foo has no tool part after the module, treat as regular tool
+        expect(parseToolName('mcp__foo')).toEqual({ module: 'claude', tool: 'mcp__foo' });
+    });
+
+    it('should handle MCP names with only prefix and no module/tool', () => {
+        // Just "mcp__" with nothing after
+        expect(parseToolName('mcp__')).toEqual({ module: 'claude', tool: 'mcp__' });
+    });
+
+    it('should only treat tools starting with exact mcp__ prefix as MCP tools', () => {
+        // This test kills the mutant that changes 'mcp__' to '' in the startsWith check.
+        // If 'mcp__' is mutated to '', startsWith(toolName, '') would be true for ALL strings,
+        // causing all tool names to be incorrectly parsed as MCP tools.
+
+        // Valid MCP tools - should extract module
+        expect(parseToolName('mcp__memory__search')).toEqual({ module: 'memory', tool: 'search' });
+
+        // Regular tools (no mcp__ prefix) - module should be 'claude', tool should be unchanged
+        expect(parseToolName('regular_tool')).toEqual({ module: 'claude', tool: 'regular_tool' });
+        expect(parseToolName('some__other__tool')).toEqual({ module: 'claude', tool: 'some__other__tool' });
+
+        // Almost mcp__ but not quite - single underscore should NOT be treated as MCP
+        expect(parseToolName('mcp_memory_search')).toEqual({ module: 'claude', tool: 'mcp_memory_search' });
+
+        // Tool names with underscores that look like they could be split but lack the prefix
+        expect(parseToolName('foo__bar__baz')).toEqual({ module: 'claude', tool: 'foo__bar__baz' });
+    });
+});
+
+describe('redactSensitiveArgs', () => {
+    describe('basic redaction', () => {
+        it('should redact apiKey', () => {
+            const input = { apiKey: 'sk-secret-123' };
+            expect(redactSensitiveArgs(input)).toEqual({ apiKey: '[REDACTED]' });
+        });
+
+        it('should redact password', () => {
+            const input = { password: 'mypassword123' };
+            expect(redactSensitiveArgs(input)).toEqual({ password: '[REDACTED]' });
+        });
+
+        it('should redact secret', () => {
+            const input = { secret: 'super-secret' };
+            expect(redactSensitiveArgs(input)).toEqual({ secret: '[REDACTED]' });
+        });
+
+        it('should redact token', () => {
+            const input = { token: 'jwt-token-here' };
+            expect(redactSensitiveArgs(input)).toEqual({ token: '[REDACTED]' });
+        });
+
+        it('should redact credential', () => {
+            const input = { credential: 'cred-value' };
+            expect(redactSensitiveArgs(input)).toEqual({ credential: '[REDACTED]' });
+        });
+
+        it('should redact auth', () => {
+            const input = { auth: 'auth-value' };
+            expect(redactSensitiveArgs(input)).toEqual({ auth: '[REDACTED]' });
+        });
+
+        it('should redact privateKey', () => {
+            const input = { privateKey: '-----BEGIN PRIVATE KEY-----' };
+            expect(redactSensitiveArgs(input)).toEqual({ privateKey: '[REDACTED]' });
+        });
+
+        it('should redact secretKey', () => {
+            const input = { secretKey: 'secret-key-value' };
+            expect(redactSensitiveArgs(input)).toEqual({ secretKey: '[REDACTED]' });
+        });
+
+        it('should redact accessKey', () => {
+            const input = { accessKey: 'AKIA...' };
+            expect(redactSensitiveArgs(input)).toEqual({ accessKey: '[REDACTED]' });
+        });
+
+        it('should redact authKey', () => {
+            const input = { authKey: 'auth-key-value' };
+            expect(redactSensitiveArgs(input)).toEqual({ authKey: '[REDACTED]' });
+        });
+
+        it('should redact passwd', () => {
+            const input = { passwd: 'unix-style-password' };
+            expect(redactSensitiveArgs(input)).toEqual({ passwd: '[REDACTED]' });
+        });
+    });
+
+    describe('case insensitivity', () => {
+        it('should redact PASSWORD (uppercase)', () => {
+            const input = { PASSWORD: 'value' };
+            expect(redactSensitiveArgs(input)).toEqual({ PASSWORD: '[REDACTED]' });
+        });
+
+        it('should redact ApiKey (mixed case)', () => {
+            const input = { ApiKey: 'value' };
+            expect(redactSensitiveArgs(input)).toEqual({ ApiKey: '[REDACTED]' });
+        });
+
+        it('should redact API_KEY with key pattern', () => {
+            const input = { API_KEY: 'value' };
+            expect(redactSensitiveArgs(input)).toEqual({ API_KEY: '[REDACTED]' });
+        });
+    });
+
+    describe('key pattern matching', () => {
+        it('should redact keys containing "key" (broad matching per requirements)', () => {
+            const input = { primaryKey: 'db-key', sortKey: 'sort-value' };
+            expect(redactSensitiveArgs(input)).toEqual({ primaryKey: '[REDACTED]', sortKey: '[REDACTED]' });
+        });
+
+        it('should redact keyboardType (contains key)', () => {
+            const input = { keyboardType: 'numeric' };
+            expect(redactSensitiveArgs(input)).toEqual({ keyboardType: '[REDACTED]' });
+        });
+    });
+
+    describe('non-sensitive keys', () => {
+        it('should NOT redact path', () => {
+            const input = { path: '/memories/test' };
+            expect(redactSensitiveArgs(input)).toEqual({ path: '/memories/test' });
+        });
+
+        it('should NOT redact content', () => {
+            const input = { content: 'Hello world' };
+            expect(redactSensitiveArgs(input)).toEqual({ content: 'Hello world' });
+        });
+
+        it('should NOT redact name', () => {
+            const input = { name: 'my-tool' };
+            expect(redactSensitiveArgs(input)).toEqual({ name: 'my-tool' });
+        });
+
+        it('should NOT redact id', () => {
+            const input = { id: '12345' };
+            expect(redactSensitiveArgs(input)).toEqual({ id: '12345' });
+        });
+    });
+
+    describe('nested objects', () => {
+        it('should redact sensitive keys in nested objects', () => {
+            const input = {
+                config: {
+                    apiKey:   'secret',
+                    endpoint: 'https://api.example.com',
+                },
+            };
+            expect(redactSensitiveArgs(input)).toEqual({
+                config: {
+                    apiKey:   '[REDACTED]',
+                    endpoint: 'https://api.example.com',
+                },
+            });
+        });
+
+        it('should redact deeply nested sensitive keys', () => {
+            const input = {
+                level1: {
+                    level2: {
+                        level3: {
+                            password: 'deep-secret',
+                        },
+                    },
+                },
+            };
+            expect(redactSensitiveArgs(input)).toEqual({
+                level1: {
+                    level2: {
+                        level3: {
+                            password: '[REDACTED]',
+                        },
+                    },
+                },
+            });
+        });
+    });
+
+    describe('arrays', () => {
+        it('should redact sensitive keys in objects within arrays', () => {
+            const input = {
+                users: [
+                    { name: 'Alice', password: 'secret1' },
+                    { name: 'Bob', password: 'secret2' },
+                ],
+            };
+            expect(redactSensitiveArgs(input)).toEqual({
+                users: [
+                    { name: 'Alice', password: '[REDACTED]' },
+                    { name: 'Bob', password: '[REDACTED]' },
+                ],
+            });
+        });
+
+        it('should handle arrays of primitives unchanged', () => {
+            const input = { tags: ['a', 'b', 'c'] };
+            expect(redactSensitiveArgs(input)).toEqual({ tags: ['a', 'b', 'c'] });
+        });
+
+        it('should handle mixed arrays', () => {
+            const input = {
+                items: [
+                    'string',
+                    123,
+                    { token: 'secret' },
+                    null,
+                ],
+            };
+            expect(redactSensitiveArgs(input)).toEqual({
+                items: [
+                    'string',
+                    123,
+                    { token: '[REDACTED]' },
+                    null,
+                ],
+            });
+        });
+    });
+
+    describe('edge cases', () => {
+        it('should return primitive values unchanged', () => {
+            expect(redactSensitiveArgs('string')).toBe('string');
+            expect(redactSensitiveArgs(123)).toBe(123);
+            expect(redactSensitiveArgs(true)).toBe(true);
+        });
+
+        it('should handle null gracefully', () => {
+            expect(redactSensitiveArgs(null)).toBeNull();
+        });
+
+        it('should handle undefined gracefully', () => {
+            expect(redactSensitiveArgs(undefined)).toBeUndefined();
+        });
+
+        it('should handle empty object', () => {
+            expect(redactSensitiveArgs({})).toEqual({});
+        });
+
+        it('should handle empty array', () => {
+            expect(redactSensitiveArgs([])).toEqual([]);
+        });
+
+        it('should handle object with null value for sensitive key', () => {
+            const input = { password: null };
+            expect(redactSensitiveArgs(input)).toEqual({ password: '[REDACTED]' });
+        });
+
+        it('should handle object with undefined value for sensitive key', () => {
+            const input = { password: undefined };
+            expect(redactSensitiveArgs(input)).toEqual({ password: '[REDACTED]' });
+        });
+
+        it('should handle object with numeric value for sensitive key', () => {
+            const input = { token: 12345 };
+            expect(redactSensitiveArgs(input)).toEqual({ token: '[REDACTED]' });
+        });
+    });
+
+    describe('multiple sensitive keys', () => {
+        it('should redact all sensitive keys in same object', () => {
+            const input = {
+                apiKey:   'key1',
+                password: 'pass1',
+                token:    'tok1',
+                path:     '/safe',
+            };
+            expect(redactSensitiveArgs(input)).toEqual({
+                apiKey:   '[REDACTED]',
+                password: '[REDACTED]',
+                token:    '[REDACTED]',
+                path:     '/safe',
+            });
+        });
+    });
+});
+
+describe('logStreamEvent', () => {
+    let debugSpy: ReturnType<typeof spyOn>;
+
+    beforeEach(() => {
+        debugSpy = spyOn(logger, 'debug');
+    });
+
+    afterEach(() => {
+        debugSpy.mockRestore();
+    });
+
+    it('should log user events as "Sending message to Claude LLM"', () => {
+        const event: AgentStreamEvent = { type: 'user' };
+
+        logStreamEvent(event);
+
+        expect(debugSpy).toHaveBeenCalledWith({
+            eventType: 'user',
+            msg:       'Sending message to Claude LLM',
+        });
+    });
+
+    it('should log assistant events with text as "Claude LLM responding" with hasText: true', () => {
+        const event: AgentStreamEvent = {
+            type:    'assistant',
+            message: {
+                content: [{ type: 'text', text: 'Hello world' }],
+            },
+        };
+
+        logStreamEvent(event);
+
+        expect(debugSpy).toHaveBeenCalledWith({
+            eventType: 'assistant',
+            hasText:   true,
+            msg:       'Claude LLM responding',
+        });
+    });
+
+    it('should log assistant events without text as "Claude LLM thinking"', () => {
+        const event: AgentStreamEvent = {
+            type:    'assistant',
+            message: {
+                content: [],
+            },
+        };
+
+        logStreamEvent(event);
+
+        expect(debugSpy).toHaveBeenCalledWith({
+            eventType: 'assistant',
+            hasText:   false,
+            msg:       'Claude LLM thinking',
+        });
+    });
+
+    it('should log tool_progress events with parsed module and tool for MCP tools', () => {
+        const event: AgentStreamEvent = {
+            type:      'tool_progress',
+            tool_name: 'mcp__memory__view',
+        };
+
+        logStreamEvent(event);
+
+        expect(debugSpy).toHaveBeenCalledWith({
+            eventType: 'tool_progress',
+            module:    'memory',
+            tool:      'view',
+            msg:       'Tool execution started',
+        });
+    });
+
+    it('should log tool_progress events with claude module for regular tools', () => {
+        const event: AgentStreamEvent = {
+            type:      'tool_progress',
+            tool_name: 'Read',
+        };
+
+        logStreamEvent(event);
+
+        expect(debugSpy).toHaveBeenCalledWith({
+            eventType: 'tool_progress',
+            module:    'claude',
+            tool:      'Read',
+            msg:       'Tool execution started',
+        });
+    });
+
+    it('should log tool_result events with parsed module and tool', () => {
+        const event: AgentStreamEvent = {
+            type:      'tool_result',
+            tool_name: 'mcp__memory__view',
+        };
+
+        logStreamEvent(event);
+
+        expect(debugSpy).toHaveBeenCalledWith({
+            eventType: 'tool_result',
+            module:    'memory',
+            tool:      'view',
+            msg:       'Tool execution complete',
+        });
+    });
+
+    it('should log result events with status from subtype', () => {
+        const event: AgentStreamEvent = {
+            type:    'result',
+            subtype: 'success',
+        };
+
+        logStreamEvent(event);
+
+        expect(debugSpy).toHaveBeenCalledWith({
+            eventType: 'result',
+            status:    'success',
+            msg:       'Claude LLM stream complete',
+        });
+    });
+
+    it('should log result events with error_during_execution status', () => {
+        const event: AgentStreamEvent = {
+            type:    'result',
+            subtype: 'error_during_execution',
+        };
+
+        logStreamEvent(event);
+
+        expect(debugSpy).toHaveBeenCalledWith({
+            eventType: 'result',
+            status:    'error_during_execution',
+            msg:       'Claude LLM stream complete',
+        });
+    });
+
+    it('should log result events with undefined subtype', () => {
+        const event: AgentStreamEvent = {
+            type: 'result',
+        };
+
+        logStreamEvent(event);
+
+        expect(debugSpy).toHaveBeenCalledWith({
+            eventType: 'result',
+            status:    undefined,
+            msg:       'Claude LLM stream complete',
+        });
+    });
+});
 
 describe('extractToolUses', () => {
     it('should return empty array for non-assistant messages', () => {

@@ -21,6 +21,35 @@ describe('ActiveStatusGenerator', () => {
 
     describe('generate', () => {
         describe('thinking phase', () => {
+            it('should use generatedStatus when present', () => {
+                const generator = createActiveStatusGenerator({
+                    logger:       mockLogger,
+                    activityType: ActivityType.Custom,
+                });
+
+                const phase: PresencePhase = {
+                    type:            'thinking',
+                    startedAt:       new Date(),
+                    generatedStatus: 'Pondering the meaning of life...',
+                };
+                const result = generator.generate(phase);
+
+                expect(result.name).toBe('Pondering the meaning of life...');
+                expect(result.type).toBe(ActivityType.Custom);
+            });
+
+            it('should fall back to "Thinking..." when generatedStatus is undefined', () => {
+                const generator = createActiveStatusGenerator({
+                    logger:       mockLogger,
+                    activityType: ActivityType.Custom,
+                });
+
+                const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
+                const result = generator.generate(phase);
+
+                expect(result.name).toBe('Thinking...');
+            });
+
             it('should return exactly "Thinking..." with three dots', () => {
                 const generator = createActiveStatusGenerator({
                     logger:       mockLogger,
@@ -89,6 +118,35 @@ describe('ActiveStatusGenerator', () => {
         });
 
         describe('responding phase', () => {
+            it('should use generatedStatus when present', () => {
+                const generator = createActiveStatusGenerator({
+                    logger:       mockLogger,
+                    activityType: ActivityType.Custom,
+                });
+
+                const phase: PresencePhase = {
+                    type:            'responding',
+                    startedAt:       new Date(),
+                    generatedStatus: 'Composing a thoughtful reply...',
+                };
+                const result = generator.generate(phase);
+
+                expect(result.name).toBe('Composing a thoughtful reply...');
+                expect(result.type).toBe(ActivityType.Custom);
+            });
+
+            it('should fall back to "Responding..." when generatedStatus is undefined', () => {
+                const generator = createActiveStatusGenerator({
+                    logger:       mockLogger,
+                    activityType: ActivityType.Custom,
+                });
+
+                const phase: PresencePhase = { type: 'responding', startedAt: new Date() };
+                const result = generator.generate(phase);
+
+                expect(result.name).toBe('Responding...');
+            });
+
             it('should return exactly "Responding..." with three dots', () => {
                 const generator = createActiveStatusGenerator({
                     logger:       mockLogger,
@@ -220,6 +278,42 @@ describe('ActiveStatusGenerator', () => {
         });
 
         describe('using_tool phase', () => {
+            describe('generatedStatus override', () => {
+                it('should use generatedStatus when present', () => {
+                    const generator = createActiveStatusGenerator({
+                        logger:       mockLogger,
+                        activityType: ActivityType.Custom,
+                    });
+
+                    const phase: PresencePhase = {
+                        type:            'using_tool',
+                        toolName:        'mcp__memory__view',
+                        startedAt:       new Date(),
+                        generatedStatus: 'Recalling conversation history...',
+                    };
+                    const result = generator.generate(phase);
+
+                    expect(result.name).toBe('Recalling conversation history...');
+                    expect(result.type).toBe(ActivityType.Custom);
+                });
+
+                it('should fall back to ToolStatusMap when generatedStatus is undefined', () => {
+                    const generator = createActiveStatusGenerator({
+                        logger:       mockLogger,
+                        activityType: ActivityType.Custom,
+                    });
+
+                    const phase: PresencePhase = {
+                        type:      'using_tool',
+                        toolName:  'mcp__memory__view',
+                        startedAt: new Date(),
+                    };
+                    const result = generator.generate(phase);
+
+                    expect(result.name).toBe('Remembering...');
+                });
+            });
+
             describe('known tools from ToolStatusMap', () => {
                 it('should return "Remembering..." for mcp__memory__view', () => {
                     const generator = createActiveStatusGenerator({

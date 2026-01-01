@@ -8,6 +8,7 @@ import { createDiscordClient } from './client';
 import { createReadyHandler, createErrorHandler, createMessageHandler } from './handlers';
 import {
     createActiveStatusGenerator,
+    createDynamicStatusGenerator,
     createIdleStatusGenerator,
     createPresenceManager,
     type PresenceManager
@@ -145,6 +146,11 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             presenceManager.start();
         }
 
+        // Create dynamic status generator if identityContext is provided
+        const dynamicStatusGenerator = identityContext
+            ? createDynamicStatusGenerator({ identityContext })
+            : undefined;
+
         // eslint-disable-next-line @typescript-eslint/no-misused-promises -- messageCreate handler is async
         client.on('messageCreate', createMessageHandler({
             monitoredChannelIds: config.monitoredChannelIds as ChannelId[],
@@ -152,6 +158,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             onMessage,
             presenceManager,
             agent,
+            dynamicStatusGenerator,
         }));
     });
 

@@ -29,13 +29,13 @@ describe('generateText', () => {
             );
         });
 
-        it('should use claude-3-5-haiku-20241022 model', async () => {
+        it('should use claude-haiku-4-5-20251001 model', async () => {
             await generateText('Test prompt');
 
             expect(promptSpy).toHaveBeenCalledWith(
                 expect.any(String),
                 expect.objectContaining({
-                    model: 'claude-3-5-haiku-20241022',
+                    model: 'claude-haiku-4-5-20251001',
                 })
             );
         });
@@ -232,7 +232,7 @@ describe('generateText', () => {
             for(const call of promptSpy.mock.calls) {
                 expect(call[1]).toEqual(
                     expect.objectContaining({
-                        model: 'claude-3-5-haiku-20241022',
+                        model: 'claude-haiku-4-5-20251001',
                     })
                 );
             }

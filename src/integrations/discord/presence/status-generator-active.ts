@@ -77,15 +77,15 @@ export function createActiveStatusGenerator(
                     return { name: 'Idle', type: activityType };
 
                 case 'thinking':
-                    return { name: 'Thinking...', type: activityType };
+                    return { name: phase.generatedStatus ?? 'Thinking...', type: activityType };
 
                 case 'using_tool': {
-                    const statusText = ToolStatusMap[phase.toolName] ?? 'Working...';
+                    const statusText = phase.generatedStatus ?? ToolStatusMap[phase.toolName] ?? 'Working...';
                     return { name: statusText, type: activityType };
                 }
 
                 case 'responding':
-                    return { name: 'Responding...', type: activityType };
+                    return { name: phase.generatedStatus ?? 'Responding...', type: activityType };
 
                 default: {
                     // Exhaustiveness check - TypeScript will error if we miss a case

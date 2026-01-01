@@ -459,6 +459,78 @@ describe('loadConfig', () => {
         });
     });
 
+    describe('Presence Config Defaults', () => {
+        it('includes default presence config in discord config', () => {
+            const resources = createMockResources();
+            const config = loadConfig(resources);
+
+            expect(config.discord.presence).toBeDefined();
+            expect(config.discord.presence?.updateDebounceMs).toBe(2000);
+            expect(config.discord.presence?.idleTimeoutMs).toBe(60000);
+            expect(config.discord.presence?.idleRefreshIntervalMs).toBe(300000);
+        });
+
+        it('presence config is explicitly set with all three required properties', () => {
+            const resources = createMockResources();
+            const config = loadConfig(resources);
+
+            // Verify presence is not undefined (catches mutant that removes the object literal)
+            expect(config.discord.presence).not.toBeUndefined();
+
+            // Verify it's a proper object with exactly the expected structure
+            expect(config.discord.presence).toEqual({
+                updateDebounceMs:      2000,
+                idleTimeoutMs:         60000,
+                idleRefreshIntervalMs: 300000,
+            });
+        });
+
+        it('presence object contains all default fields when loader provides defaults', () => {
+            const resources = createMockResources();
+            const config = loadConfig(resources);
+
+            // This test specifically catches mutants that modify or empty the presence object
+            // by checking the object has exactly the expected keys and values
+            const presence = config.discord.presence;
+            expect(presence).toBeTruthy();
+            expect(_.keys(presence!)).toHaveLength(3);
+            expect(_.keys(presence!)).toContain('updateDebounceMs');
+            expect(_.keys(presence!)).toContain('idleTimeoutMs');
+            expect(_.keys(presence!)).toContain('idleRefreshIntervalMs');
+        });
+
+        it('presence defaults from loader have exact numeric values not just truthy', () => {
+            // This test kills the ObjectLiteral mutant by verifying EXACT numeric values
+            // that cannot be satisfied by schema defaults or modified values
+            const resources = createMockResources();
+            const config = loadConfig(resources);
+
+            // Verify presence exists and is not undefined (kills removal mutant)
+            expect(config.discord.presence).toBeDefined();
+
+            // Verify exact values - these specific assertions kill mutations that:
+            // - Remove the object literal entirely (presence would be undefined)
+            // - Modify individual numeric values (e.g., 2000 -> 0 or empty)
+            // - Replace the object with an empty object
+            const presence = config.discord.presence!;
+
+            // Check updateDebounceMs is exactly 2000 (not 0, not falsy, not different number)
+            expect(presence.updateDebounceMs).toBeGreaterThan(0);
+            expect(presence.updateDebounceMs).toBeLessThan(10000);
+            expect(presence.updateDebounceMs).toBe(2000);
+
+            // Check idleTimeoutMs is exactly 60000 (not 0, not falsy, not different number)
+            expect(presence.idleTimeoutMs).toBeGreaterThan(0);
+            expect(presence.idleTimeoutMs).toBeLessThan(120000);
+            expect(presence.idleTimeoutMs).toBe(60000);
+
+            // Check idleRefreshIntervalMs is exactly 300000 (not 0, not falsy, not different number)
+            expect(presence.idleRefreshIntervalMs).toBeGreaterThan(0);
+            expect(presence.idleRefreshIntervalMs).toBeLessThan(600000);
+            expect(presence.idleRefreshIntervalMs).toBe(300000);
+        });
+    });
+
     describe('Type Coercion', () => {
         it('should coerce string ports to numbers', () => {
             const resources = createMockResources({

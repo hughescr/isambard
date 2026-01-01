@@ -269,6 +269,36 @@ describe('createMessageFetcher', () => {
                 });
             });
 
+            it('should NOT include contentType in attachment when attachment.contentType is null', async () => {
+                // This test specifically targets the mutant that changes
+                // `if(attachment.contentType)` to `if(true)` at line 92.
+                // If the mutation survives, the attachment would have `contentType: null`
+                // instead of omitting the contentType property entirely.
+                const message = createMockMessage({
+                    id:          '100000000000000000',
+                    attachments: [
+                        { url: 'https://cdn.discord.com/file.bin', name: 'file.bin', contentType: null },
+                    ],
+                });
+
+                const channel = createMockChannel('123456789012345678', [message]);
+                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+                const client = createMockClient(channels);
+
+                const fetcher = createMessageFetcher(client);
+                const result = await fetcher.fetchMessages({ channelId: '123456789012345678' });
+
+                // Verify attachment has url and filename but NOT contentType
+                expect(result.messages[0].attachments).toHaveLength(1);
+                expect(result.messages[0].attachments[0]).toEqual({
+                    url:      'https://cdn.discord.com/file.bin',
+                    filename: 'file.bin',
+                });
+                // This assertion catches the `if(true)` mutation which would add null property
+                expect('contentType' in result.messages[0].attachments[0]).toBe(false);
+                expect(_.has(result.messages[0].attachments[0], 'contentType')).toBe(false);
+            });
+
             it('should include embeds in transformed message', async () => {
                 const message = createMockMessage({
                     id:     '100000000000000000',
@@ -804,6 +834,74 @@ describe('createMessageFetcher', () => {
                 // Message before boundary should NOT be included
                 expect(result.messages).toHaveLength(0);
             });
+
+            it('should stop pagination loop when shouldStop is set to true by processBatch', async () => {
+                // This test specifically targets the mutant that changes `shouldStop = true` to
+                // `shouldStop = false` at line 219. If the mutation survives, the loop would
+                // continue fetching additional batches when it should have stopped.
+                //
+                // Setup:
+                // - Create 150 messages across multiple batches
+                // - Use startTime that causes processBatch to trigger shouldStop on first batch
+                // - Verify only 1 fetch call is made (loop terminates after shouldStop = true)
+
+                const boundaryDate = new Date('2025-01-15T00:00:00.000Z');
+                const boundarySnowflake = timestampToSnowflake(boundaryDate);
+
+                // Create messages: 50 BEFORE boundary, 50 AFTER boundary
+                const messages: Message[] = [];
+
+                // Messages before boundary (these should trigger shouldStop)
+                for(let i = 0; i < 50; i++) {
+                    const snowflake = (BigInt(boundarySnowflake) - BigInt(50 - i)).toString();
+                    messages.push(createMockMessage({
+                        id:        snowflake,
+                        content:   `Before ${i}`,
+                        createdAt: new Date(boundaryDate.getTime() - (50 - i) * 1000),
+                    }));
+                }
+
+                // Messages after boundary (these should be included)
+                for(let i = 0; i < 50; i++) {
+                    const snowflake = (BigInt(boundarySnowflake) + BigInt(i)).toString();
+                    messages.push(createMockMessage({
+                        id:        snowflake,
+                        content:   `After ${i}`,
+                        createdAt: new Date(boundaryDate.getTime() + i * 1000),
+                    }));
+                }
+
+                let fetchCallCount = 0;
+                const channel = createMockChannel('123456789012345678', messages, (options) => {
+                    fetchCallCount++;
+                    const limit = options.limit ?? 100;
+                    let result = [...messages];
+
+                    if(options.before) {
+                        result = _.filter(messages, m => BigInt(m.id) < BigInt(options.before!));
+                    }
+
+                    // Return in descending order (newest first)
+                    return result.slice(-limit).reverse();
+                });
+
+                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+                const client = createMockClient(channels);
+
+                const fetcher = createMessageFetcher(client);
+                const result = await fetcher.fetchMessages({
+                    channelId: '123456789012345678',
+                    startTime: boundaryDate,
+                });
+
+                // Should have 50 messages (all after boundary)
+                expect(result.messages).toHaveLength(50);
+
+                // CRITICAL: If shouldStop mutation survives (shouldStop = false instead of true),
+                // the loop would continue and make a second fetch call.
+                // With correct behavior (shouldStop = true), loop terminates after first batch.
+                expect(fetchCallCount).toBe(1);
+            });
         });
 
         describe('error handling', () => {
@@ -1212,6 +1310,156 @@ describe('createMessageFetcher', () => {
             expect(result!.embeds).toHaveLength(1);
             expect(result!.reactions).toHaveLength(1);
             expect(result!.replyTo).toBe('99999999999999999');
+        });
+    });
+
+    describe('fetchByIds', () => {
+        it('should fetch multiple messages in batch', async () => {
+            const messages = [
+                createMockMessage({ id: '100000000000000001', content: 'First message' }),
+                createMockMessage({ id: '100000000000000002', content: 'Second message' }),
+                createMockMessage({ id: '100000000000000003', content: 'Third message' }),
+            ];
+
+            // Create mock channel that handles individual message fetches
+            const channel = {
+                id:          '123456789012345678',
+                isTextBased: _.constant(true),
+                messages:    {
+                    fetch: mock(async (messageId: string) => {
+                        const msg = _.find(messages, ['id', messageId]);
+                        if(!msg) {
+                            throw new Error('Not found');
+                        }
+                        return msg;
+                    }),
+                },
+            } as unknown as TextChannel;
+
+            const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+            const client = createMockClient(channels);
+
+            const fetcher = createMessageFetcher(client);
+            const result = await fetcher.fetchByIds('123456789012345678', ['100000000000000001', '100000000000000002', '100000000000000003']);
+
+            expect(result).toHaveLength(3);
+            expect(result[0].content).toBe('First message');
+            expect(result[1].content).toBe('Second message');
+            expect(result[2].content).toBe('Third message');
+        });
+
+        it('should return empty array for empty input', async () => {
+            const channel = createMockChannel('123456789012345678', []);
+            const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+            const client = createMockClient(channels);
+
+            const fetcher = createMessageFetcher(client);
+            const result = await fetcher.fetchByIds('123456789012345678', []);
+
+            expect(result).toHaveLength(0);
+        });
+
+        it('should filter out messages that fail to fetch (missing IDs)', async () => {
+            const messages = [
+                createMockMessage({ id: '100000000000000001', content: 'First message' }),
+                createMockMessage({ id: '100000000000000002', content: 'Second message' }),
+            ];
+
+            const channel = {
+                id:          '123456789012345678',
+                isTextBased: _.constant(true),
+                messages:    {
+                    fetch: mock(async (messageId: string) => {
+                        const msg = _.find(messages, ['id', messageId]);
+                        if(!msg) {
+                            throw new Error('Not found');
+                        }
+                        return msg;
+                    }),
+                },
+            } as unknown as TextChannel;
+
+            const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+            const client = createMockClient(channels);
+
+            const fetcher = createMessageFetcher(client);
+            // Request 3 IDs but only 2 exist
+            const result = await fetcher.fetchByIds('123456789012345678', ['100000000000000001', '100000000000000002', '100000000000000003']);
+
+            expect(result).toHaveLength(2);
+            expect(result[0].content).toBe('First message');
+            expect(result[1].content).toBe('Second message');
+        });
+
+        it('should throw ChannelNotAccessibleError when channel not found', async () => {
+            const channels = new Map<string, TextChannel>();
+            const client = createMockClient(channels);
+
+            const fetcher = createMessageFetcher(client);
+
+            try {
+                await fetcher.fetchByIds('nonexistent', ['100000000000000001']);
+                expect(true).toBe(false); // Should not reach here
+            } catch (error) {
+                expect(error).toBeInstanceOf(ChannelNotAccessibleError);
+            }
+        });
+
+        it('should return empty array when batch fetch throws error', async () => {
+            const channel = {
+                id:          '123456789012345678',
+                isTextBased: _.constant(true),
+                messages:    {
+                    fetch: mock(async () => {
+                        throw new Error('API error');
+                    }),
+                },
+            } as unknown as TextChannel;
+
+            const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+            const client = createMockClient(channels);
+
+            const fetcher = createMessageFetcher(client);
+            const result = await fetcher.fetchByIds('123456789012345678', ['100000000000000001']);
+
+            expect(result).toHaveLength(0);
+        });
+
+        it('should transform messages to DiscordSearchResult format', async () => {
+            const message = createMockMessage({
+                id:                '100000000000000001',
+                content:           'Test content',
+                channelId:         '123456789012345678',
+                guildId:           '987654321098765432',
+                authorId:          '111111111111111111',
+                authorUsername:    'testuser',
+                authorDisplayName: 'Test User',
+                createdAt:         new Date('2025-01-15T12:00:00.000Z'),
+                attachments:       [{ url: 'https://test.com/file.png', name: 'file.png' }],
+            });
+
+            const channel = {
+                id:          '123456789012345678',
+                isTextBased: _.constant(true),
+                messages:    {
+                    fetch: mock(async () => message),
+                },
+            } as unknown as TextChannel;
+
+            const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+            const client = createMockClient(channels);
+
+            const fetcher = createMessageFetcher(client);
+            const result = await fetcher.fetchByIds('123456789012345678', ['100000000000000001']);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].id).toBe('100000000000000001');
+            expect(result[0].channelId).toBe(createChannelId('123456789012345678'));
+            expect(result[0].guildId).toBe(createGuildId('987654321098765432'));
+            expect(result[0].author.id).toBe('111111111111111111');
+            expect(result[0].content).toBe('Test content');
+            expect(result[0].timestamp).toBe('2025-01-15T12:00:00.000Z');
+            expect(result[0].attachments).toHaveLength(1);
         });
     });
 });

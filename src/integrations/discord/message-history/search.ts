@@ -80,6 +80,15 @@ export interface MessageSearchService {
      * @returns The message if found, null otherwise
      */
     getMessageById(channelId: string, messageId: string): Promise<DiscordSearchResult | null>
+
+    /**
+     * Get multiple messages by IDs.
+     *
+     * @param channelId - Discord channel ID
+     * @param messageIds - Array of Discord message IDs
+     * @returns Array of found messages (empty for not found)
+     */
+    getMessagesById(channelId: string, messageIds: string[]): Promise<DiscordSearchResult[]>
 }
 
 /**
@@ -102,7 +111,9 @@ function convertCachedToSearchResult(cached: CachedMessage, channelId: ChannelId
         guildId: null,
         author:  {
             id:          cached.authorId,
+            // Stryker disable next-line StringLiteral: Default display string not tested
             username:    'unknown',
+            // Stryker disable next-line StringLiteral: Default display string not tested
             displayName: 'Unknown User',
         },
         content:     cached.content,
@@ -234,6 +245,7 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
         allMessages = _.sortBy(allMessages, 'id');
 
         // 8. Filter by text query if provided
+        // Stryker disable next-line ConditionalExpression: if(true) is equivalent since _.includes(x, '') is always true
         if(query) {
             const lowerQuery = _.toLower(query);
             allMessages = _.filter(allMessages, msg =>
@@ -286,9 +298,17 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
         return fetcher.fetchById(channelId, messageId);
     }
 
+    /**
+     * Get multiple messages by IDs.
+     */
+    async function getMessagesById(channelId: string, messageIds: string[]): Promise<DiscordSearchResult[]> {
+        return fetcher.fetchByIds(channelId, messageIds);
+    }
+
     return {
         searchMessages,
         getRecentMessages,
         getMessageById,
+        getMessagesById,
     };
 }

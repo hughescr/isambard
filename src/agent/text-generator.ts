@@ -6,13 +6,13 @@ import { unstable_v2_prompt } from '@anthropic-ai/claude-agent-sdk';
  *
  * Design goals:
  * - Minimal overhead - just an LLM call
- * - Uses claude-3-5-haiku (lightest model)
+ * - Uses claude-4-5-haiku (lightest model)
  * - Reuses existing Claude Max token budget via OAuth
  * - No tools, agents, MCP servers, or streaming complexity
  */
 export async function generateText(prompt: string): Promise<string> {
     const result = await unstable_v2_prompt(prompt, {
-        model: 'claude-3-5-haiku-20241022',
+        model: 'claude-haiku-4-5-20251001',
     });
 
     if(result.subtype === 'success') {

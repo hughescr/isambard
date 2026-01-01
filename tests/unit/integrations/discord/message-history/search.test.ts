@@ -84,6 +84,7 @@ describe('createMessageSearchService', () => {
         mockFetcher = {
             fetchMessages: mock(() => Promise.resolve({ messages: [], hasMore: false })),
             fetchById:     mock(() => Promise.resolve(null)),
+            fetchByIds:    mock(() => Promise.resolve([])),
         };
 
         mockCache = {
@@ -531,6 +532,39 @@ describe('createMessageSearchService', () => {
                 expect(result.messages[1].content).toBe('banana');
                 expect(result.messages[2].content).toBe('cherry');
                 expect(result.messages[3].content).toBe('date');
+            });
+
+            it('should NOT filter messages when query is empty string - all messages returned unfiltered', async () => {
+                // Empty string is falsy in JavaScript, so it should NOT trigger the filter block
+                // This test kills mutants that change `if(query)` to `if(true)` or remove the check
+                const messages = [
+                    createMockCachedMessage({ id: '100000000000000001', content: 'alpha' }),
+                    createMockCachedMessage({ id: '100000000000000002', content: 'beta' }),
+                    createMockCachedMessage({ id: '100000000000000003', content: 'gamma' }),
+                ];
+
+                (mockCache.getMessagesInRange as ReturnType<typeof mock>).mockImplementation(() =>
+                    Promise.resolve({
+                        messages,
+                        gaps:          [],
+                        fullyResolved: true,
+                    })
+                );
+
+                // Call with empty string query
+                const result = await service.searchMessages({
+                    channelId: createChannelId(testChannelId),
+                    query:     '',  // Empty string is falsy
+                    limit:     100,
+                });
+
+                // ALL messages should be returned, not filtered
+                expect(result.messages).toHaveLength(3);
+                expect(result.messages[0].content).toBe('alpha');
+                expect(result.messages[1].content).toBe('beta');
+                expect(result.messages[2].content).toBe('gamma');
+                // Metadata should show empty string query
+                expect(result.metadata.query).toBe('');
             });
         });
 
@@ -985,6 +1019,46 @@ describe('createMessageSearchService', () => {
             await expect(
                 service.getMessageById(testChannelId, '100000000000000000')
             ).rejects.toThrow('Fetch error');
+        });
+    });
+
+    describe('getMessagesById', () => {
+        it('should delegate to fetcher.fetchByIds', async () => {
+            const mockMessages = [
+                createMockSearchResult({ id: '100000000000000001', content: 'First message' }),
+                createMockSearchResult({ id: '100000000000000002', content: 'Second message' }),
+            ];
+
+            (mockFetcher.fetchByIds as ReturnType<typeof mock>).mockImplementation(() =>
+                Promise.resolve(mockMessages)
+            );
+
+            const result = await service.getMessagesById(testChannelId, ['100000000000000001', '100000000000000002']);
+
+            expect(mockFetcher.fetchByIds).toHaveBeenCalledWith(testChannelId, ['100000000000000001', '100000000000000002']);
+            expect(result).toHaveLength(2);
+            expect(result[0].content).toBe('First message');
+            expect(result[1].content).toBe('Second message');
+        });
+
+        it('should return empty array when all messages not found', async () => {
+            (mockFetcher.fetchByIds as ReturnType<typeof mock>).mockImplementation(() =>
+                Promise.resolve([])
+            );
+
+            const result = await service.getMessagesById(testChannelId, ['nonexistent1', 'nonexistent2']);
+
+            expect(result).toHaveLength(0);
+        });
+
+        it('should propagate fetcher errors', async () => {
+            (mockFetcher.fetchByIds as ReturnType<typeof mock>).mockImplementation(() =>
+                Promise.reject(new Error('Batch fetch error'))
+            );
+
+            await expect(
+                service.getMessagesById(testChannelId, ['100000000000000001'])
+            ).rejects.toThrow('Batch fetch error');
         });
     });
 

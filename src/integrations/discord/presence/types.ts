@@ -24,9 +24,28 @@ import type { ActivitiesOptions } from 'discord.js';
  */
 export type PresencePhase
     = | { type: 'idle', since: Date }
-      | { type: 'thinking', startedAt: Date }
-      | { type: 'using_tool', toolName: string, startedAt: Date }
-      | { type: 'responding', startedAt: Date };
+      | { type: 'thinking', startedAt: Date, userMessage?: string, generatedStatus?: string }
+      | { type: 'using_tool', toolName: string, startedAt: Date, generatedStatus?: string }
+      | { type: 'responding', startedAt: Date, generatedStatus?: string };
+
+// ============================================================================
+// Synopsis Context - For LLM status generation
+// ============================================================================
+
+/**
+ * Context provided to the LLM for generating dynamic status synopses.
+ * Used when generating contextual presence status messages.
+ */
+export interface SynopsisContext {
+    /** The current phase type */
+    phase:             'thinking' | 'using_tool' | 'responding'
+    /** The user's original message being processed */
+    userMessage:       string
+    /** The name of the tool being used (only for 'using_tool' phase) */
+    toolName?:         string
+    /** A fragment of the response being generated (only for 'responding' phase) */
+    responseFragment?: string
+}
 
 // ============================================================================
 // Status Update - What to show users

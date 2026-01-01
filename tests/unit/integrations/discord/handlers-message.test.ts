@@ -385,6 +385,87 @@ describe('Discord Event Handlers', () => {
             expect(mockOnMessage).toHaveBeenCalled();
         });
 
+        describe('dynamicStatusGenerator option', () => {
+            it('should accept optional dynamicStatusGenerator in options', async () => {
+                const mockDynamicStatusGenerator = {
+                    generateSynopsis: mock(async () => 'Thinking deeply...'),
+                };
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds:    ['333333333333333333' as ChannelId],
+                    botUserId:              '999999999999999999' as UserId,
+                    onMessage:              mockOnMessage,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await handler(mockMessage);
+
+                // Handler should work without errors when dynamicStatusGenerator is provided
+                expect(mockOnMessage).toHaveBeenCalled();
+            });
+
+            it('should pass dynamicStatusGenerator to statusMiddleware when all deps present', async () => {
+                const mockPresenceManager = {
+                    start:       mock(() => undefined),
+                    stop:        mock(() => undefined),
+                    updatePhase: mock(async () => undefined),
+                };
+
+                const mockAgent = {
+                    chat: mock(async () => 'agent response'),
+                };
+
+                const mockDynamicStatusGenerator = {
+                    generateSynopsis: mock(async () => 'Pondering...'),
+                };
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds:    ['333333333333333333' as ChannelId],
+                    botUserId:              '999999999999999999' as UserId,
+                    onMessage:              mockOnMessage,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+                    presenceManager:        mockPresenceManager as any,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+                    agent:                  mockAgent as any,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                });
+
+                await handler(mockMessage);
+
+                // When status middleware is used with dynamicStatusGenerator,
+                // agent.chat should be called (middleware behavior)
+                expect(mockAgent.chat).toHaveBeenCalled();
+            });
+
+            it('should work without dynamicStatusGenerator (backward compatible)', async () => {
+                const mockPresenceManager = {
+                    start:       mock(() => undefined),
+                    stop:        mock(() => undefined),
+                    updatePhase: mock(async () => undefined),
+                };
+
+                const mockAgent = {
+                    chat: mock(async () => 'agent response'),
+                };
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+                    presenceManager:     mockPresenceManager as any,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+                    agent:               mockAgent as any,
+                    // dynamicStatusGenerator NOT provided
+                });
+
+                await handler(mockMessage);
+
+                // Middleware should still work without dynamicStatusGenerator
+                expect(mockAgent.chat).toHaveBeenCalled();
+            });
+        });
+
         describe('statusMiddleware creation (logical AND behavior)', () => {
             it('should NOT use statusMiddleware when only presenceManager is provided (no agent)', async () => {
                 const mockPresenceManager = {

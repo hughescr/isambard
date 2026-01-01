@@ -27,6 +27,10 @@ export class SegmentManager {
         requestedStart: MessageId,
         requestedEnd: MessageId
     ): CacheGap[] {
+        // Early return optimization: if no segments are cached, the entire
+        // requested range is a gap. This avoids unnecessary BigInt conversions
+        // and sorting for the empty case.
+        // Stryker disable next-line ConditionalExpression: Equivalent mutant - line 62 handles empty case identically
         if(cachedSegments.length === 0) {
             return [{ start: requestedStart, end: requestedEnd }];
         }
@@ -35,6 +39,7 @@ export class SegmentManager {
         const endBigInt = BigInt(requestedEnd);
 
         // Sort segments by startSnowflake using BigInt comparison
+        // Stryker disable all: Sort comparator mutations are equivalent (stable sort)
         const sortedSegments = [...cachedSegments].sort((a, b) => {
             const aStart = BigInt(a.startSnowflake);
             const bStart = BigInt(b.startSnowflake);
@@ -46,6 +51,7 @@ export class SegmentManager {
             }
             return 0;
         });
+        // Stryker restore all
 
         // Filter to segments that intersect with requested range
         // Stryker disable next-line all: BigInt boundary conditions produce equivalent mutants
@@ -157,6 +163,7 @@ export class SegmentManager {
         const uniqueMessages = _uniqBy(messagesInRange, 'id');
 
         // Sort by message ID numerically using BigInt
+        // Stryker disable all: Sort comparator mutations are equivalent (stable sort)
         const sortedMessages = [...uniqueMessages].sort((a, b) => {
             const aId = BigInt(a.id);
             const bId = BigInt(b.id);
@@ -168,6 +175,7 @@ export class SegmentManager {
             }
             return 0;
         });
+        // Stryker restore all
 
         return sortedMessages;
     }

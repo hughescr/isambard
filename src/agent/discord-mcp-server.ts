@@ -85,15 +85,28 @@ export function createDiscordMCPServer(searchService: MessageSearchService) {
 
             tool(
                 'getMessageById',
-                'Fetch a specific Discord message by its ID',
+                'Fetch a specific Discord message by its ID, or multiple messages by an array of IDs',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId: z.string().describe('Discord channel ID'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    messageId: z.string().describe('Discord message ID'),
+                    messageId: z.union([z.string(), z.array(z.string())])
+                        // Stryker disable next-line StringLiteral: describe() is documentation only
+                        .describe('Discord message ID or array of message IDs'),
                 },
                 async (args) => {
                     try {
+                        // Handle array input
+                        if(_.isArray(args.messageId)) {
+                            const results = await searchService.getMessagesById(
+                                args.channelId,
+                                args.messageId
+                            );
+                            return {
+                                content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
+                            };
+                        }
+
+                        // Handle single string input (existing logic)
                         const result = await searchService.getMessageById(
                             args.channelId,
                             args.messageId

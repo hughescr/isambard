@@ -62,6 +62,13 @@ export function loadConfig(resources: ResourceProvider = Resource as unknown as 
                     .compact()
                     .value()
                 : undefined,
+            // Discord presence configuration controls how bot status updates are displayed.
+            // These values balance responsiveness with API rate limit compliance.
+            presence: {
+                updateDebounceMs:      2000,        // Debounce rapid phase changes to avoid flickering
+                idleTimeoutMs:         60000,       // Transition to idle after 1 minute of inactivity
+                idleRefreshIntervalMs: 300000,      // Refresh idle status every 5 minutes to maintain visibility
+            },
         },
         box: {
             clientId:     resources.BoxClientId.value,

@@ -43,8 +43,9 @@ Message:
 
 /**
  * Simple semaphore for limiting concurrent operations.
+ * @internal Exported for testing purposes only
  */
-function createSemaphore(maxConcurrent: number): {
+export function createSemaphore(maxConcurrent: number): {
     acquire: () => Promise<void>
     release: () => void
 } {

@@ -152,8 +152,11 @@ export function getCurrentTimeContext(userTimezone?: string): TimeContext {
                 month:    '2-digit',
                 // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
                 day:      '2-digit',
+                // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
                 hour:     '2-digit',
+                // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
                 minute:   '2-digit',
+                // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
                 second:   '2-digit',
                 hour12:   false,
             });

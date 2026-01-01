@@ -3,6 +3,7 @@ import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { DiscordMessageContext, UserId, ChannelId } from './types';
 import type { PresenceManager } from './presence';
+import type { DynamicStatusGenerator } from './presence/status-generator-dynamic';
 import type { ClaudeAgent } from '@/agent/agent';
 import { createGuildId, createChannelId, createUserId } from './types';
 import { createStatusMiddleware } from './presence';
@@ -81,6 +82,11 @@ export interface MessageHandlerOptions {
      * Optional Claude agent for status middleware integration.
      */
     agent?: ClaudeAgent
+
+    /**
+     * Optional dynamic status generator for LLM-generated synopses.
+     */
+    dynamicStatusGenerator?: DynamicStatusGenerator
 }
 
 /**
@@ -117,7 +123,7 @@ export interface MessageHandlerOptions {
  * ```
  */
 export function createMessageHandler(options: MessageHandlerOptions): (message: Message) => Promise<void> {
-    const { monitoredChannelIds, botUserId, onMessage, presenceManager, agent } = options;
+    const { monitoredChannelIds, botUserId, onMessage, presenceManager, agent, dynamicStatusGenerator } = options;
 
     // Create status middleware if both presenceManager and agent are provided
     const statusMiddleware = presenceManager && agent
@@ -125,6 +131,7 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
             presenceManager,
             agent,
             logger,
+            dynamicStatusGenerator,
         })
         : null;
 

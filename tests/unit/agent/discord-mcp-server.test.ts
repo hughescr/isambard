@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- Handler return values are typed as any in tests */
-import { constant as _constant } from 'lodash';
+import { constant as _constant, isArray as _isArray } from 'lodash';
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import { createDiscordMCPServer } from '../../../src/agent/discord-mcp-server';
 import type { MessageSearchService } from '../../../src/integrations/discord/message-history/search';
@@ -46,6 +46,7 @@ describe('createDiscordMCPServer', () => {
             searchMessages:    mock(_constant(Promise.resolve(createMockSearchResponse()))),
             getRecentMessages: mock(_constant(Promise.resolve(createMockSearchResponse()))),
             getMessageById:    mock(_constant(Promise.resolve(null))),
+            getMessagesById:   mock(_constant(Promise.resolve([]))),
         };
     });
 
@@ -107,7 +108,7 @@ describe('createDiscordMCPServer', () => {
             const byIdTool = (server.instance as any)._registeredTools.getMessageById;
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking tool description
-            expect(byIdTool.description).toBe('Fetch a specific Discord message by its ID');
+            expect(byIdTool.description).toBe('Fetch a specific Discord message by its ID, or multiple messages by an array of IDs');
         });
 
         it('should have searchMessages tool with correct input schema', () => {
@@ -626,6 +627,155 @@ describe('createDiscordMCPServer', () => {
             const text = result.content[0].text as string;
             expect(text).toContain('\n');
             expect(text).toContain('  ');
+        });
+
+        it('should fetch multiple messages when given array', async () => {
+            const mockMessages = [
+                createMockSearchResult({ id: '111111111111111111', content: 'First message' }),
+                createMockSearchResult({ id: '222222222222222222', content: 'Second message' }),
+            ];
+            mockSearchService.getMessagesById = mock(async () => mockMessages);
+
+            const server = createDiscordMCPServer(mockSearchService);
+            const handler = getToolHandler(server, 'getMessageById');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: ['111111111111111111', '222222222222222222'],
+            });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content).toBeDefined();
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].type).toBe('text');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            const parsed = JSON.parse(result.content[0].text as string) as DiscordSearchResult[];
+            expect(parsed).toHaveLength(2);
+            expect(parsed[0].content).toBe('First message');
+            expect(parsed[1].content).toBe('Second message');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBeUndefined();
+        });
+
+        it('should return array for array input even with single element', async () => {
+            const mockMessages = [
+                createMockSearchResult({ id: '111111111111111111', content: 'Single message' }),
+            ];
+            mockSearchService.getMessagesById = mock(async () => mockMessages);
+
+            const server = createDiscordMCPServer(mockSearchService);
+            const handler = getToolHandler(server, 'getMessageById');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: ['111111111111111111'],
+            });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            const parsed = JSON.parse(result.content[0].text as string) as DiscordSearchResult[];
+            expect(_isArray(parsed)).toBe(true);
+            expect(parsed).toHaveLength(1);
+        });
+
+        it('should handle empty array', async () => {
+            mockSearchService.getMessagesById = mock(async () => []);
+
+            const server = createDiscordMCPServer(mockSearchService);
+            const handler = getToolHandler(server, 'getMessageById');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: [],
+            });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            const parsed = JSON.parse(result.content[0].text as string) as DiscordSearchResult[];
+            expect(parsed).toHaveLength(0);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBeUndefined();
+        });
+
+        it('should handle some messages not found in batch', async () => {
+            // Only 2 of 3 messages found
+            const mockMessages = [
+                createMockSearchResult({ id: '111111111111111111', content: 'First message' }),
+                createMockSearchResult({ id: '333333333333333333', content: 'Third message' }),
+            ];
+            mockSearchService.getMessagesById = mock(async () => mockMessages);
+
+            const server = createDiscordMCPServer(mockSearchService);
+            const handler = getToolHandler(server, 'getMessageById');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: ['111111111111111111', '222222222222222222', '333333333333333333'],
+            });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            const parsed = JSON.parse(result.content[0].text as string) as DiscordSearchResult[];
+            expect(parsed).toHaveLength(2);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBeUndefined();
+        });
+
+        it('should call getMessagesById with correct parameters for array input', async () => {
+            mockSearchService.getMessagesById = mock(async () => []);
+
+            const server = createDiscordMCPServer(mockSearchService);
+            const handler = getToolHandler(server, 'getMessageById');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({
+                channelId: '123456789012345678',
+                messageId: ['111111111111111111', '222222222222222222'],
+            });
+
+            expect(mockSearchService.getMessagesById).toHaveBeenCalledWith(
+                '123456789012345678',
+                ['111111111111111111', '222222222222222222']
+            );
+        });
+
+        it('should return error when getMessagesById throws Error', async () => {
+            mockSearchService.getMessagesById = mock(async () => {
+                throw new Error('Batch fetch failed');
+            });
+
+            const server = createDiscordMCPServer(mockSearchService);
+            const handler = getToolHandler(server, 'getMessageById');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: ['111111111111111111'],
+            });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Error: Batch fetch failed');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBe(true);
+        });
+
+        it('should accept union schema for messageId (string or array)', () => {
+            const server = createDiscordMCPServer(mockSearchService);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
+            const byIdTool = (server.instance as any)._registeredTools.getMessageById;
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing schema
+            const schema = byIdTool.inputSchema.shape.messageId;
+
+            // Should accept string
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
+            expect(schema.safeParse('123456789012345678').success).toBe(true);
+            // Should accept array of strings
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
+            expect(schema.safeParse(['123456789012345678', '987654321098765432']).success).toBe(true);
+            // Should accept empty array
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
+            expect(schema.safeParse([]).success).toBe(true);
         });
     });
 

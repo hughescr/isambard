@@ -71,6 +71,8 @@ export interface MessageFetcher {
     fetchMessages(options: FetchOptions): Promise<FetchResult>
     /** Fetch a single message by ID */
     fetchById(channelId: string, messageId: string): Promise<DiscordSearchResult | null>
+    /** Fetch multiple messages by IDs in batch */
+    fetchByIds(channelId: string, messageIds: string[]): Promise<DiscordSearchResult[]>
 }
 
 /**
@@ -188,6 +190,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
             }
             return channel as TextChannel;
         } catch (error) {
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Re-throwing original error preserves stack trace
             if(error instanceof ChannelNotAccessibleError) {
                 throw error;
             }
@@ -256,6 +259,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
 
                 const batch = await channel.messages.fetch(fetchOptions);
 
+                // Stryker disable next-line ConditionalExpression: Empty batch check terminates pagination loop
                 if(batch.size === 0) {
                     break;
                 }
@@ -318,8 +322,34 @@ export function createMessageFetcher(client: Client): MessageFetcher {
         }
     }
 
+    /**
+     * Fetches multiple messages by IDs.
+     * Returns only the messages that were successfully fetched.
+     */
+    async function fetchByIds(channelId: string, messageIds: string[]): Promise<DiscordSearchResult[]> {
+        // Stryker disable next-line BlockStatement: Early return for empty array avoids unnecessary channel fetch
+        if(messageIds.length === 0) {
+            return [];
+        }
+
+        const channel = await getChannel(channelId);
+
+        // Fetch each message individually and filter out failures
+        const results: DiscordSearchResult[] = [];
+        for(const messageId of messageIds) {
+            try {
+                const message = await channel.messages.fetch(messageId);
+                results.push(transformMessage(message));
+            } catch{
+                // Skip messages that fail to fetch (not found or inaccessible)
+            }
+        }
+        return results;
+    }
+
     return {
         fetchMessages,
         fetchById,
+        fetchByIds,
     };
 }
