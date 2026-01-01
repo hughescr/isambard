@@ -122,6 +122,17 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         // At this point, readyClient.user is guaranteed to be non-null
         // because the 'clientReady' event only fires after successful authentication
 
+        // Track recent messages for context-aware idle status generation
+        const MAX_RECENT_MESSAGES = 5;
+        const recentMessages: string[] = [];
+
+        const addRecentMessage = (content: string): void => {
+            recentMessages.push(content.slice(0, 200)); // Truncate long messages
+            if(recentMessages.length > MAX_RECENT_MESSAGES) {
+                recentMessages.shift();
+            }
+        };
+
         // Create presence manager if optional deps provided
         if(identityContext && config.presence) {
             const activeStatusGenerator = createActiveStatusGenerator({
@@ -131,8 +142,14 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
             const idleStatusGenerator = createIdleStatusGenerator({
                 logger,
-                activityType: ActivityType.Custom,
+                activityType:     ActivityType.Custom,
                 identityContext,
+                getRecentContext: async () => {
+                    if(recentMessages.length === 0) {
+                        return undefined;
+                    }
+                    return recentMessages.join('\n• ');
+                },
             });
 
             presenceManager = createPresenceManager({
@@ -159,6 +176,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             presenceManager,
             agent,
             dynamicStatusGenerator,
+            addRecentMessage,
         }));
     });
 

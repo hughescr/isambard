@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import _ from 'lodash';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
-import { generateText } from '../../../src/agent/text-generator';
+import { generateText, generateTextWithSystemPrompt } from '../../../src/agent/text-generator';
 
 describe('generateText', () => {
     let promptSpy: ReturnType<typeof spyOn>;
@@ -35,7 +35,7 @@ describe('generateText', () => {
             expect(promptSpy).toHaveBeenCalledWith(
                 expect.any(String),
                 expect.objectContaining({
-                    model: 'claude-haiku-4-5-20251001',
+                    model: 'haiku',
                 })
             );
         });
@@ -232,7 +232,7 @@ describe('generateText', () => {
             for(const call of promptSpy.mock.calls) {
                 expect(call[1]).toEqual(
                     expect.objectContaining({
-                        model: 'claude-haiku-4-5-20251001',
+                        model: 'haiku',
                     })
                 );
             }
@@ -268,6 +268,294 @@ describe('generateText', () => {
 
         it('should return Promise that resolves to string', async () => {
             const promise = generateText('Test prompt');
+
+            expect(promise).toBeInstanceOf(Promise);
+
+            const result = await promise;
+            expect(typeof result).toBe('string');
+        });
+    });
+});
+
+describe('generateTextWithSystemPrompt', () => {
+    let promptSpy: ReturnType<typeof spyOn>;
+
+    beforeEach(() => {
+        // Mock unstable_v2_prompt to return a successful result
+        promptSpy = spyOn(agentSdk, 'unstable_v2_prompt').mockResolvedValue({
+            subtype: 'success',
+            result:  '  Generated response  ',
+        } as any);
+    });
+
+    afterEach(() => {
+        promptSpy.mockRestore();
+    });
+
+    describe('prompt formatting', () => {
+        it('should combine system and user prompts with correct format', async () => {
+            await generateTextWithSystemPrompt('Be helpful', 'What is 2+2?');
+
+            expect(promptSpy).toHaveBeenCalledWith(
+                'System:\nBe helpful\n\nUser:\nWhat is 2+2?',
+                expect.any(Object)
+            );
+        });
+
+        it('should place system prompt before user prompt', async () => {
+            await generateTextWithSystemPrompt('System instructions', 'User request');
+
+            const calledPrompt = promptSpy.mock.calls[0][0] as string;
+
+            expect(calledPrompt.indexOf('System:')).toBeLessThan(calledPrompt.indexOf('User:'));
+        });
+
+        it('should include System: header', async () => {
+            await generateTextWithSystemPrompt('Test system', 'Test user');
+
+            const calledPrompt = promptSpy.mock.calls[0][0] as string;
+
+            expect(calledPrompt).toContain('System:');
+        });
+
+        it('should include User: header', async () => {
+            await generateTextWithSystemPrompt('Test system', 'Test user');
+
+            const calledPrompt = promptSpy.mock.calls[0][0] as string;
+
+            expect(calledPrompt).toContain('User:');
+        });
+
+        it('should separate sections with blank line', async () => {
+            await generateTextWithSystemPrompt('System content', 'User content');
+
+            const calledPrompt = promptSpy.mock.calls[0][0] as string;
+
+            expect(calledPrompt).toContain('\n\n');
+        });
+
+        it('should preserve multiline system prompt', async () => {
+            const multilineSystem = 'Line 1\nLine 2\nLine 3';
+
+            await generateTextWithSystemPrompt(multilineSystem, 'User prompt');
+
+            const calledPrompt = promptSpy.mock.calls[0][0] as string;
+
+            expect(calledPrompt).toContain(multilineSystem);
+        });
+
+        it('should preserve multiline user prompt', async () => {
+            const multilineUser = 'Question 1\nQuestion 2\nQuestion 3';
+
+            await generateTextWithSystemPrompt('System prompt', multilineUser);
+
+            const calledPrompt = promptSpy.mock.calls[0][0] as string;
+
+            expect(calledPrompt).toContain(multilineUser);
+        });
+    });
+
+    describe('edge cases', () => {
+        it('should handle empty system prompt', async () => {
+            await generateTextWithSystemPrompt('', 'User prompt');
+
+            expect(promptSpy).toHaveBeenCalledWith(
+                'System:\n\n\nUser:\nUser prompt',
+                expect.any(Object)
+            );
+        });
+
+        it('should handle empty user prompt', async () => {
+            await generateTextWithSystemPrompt('System prompt', '');
+
+            expect(promptSpy).toHaveBeenCalledWith(
+                'System:\nSystem prompt\n\nUser:\n',
+                expect.any(Object)
+            );
+        });
+
+        it('should handle both prompts empty', async () => {
+            await generateTextWithSystemPrompt('', '');
+
+            expect(promptSpy).toHaveBeenCalledWith(
+                'System:\n\n\nUser:\n',
+                expect.any(Object)
+            );
+        });
+
+        it('should handle prompts with special characters', async () => {
+            const specialSystem = '<xml>tag</xml> @mention **bold**';
+            const specialUser = '{"json": true} `code` $variable';
+
+            await generateTextWithSystemPrompt(specialSystem, specialUser);
+
+            const calledPrompt = promptSpy.mock.calls[0][0] as string;
+
+            expect(calledPrompt).toContain(specialSystem);
+            expect(calledPrompt).toContain(specialUser);
+        });
+
+        it('should handle prompts with unicode characters', async () => {
+            const unicodeSystem = '你好 مرحبا';
+            const unicodeUser = '🎉 emoji test';
+
+            await generateTextWithSystemPrompt(unicodeSystem, unicodeUser);
+
+            const calledPrompt = promptSpy.mock.calls[0][0] as string;
+
+            expect(calledPrompt).toContain(unicodeSystem);
+            expect(calledPrompt).toContain(unicodeUser);
+        });
+
+        it('should handle very long prompts', async () => {
+            const longSystem = _.repeat('s', 5000);
+            const longUser = _.repeat('u', 5000);
+
+            await generateTextWithSystemPrompt(longSystem, longUser);
+
+            const calledPrompt = promptSpy.mock.calls[0][0] as string;
+
+            expect(calledPrompt).toContain(longSystem);
+            expect(calledPrompt).toContain(longUser);
+        });
+    });
+
+    describe('successful text generation', () => {
+        it('should return trimmed text from result', async () => {
+            promptSpy.mockResolvedValue({
+                subtype: 'success',
+                result:  '  Hello, world!  ',
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User');
+
+            expect(result).toBe('Hello, world!');
+        });
+
+        it('should trim leading whitespace', async () => {
+            promptSpy.mockResolvedValue({
+                subtype: 'success',
+                result:  '\n\t  Leading whitespace',
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User');
+
+            expect(result).toBe('Leading whitespace');
+        });
+
+        it('should trim trailing whitespace', async () => {
+            promptSpy.mockResolvedValue({
+                subtype: 'success',
+                result:  'Trailing whitespace  \n\t',
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User');
+
+            expect(result).toBe('Trailing whitespace');
+        });
+
+        it('should preserve internal whitespace', async () => {
+            promptSpy.mockResolvedValue({
+                subtype: 'success',
+                result:  '  Hello   world  ',
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User');
+
+            expect(result).toBe('Hello   world');
+        });
+    });
+
+    describe('error result handling', () => {
+        it('should return empty string when subtype is error_during_execution', async () => {
+            promptSpy.mockResolvedValue({
+                subtype: 'error_during_execution',
+                errors:  ['Something went wrong'],
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User');
+
+            expect(result).toBe('');
+        });
+
+        it('should return empty string when subtype is error_max_turns', async () => {
+            promptSpy.mockResolvedValue({
+                subtype: 'error_max_turns',
+                errors:  ['Max turns exceeded'],
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User');
+
+            expect(result).toBe('');
+        });
+
+        it('should return empty string when subtype is error_max_budget_usd', async () => {
+            promptSpy.mockResolvedValue({
+                subtype: 'error_max_budget_usd',
+                errors:  ['Budget exceeded'],
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User');
+
+            expect(result).toBe('');
+        });
+
+        it('should return empty string for non-success even if result property exists', async () => {
+            // This test kills the mutation: if(result.subtype === 'success') -> if(true)
+            promptSpy.mockResolvedValue({
+                subtype: 'error_during_execution',
+                errors:  ['Something went wrong'],
+                result:  'This text should NOT be returned',
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User');
+
+            expect(result).toBe('');
+            expect(result).not.toBe('This text should NOT be returned');
+        });
+    });
+
+    describe('model configuration', () => {
+        it('should use the lightweight haiku model', async () => {
+            await generateTextWithSystemPrompt('System', 'User');
+
+            expect(promptSpy).toHaveBeenCalledWith(
+                expect.any(String),
+                expect.objectContaining({
+                    model: 'haiku',
+                })
+            );
+        });
+
+        it('should pass only model in options object', async () => {
+            await generateTextWithSystemPrompt('System', 'User');
+
+            const callArgs = promptSpy.mock.calls[0];
+            const options = callArgs[1];
+
+            expect(_.keys(options as object)).toEqual(['model']);
+        });
+    });
+
+    describe('return value types', () => {
+        it('should return a string', async () => {
+            promptSpy.mockResolvedValue({ subtype: 'success', result: 'test' } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User');
+
+            expect(typeof result).toBe('string');
+        });
+
+        it('should return string even for error result', async () => {
+            promptSpy.mockResolvedValue({ subtype: 'error_during_execution', errors: ['error'] } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User');
+
+            expect(typeof result).toBe('string');
+        });
+
+        it('should return Promise that resolves to string', async () => {
+            const promise = generateTextWithSystemPrompt('System', 'User');
 
             expect(promise).toBeInstanceOf(Promise);
 

@@ -7,8 +7,10 @@
 
 import type { PresenceManager } from './manager.js';
 import type { PresencePhase } from './types.js';
+import { getToolDescription } from './types.js';
 import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
 import type { ClaudeAgent } from '../../../agent/agent.js';
+import { extractToolUses, redactSensitiveArgs } from '../../../agent/agent.js';
 import type { AgentStreamEvent } from '../../../agent/types.js';
 import type { DiscordMessageContext } from '../types.js';
 
@@ -87,6 +89,10 @@ export function createStatusMiddleware(
         let lastToolName: string | undefined;
         const userMessage = context.content;
 
+        // Track accumulated state from stream events for rich context
+        const pendingToolInputs = new Map<string, unknown>();
+        let accumulatedText = '';
+
         // Pre-generate thinking synopsis at start (before agent.chat).
         // This allows immediate status display without waiting for the first stream event.
         // The synopsis is cached and reused when transitioning to 'thinking' phase.
@@ -116,6 +122,7 @@ export function createStatusMiddleware(
             }
 
             // Define stream event handler
+            // eslint-disable-next-line complexity -- Event handler has inherent branching for different event types
             const onStreamEvent = (event: AgentStreamEvent): void => {
                 // Helper to handle presence update errors
                 const safeUpdatePhase = async (phase: PresencePhase): Promise<void> => {
@@ -132,6 +139,18 @@ export function createStatusMiddleware(
 
                 // Map stream events to presence phases
                 if(event.type === 'assistant') {
+                    // Extract tool_use blocks and store redacted inputs for later use
+                    const toolUses = extractToolUses(event);
+                    for(const toolUse of toolUses) {
+                        pendingToolInputs.set(toolUse.name, redactSensitiveArgs(toolUse.input));
+                    }
+
+                    // Accumulate response text for context (keep last 200 chars)
+                    if(event.delta?.text) {
+                        accumulatedText = (accumulatedText + event.delta.text).slice(-200);
+                    }
+
+                    // Stryker disable next-line StringLiteral: Equivalent - newPhase used only for state tracking; updatePhase uses hardcoded literals
                     const newPhase = event.delta?.text ? 'responding' : 'thinking';
 
                     if(newPhase !== currentPhase) {
@@ -147,6 +166,7 @@ export function createStatusMiddleware(
                             });
                         } else {
                             // Generate responding synopsis asynchronously
+                            // Stryker disable next-line ConditionalExpression: Equivalent - try/catch swallows TypeError when undefined
                             if(dynamicStatusGenerator) {
                                 void (async () => {
                                     try {
@@ -155,6 +175,7 @@ export function createStatusMiddleware(
                                             userMessage,
                                             // Stryker disable next-line OptionalChaining: Equivalent - try/catch swallows TypeError when text is undefined
                                             responseFragment: event.delta?.text?.slice(0, 100),
+                                            accumulatedText:  accumulatedText || undefined,
                                         });
                                         void safeUpdatePhase({
                                             type:            'responding',
@@ -190,9 +211,12 @@ export function createStatusMiddleware(
                             void (async () => {
                                 try {
                                     const synopsis = await dynamicStatusGenerator.generateSynopsis({
-                                        phase: 'using_tool',
+                                        phase:           'using_tool',
                                         userMessage,
                                         toolName,
+                                        toolInput:       pendingToolInputs.get(toolName),
+                                        toolDescription: getToolDescription(toolName),
+                                        accumulatedText: accumulatedText || undefined,
                                     });
                                     void safeUpdatePhase({
                                         type:            'using_tool',
@@ -268,6 +292,7 @@ export function createStatusMiddleware(
             return null;
         } finally {
             // Clean up typing interval
+            // Stryker disable next-line ConditionalExpression: clearInterval(null) is a no-op in JS, equivalent behavior
             if(typingInterval) {
                 clearInterval(typingInterval);
                 logger.debug({ messageId: context.messageId }, 'Stopped typing indicator');

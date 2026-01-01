@@ -87,6 +87,11 @@ export interface MessageHandlerOptions {
      * Optional dynamic status generator for LLM-generated synopses.
      */
     dynamicStatusGenerator?: DynamicStatusGenerator
+
+    /**
+     * Optional callback to track recent message content for context-aware idle status.
+     */
+    addRecentMessage?: (content: string) => void
 }
 
 /**
@@ -123,7 +128,7 @@ export interface MessageHandlerOptions {
  * ```
  */
 export function createMessageHandler(options: MessageHandlerOptions): (message: Message) => Promise<void> {
-    const { monitoredChannelIds, botUserId, onMessage, presenceManager, agent, dynamicStatusGenerator } = options;
+    const { monitoredChannelIds, botUserId, onMessage, presenceManager, agent, dynamicStatusGenerator, addRecentMessage } = options;
 
     // Create status middleware if both presenceManager and agent are provided
     const statusMiddleware = presenceManager && agent
@@ -163,6 +168,9 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
             const reply = statusMiddleware
                 ? await statusMiddleware(context, channel)
                 : await onMessage(context);
+
+            // Track this message for context-aware idle status
+            addRecentMessage?.(context.content);
 
             // Reply if callback returned a string
             if(reply !== null) {

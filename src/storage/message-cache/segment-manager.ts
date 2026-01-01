@@ -30,7 +30,7 @@ export class SegmentManager {
         // Early return optimization: if no segments are cached, the entire
         // requested range is a gap. This avoids unnecessary BigInt conversions
         // and sorting for the empty case.
-        // Stryker disable next-line ConditionalExpression: Equivalent mutant - line 62 handles empty case identically
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent - line 66 handles empty case identically
         if(cachedSegments.length === 0) {
             return [{ start: requestedStart, end: requestedEnd }];
         }

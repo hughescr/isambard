@@ -5,9 +5,9 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
 
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
-import { constant as _constant, filter as _filter, find as _find, repeat as _repeat, some as _some } from 'lodash';
+import { constant as _constant, endsWith as _endsWith, filter as _filter, find as _find, repeat as _repeat, some as _some, startsWith as _startsWith } from 'lodash';
 import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
-import type { PresencePhase } from '@/integrations/discord/presence/types';
+import type { PresencePhase, SynopsisContext } from '@/integrations/discord/presence/types';
 import type { AgentStreamEvent } from '@/agent/types';
 import type { DiscordMessageContext } from '@/integrations/discord/types';
 import type { DynamicStatusGenerator } from '@/integrations/discord/presence/status-generator-dynamic';
@@ -2770,6 +2770,362 @@ describe('StatusMiddleware', () => {
                     expect(thinkingPhase.generatedStatus).toBeUndefined();
                 }
             });
+        });
+    });
+
+    describe('rich context passing to generateSynopsis', () => {
+        it('should pass toolInput to generateSynopsis for using_tool phase', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // First send assistant event with tool_use block
+                        onEvent({
+                            type:    'assistant',
+                            message: {
+                                content: [{
+                                    type:  'tool_use',
+                                    id:    'tool1',
+                                    name:  'Read',
+                                    input: { file_path: '/test.txt' }
+                                }]
+                            }
+                        } as any);
+                        // Then send tool_progress for that tool
+                        onEvent({ type: 'tool_progress', tool_name: 'Read' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Find the using_tool context
+            const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
+            expect(toolContext).toBeDefined();
+            expect(toolContext!.toolInput).toEqual({ file_path: '/test.txt' });
+        });
+
+        it('should pass toolDescription to generateSynopsis for using_tool phase', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        onEvent({ type: 'tool_progress', tool_name: 'Read' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
+            expect(toolContext).toBeDefined();
+            // Read is defined in ToolDescriptions
+            expect(toolContext!.toolDescription).toBe('Reading a file');
+        });
+
+        it('should pass accumulatedText to generateSynopsis for using_tool phase', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // First accumulate some text
+                        onEvent({ type: 'assistant', delta: { text: 'Hello ' } });
+                        onEvent({ type: 'assistant', delta: { text: 'world!' } });
+                        // Then trigger tool progress
+                        onEvent({ type: 'tool_progress', tool_name: 'Bash' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
+            expect(toolContext).toBeDefined();
+            expect(toolContext!.accumulatedText).toBe('Hello world!');
+        });
+
+        it('should pass accumulatedText to generateSynopsis for responding phase', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // This is the first text, triggers phase transition to responding
+                        onEvent({ type: 'assistant', delta: { text: 'First chunk' } });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            const respondingContext = _find(capturedContexts, ['phase', 'responding']);
+            expect(respondingContext).toBeDefined();
+            // The accumulatedText should include the text that triggered the phase
+            expect(respondingContext!.accumulatedText).toBe('First chunk');
+        });
+
+        it('should redact sensitive tool inputs before passing to generateSynopsis', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Send assistant event with tool_use containing sensitive data
+                        onEvent({
+                            type:    'assistant',
+                            message: {
+                                content: [{
+                                    type:  'tool_use',
+                                    id:    'tool1',
+                                    name:  'WebFetch',
+                                    input: {
+                                        url:     'https://api.example.com',
+                                        apiKey:  'super-secret-key',
+                                        headers: { Authorization: 'Bearer token123' }
+                                    }
+                                }]
+                            }
+                        } as any);
+                        onEvent({ type: 'tool_progress', tool_name: 'WebFetch' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
+            expect(toolContext).toBeDefined();
+            const toolInput = toolContext!.toolInput as Record<string, unknown>;
+            expect(toolInput.url).toBe('https://api.example.com');
+            expect(toolInput.apiKey).toBe('[REDACTED]');
+        });
+
+        it('should accumulate text up to 200 characters, truncating older text', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            // Create strings that together exceed 200 chars
+            const longText1 = _repeat('X', 150);
+            const longText2 = _repeat('Y', 60);
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Send multiple text chunks that exceed 200 chars total (210)
+                        onEvent({ type: 'assistant', delta: { text: longText1 } });
+                        onEvent({ type: 'assistant', delta: { text: longText2 } });
+                        // Tool progress to capture the context
+                        onEvent({ type: 'tool_progress', tool_name: 'Bash' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
+            expect(toolContext).toBeDefined();
+            // Should be exactly 200 chars, with older text truncated
+            expect(toolContext!.accumulatedText!.length).toBe(200);
+            // Should end with the most recent text (all Y's)
+            expect(_endsWith(toolContext!.accumulatedText, _repeat('Y', 60))).toBe(true);
+            // Should start with some X's (the tail of the first chunk)
+            expect(_startsWith(toolContext!.accumulatedText, _repeat('X', 140))).toBe(true);
+        });
+
+        it('should handle undefined toolDescription for unknown tools', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        onEvent({ type: 'tool_progress', tool_name: 'UnknownTool123' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
+            expect(toolContext).toBeDefined();
+            // Unknown tool should have undefined description
+            expect(toolContext!.toolDescription).toBeUndefined();
+        });
+
+        it('should pass undefined accumulatedText when no text has been accumulated', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Directly emit tool_progress without any text accumulation
+                        onEvent({ type: 'tool_progress', tool_name: 'Read' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
+            expect(toolContext).toBeDefined();
+            // Empty string is converted to undefined
+            expect(toolContext!.accumulatedText).toBeUndefined();
+        });
+
+        it('should handle undefined toolInput when no tool_use block was sent for the tool', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Emit tool_progress without any prior tool_use block
+                        onEvent({ type: 'tool_progress', tool_name: 'SomeTool' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
+            expect(toolContext).toBeDefined();
+            // No tool_use block means undefined toolInput
+            expect(toolContext!.toolInput).toBeUndefined();
         });
     });
 });

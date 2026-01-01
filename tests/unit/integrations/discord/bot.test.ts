@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
 /* eslint-disable lodash/prefer-constant -- Test callbacks */
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
-import { filter } from 'lodash';
+import { filter, repeat } from 'lodash';
 import type { Client } from 'discord.js';
 import { createDiscordBot } from '@/integrations/discord/bot';
 import type { DiscordConfig } from '@/config/schemas';
@@ -231,9 +231,14 @@ describe('createDiscordBot', () => {
 
         // Verify createMessageHandler was called with correct options
         expect(messageHandlerSpy).toHaveBeenCalledWith({
-            monitoredChannelIds: mockConfig.monitoredChannelIds,
-            botUserId:           '999999999999999999',
-            onMessage:           mockOnMessage,
+            monitoredChannelIds:    mockConfig.monitoredChannelIds,
+            botUserId:              '999999999999999999',
+            onMessage:              mockOnMessage,
+            presenceManager:        undefined,
+            agent:                  undefined,
+            dynamicStatusGenerator: undefined,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock
+            addRecentMessage:       expect.any(Function),
         });
 
         // Verify messageCreate handler was registered
@@ -710,7 +715,7 @@ describe('createDiscordBot', () => {
                 }));
             });
 
-            it('should create idle status generator with identityContext', () => {
+            it('should create idle status generator with identityContext and getRecentContext', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -758,8 +763,10 @@ describe('createDiscordBot', () => {
                 messageCreateSetupHandler(mockClient);
 
                 expect(idleGenSpy).toHaveBeenCalledWith(expect.objectContaining({
-                    identityContext: 'Test identity',
-                    activityType:    4,
+                    identityContext:  'Test identity',
+                    activityType:     4,
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock
+                    getRecentContext: expect.any(Function),
                 }));
             });
 
@@ -814,6 +821,321 @@ describe('createDiscordBot', () => {
                     discordClient: mockClient,
                     config:        configWithPresence.presence,
                 }));
+            });
+
+            it('should provide getRecentContext that returns undefined when no messages tracked', async () => {
+                const mockClient = {
+                    on:      mock(() => mockClient),
+                    login:   mock(async () => 'mock-token'),
+                    destroy: mock(async () => undefined),
+                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+                } as unknown as Client;
+
+                const configWithPresence: DiscordConfig = {
+                    ...mockConfig,
+                    presence: {
+                        updateDebounceMs:      2000,
+                        idleTimeoutMs:         60000,
+                        idleRefreshIntervalMs: 300000,
+                    },
+                };
+
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+                const mockPresenceManager = {
+                    start:       mock(() => undefined),
+                    stop:        mock(() => undefined),
+                    updatePhase: mock(async () => undefined),
+                };
+                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
+
+                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
+                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
+                }));
+
+                let capturedGetRecentContext: (() => Promise<string | undefined>) | undefined;
+                const idleGenSpy = spyOn(presenceModule, 'createIdleStatusGenerator').mockImplementation((deps: presenceModule.IdleStatusGeneratorDeps) => {
+                    capturedGetRecentContext = deps.getRecentContext;
+                    return { generate: mock(async () => ({ name: 'Idle', type: 4 })) };
+                });
+                spies.push(idleGenSpy);
+
+                createDiscordBot({
+                    config:          configWithPresence,
+                    onMessage:       mockOnMessage,
+                    identityContext: 'Test identity',
+                });
+
+                // Simulate clientReady event
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
+                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
+                messageCreateSetupHandler(mockClient);
+
+                // Verify getRecentContext returns undefined when no messages tracked
+                expect(capturedGetRecentContext).toBeDefined();
+                const result = await capturedGetRecentContext!();
+                expect(result).toBeUndefined();
+            });
+
+            it('should pass addRecentMessage callback to createMessageHandler', () => {
+                const mockClient = {
+                    on:      mock(() => mockClient),
+                    login:   mock(async () => 'mock-token'),
+                    destroy: mock(async () => undefined),
+                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+                } as unknown as Client;
+
+                const configWithPresence: DiscordConfig = {
+                    ...mockConfig,
+                    presence: {
+                        updateDebounceMs:      2000,
+                        idleTimeoutMs:         60000,
+                        idleRefreshIntervalMs: 300000,
+                    },
+                };
+
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+                const mockPresenceManager = {
+                    start:       mock(() => undefined),
+                    stop:        mock(() => undefined),
+                    updatePhase: mock(async () => undefined),
+                };
+                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
+
+                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
+                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
+                }));
+
+                spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
+                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
+                }));
+
+                const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockReturnValue(mock(async () => undefined));
+                spies.push(messageHandlerSpy);
+
+                createDiscordBot({
+                    config:          configWithPresence,
+                    onMessage:       mockOnMessage,
+                    identityContext: 'Test identity',
+                });
+
+                // Simulate clientReady event
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
+                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
+                messageCreateSetupHandler(mockClient);
+
+                expect(messageHandlerSpy).toHaveBeenCalledWith(expect.objectContaining({
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock
+                    addRecentMessage: expect.any(Function),
+                }));
+            });
+
+            it('should provide getRecentContext that returns formatted messages when messages tracked via addRecentMessage', async () => {
+                const mockClient = {
+                    on:      mock(() => mockClient),
+                    login:   mock(async () => 'mock-token'),
+                    destroy: mock(async () => undefined),
+                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+                } as unknown as Client;
+
+                const configWithPresence: DiscordConfig = {
+                    ...mockConfig,
+                    presence: {
+                        updateDebounceMs:      2000,
+                        idleTimeoutMs:         60000,
+                        idleRefreshIntervalMs: 300000,
+                    },
+                };
+
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+                const mockPresenceManager = {
+                    start:       mock(() => undefined),
+                    stop:        mock(() => undefined),
+                    updatePhase: mock(async () => undefined),
+                };
+                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
+
+                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
+                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
+                }));
+
+                let capturedGetRecentContext: (() => Promise<string | undefined>) | undefined;
+                const idleGenSpy = spyOn(presenceModule, 'createIdleStatusGenerator').mockImplementation((deps: presenceModule.IdleStatusGeneratorDeps) => {
+                    capturedGetRecentContext = deps.getRecentContext;
+                    return { generate: mock(async () => ({ name: 'Idle', type: 4 })) };
+                });
+                spies.push(idleGenSpy);
+
+                let capturedAddRecentMessage: ((content: string) => void) | undefined;
+                const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockImplementation((opts: handlersModule.MessageHandlerOptions) => {
+                    capturedAddRecentMessage = opts.addRecentMessage;
+                    return mock(async () => undefined);
+                });
+                spies.push(messageHandlerSpy);
+
+                createDiscordBot({
+                    config:          configWithPresence,
+                    onMessage:       mockOnMessage,
+                    identityContext: 'Test identity',
+                });
+
+                // Simulate clientReady event
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
+                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
+                messageCreateSetupHandler(mockClient);
+
+                // Add some messages via addRecentMessage
+                expect(capturedAddRecentMessage).toBeDefined();
+                capturedAddRecentMessage!('First message');
+                capturedAddRecentMessage!('Second message');
+
+                // Verify getRecentContext returns formatted messages
+                expect(capturedGetRecentContext).toBeDefined();
+                const result = await capturedGetRecentContext!();
+                expect(result).toBe('First message\n• Second message');
+            });
+
+            it('should limit recent messages to MAX_RECENT_MESSAGES (5)', async () => {
+                const mockClient = {
+                    on:      mock(() => mockClient),
+                    login:   mock(async () => 'mock-token'),
+                    destroy: mock(async () => undefined),
+                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+                } as unknown as Client;
+
+                const configWithPresence: DiscordConfig = {
+                    ...mockConfig,
+                    presence: {
+                        updateDebounceMs:      2000,
+                        idleTimeoutMs:         60000,
+                        idleRefreshIntervalMs: 300000,
+                    },
+                };
+
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+                const mockPresenceManager = {
+                    start:       mock(() => undefined),
+                    stop:        mock(() => undefined),
+                    updatePhase: mock(async () => undefined),
+                };
+                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
+
+                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
+                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
+                }));
+
+                let capturedGetRecentContext: (() => Promise<string | undefined>) | undefined;
+                const idleGenSpy = spyOn(presenceModule, 'createIdleStatusGenerator').mockImplementation((deps: presenceModule.IdleStatusGeneratorDeps) => {
+                    capturedGetRecentContext = deps.getRecentContext;
+                    return { generate: mock(async () => ({ name: 'Idle', type: 4 })) };
+                });
+                spies.push(idleGenSpy);
+
+                let capturedAddRecentMessage: ((content: string) => void) | undefined;
+                const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockImplementation((opts: handlersModule.MessageHandlerOptions) => {
+                    capturedAddRecentMessage = opts.addRecentMessage;
+                    return mock(async () => undefined);
+                });
+                spies.push(messageHandlerSpy);
+
+                createDiscordBot({
+                    config:          configWithPresence,
+                    onMessage:       mockOnMessage,
+                    identityContext: 'Test identity',
+                });
+
+                // Simulate clientReady event
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
+                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
+                messageCreateSetupHandler(mockClient);
+
+                // Add more than 5 messages - first one should be dropped
+                expect(capturedAddRecentMessage).toBeDefined();
+                capturedAddRecentMessage!('Message 1');
+                capturedAddRecentMessage!('Message 2');
+                capturedAddRecentMessage!('Message 3');
+                capturedAddRecentMessage!('Message 4');
+                capturedAddRecentMessage!('Message 5');
+                capturedAddRecentMessage!('Message 6');
+
+                // Verify only last 5 messages are kept
+                expect(capturedGetRecentContext).toBeDefined();
+                const result = await capturedGetRecentContext!();
+                expect(result).toBe('Message 2\n• Message 3\n• Message 4\n• Message 5\n• Message 6');
+            });
+
+            it('should truncate long messages to 200 characters', async () => {
+                const mockClient = {
+                    on:      mock(() => mockClient),
+                    login:   mock(async () => 'mock-token'),
+                    destroy: mock(async () => undefined),
+                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+                } as unknown as Client;
+
+                const configWithPresence: DiscordConfig = {
+                    ...mockConfig,
+                    presence: {
+                        updateDebounceMs:      2000,
+                        idleTimeoutMs:         60000,
+                        idleRefreshIntervalMs: 300000,
+                    },
+                };
+
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+                const mockPresenceManager = {
+                    start:       mock(() => undefined),
+                    stop:        mock(() => undefined),
+                    updatePhase: mock(async () => undefined),
+                };
+                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
+
+                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
+                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
+                }));
+
+                let capturedGetRecentContext: (() => Promise<string | undefined>) | undefined;
+                const idleGenSpy = spyOn(presenceModule, 'createIdleStatusGenerator').mockImplementation((deps: presenceModule.IdleStatusGeneratorDeps) => {
+                    capturedGetRecentContext = deps.getRecentContext;
+                    return { generate: mock(async () => ({ name: 'Idle', type: 4 })) };
+                });
+                spies.push(idleGenSpy);
+
+                let capturedAddRecentMessage: ((content: string) => void) | undefined;
+                const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockImplementation((opts: handlersModule.MessageHandlerOptions) => {
+                    capturedAddRecentMessage = opts.addRecentMessage;
+                    return mock(async () => undefined);
+                });
+                spies.push(messageHandlerSpy);
+
+                createDiscordBot({
+                    config:          configWithPresence,
+                    onMessage:       mockOnMessage,
+                    identityContext: 'Test identity',
+                });
+
+                // Simulate clientReady event
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
+                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
+                messageCreateSetupHandler(mockClient);
+
+                // Add a very long message (300+ characters)
+                const longMessage = repeat('A', 300);
+                expect(capturedAddRecentMessage).toBeDefined();
+                capturedAddRecentMessage!(longMessage);
+
+                // Verify the message is truncated to 200 characters
+                expect(capturedGetRecentContext).toBeDefined();
+                const result = await capturedGetRecentContext!();
+                expect(result).toBe(repeat('A', 200));
             });
         });
 

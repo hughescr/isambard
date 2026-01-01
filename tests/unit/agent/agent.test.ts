@@ -666,7 +666,7 @@ describe('createClaudeAgent', () => {
         expect(querySpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 options: expect.objectContaining({
-                    model: 'claude-sonnet-4-5',
+                    model: 'sonnet',
                 }),
             })
         );

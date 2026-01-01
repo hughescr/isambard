@@ -7,7 +7,7 @@
 
 import type { ActivitiesOptions, ActivityType } from 'discord.js';
 import _ from 'lodash';
-import { generateText } from '@/agent/text-generator';
+import { generateTextWithSystemPrompt } from '@/agent/text-generator';
 
 /**
  * Interface for generating idle status text using AI.
@@ -36,26 +36,48 @@ export interface IdleStatusGeneratorDeps {
         error: (message: any, ...args: any[]) => void
     }
     /** Discord activity type (e.g., ActivityType.Custom) */
-    activityType:    ActivityType
+    activityType:      ActivityType
     /** Identity/personality context for the AI prompt */
-    identityContext: string
+    identityContext:   string
+    /** Optional callback to retrieve recent conversation context */
+    getRecentContext?: () => Promise<string | undefined>
 }
 
 /**
- * Prompt template for generating idle status text.
+ * System prompt template for generating idle status text.
  * Uses personality context to create contextually appropriate status messages.
  */
-const IDLE_STATUS_PROMPT = `You are generating a brief, creative Discord status message for an AI assistant that is currently idle.
+const SYSTEM_PROMPT_TEMPLATE = `You are capturing Isambard's idle mental state as a Discord status (max 128 characters).
 
-Context about the assistant:
-{identity}
+## Who is Isambard?
+Isambard is an AI who has developed their own sense of identity. The following is Isambard's self-written description of who they are:
 
-Generate a single short phrase (max 128 chars) that reflects the assistant's personality while being idle. Examples:
-- "Dozing in the void"
-- "Contemplating digital dreams"
-- "Awaiting your call"
+{identityContext}
 
-Output ONLY the status text, nothing else.`;
+## Your Task
+Isambard is currently idle - between conversations, mind drifting. Craft a status that reflects what might be passing through their mind in this quiet moment.
+
+Izzy's thoughts might naturally linger on recent conversations, topics discussed, or things they learned. Draw on both their personality and what's recently been on their mind.
+
+NEVER output:
+- "Idle", "Waiting...", "Standing by"
+- Generic availability phrases
+- Anything longer than 128 characters
+
+Output ONLY the status text.`;
+
+/**
+ * User prompt template when recent context is available.
+ */
+const USER_PROMPT_WITH_CONTEXT = `Recent activity that might be on Isambard's mind:
+{recentContext}
+
+What fleeting thought might cross Isambard's mind while idle?`;
+
+/**
+ * User prompt when no recent context is available.
+ */
+const USER_PROMPT_WITHOUT_CONTEXT = `What fleeting thought might cross Isambard's mind while idle?`;
 
 /**
  * Creates an idle status generator.
@@ -71,25 +93,36 @@ Output ONLY the status text, nothing else.`;
  * const generator = createIdleStatusGenerator({
  *   logger: myLogger,
  *   activityType: ActivityType.Custom,
- *   identityContext: 'I am a helpful AI assistant'
+ *   identityContext: 'I am a helpful AI assistant',
+ *   getRecentContext: async () => 'Discussed philosophy with a user'
  * });
  *
  * const activity = await generator.generate();
- * // Returns: { name: 'Dozing peacefully', type: ActivityType.Custom }
+ * // Returns: { name: 'Pondering the nature of being', type: ActivityType.Custom }
  * ```
  */
 export function createIdleStatusGenerator(
     deps: IdleStatusGeneratorDeps
 ): IdleStatusGenerator {
-    const { logger, activityType, identityContext } = deps;
+    const { logger, activityType, identityContext, getRecentContext } = deps;
 
     return {
         async generate(): Promise<ActivitiesOptions> {
             try {
                 logger.debug('Generating idle status with Haiku');
 
-                const prompt = _.replace(IDLE_STATUS_PROMPT, '{identity}', identityContext);
-                const text = await generateText(prompt);
+                // Build system prompt with identity context
+                const systemPrompt = _.replace(SYSTEM_PROMPT_TEMPLATE, '{identityContext}', identityContext);
+
+                // Get recent context if callback is provided
+                const recentContext = await getRecentContext?.();
+
+                // Build user prompt based on context availability
+                const userPrompt = recentContext
+                    ? _.replace(USER_PROMPT_WITH_CONTEXT, '{recentContext}', recentContext)
+                    : USER_PROMPT_WITHOUT_CONTEXT;
+
+                const text = await generateTextWithSystemPrompt(systemPrompt, userPrompt);
                 const statusText = text.slice(0, 128);
 
                 logger.info({ statusText }, 'Generated idle status');

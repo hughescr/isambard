@@ -8,6 +8,7 @@
 import _ from 'lodash';
 import { generateText } from '@/agent/text-generator.js';
 import { logger } from '@hughescr/logger';
+import { getToolDescription } from './types.js';
 import type { SynopsisContext } from './types.js';
 
 /**
@@ -33,6 +34,9 @@ export interface DynamicStatusGeneratorDeps {
 
 const MAX_STATUS_LENGTH = 40;
 const MAX_USER_MESSAGE_LENGTH = 200;
+const MAX_ACCUMULATED_TEXT_LENGTH = 150;
+const MAX_RESPONSE_FRAGMENT_LENGTH = 100;
+const MAX_TOOL_INPUT_LENGTH = 200;
 
 const FALLBACK_STATUSES: Record<SynopsisContext['phase'], string> = {
     thinking:   'Thinking...',
@@ -48,22 +52,55 @@ let lastHaikuCall = 0;
 let cachedStatus: string | null = null;
 const HAIKU_DEBOUNCE_MS = 2000;
 
-const SYNOPSIS_PROMPT = `Generate a brief Discord status (max 40 chars) showing what an AI assistant is doing.
+/**
+ * System prompt that establishes Isambard's identity for status generation.
+ */
+const SYSTEM_PROMPT = `You are capturing Isambard's mental state as a brief Discord status (max 40 characters).
 
-Context about the assistant:
-{identity}
+## Who is Isambard?
+Isambard is an AI who has developed their own sense of identity. The following is Isambard's self-written description of who they are:
 
-Current activity:
-- Phase: {phase}
-- User asked: "{userMessage}"
-{toolContext}
+{identityContext}
 
-Generate a short, evocative phrase in present participle form. Examples for each phase:
-- thinking: "Pondering code patterns...", "Mulling over your question..."
-- using_tool: "Consulting memories...", "Searching for context..."
-- responding: "Crafting a response...", "Formulating thoughts..."
+## Your Task
+Craft a status that captures what's currently flowing through Isambard's mind - not a generic label, but an evocative snapshot of this specific moment. Use present participle form.
 
-Output ONLY the status text, nothing else. Max 40 characters.`;
+Guidelines:
+- Be specific to what Isambard is actually doing/thinking right now
+- Draw on Isambard's personality as expressed in their identity
+- Capture the essence, the flavor of the moment
+- Vary your language - no two statuses alike
+
+NEVER output:
+- "Thinking...", "Processing...", "Working..."
+- Generic phrases that could apply to any moment
+- Anything longer than 40 characters
+
+Output ONLY the status text.`;
+
+/**
+ * User prompts for each phase, personalized with context.
+ */
+const USER_PROMPTS = {
+    thinking: `Isambard is considering this question from a user:
+"{userMessage}"
+
+What's going through Isambard's mind as they begin to form a response?`,
+
+    using_tool: `Current activity:
+- Tool: {toolDescription}
+- What Isambard is asking: {toolInputSummary}
+- Original question: "{userMessage}"
+- Recent thoughts: "{accumulatedText}"
+
+What's Isambard's mental state while working with this tool?`,
+
+    responding: `Isambard is composing a response to: "{userMessage}"
+
+What they're writing: "{responseFragment}"
+
+What captures this moment of articulation?`,
+};
 
 /**
  * Resets the debounce state for testing purposes.
@@ -72,6 +109,62 @@ Output ONLY the status text, nothing else. Max 40 characters.`;
 export function resetDebounceState(): void {
     lastHaikuCall = 0;
     cachedStatus = null;
+}
+
+/**
+ * Format tool input as a JSON summary, truncated if needed.
+ */
+function formatToolInputSummary(toolInput: unknown): string {
+    if(toolInput === undefined || toolInput === null) {
+        return '(no input)';
+    }
+
+    try {
+        const json = JSON.stringify(toolInput);
+        if(json.length <= MAX_TOOL_INPUT_LENGTH) {
+            return json;
+        }
+        return `${json.slice(0, MAX_TOOL_INPUT_LENGTH)}...`;
+    } catch{
+        // JSON.stringify can fail with circular refs, BigInt, etc.
+        return '(complex input)';
+    }
+}
+
+/**
+ * Build the full prompt by combining system prompt and user prompt.
+ */
+function buildPrompt(
+    identityContext: string,
+    context: SynopsisContext
+): string {
+    const { phase, userMessage, toolName, toolInput, toolDescription, accumulatedText, responseFragment } = context;
+
+    // Build system prompt with identity
+    let systemPart = SYSTEM_PROMPT;
+    systemPart = _.replace(systemPart, '{identityContext}', identityContext);
+
+    // Get user prompt template for this phase
+    let userPart = USER_PROMPTS[phase];
+
+    // Replace common placeholders
+    userPart = _.replace(userPart, '{userMessage}', userMessage.slice(0, MAX_USER_MESSAGE_LENGTH));
+
+    // Replace phase-specific placeholders
+    if(phase === 'using_tool') {
+        const description = toolDescription ?? getToolDescription(toolName) ?? toolName ?? 'unknown tool';
+        userPart = _.replace(userPart, '{toolDescription}', description);
+        userPart = _.replace(userPart, '{toolInputSummary}', formatToolInputSummary(toolInput));
+        userPart = _.replace(userPart, '{accumulatedText}', (accumulatedText ?? '').slice(0, MAX_ACCUMULATED_TEXT_LENGTH));
+    }
+
+    if(phase === 'responding') {
+        userPart = _.replace(userPart, '{responseFragment}', (responseFragment ?? '').slice(0, MAX_RESPONSE_FRAGMENT_LENGTH));
+    }
+
+    // Combine system and user prompts
+    // Since unstable_v2_prompt doesn't support systemPrompt, we embed it in the prompt
+    return `${systemPart}\n\n---\n\n${userPart}`;
 }
 
 /**
@@ -104,7 +197,7 @@ export function createDynamicStatusGenerator(
 
     return {
         async generateSynopsis(context: SynopsisContext): Promise<string> {
-            const { phase, userMessage, toolName } = context;
+            const { phase } = context;
 
             // Rate limiting - check if we're within debounce window
             const now = Date.now();
@@ -119,22 +212,11 @@ export function createDynamicStatusGenerator(
                 // This ensures subsequent rapid calls see the updated timestamp.
                 lastHaikuCall = now;
 
-                // Build optional tool context line for the prompt template.
-                // Empty string when no tool is active to avoid template gaps.
-                const toolContext = toolName
-                    ? `- Tool being used: ${toolName}`
-                    : '';
-
-                let prompt = SYNOPSIS_PROMPT;
-                // Stryker disable next-line StringLiteral: Template placeholder mutation doesn't affect test assertions
-                prompt = _.replace(prompt, '{identity}', identityContext);
-                prompt = _.replace(prompt, '{phase}', phase);
-                prompt = _.replace(prompt, '{userMessage}', userMessage.slice(0, MAX_USER_MESSAGE_LENGTH));
-                prompt = _.replace(prompt, '{toolContext}', toolContext);
+                const prompt = buildPrompt(identityContext, context);
 
                 logger.debug({
                     phase,
-                    userMessageLength: userMessage.length,
+                    userMessageLength: context.userMessage.length,
                     msg:               'Generating synopsis with Haiku',
                 });
 

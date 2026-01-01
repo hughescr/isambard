@@ -20,8 +20,10 @@ import type { AgentStreamEvent } from '@/agent/types';
 
 // Mock generateText module for idle status generator
 const mockGenerateText = mock(_constant(Promise.resolve('Contemplating digital dreams')));
+const mockGenerateTextWithSystemPrompt = mock(_constant(Promise.resolve('Contemplating digital dreams')));
 void mock.module('@/agent/text-generator', () => ({
-    generateText: mockGenerateText,
+    generateText:                 mockGenerateText,
+    generateTextWithSystemPrompt: mockGenerateTextWithSystemPrompt,
 }));
 
 describe('Discord Presence Flow (Integration)', () => {
@@ -34,6 +36,8 @@ describe('Discord Presence Flow (Integration)', () => {
         jest.useFakeTimers();
         mockGenerateText.mockReset();
         mockGenerateText.mockImplementation(_constant(Promise.resolve('Contemplating digital dreams')));
+        mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve('Contemplating digital dreams')));
 
         // Mock Discord client
         mockDiscordClient = {

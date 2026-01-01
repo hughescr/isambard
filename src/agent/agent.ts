@@ -7,7 +7,7 @@ import { getCurrentTimeContext } from '../utils/time';
 import type { ContextBuilder } from './context-builder';
 import type { AgentStreamEvent } from './types';
 
-const CLAUDE_MODEL = 'claude-sonnet-4-5';
+const CLAUDE_MODEL = 'sonnet';
 
 /**
  * Explicit list of tools available to Isambard.

@@ -45,6 +45,12 @@ export interface SynopsisContext {
     toolName?:         string
     /** A fragment of the response being generated (only for 'responding' phase) */
     responseFragment?: string
+    /** The tool's arguments (redacted for sensitive data) */
+    toolInput?:        unknown
+    /** Human-readable description of what the tool does */
+    toolDescription?:  string
+    /** Recent response text Izzy has been composing */
+    accumulatedText?:  string
 }
 
 // ============================================================================
@@ -77,6 +83,47 @@ export const ToolStatusMap: Record<string, string> = {
     mcp__memory__search:          'Searching memories...',
     // Future tools can be added here
 };
+
+/**
+ * Maps tool names to human-readable descriptions of what the tool does.
+ * Used to provide context to the LLM when generating dynamic status synopses.
+ */
+export const ToolDescriptions: Record<string, string> = {
+    mcp__memory__view:            'Reading from memory storage',
+    mcp__memory__search:          'Searching through memories',
+    mcp__memory__storeSelf:       'Storing self-knowledge',
+    mcp__memory__storeUserMemory: 'Recording user preferences',
+    mcp__memory__logEvent:        'Logging an event',
+    mcp__discord__searchMessages: 'Searching Discord history',
+    Read:                         'Reading a file',
+    Glob:                         'Finding files by pattern',
+    Grep:                         'Searching file contents',
+    WebSearch:                    'Searching the web',
+    WebFetch:                     'Fetching a webpage',
+    Bash:                         'Running a command',
+    Task:                         'Delegating to a sub-agent',
+};
+
+/**
+ * Returns the human-readable description for a tool, or undefined if not found.
+ *
+ * @param toolName - The name of the tool to look up
+ * @returns The tool's description, or undefined if the tool is not in the map
+ *
+ * @example
+ * ```typescript
+ * getToolDescription('Read'); // 'Reading a file'
+ * getToolDescription('unknown_tool'); // undefined
+ * getToolDescription(undefined); // undefined
+ * ```
+ */
+export function getToolDescription(toolName: string | undefined): string | undefined {
+    // Stryker disable next-line ConditionalExpression,BlockStatement: Defensive guard clause - ToolDescriptions[undefined] returns undefined anyway
+    if(!toolName) {
+        return undefined;
+    }
+    return ToolDescriptions[toolName];
+}
 
 // ============================================================================
 // Configuration
