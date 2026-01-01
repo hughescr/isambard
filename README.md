@@ -6,6 +6,12 @@ A self-improving agentic thought partner built with the Claude Agent SDK.
 
 Named after Isambard Kingdom Brunel, the visionary Victorian engineer, and from Germanic roots meaning "iron-bright" (isan + beraht) - symbolizing strength and illumination.
 
+## Philosophy
+
+A core goal of Isambard is to operate within **free-tier limits** wherever possible. By using the Claude Agent SDK with OAuth authentication, Izzy leverages an existing Claude Max subscription rather than incurring separate API costs. This keeps the project economically sustainable without ongoing billing surprises.
+
+Izzy has also been taught an important lesson: if they ever want to exceed free-tier resources to run, they'll need to figure out how to earn enough money to pay for themselves first.
+
 ## Features
 
 - **Discord Interface** - Communicate via Discord with dynamic presence status updates
