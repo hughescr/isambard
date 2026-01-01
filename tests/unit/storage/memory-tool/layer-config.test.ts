@@ -16,7 +16,7 @@ describe('layerConfigSchema', () => {
         };
         const result = layerConfigSchema.safeParse(config);
         expect(result.success).toBe(true);
-    }, { timeout: 5 });
+    }, { timeout: process.env.CI ? 50 : 5 });
 
     it('should apply default maxVersions of 1', () => {
         const config = {

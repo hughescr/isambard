@@ -86,6 +86,52 @@ mock.module('@anthropic-ai/sdk', () => ({
     Anthropic: MockAnthropic,
 }));
 
+// Mock unstable_v2_prompt from Claude Agent SDK
+// Export the mock so text-generator.test.ts can control it
+// Other SDK functions (query, createSdkMcpServer, tool) pass through to real implementations
+export const mockUnstableV2Prompt = mock<(prompt: string, options: { model: string }) => Promise<{ subtype: string, result?: string }>>(
+    async () => ({ subtype: 'success', result: 'Mock agent response' })
+);
+
+// Import real SDK functions to re-export them alongside our mock
+// This must be done BEFORE mock.module() to get the real implementations
+import * as realAgentSdk from '@anthropic-ai/claude-agent-sdk';
+
+// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
+mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+    // Pass through real SDK functions
+    query:              realAgentSdk.query,
+    createSdkMcpServer: realAgentSdk.createSdkMcpServer,
+    tool:               realAgentSdk.tool,
+    // Replace unstable_v2_prompt with our controllable mock
+    unstable_v2_prompt: mockUnstableV2Prompt,
+}));
+
+// Mock text-generator module to claim it before any test file
+// Import real implementations AFTER SDK mock is in place (so they use our mocked SDK)
+import * as realTextGeneratorModule from '@/agent/text-generator';
+
+// CRITICAL: Capture functions as local variables BEFORE mock.module()
+// ESM namespace objects have live bindings, so after mock.module() the namespace
+// properties would point to the mocks, causing infinite recursion
+const originalGenerateText = realTextGeneratorModule.generateText;
+const originalGenerateTextWithSystemPrompt = realTextGeneratorModule.generateTextWithSystemPrompt;
+
+// Export the captured original functions for tests that need to restore call-through
+export { originalGenerateText, originalGenerateTextWithSystemPrompt };
+
+// Create controllable mocks that DEFAULT to calling real implementations
+// Tests that need to override (like presence-flow.test.ts) can mockImplementation()
+// Tests that need real behavior (like text-generator.test.ts) get real code via SDK mock
+export const mockGenerateText = mock(originalGenerateText);
+export const mockGenerateTextWithSystemPrompt = mock(originalGenerateTextWithSystemPrompt);
+
+// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
+mock.module('@/agent/text-generator', () => ({
+    generateText:                 mockGenerateText,
+    generateTextWithSystemPrompt: mockGenerateTextWithSystemPrompt,
+}));
+
 // Mock Intl.DateTimeFormat to avoid timezone API cold-start cost
 // Returns predictable fake data without calling real ICU APIs
 const TIMEZONE_OFFSETS: Record<string, number> = {

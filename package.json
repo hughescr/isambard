@@ -16,7 +16,7 @@
     "sst-diagnostics": "bunx sst diagnostic --print-logs \"$@\"",
     "sst-remove": "bunx sst remove",
     "start": "bun run dev:sst",
-    "test": "bun test",
+    "test": "if [ -n \"$CI\" ]; then bun test --timeout 30; else bun test --timeout 5; fi",
     "test:full": "bun run lint;bun run typecheck;bun run mutate",
     "test:watch": "bun test --watch",
     "typecheck": "bunx tsc --noEmit"

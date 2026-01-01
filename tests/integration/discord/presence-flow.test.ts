@@ -17,14 +17,8 @@ import { createMessageHandler } from '@/integrations/discord/handlers';
 import type { ClaudeAgent } from '@/agent/agent';
 import type { DiscordMessageContext, ChannelId, UserId, GuildId } from '@/integrations/discord/types';
 import type { AgentStreamEvent } from '@/agent/types';
-
-// Mock generateText module for idle status generator
-const mockGenerateText = mock(_constant(Promise.resolve('Contemplating digital dreams')));
-const mockGenerateTextWithSystemPrompt = mock(_constant(Promise.resolve('Contemplating digital dreams')));
-void mock.module('@/agent/text-generator', () => ({
-    generateText:                 mockGenerateText,
-    generateTextWithSystemPrompt: mockGenerateTextWithSystemPrompt,
-}));
+// Import shared mocks from setup.ts (already registered via mock.module in preload)
+import { mockGenerateText, mockGenerateTextWithSystemPrompt } from '../../setup';
 
 describe('Discord Presence Flow (Integration)', () => {
     let mockDiscordClient: Client;

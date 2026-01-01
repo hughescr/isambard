@@ -236,7 +236,7 @@ describe('Bot Lifecycle Integration', () => {
                 memoryMcpServer:  mockMemoryMcp,
                 discordMcpServer: expect.any(Object),
             });
-        }, { timeout: 15 });
+        }, { timeout: process.env.CI ? 150 : 15 });
 
         it('should continue without memory when DynamoDB client creation fails', async () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({

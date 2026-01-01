@@ -21,7 +21,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run tests
-        run: bun test
+        run: bun run test
 
       - name: Full validation (lint, typecheck, mutation)
         run: bun run test:full

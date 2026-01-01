@@ -13,4 +13,4 @@ coveragePathIgnorePatterns = [
     "src/index.ts"
 ]
 onlyFailures = true
-
+timeout = 5
