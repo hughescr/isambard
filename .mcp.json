@@ -1,0 +1,20 @@
+{
+	"mcpServers": {
+		"dynamodb": {
+			"command": "uvx",
+			"args": ["--env-file", ".env", "awslabs.dynamodb-mcp-server@latest"],
+			"env": {
+				"FASTMCP_LOG_LEVEL": "ERROR"
+			},
+			"defer_loading": true
+		},
+		"aws-cost": {
+			"command": "uvx",
+			"args": ["--env-file", ".env", "awslabs.billing-cost-management-mcp-server@latest"],
+            "env": {
+                "FASTMCP_LOG_LEVEL": "ERROR"
+            },
+			"defer_loading": true
+        }
+	}
+}
