@@ -7,7 +7,7 @@ import { createContextBuilder } from '../../../src/agent/context-builder';
 import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import { createMemoryPath } from '../../../src/storage/memory-tool/types';
 
-describe.concurrent('createContextBuilder loading methods', () => {
+describe('createContextBuilder loading methods', () => {
     let mockDocClient: DynamoDBDocumentClient;
     let backend: MemoryToolBackend;
 

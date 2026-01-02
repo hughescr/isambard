@@ -342,7 +342,7 @@ describe.concurrent('redactSensitiveArgs', () => {
     });
 });
 
-describe('logStreamEvent', () => {
+describe.concurrent('logStreamEvent', () => {
     beforeEach(() => {
         mockLogger.debug.mockClear();
     });

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Mock functions don't have proper this binding */
 /* eslint-disable @typescript-eslint/only-throw-error -- Some tests intentionally throw non-Error values */
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, it, test, expect, beforeEach } from 'bun:test';
 import { mock } from 'bun:test';
 import { mockLogger } from '../../../setup';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
@@ -110,41 +110,55 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
             expect(mockBackend.delete).not.toHaveBeenCalled();
         });
 
-        it('should throw PathAlreadyExistsError when target exists', async () => {
-            mockBackend.get = mock(async () => ({
-                path:        '/test/target.md' as MemoryPath,
-                content:     'Existing content',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
-            }));
+        describe.concurrent('error validation', () => {
+            const createMockBackend = (getOverride?: () => Promise<unknown>) => ({
+                create:   mock(async () => ({})),
+                get:      getOverride ? mock(getOverride) : mock(async () => undefined),
+                update:   mock(async () => ({})),
+                'delete': mock(async () => { /* intentionally empty */ }),
+                list:     mock(async () => ({ items: [], nextCursor: undefined })),
+            } as unknown as MemoryToolBackend);
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
-            await expect(consolidateHandler(mockBackend, {
-                source_paths: ['/test/source1.md'],
-                target_path:  '/test/target.md',
-                summary:      'Summary',
-            })).rejects.toThrow(PathAlreadyExistsError);
-        });
+            test('should throw PathAlreadyExistsError when target exists', async () => {
+                const localBackend = createMockBackend(async () => ({
+                    path:        '/test/target.md' as MemoryPath,
+                    content:     'Existing content',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                }));
 
-        it('should throw InvalidPathError for invalid target path', async () => {
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
-            await expect(consolidateHandler(mockBackend, {
-                source_paths: ['/test/source1.md'],
-                target_path:  'bad-path',
-                summary:      'Summary',
-            })).rejects.toThrow(InvalidPathError);
-        });
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(consolidateHandler(localBackend, {
+                    source_paths: ['/test/source1.md'],
+                    target_path:  '/test/target.md',
+                    summary:      'Summary',
+                })).rejects.toThrow(PathAlreadyExistsError);
+            });
 
-        it('should throw InvalidPathError for invalid source paths', async () => {
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
-            await expect(consolidateHandler(mockBackend, {
-                source_paths: ['bad-path'],
-                target_path:  '/test/target.md',
-                summary:      'Summary',
-            })).rejects.toThrow(InvalidPathError);
+            test('should throw InvalidPathError for invalid target path', async () => {
+                const localBackend = createMockBackend();
+
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(consolidateHandler(localBackend, {
+                    source_paths: ['/test/source1.md'],
+                    target_path:  'bad-path',
+                    summary:      'Summary',
+                })).rejects.toThrow(InvalidPathError);
+            });
+
+            test('should throw InvalidPathError for invalid source paths', async () => {
+                const localBackend = createMockBackend();
+
+                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
+                await expect(consolidateHandler(localBackend, {
+                    source_paths: ['bad-path'],
+                    target_path:  '/test/target.md',
+                    summary:      'Summary',
+                })).rejects.toThrow(InvalidPathError);
+            });
         });
 
         it('should log warning with error message when source delete fails', async () => {
