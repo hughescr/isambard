@@ -23,7 +23,6 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.1.76",
-    "@anthropic-ai/sdk": "0.71.2",
     "@aws-sdk/client-dynamodb": "^3.700.0",
     "@aws-sdk/lib-dynamodb": "^3.700.0",
     "@hughescr/logger": "2.7.2",
