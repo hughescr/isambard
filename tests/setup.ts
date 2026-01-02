@@ -126,6 +126,21 @@ export { originalGenerateText, originalGenerateTextWithSystemPrompt };
 export const mockGenerateText = mock(originalGenerateText);
 export const mockGenerateTextWithSystemPrompt = mock(originalGenerateTextWithSystemPrompt);
 
+// Mock logger to silence output and allow test assertions
+// Type the mock functions properly so .mock.calls[n][0] works correctly
+export const mockLogger = {
+    debug: mock((_obj: Record<string, unknown>) => undefined),
+    info:  mock((_obj: Record<string, unknown>) => undefined),
+    warn:  mock((_obj: Record<string, unknown>) => undefined),
+    error: mock((_obj: Record<string, unknown>) => undefined),
+    child: mock(function() { return mockLogger; }),
+};
+
+// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
+mock.module('@hughescr/logger', () => ({
+    logger: mockLogger,
+}));
+
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
 mock.module('@/agent/text-generator', () => ({
     generateText:                 mockGenerateText,
@@ -202,10 +217,3 @@ Intl.DateTimeFormat = class MockDateTimeFormat {
         return isArray(locales) ? locales : [locales];
     }
 };
-
-// Silence all log messages while in test to avoid blowing up stryker
-import { forEach } from 'lodash';
-import { logger } from '@hughescr/logger';
-forEach(logger.transports, (t) => {
-    t.silent = true;
-});

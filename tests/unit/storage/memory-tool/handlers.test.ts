@@ -3,7 +3,7 @@
 import { describe, it, expect, beforeEach, spyOn } from 'bun:test';
 import { mock } from 'bun:test';
 import { split as _split, some as _some, includes as _includes } from 'lodash';
-import { logger } from '@hughescr/logger';
+import { mockLogger } from '../../../setup';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';
 import { memoryPathSchema } from '@/storage/memory-tool/types';
@@ -28,6 +28,11 @@ describe('Memory Tool Handlers', () => {
     let mockBackend: MemoryToolBackend;
 
     beforeEach(() => {
+        mockLogger.info.mockClear();
+        mockLogger.error.mockClear();
+        mockLogger.debug.mockClear();
+        mockLogger.warn.mockClear();
+
         mockBackend = {
             create:   mock(async () => ({})),
             get:      mock(async () => undefined),
@@ -592,8 +597,6 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should log warning when individual file delete fails in directory', async () => {
-            const warnSpy = spyOn(logger, 'warn');
-
             mockBackend.get = mock(async () => undefined);
             mockBackend.list = mock(async () => ({
                 items: [
@@ -630,8 +633,8 @@ describe('Memory Tool Handlers', () => {
             const result = await deleteMemory(mockBackend, { path: '/test/dir' });
 
             expect(result).toContain('1 memories');
-            expect(warnSpy).toHaveBeenCalledTimes(1);
-            expect(warnSpy).toHaveBeenCalledWith(
+            expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
                 expect.objectContaining({
                     path:  '/test/dir/file2.txt',
                     error: 'Delete failed',
@@ -639,8 +642,6 @@ describe('Memory Tool Handlers', () => {
                     msg:   expect.stringContaining('Failed to delete'),
                 })
             );
-
-            warnSpy.mockRestore();
         });
 
         it('should throw PathNotFoundError when path does not exist', async () => {
@@ -955,8 +956,6 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should log warning when cleanup delete fails after rename', async () => {
-            const warnSpy = spyOn(logger, 'warn');
-
             mockBackend.get = mock(async (path: MemoryPath) => {
                 if(path === '/test/old.md') {
                     return {
@@ -990,8 +989,8 @@ describe('Memory Tool Handlers', () => {
             });
 
             expect(result).toContain('renamed');
-            expect(warnSpy).toHaveBeenCalledTimes(1);
-            expect(warnSpy).toHaveBeenCalledWith(
+            expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
                 expect.objectContaining({
                     path:  '/test/old.md',
                     error: 'Cleanup failed',
@@ -999,8 +998,6 @@ describe('Memory Tool Handlers', () => {
                     msg:   expect.stringContaining('Failed to delete original'),
                 })
             );
-
-            warnSpy.mockRestore();
         });
 
         it('should throw PathNotFoundError when source path does not exist', async () => {

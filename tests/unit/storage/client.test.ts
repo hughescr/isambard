@@ -1,5 +1,6 @@
-import { describe, it, expect, spyOn } from 'bun:test';
+import { describe, it, expect, spyOn, beforeEach, afterEach } from 'bun:test';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
+import { mockClient } from 'aws-sdk-client-mock';
 import { createDynamoDBClient, buildClientConfig } from '@/storage/client';
 import type { DynamoDBConfig } from '@/config/schemas';
 
@@ -334,6 +335,17 @@ describe('createDynamoDBClient', () => {
 });
 
 describe('DynamoDBDocumentClient marshalling', () => {
+    const ddbMock = mockClient(DynamoDBDocumentClient);
+
+    beforeEach(() => {
+        ddbMock.reset();
+        ddbMock.on(GetCommand).resolves({});
+    });
+
+    afterEach(() => {
+        ddbMock.reset();
+    });
+
     it('should be able to send commands via docClient', async () => {
         const clients = createDynamoDBClient({
             tableName: 'TestTable',

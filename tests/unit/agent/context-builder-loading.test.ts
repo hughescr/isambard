@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
-import { describe, it, expect, beforeEach, mock, spyOn } from 'bun:test';
+import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import _ from 'lodash';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { logger } from '@hughescr/logger';
+import { mockLogger } from '../../setup';
 import { createContextBuilder } from '../../../src/agent/context-builder';
 import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import { createMemoryPath } from '../../../src/storage/memory-tool/types';
@@ -12,6 +12,12 @@ describe('createContextBuilder loading methods', () => {
     let backend: MemoryToolBackend;
 
     beforeEach(() => {
+        // Reset logger mocks
+        mockLogger.info.mockClear();
+        mockLogger.error.mockClear();
+        mockLogger.debug.mockClear();
+        mockLogger.warn.mockClear();
+
         mockDocClient = {} as DynamoDBDocumentClient;
         backend = new MemoryToolBackend(mockDocClient, 'test-table');
     });
@@ -474,13 +480,12 @@ describe('createContextBuilder loading methods', () => {
         });
 
         it('should log when loading core identity starts', async () => {
-            const debugSpy = spyOn(logger, 'debug');
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
             await contextBuilder.loadCoreIdentity();
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     msg: 'Loading core identity...',
                 })
@@ -488,13 +493,12 @@ describe('createContextBuilder loading methods', () => {
         });
 
         it('should log identityLength: 0 when no identity items exist', async () => {
-            const debugSpy = spyOn(logger, 'debug');
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
             await contextBuilder.loadCoreIdentity();
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     identityLength: 0,
                     msg:            'Core identity loaded',
@@ -503,7 +507,6 @@ describe('createContextBuilder loading methods', () => {
         });
 
         it('should log identityLength matching result length when items exist', async () => {
-            const debugSpy = spyOn(logger, 'debug');
             const content = 'Test identity content';
 
             backend.listByLayer = mock(async () => ({
@@ -523,7 +526,7 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.loadCoreIdentity();
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     identityLength: result.length,
                     msg:            'Core identity loaded',
@@ -666,7 +669,6 @@ describe('createContextBuilder loading methods', () => {
         });
 
         it('should log when loading user context starts', async () => {
-            const debugSpy = spyOn(logger, 'debug');
             const userId = 'test-user-log';
 
             backend.searchByTag = mock(async () => ({ items: [] }));
@@ -674,7 +676,7 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             await contextBuilder.loadRecentContext(userId);
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     userId,
                     msg: 'Loading user context',
@@ -683,7 +685,6 @@ describe('createContextBuilder loading methods', () => {
         });
 
         it('should log userId and memoryCount when user context loaded', async () => {
-            const debugSpy = spyOn(logger, 'debug');
             const userId = 'test-user-loaded';
 
             backend.searchByTag = mock(async () => ({
@@ -712,7 +713,7 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             await contextBuilder.loadRecentContext(userId);
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     userId,
                     memoryCount: 2,
@@ -879,14 +880,13 @@ describe('createContextBuilder loading methods', () => {
         });
 
         it('should log when loading recent events starts', async () => {
-            const debugSpy = spyOn(logger, 'debug');
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
 
             const contextBuilder = createContextBuilder({ backend });
             await contextBuilder.loadRecentEvents();
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     msg: 'Loading recent events',
                 })
@@ -894,7 +894,6 @@ describe('createContextBuilder loading methods', () => {
         });
 
         it('should log eventCount when recent events loaded', async () => {
-            const debugSpy = spyOn(logger, 'debug');
             backend.searchByTimeRange = mock(async () => [
                 {
                     path:        createMemoryPath('/events/event1.md'),
@@ -928,7 +927,7 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             await contextBuilder.loadRecentEvents();
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     eventCount: 3,
                     msg:        'Recent events loaded',
@@ -1371,7 +1370,6 @@ describe('createContextBuilder loading methods', () => {
         });
 
         it('should log debug message when timezone not found', async () => {
-            const debugSpy = spyOn(logger, 'debug');
             const userId = 'user-log-test';
 
             backend.get = mock(async () => undefined);
@@ -1379,7 +1377,7 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             await contextBuilder.loadUserTimezone(userId);
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     userId,
                     msg: 'User timezone not found',
@@ -1400,35 +1398,19 @@ describe('createContextBuilder loading methods', () => {
                 updatedAt:   '2025-01-01T00:00:00Z',
             }));
 
-            // Create a fresh mock for logger.debug
-            const originalDebug = logger.debug.bind(logger);
-            const debugCalls: unknown[][] = [];
-            /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Mocking logger for test */
-            (logger as any).debug = (arg: unknown) => {
-                debugCalls.push([arg]);
-                return logger;
-            };
-            /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Mocking complete */
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadUserTimezone(userId);
 
-            try {
-                const contextBuilder = createContextBuilder({ backend });
-                await contextBuilder.loadUserTimezone(userId);
-
-                // Should not have called debug with 'User timezone not found'
-                const notFoundCalls = _.filter(
-                    debugCalls,
-                    (call: unknown[]) =>
-                        _.isObject(call[0])
-                        && call[0] !== null
-                        && 'msg' in call[0]
-                        && (call[0] as { msg: string }).msg === 'User timezone not found'
-                );
-                expect(notFoundCalls).toHaveLength(0);
-            } finally {
-                /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Restoring logger mock */
-                (logger as any).debug = originalDebug;
-                /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Restore complete */
-            }
+            // Should not have called debug with 'User timezone not found'
+            const notFoundCalls = _.filter(
+                mockLogger.debug.mock.calls,
+                (call: unknown[]) =>
+                    _.isObject(call[0])
+                    && call[0] !== null
+                    && 'msg' in call[0]
+                    && (call[0] as { msg: string }).msg === 'User timezone not found'
+            );
+            expect(notFoundCalls).toHaveLength(0);
         });
 
         it('should handle different timezone formats', async () => {

@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Mock functions don't have proper this binding */
-import { describe, it, expect, beforeEach, spyOn } from 'bun:test';
+import { describe, it, expect, beforeEach } from 'bun:test';
 import { mock } from 'bun:test';
 import { split as _split, repeat as _repeat } from 'lodash';
-import { logger } from '@hughescr/logger';
+import { mockLogger } from '../../../setup';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';
 
@@ -10,6 +10,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
     let mockBackend: MemoryToolBackend;
 
     beforeEach(() => {
+        mockLogger.info.mockClear();
+        mockLogger.error.mockClear();
+        mockLogger.debug.mockClear();
+        mockLogger.warn.mockClear();
+
         mockBackend = {
             create:   mock(async () => ({})),
             get:      mock(async () => undefined),
@@ -861,8 +866,6 @@ describe('Memory Tool Handlers - Search Operations', () => {
     });
 
     describe('search query building and logging', () => {
-        let debugSpy: ReturnType<typeof spyOn>;
-
         const searchHandler = async (
             backend: MemoryToolBackend,
             params: { tags?: string[], layer?: string, time_range?: { start: string, end: string }, limit?: number }
@@ -870,10 +873,6 @@ describe('Memory Tool Handlers - Search Operations', () => {
             const { search } = await import('@/storage/memory-tool/handlers');
             return search(backend, params as Parameters<typeof search>[1]);
         };
-
-        beforeEach(() => {
-            debugSpy = spyOn(logger, 'debug');
-        });
 
         it('should log search with tags joined by comma as query', async () => {
             mockBackend.searchByTag = mock(async () => ({
@@ -894,7 +893,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             await searchHandler(mockBackend, { tags: ['tag1', 'tag2'] });
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     query:       'tag1,tag2',
                     resultCount: 1,
@@ -922,7 +921,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             await searchHandler(mockBackend, { layer: 'identity' });
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     query:       'identity',
                     resultCount: 1,
@@ -949,7 +948,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 time_range: { start: '2025-01-10T00:00:00.000Z', end: '2025-01-20T00:00:00.000Z' },
             });
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     query:       'time_range',
                     resultCount: 1,
@@ -962,7 +961,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
         it('should log search with empty query and zero results when no criteria provided', async () => {
             await searchHandler(mockBackend, {});
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     query:       '',
                     resultCount: 0,
@@ -1011,7 +1010,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             await searchHandler(mockBackend, { tags: ['tag1'] });
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     query:       'tag1',
                     resultCount: 3,

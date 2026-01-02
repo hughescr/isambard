@@ -7,14 +7,7 @@ import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { ActivityType } from 'discord.js';
 import { constant as _constant, repeat as _repeat, size as _size } from 'lodash';
 import { createIdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
-
-// Mock generateTextWithSystemPrompt module
-const mockGenerateTextWithSystemPrompt = mock<(systemPrompt: string, userPrompt: string) => Promise<string>>(
-    _constant(Promise.resolve('Dozing peacefully'))
-);
-void mock.module('@/agent/text-generator', () => ({
-    generateTextWithSystemPrompt: mockGenerateTextWithSystemPrompt,
-}));
+import { mockGenerateTextWithSystemPrompt } from '../../../../setup';
 
 describe('IdleStatusGenerator', () => {
     const mockLogger = {
@@ -27,7 +20,7 @@ describe('IdleStatusGenerator', () => {
 
     beforeEach(() => {
         mockGenerateTextWithSystemPrompt.mockReset();
-        mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve('Dozing peacefully')));
+        mockGenerateTextWithSystemPrompt.mockResolvedValue('Dozing peacefully');
     });
 
     afterEach(() => {

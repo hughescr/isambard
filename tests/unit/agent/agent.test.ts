@@ -5,7 +5,7 @@ import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
 import { createClaudeAgent, extractToolUses, parseToolName, logStreamEvent, redactSensitiveArgs } from '../../../src/agent/agent';
 import type { ParsedToolName } from '../../../src/agent/agent';
 import type { AgentStreamEvent } from '../../../src/agent/types';
-import { logger } from '@hughescr/logger';
+import { mockLogger } from '../../setup';
 import type { DiscordMessageContext } from '../../../src/integrations/discord/types';
 import { createGuildId, createChannelId, createUserId } from '../../../src/integrations/discord/types';
 import type { ContextBuilder } from '../../../src/agent/context-builder';
@@ -343,14 +343,8 @@ describe('redactSensitiveArgs', () => {
 });
 
 describe('logStreamEvent', () => {
-    let debugSpy: ReturnType<typeof spyOn>;
-
     beforeEach(() => {
-        debugSpy = spyOn(logger, 'debug');
-    });
-
-    afterEach(() => {
-        debugSpy.mockRestore();
+        mockLogger.debug.mockClear();
     });
 
     it('should log user events as "Sending message to Claude LLM"', () => {
@@ -358,7 +352,7 @@ describe('logStreamEvent', () => {
 
         logStreamEvent(event);
 
-        expect(debugSpy).toHaveBeenCalledWith({
+        expect(mockLogger.debug).toHaveBeenCalledWith({
             eventType: 'user',
             msg:       'Sending message to Claude LLM',
         });
@@ -374,7 +368,7 @@ describe('logStreamEvent', () => {
 
         logStreamEvent(event);
 
-        expect(debugSpy).toHaveBeenCalledWith({
+        expect(mockLogger.debug).toHaveBeenCalledWith({
             eventType: 'assistant',
             hasText:   true,
             msg:       'Claude LLM responding',
@@ -391,7 +385,7 @@ describe('logStreamEvent', () => {
 
         logStreamEvent(event);
 
-        expect(debugSpy).toHaveBeenCalledWith({
+        expect(mockLogger.debug).toHaveBeenCalledWith({
             eventType: 'assistant',
             hasText:   false,
             msg:       'Claude LLM thinking',
@@ -406,7 +400,7 @@ describe('logStreamEvent', () => {
 
         logStreamEvent(event);
 
-        expect(debugSpy).toHaveBeenCalledWith({
+        expect(mockLogger.debug).toHaveBeenCalledWith({
             eventType: 'tool_progress',
             module:    'memory',
             tool:      'view',
@@ -422,7 +416,7 @@ describe('logStreamEvent', () => {
 
         logStreamEvent(event);
 
-        expect(debugSpy).toHaveBeenCalledWith({
+        expect(mockLogger.debug).toHaveBeenCalledWith({
             eventType: 'tool_progress',
             module:    'claude',
             tool:      'Read',
@@ -438,7 +432,7 @@ describe('logStreamEvent', () => {
 
         logStreamEvent(event);
 
-        expect(debugSpy).toHaveBeenCalledWith({
+        expect(mockLogger.debug).toHaveBeenCalledWith({
             eventType: 'tool_result',
             module:    'memory',
             tool:      'view',
@@ -454,7 +448,7 @@ describe('logStreamEvent', () => {
 
         logStreamEvent(event);
 
-        expect(debugSpy).toHaveBeenCalledWith({
+        expect(mockLogger.debug).toHaveBeenCalledWith({
             eventType: 'result',
             status:    'success',
             msg:       'Claude LLM stream complete',
@@ -469,7 +463,7 @@ describe('logStreamEvent', () => {
 
         logStreamEvent(event);
 
-        expect(debugSpy).toHaveBeenCalledWith({
+        expect(mockLogger.debug).toHaveBeenCalledWith({
             eventType: 'result',
             status:    'error_during_execution',
             msg:       'Claude LLM stream complete',
@@ -483,7 +477,7 @@ describe('logStreamEvent', () => {
 
         logStreamEvent(event);
 
-        expect(debugSpy).toHaveBeenCalledWith({
+        expect(mockLogger.debug).toHaveBeenCalledWith({
             eventType: 'result',
             status:    undefined,
             msg:       'Claude LLM stream complete',

@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Mock functions don't have proper this binding */
 /* eslint-disable @typescript-eslint/only-throw-error -- Some tests intentionally throw non-Error values */
-import { describe, it, expect, beforeEach, spyOn } from 'bun:test';
+import { describe, it, expect, beforeEach } from 'bun:test';
 import { mock } from 'bun:test';
-import { logger } from '@hughescr/logger';
+import { mockLogger } from '../../../setup';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';
 import {
@@ -21,6 +21,11 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
     let mockBackend: MemoryToolBackend;
 
     beforeEach(() => {
+        mockLogger.info.mockClear();
+        mockLogger.error.mockClear();
+        mockLogger.debug.mockClear();
+        mockLogger.warn.mockClear();
+
         mockBackend = {
             create:   mock(async () => ({})),
             get:      mock(async () => undefined),
@@ -143,87 +148,69 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
         });
 
         it('should log warning with error message when source delete fails', async () => {
-            const warnSpy = spyOn(logger, 'warn');
+            mockBackend.get = mock(async () => undefined);
+            mockBackend.create = mock(async () => ({
+                path:        '/test/target.md' as MemoryPath,
+                content:     'Summary',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:00.000Z',
+            }));
+            mockBackend.delete = mock(async () => {
+                throw new Error('Delete error message');
+            });
 
-            try {
-                mockBackend.get = mock(async () => undefined);
-                mockBackend.create = mock(async () => ({
-                    path:        '/test/target.md' as MemoryPath,
-                    content:     'Summary',
-                    contentType: 'text/markdown' as ContentType,
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-01T00:00:00.000Z',
-                    updatedAt:   '2025-01-01T00:00:00.000Z',
-                }));
-                mockBackend.delete = mock(async () => {
-                    throw new Error('Delete error message');
-                });
+            const result = await consolidateHandler(mockBackend, {
+                source_paths: ['/test/source1.md'],
+                target_path:  '/test/target.md',
+                summary:      'Summary',
+            });
 
-                const result = await consolidateHandler(mockBackend, {
-                    source_paths: ['/test/source1.md'],
-                    target_path:  '/test/target.md',
-                    summary:      'Summary',
-                });
-
-                expect(result).toContain('consolidated');
-                expect(warnSpy).toHaveBeenCalledTimes(1);
-                expect(warnSpy).toHaveBeenCalledWith(
-                    expect.objectContaining({
-                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
-                        msg: expect.stringContaining('Failed to delete source /test/source1.md during consolidation'),
-                    })
-                );
-            } finally {
-                warnSpy.mockRestore();
-            }
+            expect(result).toContain('consolidated');
+            expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                    msg: expect.stringContaining('Failed to delete source /test/source1.md during consolidation'),
+                })
+            );
         });
 
         it('should catch and log non-Error objects thrown during source delete', async () => {
-            const warnSpy = spyOn(logger, 'warn');
+            mockBackend.get = mock(async () => undefined);
+            mockBackend.create = mock(async () => ({
+                path:        '/test/target.md' as MemoryPath,
+                content:     'Summary',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:00.000Z',
+            }));
+            mockBackend.delete = mock(async () => {
+                throw 'string error';
+            });
 
-            try {
-                mockBackend.get = mock(async () => undefined);
-                mockBackend.create = mock(async () => ({
-                    path:        '/test/target.md' as MemoryPath,
-                    content:     'Summary',
-                    contentType: 'text/markdown' as ContentType,
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-01T00:00:00.000Z',
-                    updatedAt:   '2025-01-01T00:00:00.000Z',
-                }));
-                mockBackend.delete = mock(async () => {
-                    throw 'string error';
-                });
+            const result = await consolidateHandler(mockBackend, {
+                source_paths: ['/test/source1.md'],
+                target_path:  '/test/target.md',
+                summary:      'Summary',
+            });
 
-                const result = await consolidateHandler(mockBackend, {
-                    source_paths: ['/test/source1.md'],
-                    target_path:  '/test/target.md',
-                    summary:      'Summary',
-                });
-
-                expect(result).toContain('consolidated');
-                expect(warnSpy).toHaveBeenCalledTimes(1);
-                expect(warnSpy).toHaveBeenCalledWith(
-                    expect.objectContaining({
-                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
-                        msg: expect.stringContaining('string error'),
-                    })
-                );
-            } finally {
-                warnSpy.mockRestore();
-            }
+            expect(result).toContain('consolidated');
+            expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                    msg: expect.stringContaining('string error'),
+                })
+            );
         });
     });
 
     describe('logging', () => {
-        let debugSpy: ReturnType<typeof spyOn>;
-
-        beforeEach(() => {
-            debugSpy = spyOn(logger, 'debug');
-        });
-
         it('should log memory create with path', async () => {
             mockBackend.create = mock(async () => ({
                 path:        '/test/file.md' as MemoryPath,
@@ -237,7 +224,7 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
 
             await create(mockBackend, { path: '/test/file.md', file_text: 'content' });
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     path: '/test/file.md',
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
@@ -259,7 +246,7 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
 
             await view(mockBackend, { path: '/test/file.md' });
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     path: '/test/file.md',
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
@@ -282,7 +269,7 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
 
             await deleteMemory(mockBackend, { path: '/test/file.md' });
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     path: '/test/file.md',
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
@@ -313,7 +300,7 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
 
             await insert(mockBackend, { path: '/test/file.md', insert_line: 0, insert_text: 'Inserted' });
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     path: '/test/file.md',
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
@@ -344,7 +331,7 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
 
             await strReplace(mockBackend, { path: '/test/file.md', old_str: 'World', new_str: 'Universe' });
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     path: '/test/file.md',
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher

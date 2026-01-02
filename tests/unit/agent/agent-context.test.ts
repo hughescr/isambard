@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import _ from 'lodash';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
-import { logger } from '@hughescr/logger';
+import { mockLogger } from '../../setup';
 import { createClaudeAgent } from '../../../src/agent/agent';
 import type { DiscordMessageContext } from '../../../src/integrations/discord/types';
 import { createGuildId, createChannelId, createUserId } from '../../../src/integrations/discord/types';
@@ -15,6 +15,12 @@ describe('createClaudeAgent context integration', () => {
     let querySpy: ReturnType<typeof spyOn>;
 
     beforeEach(() => {
+        // Reset logger mocks
+        mockLogger.info.mockClear();
+        mockLogger.error.mockClear();
+        mockLogger.debug.mockClear();
+        mockLogger.warn.mockClear();
+
         // Create mock Discord message context
         mockMessageContext = {
             guildId:   createGuildId('123456789'),
@@ -940,7 +946,6 @@ describe('createClaudeAgent context integration', () => {
         });
 
         it('should log error with message and user details', async () => {
-            const errorSpy = spyOn(logger, 'error');
             const testError = new Error('Test error message');
             querySpy.mockImplementation((_params: any): any => {
                 throw testError;
@@ -949,7 +954,7 @@ describe('createClaudeAgent context integration', () => {
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);
 
-            expect(errorSpy).toHaveBeenCalledWith(
+            expect(mockLogger.error).toHaveBeenCalledWith(
                 expect.objectContaining({
                     error:     testError,
                     userId:    '111222333',
@@ -962,12 +967,10 @@ describe('createClaudeAgent context integration', () => {
 
     describe('structured logging', () => {
         it('should log message processing start with context', async () => {
-            const infoSpy = spyOn(logger, 'info');
-
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);
 
-            expect(infoSpy).toHaveBeenCalledWith(
+            expect(mockLogger.info).toHaveBeenCalledWith(
                 expect.objectContaining({
                     userId:    mockMessageContext.userId,
                     channelId: mockMessageContext.channelId,
@@ -975,47 +978,36 @@ describe('createClaudeAgent context integration', () => {
                     msg:       'Agent starting to process message',
                 })
             );
-
-            infoSpy.mockRestore();
         });
 
         it('should log stream events with descriptive messages', async () => {
-            const debugSpy = spyOn(logger, 'debug');
-
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);
 
             // Should log assistant event with hasText indicator
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     eventType: 'assistant',
                     hasText:   true,
                     msg:       'Claude LLM responding',
                 })
             );
-
-            debugSpy.mockRestore();
         });
 
         it('should log completion with response length', async () => {
-            const infoSpy = spyOn(logger, 'info');
-
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);
 
-            expect(infoSpy).toHaveBeenCalledWith(
+            expect(mockLogger.info).toHaveBeenCalledWith(
                 expect.objectContaining({
                     messageId:      mockMessageContext.messageId,
                     responseLength: expect.any(Number),
                     msg:            expect.stringContaining('Agent completed processing'),
                 })
             );
-
-            infoSpy.mockRestore();
         });
 
         it('should log tool usage from assistant messages', async () => {
-            const debugSpy = spyOn(logger, 'debug');
             querySpy.mockImplementation((_params: any): any => {
                 async function* mockGenerator() {
                     yield {
@@ -1042,19 +1034,16 @@ describe('createClaudeAgent context integration', () => {
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     module: 'memory',
                     tool:   'view',
                     args:   { path: '/memories/test' },
                 })
             );
-
-            debugSpy.mockRestore();
         });
 
         it('should log multiple tool uses from a single assistant message', async () => {
-            const debugSpy = spyOn(logger, 'debug');
             querySpy.mockImplementation((_params: any): any => {
                 async function* mockGenerator() {
                     yield {
@@ -1083,26 +1072,23 @@ describe('createClaudeAgent context integration', () => {
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);
 
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     module: 'memory',
                     tool:   'view',
                     args:   { path: '/memories/test' },
                 })
             );
-            expect(debugSpy).toHaveBeenCalledWith(
+            expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     module: 'memory',
                     tool:   'store',
                     args:   { path: '/memories/new', content: 'data' },
                 })
             );
-
-            debugSpy.mockRestore();
         });
 
         it('should not log tool usage for messages without tool_use blocks', async () => {
-            const debugSpy = spyOn(logger, 'debug');
             querySpy.mockImplementation((_params: any): any => {
                 async function* mockGenerator() {
                     yield {
@@ -1125,12 +1111,10 @@ describe('createClaudeAgent context integration', () => {
 
             // Should only have stream event log, not tool call log
             const toolCallCalls = _.filter(
-                debugSpy.mock.calls,
+                mockLogger.debug.mock.calls,
                 call => call[0] && _.isObject(call[0]) && 'toolName' in call[0]
             );
             expect(toolCallCalls.length).toBe(0);
-
-            debugSpy.mockRestore();
         });
     });
 });

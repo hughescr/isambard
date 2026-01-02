@@ -1,14 +1,9 @@
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { describe, it, expect, beforeEach } from 'bun:test';
 import _ from 'lodash';
 import { createMessageSummarizer, createSemaphore } from '@/integrations/discord/message-history/summarizer';
 import type { DiscordSearchResult } from '@/integrations/discord/message-history/types';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
-
-// Mock the generateText module
-const mockGenerateText = mock<(prompt: string) => Promise<string>>(_.constant(Promise.resolve('This is a test summary.')));
-await mock.module('@/agent/text-generator', () => ({
-    generateText: mockGenerateText,
-}));
+import { mockGenerateText } from '../../../../setup';
 
 /**
  * Creates a mock Discord search result for testing.
@@ -42,8 +37,8 @@ function createMockSearchResult(overrides: Partial<{
 
 describe('createMessageSummarizer', () => {
     beforeEach(() => {
-        mockGenerateText.mockClear();
-        mockGenerateText.mockImplementation(_.constant(Promise.resolve('This is a test summary.')));
+        mockGenerateText.mockReset();
+        mockGenerateText.mockResolvedValue('This is a test summary.');
     });
 
     describe('summarizeMessages', () => {
