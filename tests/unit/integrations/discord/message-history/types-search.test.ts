@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import {
     discordSearchResultSchema,
     overflowSummarySchema,
@@ -9,7 +9,7 @@ import {
 } from '@/integrations/discord/message-history/types';
 import type { ChannelId, GuildId } from '@/integrations/discord/types';
 
-describe('discordSearchResultSchema', () => {
+describe.concurrent('discordSearchResultSchema', () => {
     const validSearchResult: DiscordSearchResult = {
         id:        '999888777666555444',
         channelId: '123456789012345678' as ChannelId,
@@ -26,12 +26,12 @@ describe('discordSearchResultSchema', () => {
         reactions:   [],
     };
 
-    it('should accept valid search result with all required fields', () => {
+    test('should accept valid search result with all required fields', () => {
         const result = discordSearchResultSchema.safeParse(validSearchResult);
         expect(result.success).toBe(true);
     });
 
-    it('should accept null guildId for DMs', () => {
+    test('should accept null guildId for DMs', () => {
         const result = discordSearchResultSchema.safeParse({
             ...validSearchResult,
             guildId: null,
@@ -42,7 +42,7 @@ describe('discordSearchResultSchema', () => {
         }
     });
 
-    it('should accept search result with replyTo', () => {
+    test('should accept search result with replyTo', () => {
         const result = discordSearchResultSchema.safeParse({
             ...validSearchResult,
             replyTo: '888777666555444333',
@@ -53,7 +53,7 @@ describe('discordSearchResultSchema', () => {
         }
     });
 
-    it('should accept search result with attachments', () => {
+    test('should accept search result with attachments', () => {
         const result = discordSearchResultSchema.safeParse({
             ...validSearchResult,
             attachments: [
@@ -67,7 +67,7 @@ describe('discordSearchResultSchema', () => {
         expect(result.success).toBe(true);
     });
 
-    it('should accept search result with embeds', () => {
+    test('should accept search result with embeds', () => {
         const result = discordSearchResultSchema.safeParse({
             ...validSearchResult,
             embeds: [
@@ -77,7 +77,7 @@ describe('discordSearchResultSchema', () => {
         expect(result.success).toBe(true);
     });
 
-    it('should accept search result with reactions', () => {
+    test('should accept search result with reactions', () => {
         const result = discordSearchResultSchema.safeParse({
             ...validSearchResult,
             reactions: [
@@ -88,52 +88,52 @@ describe('discordSearchResultSchema', () => {
         expect(result.success).toBe(true);
     });
 
-    it('should require id field', () => {
+    test('should require id field', () => {
         const { id: _id, ...noId } = validSearchResult;
         const result = discordSearchResultSchema.safeParse(noId);
         expect(result.success).toBe(false);
     });
 
-    it('should reject empty id', () => {
+    test('should reject empty id', () => {
         const result = discordSearchResultSchema.safeParse({ ...validSearchResult, id: '' });
         expect(result.success).toBe(false);
     });
 
-    it('should require channelId field', () => {
+    test('should require channelId field', () => {
         const { channelId: _channelId, ...noChannelId } = validSearchResult;
         const result = discordSearchResultSchema.safeParse(noChannelId);
         expect(result.success).toBe(false);
     });
 
-    it('should reject empty channelId', () => {
+    test('should reject empty channelId', () => {
         const result = discordSearchResultSchema.safeParse({ ...validSearchResult, channelId: '' });
         expect(result.success).toBe(false);
     });
 
-    it('should require author field', () => {
+    test('should require author field', () => {
         const { author: _author, ...noAuthor } = validSearchResult;
         const result = discordSearchResultSchema.safeParse(noAuthor);
         expect(result.success).toBe(false);
     });
 
-    it('should require content field', () => {
+    test('should require content field', () => {
         const { content: _content, ...noContent } = validSearchResult;
         const result = discordSearchResultSchema.safeParse(noContent);
         expect(result.success).toBe(false);
     });
 
-    it('should accept empty content string', () => {
+    test('should accept empty content string', () => {
         const result = discordSearchResultSchema.safeParse({ ...validSearchResult, content: '' });
         expect(result.success).toBe(true);
     });
 
-    it('should require timestamp field', () => {
+    test('should require timestamp field', () => {
         const { timestamp: _timestamp, ...noTimestamp } = validSearchResult;
         const result = discordSearchResultSchema.safeParse(noTimestamp);
         expect(result.success).toBe(false);
     });
 
-    it('should validate timestamp as ISO datetime', () => {
+    test('should validate timestamp as ISO datetime', () => {
         const result = discordSearchResultSchema.safeParse({
             ...validSearchResult,
             timestamp: 'not-a-date',
@@ -141,19 +141,19 @@ describe('discordSearchResultSchema', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should require attachments field', () => {
+    test('should require attachments field', () => {
         const { attachments: _attachments, ...noAttachments } = validSearchResult;
         const result = discordSearchResultSchema.safeParse(noAttachments);
         expect(result.success).toBe(false);
     });
 
-    it('should require embeds field', () => {
+    test('should require embeds field', () => {
         const { embeds: _embeds, ...noEmbeds } = validSearchResult;
         const result = discordSearchResultSchema.safeParse(noEmbeds);
         expect(result.success).toBe(false);
     });
 
-    it('should require reactions field', () => {
+    test('should require reactions field', () => {
         const { reactions: _reactions, ...noReactions } = validSearchResult;
         const result = discordSearchResultSchema.safeParse(noReactions);
         expect(result.success).toBe(false);
@@ -168,29 +168,29 @@ describe('overflowSummarySchema', () => {
         synopsis:  'User discussed the new feature implementation and mentioned several concerns about performance.',
     };
 
-    it('should accept valid overflow summary', () => {
+    test('should accept valid overflow summary', () => {
         const result = overflowSummarySchema.safeParse(validOverflow);
         expect(result.success).toBe(true);
     });
 
-    it('should require id field', () => {
+    test('should require id field', () => {
         const { id: _id, ...noId } = validOverflow;
         const result = overflowSummarySchema.safeParse(noId);
         expect(result.success).toBe(false);
     });
 
-    it('should reject empty id', () => {
+    test('should reject empty id', () => {
         const result = overflowSummarySchema.safeParse({ ...validOverflow, id: '' });
         expect(result.success).toBe(false);
     });
 
-    it('should require timestamp field', () => {
+    test('should require timestamp field', () => {
         const { timestamp: _timestamp, ...noTimestamp } = validOverflow;
         const result = overflowSummarySchema.safeParse(noTimestamp);
         expect(result.success).toBe(false);
     });
 
-    it('should validate timestamp as ISO datetime', () => {
+    test('should validate timestamp as ISO datetime', () => {
         const result = overflowSummarySchema.safeParse({
             ...validOverflow,
             timestamp: 'not-a-date',
@@ -198,24 +198,24 @@ describe('overflowSummarySchema', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should require author field', () => {
+    test('should require author field', () => {
         const { author: _author, ...noAuthor } = validOverflow;
         const result = overflowSummarySchema.safeParse(noAuthor);
         expect(result.success).toBe(false);
     });
 
-    it('should reject empty author', () => {
+    test('should reject empty author', () => {
         const result = overflowSummarySchema.safeParse({ ...validOverflow, author: '' });
         expect(result.success).toBe(false);
     });
 
-    it('should require synopsis field', () => {
+    test('should require synopsis field', () => {
         const { synopsis: _synopsis, ...noSynopsis } = validOverflow;
         const result = overflowSummarySchema.safeParse(noSynopsis);
         expect(result.success).toBe(false);
     });
 
-    it('should reject empty synopsis', () => {
+    test('should reject empty synopsis', () => {
         const result = overflowSummarySchema.safeParse({ ...validOverflow, synopsis: '' });
         expect(result.success).toBe(false);
     });
@@ -249,12 +249,12 @@ describe('searchResponseSchema', () => {
         },
     };
 
-    it('should accept valid search response without overflow', () => {
+    test('should accept valid search response without overflow', () => {
         const result = searchResponseSchema.safeParse(validSearchResponse);
         expect(result.success).toBe(true);
     });
 
-    it('should accept valid search response with overflow', () => {
+    test('should accept valid search response with overflow', () => {
         const result = searchResponseSchema.safeParse({
             ...validSearchResponse,
             overflow: {
@@ -272,7 +272,7 @@ describe('searchResponseSchema', () => {
         expect(result.success).toBe(true);
     });
 
-    it('should accept search response with query in metadata', () => {
+    test('should accept search response with query in metadata', () => {
         const result = searchResponseSchema.safeParse({
             ...validSearchResponse,
             metadata: {
@@ -286,7 +286,7 @@ describe('searchResponseSchema', () => {
         }
     });
 
-    it('should accept empty messages array', () => {
+    test('should accept empty messages array', () => {
         const result = searchResponseSchema.safeParse({
             ...validSearchResponse,
             messages: [],
@@ -294,19 +294,19 @@ describe('searchResponseSchema', () => {
         expect(result.success).toBe(true);
     });
 
-    it('should require messages field', () => {
+    test('should require messages field', () => {
         const { messages: _messages, ...noMessages } = validSearchResponse;
         const result = searchResponseSchema.safeParse(noMessages);
         expect(result.success).toBe(false);
     });
 
-    it('should require metadata field', () => {
+    test('should require metadata field', () => {
         const { metadata: _metadata, ...noMetadata } = validSearchResponse;
         const result = searchResponseSchema.safeParse(noMetadata);
         expect(result.success).toBe(false);
     });
 
-    it('should require metadata.totalFound', () => {
+    test('should require metadata.totalFound', () => {
         const result = searchResponseSchema.safeParse({
             ...validSearchResponse,
             metadata: {
@@ -316,7 +316,7 @@ describe('searchResponseSchema', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should require metadata.timeRange', () => {
+    test('should require metadata.timeRange', () => {
         const result = searchResponseSchema.safeParse({
             ...validSearchResponse,
             metadata: {
@@ -326,7 +326,7 @@ describe('searchResponseSchema', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should require metadata.timeRange.start as ISO datetime', () => {
+    test('should require metadata.timeRange.start as ISO datetime', () => {
         const result = searchResponseSchema.safeParse({
             ...validSearchResponse,
             metadata: {
@@ -340,7 +340,7 @@ describe('searchResponseSchema', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should require metadata.timeRange.end as ISO datetime', () => {
+    test('should require metadata.timeRange.end as ISO datetime', () => {
         const result = searchResponseSchema.safeParse({
             ...validSearchResponse,
             metadata: {
@@ -354,7 +354,7 @@ describe('searchResponseSchema', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should require overflow.count to be non-negative', () => {
+    test('should require overflow.count to be non-negative', () => {
         const result = searchResponseSchema.safeParse({
             ...validSearchResponse,
             overflow: {
@@ -365,7 +365,7 @@ describe('searchResponseSchema', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should accept overflow.count of 0', () => {
+    test('should accept overflow.count of 0', () => {
         const result = searchResponseSchema.safeParse({
             ...validSearchResponse,
             overflow: {

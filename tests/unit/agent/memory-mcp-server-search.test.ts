@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- Handler return values are typed as any in tests */
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { repeat as _repeat } from 'lodash';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
@@ -18,7 +18,7 @@ const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryTool
     ...overrides,
 });
 
-describe('Memory MCP Server Search and List Tools', () => {
+describe.concurrent('Memory MCP Server Search and List Tools', () => {
     let mockBackend: MemoryToolBackend;
 
     beforeEach(() => {
@@ -40,7 +40,7 @@ describe('Memory MCP Server Search and List Tools', () => {
     };
 
     describe('search tool', () => {
-        it('should return search results when memories found', async () => {
+        test('should return search results when memories found', async () => {
             mockBackend.searchByTag = mock(async () => ({
                 items: [
                     {
@@ -87,7 +87,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        it('should return message when no memories found', async () => {
+        test('should return message when no memories found', async () => {
             mockBackend.searchByTag = mock(async () => ({
                 items:      [],
                 nextCursor: undefined,
@@ -109,7 +109,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        it('should truncate content preview to 200 characters', async () => {
+        test('should truncate content preview to 200 characters', async () => {
             const longContent = _repeat('A', 300);
             mockBackend.searchByTag = mock(async () => ({
                 items: [
@@ -141,7 +141,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(result.content[0].text).not.toContain(_repeat('A', 201));
         });
 
-        it('should not truncate content exactly at 200 characters', async () => {
+        test('should not truncate content exactly at 200 characters', async () => {
             const exactContent = _repeat('B', 200);
             mockBackend.searchByTag = mock(async () => ({
                 items: [
@@ -171,7 +171,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(result.content[0].text).not.toContain('...');
         });
 
-        it('should join multiple results with double newline', async () => {
+        test('should join multiple results with double newline', async () => {
             mockBackend.searchByTag = mock(async () => ({
                 items: [
                     {
@@ -210,7 +210,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(result.content[0].text).toMatch(/test1\.md.*\n\n.*test2\.md/);
         });
 
-        it('should call backend.searchByTag with tag only', async () => {
+        test('should call backend.searchByTag with tag only', async () => {
             mockBackend.searchByTag = mock(async () => ({
                 items:      [],
                 nextCursor: undefined,
@@ -225,7 +225,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(mockBackend.searchByTag).toHaveBeenCalledWith('my-search-tag', undefined, undefined);
         });
 
-        it('should call backend.searchByTag with tag and layer', async () => {
+        test('should call backend.searchByTag with tag and layer', async () => {
             mockBackend.searchByTag = mock(async () => ({
                 items:      [],
                 nextCursor: undefined,
@@ -240,7 +240,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(mockBackend.searchByTag).toHaveBeenCalledWith('important', 'identity', undefined);
         });
 
-        it('should call backend.searchByTag with tag and limit', async () => {
+        test('should call backend.searchByTag with tag and limit', async () => {
             mockBackend.searchByTag = mock(async () => ({
                 items:      [],
                 nextCursor: undefined,
@@ -255,7 +255,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(mockBackend.searchByTag).toHaveBeenCalledWith('recent', undefined, { limit: 10 });
         });
 
-        it('should call backend.searchByTag with all parameters', async () => {
+        test('should call backend.searchByTag with all parameters', async () => {
             mockBackend.searchByTag = mock(async () => ({
                 items:      [],
                 nextCursor: undefined,
@@ -270,7 +270,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(mockBackend.searchByTag).toHaveBeenCalledWith('active', 'state', { limit: 5 });
         });
 
-        it('should call backend.searchByTag with events layer', async () => {
+        test('should call backend.searchByTag with events layer', async () => {
             mockBackend.searchByTag = mock(async () => ({
                 items:      [],
                 nextCursor: undefined,
@@ -285,7 +285,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(mockBackend.searchByTag).toHaveBeenCalledWith('error', 'events', undefined);
         });
 
-        it('should return error when backend.searchByTag throws Error', async () => {
+        test('should return error when backend.searchByTag throws Error', async () => {
             mockBackend.searchByTag = mock(async () => {
                 throw new Error('Search failed');
             });
@@ -306,7 +306,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should return error when backend.searchByTag throws non-Error', async () => {
+        test('should return error when backend.searchByTag throws non-Error', async () => {
             mockBackend.searchByTag = mock(async () => {
                 // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw 'Database timeout';
@@ -326,7 +326,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should format results with path and content preview', async () => {
+        test('should format results with path and content preview', async () => {
             mockBackend.searchByTag = mock(async () => ({
                 items: [
                     {
@@ -353,7 +353,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(result.content[0].text).toBe('/memories/note.md: This is my note content');
         });
 
-        it('should return content as text type with const assertion', async () => {
+        test('should return content as text type with const assertion', async () => {
             mockBackend.searchByTag = mock(async () => ({
                 items:      [],
                 nextCursor: undefined,
@@ -370,7 +370,7 @@ describe('Memory MCP Server Search and List Tools', () => {
         });
 
         describe('layer enum validation', () => {
-            it('should have layer schema that accepts identity', () => {
+            test('should have layer schema that accepts identity', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
                 const searchTool = (server.instance as any)._registeredTools.search;
@@ -380,7 +380,7 @@ describe('Memory MCP Server Search and List Tools', () => {
                 expect(result.success).toBe(true);
             });
 
-            it('should have layer schema that accepts state', () => {
+            test('should have layer schema that accepts state', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
                 const searchTool = (server.instance as any)._registeredTools.search;
@@ -390,7 +390,7 @@ describe('Memory MCP Server Search and List Tools', () => {
                 expect(result.success).toBe(true);
             });
 
-            it('should have layer schema that accepts events', () => {
+            test('should have layer schema that accepts events', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
                 const searchTool = (server.instance as any)._registeredTools.search;
@@ -400,7 +400,7 @@ describe('Memory MCP Server Search and List Tools', () => {
                 expect(result.success).toBe(true);
             });
 
-            it('should have layer schema that rejects invalid values', () => {
+            test('should have layer schema that rejects invalid values', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
                 const searchTool = (server.instance as any)._registeredTools.search;
@@ -410,7 +410,7 @@ describe('Memory MCP Server Search and List Tools', () => {
                 expect(result.success).toBe(false);
             });
 
-            it('should have layer schema that rejects empty string', () => {
+            test('should have layer schema that rejects empty string', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
                 const searchTool = (server.instance as any)._registeredTools.search;
@@ -423,7 +423,7 @@ describe('Memory MCP Server Search and List Tools', () => {
     });
 
     describe('list tool', () => {
-        it('should return directory contents when items exist', async () => {
+        test('should return directory contents when items exist', async () => {
             mockBackend.list = mock(async () => ({
                 items: [
                     {
@@ -466,7 +466,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        it('should return empty message for empty directory', async () => {
+        test('should return empty message for empty directory', async () => {
             mockBackend.list = mock(async () => ({
                 items:      [],
                 nextCursor: undefined,
@@ -488,7 +488,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        it('should list specific subdirectory', async () => {
+        test('should list specific subdirectory', async () => {
             mockBackend.list = mock(async () => ({
                 items: [
                     {
@@ -515,7 +515,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(result.content[0].text).toContain('/identity/values');
         });
 
-        it('should default to root path when path not provided', async () => {
+        test('should default to root path when path not provided', async () => {
             mockBackend.list = mock(async () => ({
                 items:      [],
                 nextCursor: undefined,
@@ -530,7 +530,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(mockBackend.list).toHaveBeenCalledWith('/');
         });
 
-        it('should return error when backend.list throws Error', async () => {
+        test('should return error when backend.list throws Error', async () => {
             mockBackend.list = mock(async () => {
                 throw new Error('Database connection failed');
             });
@@ -551,7 +551,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should return error when backend.list throws non-Error', async () => {
+        test('should return error when backend.list throws non-Error', async () => {
             mockBackend.list = mock(async () => {
                 // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw 'Network error';
@@ -569,7 +569,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should join multiple paths with newlines', async () => {
+        test('should join multiple paths with newlines', async () => {
             mockBackend.list = mock(async () => ({
                 items: [
                     {
@@ -604,7 +604,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(result.content[0].text).toBe('/state/goal-1\n/state/goal-2');
         });
 
-        it('should return content as text type with const assertion', async () => {
+        test('should return content as text type with const assertion', async () => {
             mockBackend.list = mock(async () => ({
                 items:      [],
                 nextCursor: undefined,
@@ -620,7 +620,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(result.content[0].type).toBe('text');
         });
 
-        it('should have list tool with description', () => {
+        test('should have list tool with description', () => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const listTool = (server.instance as any)._registeredTools.list;
@@ -629,7 +629,7 @@ describe('Memory MCP Server Search and List Tools', () => {
             expect(listTool.description).toBe('List memories in a directory');
         });
 
-        it('should have list tool with path input schema', () => {
+        test('should have list tool with path input schema', () => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const listTool = (server.instance as any)._registeredTools.list;

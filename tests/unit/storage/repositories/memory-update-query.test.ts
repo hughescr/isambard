@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import { assign as _assign } from 'lodash';
 import {
@@ -11,7 +11,7 @@ import { MemoryRepository } from '@/storage/repositories/memory';
 import { ItemNotFoundError, ConflictError, ValidationError } from '@/storage/errors';
 import type { MemoryItem } from '@/storage/models/memory';
 
-describe('MemoryRepository', () => {
+describe.concurrent('MemoryRepository', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let repository: MemoryRepository;
 
@@ -43,7 +43,7 @@ describe('MemoryRepository', () => {
             updatedAt:   '2024-01-01T00:00:00.000Z',
         };
 
-        it('should update existing memory', async () => {
+        test('should update existing memory', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolves({});
 
@@ -54,7 +54,7 @@ describe('MemoryRepository', () => {
             expect(result.content).toBe('Updated content');
         });
 
-        it('should update updatedAt timestamp', async () => {
+        test('should update updatedAt timestamp', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolves({});
 
@@ -67,7 +67,7 @@ describe('MemoryRepository', () => {
             expect(result.createdAt).toBe('2024-01-01T00:00:00.000Z'); // unchanged
         });
 
-        it('should throw ItemNotFoundError if memory does not exist', async () => {
+        test('should throw ItemNotFoundError if memory does not exist', async () => {
             ddbMock.on(GetCommand).resolves({ Item: undefined });
 
             expect(
@@ -75,7 +75,7 @@ describe('MemoryRepository', () => {
             ).rejects.toThrow(ItemNotFoundError);
         });
 
-        it('should increment version on update', async () => {
+        test('should increment version on update', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolves({});
 
@@ -86,7 +86,7 @@ describe('MemoryRepository', () => {
             expect(result.version).toBe(1);
         });
 
-        it('should throw ConflictError on concurrent update (version mismatch)', async () => {
+        test('should throw ConflictError on concurrent update (version mismatch)', async () => {
             // Setup: First GetCommand returns version 0, second returns version 5
             ddbMock.on(GetCommand)
                 .resolvesOnce({ Item: existingItem })
@@ -102,7 +102,7 @@ describe('MemoryRepository', () => {
             ).rejects.toThrow(ConflictError);
         });
 
-        it('should merge business data with DynamoDB keys in PutCommand item', async () => {
+        test('should merge business data with DynamoDB keys in PutCommand item', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolves({});
 
@@ -125,7 +125,7 @@ describe('MemoryRepository', () => {
             expect(item.GSI1SK).toBeDefined();
         });
 
-        it('should use correct ConditionExpression in PutCommand', async () => {
+        test('should use correct ConditionExpression in PutCommand', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolves({});
 
@@ -138,7 +138,7 @@ describe('MemoryRepository', () => {
             expect(calls[0].args[0].input.ConditionExpression).toBe('#version = :expectedVersion');
         });
 
-        it('should use correct ExpressionAttributeNames in PutCommand', async () => {
+        test('should use correct ExpressionAttributeNames in PutCommand', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolves({});
 
@@ -153,7 +153,7 @@ describe('MemoryRepository', () => {
             });
         });
 
-        it('should use correct ExpressionAttributeValues in PutCommand', async () => {
+        test('should use correct ExpressionAttributeValues in PutCommand', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolves({});
 
@@ -168,7 +168,7 @@ describe('MemoryRepository', () => {
             });
         });
 
-        it('should use correct TableName in PutCommand', async () => {
+        test('should use correct TableName in PutCommand', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolves({});
 
@@ -197,7 +197,7 @@ describe('MemoryRepository', () => {
                 updatedAt:   '2024-01-01T00:00:00.000Z',
             };
 
-            it('should update ONLY content when only content provided', async () => {
+            test('should update ONLY content when only content provided', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
                 ddbMock.on(PutCommand).resolves({});
 
@@ -210,7 +210,7 @@ describe('MemoryRepository', () => {
                 expect(result.TTL).toBe(1000); // unchanged
             });
 
-            it('should update ONLY metadata when only metadata provided', async () => {
+            test('should update ONLY metadata when only metadata provided', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
                 ddbMock.on(PutCommand).resolves({});
 
@@ -223,7 +223,7 @@ describe('MemoryRepository', () => {
                 expect(result.TTL).toBe(1000); // unchanged
             });
 
-            it('should update ONLY TTL when only TTL provided', async () => {
+            test('should update ONLY TTL when only TTL provided', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
                 ddbMock.on(PutCommand).resolves({});
 
@@ -236,7 +236,7 @@ describe('MemoryRepository', () => {
                 expect(result.TTL).toBe(2000);
             });
 
-            it('should update ALL fields when all provided', async () => {
+            test('should update ALL fields when all provided', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
                 ddbMock.on(PutCommand).resolves({});
 
@@ -251,7 +251,7 @@ describe('MemoryRepository', () => {
                 expect(result.TTL).toBe(2000);
             });
 
-            it('should update NOTHING except version/timestamp when empty update', async () => {
+            test('should update NOTHING except version/timestamp when empty update', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
                 ddbMock.on(PutCommand).resolves({});
 
@@ -263,7 +263,7 @@ describe('MemoryRepository', () => {
                 expect(result.version).toBe(1); // version still increments
             });
 
-            it('should NOT update content when content is explicitly undefined', async () => {
+            test('should NOT update content when content is explicitly undefined', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
                 ddbMock.on(PutCommand).resolves({});
 
@@ -274,7 +274,7 @@ describe('MemoryRepository', () => {
                 expect(result.content).toBe('Original content'); // unchanged
             });
 
-            it('should NOT update metadata when metadata is explicitly undefined', async () => {
+            test('should NOT update metadata when metadata is explicitly undefined', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
                 ddbMock.on(PutCommand).resolves({});
 
@@ -285,7 +285,7 @@ describe('MemoryRepository', () => {
                 expect(result.metadata).toEqual({ key: 'original' }); // unchanged
             });
 
-            it('should NOT update TTL when TTL is explicitly undefined', async () => {
+            test('should NOT update TTL when TTL is explicitly undefined', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
                 ddbMock.on(PutCommand).resolves({});
 
@@ -296,7 +296,7 @@ describe('MemoryRepository', () => {
                 expect(result.TTL).toBe(1000); // unchanged
             });
 
-            it('should allow clearing metadata to empty object', async () => {
+            test('should allow clearing metadata to empty object', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
                 ddbMock.on(PutCommand).resolves({});
 
@@ -307,7 +307,7 @@ describe('MemoryRepository', () => {
                 expect(result.metadata).toEqual({}); // changed to empty
             });
 
-            it('should allow updating content to different value', async () => {
+            test('should allow updating content to different value', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
                 ddbMock.on(PutCommand).resolves({});
 
@@ -319,7 +319,7 @@ describe('MemoryRepository', () => {
                 expect(result.metadata).toEqual({}); // unchanged from original
             });
 
-            it('should preserve existing TTL when not updating', async () => {
+            test('should preserve existing TTL when not updating', async () => {
                 const itemWithTTL: MemoryItem = {
                     ...existingItem,
                     TTL: 5000,
@@ -334,7 +334,7 @@ describe('MemoryRepository', () => {
                 expect(result.TTL).toBe(5000); // unchanged
             });
 
-            it('should preserve absence of TTL when not provided', async () => {
+            test('should preserve absence of TTL when not provided', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
                 ddbMock.on(PutCommand).resolves({});
 
@@ -347,7 +347,7 @@ describe('MemoryRepository', () => {
         });
 
         describe('error handling', () => {
-            it('should throw ValidationError when update input fails Zod validation', async () => {
+            test('should throw ValidationError when update input fails Zod validation', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
 
                 // Invalid content - empty string
@@ -357,7 +357,7 @@ describe('MemoryRepository', () => {
                 ).rejects.toThrow(ValidationError);
             });
 
-            it('should throw ValidationError with Zod issues when validation fails', async () => {
+            test('should throw ValidationError with Zod issues when validation fails', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
 
                 const error = await repository.update(testId, 'identity', { content: '' }).catch((e: unknown) => e);
@@ -367,7 +367,7 @@ describe('MemoryRepository', () => {
                 expect(Array.isArray((error as ValidationError).issues)).toBe(true);
             });
 
-            it('should include correct expectedVersion in ConflictError', async () => {
+            test('should include correct expectedVersion in ConflictError', async () => {
                 const itemWithVersion3 = { ...existingItem, version: 3 };
                 ddbMock.on(GetCommand)
                     .resolvesOnce({ Item: itemWithVersion3 })
@@ -382,7 +382,7 @@ describe('MemoryRepository', () => {
                 expect((error as ConflictError).expectedVersion).toBe(3);
             });
 
-            it('should include correct actualVersion in ConflictError', async () => {
+            test('should include correct actualVersion in ConflictError', async () => {
                 ddbMock.on(GetCommand)
                     .resolvesOnce({ Item: existingItem })
                     .resolvesOnce({ Item: { ...existingItem, version: 7 } });
@@ -396,7 +396,7 @@ describe('MemoryRepository', () => {
                 expect((error as ConflictError).actualVersion).toBe(7);
             });
 
-            it('should use version -1 in ConflictError when current item is undefined', async () => {
+            test('should use version -1 in ConflictError when current item is undefined', async () => {
                 ddbMock.on(GetCommand)
                     .resolvesOnce({ Item: existingItem })
                     .resolvesOnce({ Item: undefined });
@@ -410,7 +410,7 @@ describe('MemoryRepository', () => {
                 expect((error as ConflictError).actualVersion).toBe(-1);
             });
 
-            it('should re-throw non-ConditionalCheckFailed errors as-is', async () => {
+            test('should re-throw non-ConditionalCheckFailed errors as-is', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
 
                 const networkError = new Error('Network timeout');
@@ -421,7 +421,7 @@ describe('MemoryRepository', () => {
                 await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toBe(networkError);
             });
 
-            it('should re-throw errors that do not match object structure', async () => {
+            test('should re-throw errors that do not match object structure', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
 
                 // aws-sdk-client-mock wraps strings into Error objects
@@ -433,7 +433,7 @@ describe('MemoryRepository', () => {
                 await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toThrow('String error');
             });
 
-            it('should re-throw errors without name property', async () => {
+            test('should re-throw errors without name property', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
 
                 // aws-sdk-client-mock normalizes errors to Error instances
@@ -445,7 +445,7 @@ describe('MemoryRepository', () => {
                 await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toThrow('Some error');
             });
 
-            it('should only catch ConditionalCheckFailedException specifically', async () => {
+            test('should only catch ConditionalCheckFailedException specifically', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
 
                 const conditionalError = new Error('Different error');
@@ -456,7 +456,7 @@ describe('MemoryRepository', () => {
                 await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toBe(conditionalError);
             });
 
-            it('should re-throw when error is undefined', async () => {
+            test('should re-throw when error is undefined', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
                 ddbMock.on(PutCommand).rejectsOnce(undefined as unknown as Error);
 
@@ -467,7 +467,7 @@ describe('MemoryRepository', () => {
                 expect(error).not.toBeInstanceOf(ConflictError);
             });
 
-            it('should re-throw when error is an empty object', async () => {
+            test('should re-throw when error is an empty object', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
                 const emptyError = {};
                 ddbMock.on(PutCommand).rejectsOnce(emptyError);
@@ -477,7 +477,7 @@ describe('MemoryRepository', () => {
                 await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toBeInstanceOf(Error);
             });
 
-            it('should re-throw when error has wrong name property value', async () => {
+            test('should re-throw when error has wrong name property value', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
                 const wrongNameError = new Error('Wrong name');
                 _assign(wrongNameError, { name: 'SomeOtherError' });
@@ -487,7 +487,7 @@ describe('MemoryRepository', () => {
                 await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toBe(wrongNameError);
             });
 
-            it('should verify error is truthy before checking properties', async () => {
+            test('should verify error is truthy before checking properties', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
                 // Pass null as error
                 const nullError = null;
@@ -499,7 +499,7 @@ describe('MemoryRepository', () => {
                 expect(error).not.toBeInstanceOf(ConflictError);
             });
 
-            it('should verify error is an object before checking name property', async () => {
+            test('should verify error is an object before checking name property', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
                 // Pass a number as error (not an object)
                 const numberError = 42;
@@ -511,7 +511,7 @@ describe('MemoryRepository', () => {
                 expect(error).not.toBeInstanceOf(ConflictError);
             });
 
-            it('should check for name property existence before accessing it', async () => {
+            test('should check for name property existence before accessing it', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
                 // Object without name property
                 const noNameError = { message: 'Error without name' };
@@ -525,7 +525,7 @@ describe('MemoryRepository', () => {
             // Tests to kill remaining mutants at line 122
             // These tests use spyOn to directly mock docClient.send(), bypassing aws-sdk-client-mock normalization
 
-            it('should re-throw when error is primitive undefined (kills mutant: skips error check)', async () => {
+            test('should re-throw when error is primitive undefined (kills mutant: skips error check)', async () => {
                 // Spy on docClient.send to intercept both GetCommand and PutCommand
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/dot-notation -- Need private access and any type to bypass mock library error normalization
                 const sendSpy = spyOn(repository['docClient'] as any, 'send');
@@ -550,7 +550,7 @@ describe('MemoryRepository', () => {
                 sendSpy.mockRestore();
             });
 
-            it('should re-throw when error is primitive number (kills mutant: skips _isObject check)', async () => {
+            test('should re-throw when error is primitive number (kills mutant: skips _isObject check)', async () => {
                 // Spy on docClient.send to intercept both GetCommand and PutCommand
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/dot-notation -- Need private access and any type to bypass mock library error normalization
                 const sendSpy = spyOn(repository['docClient'] as any, 'send');
@@ -573,7 +573,7 @@ describe('MemoryRepository', () => {
                 sendSpy.mockRestore();
             });
 
-            it('should re-throw when error is object without name (kills mutant: skips name check)', async () => {
+            test('should re-throw when error is object without name (kills mutant: skips name check)', async () => {
                 const objWithoutName = { foo: 'bar' };
                 // Spy on docClient.send to intercept both GetCommand and PutCommand
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/dot-notation -- Need private access and any type to bypass mock library error normalization
@@ -597,7 +597,7 @@ describe('MemoryRepository', () => {
                 sendSpy.mockRestore();
             });
 
-            it('should re-throw when error has wrong name value (kills mutant: changes && to ||)', async () => {
+            test('should re-throw when error has wrong name value (kills mutant: changes && to ||)', async () => {
                 const wrongNameError = { name: 'DifferentError', message: 'Wrong error' };
                 // Spy on docClient.send to intercept both GetCommand and PutCommand
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/dot-notation -- Need private access and any type to bypass mock library error normalization
@@ -624,7 +624,7 @@ describe('MemoryRepository', () => {
     });
 
     describe('queryByType', () => {
-        it('should return memories of specified type', async () => {
+        test('should return memories of specified type', async () => {
             const testId = '550e8400-e29b-41d4-a716-446655440006';
             const items: MemoryItem[] = [
                 {
@@ -644,7 +644,7 @@ describe('MemoryRepository', () => {
             expect(result.items[0].content).toBe('First');
         });
 
-        it('should use GSI1 for type queries', async () => {
+        test('should use GSI1 for type queries', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await repository.queryByType('state');
@@ -654,7 +654,7 @@ describe('MemoryRepository', () => {
             expect(calls[0].args[0].input.ExpressionAttributeValues?.[':pk']).toBe('TYPE#state');
         });
 
-        it('should return empty items when no matches', async () => {
+        test('should return empty items when no matches', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const result = await repository.queryByType('event');
@@ -662,7 +662,7 @@ describe('MemoryRepository', () => {
             expect(result.items).toEqual([]);
         });
 
-        it('should support limit option', async () => {
+        test('should support limit option', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await repository.queryByType('identity', { limit: 10 });
@@ -671,7 +671,7 @@ describe('MemoryRepository', () => {
             expect(calls[0].args[0].input.Limit).toBe(10);
         });
 
-        it('should return nextCursor when LastEvaluatedKey present', async () => {
+        test('should return nextCursor when LastEvaluatedKey present', async () => {
             const testId = '550e8400-e29b-41d4-a716-446655440007';
             ddbMock.on(QueryCommand).resolves({
                 Items:            [],
@@ -683,7 +683,7 @@ describe('MemoryRepository', () => {
             expect(result.nextCursor).toBeDefined();
         });
 
-        it('should strip DynamoDB keys from returned items', async () => {
+        test('should strip DynamoDB keys from returned items', async () => {
             const testId = '550e8400-e29b-41d4-a716-446655440008';
             const items: MemoryItem[] = [
                 {
@@ -703,7 +703,7 @@ describe('MemoryRepository', () => {
             expect(result.items[0]).not.toHaveProperty('GSI1PK');
         });
 
-        it('should query with ScanIndexForward=false (newest first)', async () => {
+        test('should query with ScanIndexForward=false (newest first)', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await repository.queryByType('identity');
@@ -712,7 +712,7 @@ describe('MemoryRepository', () => {
             expect(calls[0].args[0].input.ScanIndexForward).toBe(false);
         });
 
-        it('should use correct KeyConditionExpression format', async () => {
+        test('should use correct KeyConditionExpression format', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await repository.queryByType('state');
@@ -721,7 +721,7 @@ describe('MemoryRepository', () => {
             expect(calls[0].args[0].input.KeyConditionExpression).toBe('GSI1PK = :pk');
         });
 
-        it('should NOT set ExclusiveStartKey when cursor not provided', async () => {
+        test('should NOT set ExclusiveStartKey when cursor not provided', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await repository.queryByType('identity');
@@ -730,7 +730,7 @@ describe('MemoryRepository', () => {
             expect(calls[0].args[0].input.ExclusiveStartKey).toBeUndefined();
         });
 
-        it('should set ExclusiveStartKey when cursor provided', async () => {
+        test('should set ExclusiveStartKey when cursor provided', async () => {
             const testId = '550e8400-e29b-41d4-a716-446655440009';
             const lastEvaluatedKey = { PK: `MEMORY#${testId}`, SK: 'TYPE#identity' };
             const cursor = Buffer.from(JSON.stringify(lastEvaluatedKey)).toString('base64');
@@ -743,7 +743,7 @@ describe('MemoryRepository', () => {
             expect(calls[0].args[0].input.ExclusiveStartKey).toEqual(lastEvaluatedKey);
         });
 
-        it('should correctly decode base64 cursor', async () => {
+        test('should correctly decode base64 cursor', async () => {
             const expectedKey = { PK: 'MEMORY#test-id', SK: 'TYPE#state' };
             const cursor = Buffer.from(JSON.stringify(expectedKey)).toString('base64');
 
@@ -755,7 +755,7 @@ describe('MemoryRepository', () => {
             expect(calls[0].args[0].input.ExclusiveStartKey).toEqual(expectedKey);
         });
 
-        it('should return base64 encoded nextCursor when LastEvaluatedKey present', async () => {
+        test('should return base64 encoded nextCursor when LastEvaluatedKey present', async () => {
             const testId = '550e8400-e29b-41d4-a716-446655440010';
             const lastEvaluatedKey = { PK: `MEMORY#${testId}`, SK: 'TYPE#event' };
 
@@ -774,7 +774,7 @@ describe('MemoryRepository', () => {
             expect(decodedCursor).toEqual(lastEvaluatedKey);
         });
 
-        it('should return undefined nextCursor when no LastEvaluatedKey', async () => {
+        test('should return undefined nextCursor when no LastEvaluatedKey', async () => {
             ddbMock.on(QueryCommand).resolves({
                 Items: [],
                 // No LastEvaluatedKey
@@ -785,7 +785,7 @@ describe('MemoryRepository', () => {
             expect(result.nextCursor).toBeUndefined();
         });
 
-        it('should handle cursor pagination round-trip correctly', async () => {
+        test('should handle cursor pagination round-trip correctly', async () => {
             const testId = '550e8400-e29b-41d4-a716-446655440011';
             const firstPageKey = { PK: `MEMORY#${testId}`, SK: 'TYPE#identity' };
 

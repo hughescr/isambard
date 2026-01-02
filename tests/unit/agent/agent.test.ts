@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any -- Test mocks require unsafe type operations */
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import _ from 'lodash';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
 import { createClaudeAgent, extractToolUses, parseToolName, logStreamEvent, redactSensitiveArgs } from '../../../src/agent/agent';
@@ -10,8 +10,8 @@ import type { DiscordMessageContext } from '../../../src/integrations/discord/ty
 import { createGuildId, createChannelId, createUserId } from '../../../src/integrations/discord/types';
 import type { ContextBuilder } from '../../../src/agent/context-builder';
 
-describe('parseToolName', () => {
-    it('should convert MCP tool names to ParsedToolName with module and tool', () => {
+describe.concurrent('parseToolName', () => {
+    test('should convert MCP tool names to ParsedToolName with module and tool', () => {
         const result1: ParsedToolName = parseToolName('mcp__memory__view');
         expect(result1).toEqual({ module: 'memory', tool: 'view' });
 
@@ -19,17 +19,17 @@ describe('parseToolName', () => {
         expect(result2).toEqual({ module: 'discord', tool: 'get_messages' });
     });
 
-    it('should return regular tool names with module "claude"', () => {
+    test('should return regular tool names with module "claude"', () => {
         expect(parseToolName('Read')).toEqual({ module: 'claude', tool: 'Read' });
         expect(parseToolName('WebFetch')).toEqual({ module: 'claude', tool: 'WebFetch' });
         expect(parseToolName('TodoWrite')).toEqual({ module: 'claude', tool: 'TodoWrite' });
     });
 
-    it('should handle tool names with multiple underscores in the tool part', () => {
+    test('should handle tool names with multiple underscores in the tool part', () => {
         expect(parseToolName('mcp__memory__get_all_items')).toEqual({ module: 'memory', tool: 'get_all_items' });
     });
 
-    it('should preserve double underscores in tool part when joining', () => {
+    test('should preserve double underscores in tool part when joining', () => {
         // This tests the '__' separator at line 390: parts.slice(1).join('__')
         // Tool names like 'mcp__module__sub__tool' should preserve the double underscore
         // If the mutation changes '__' to '', the tool would become 'subtool' instead of 'sub__tool'
@@ -41,11 +41,11 @@ describe('parseToolName', () => {
         expect(complexResult).toEqual({ module: 'server', tool: 'a__b__c' });
     });
 
-    it('should handle empty tool name', () => {
+    test('should handle empty tool name', () => {
         expect(parseToolName('')).toEqual({ module: 'claude', tool: '' });
     });
 
-    it('should treat empty string differently from non-empty strings', () => {
+    test('should treat empty string differently from non-empty strings', () => {
         // This test ensures the empty string check is essential and not just a fallback
         // If the mutation changes '' to 'Stryker was here!', this would fail because
         // 'Stryker was here!' would be treated as a regular non-MCP tool
@@ -63,21 +63,21 @@ describe('parseToolName', () => {
         expect(nonEmptyResult.tool).not.toBe('');
     });
 
-    it('should handle undefined tool name', () => {
+    test('should handle undefined tool name', () => {
         expect(parseToolName(undefined)).toEqual({ module: 'claude', tool: 'unknown' });
     });
 
-    it('should treat malformed MCP names (missing tool part) as non-MCP tools', () => {
+    test('should treat malformed MCP names (missing tool part) as non-MCP tools', () => {
         // mcp__foo has no tool part after the module, treat as regular tool
         expect(parseToolName('mcp__foo')).toEqual({ module: 'claude', tool: 'mcp__foo' });
     });
 
-    it('should handle MCP names with only prefix and no module/tool', () => {
+    test('should handle MCP names with only prefix and no module/tool', () => {
         // Just "mcp__" with nothing after
         expect(parseToolName('mcp__')).toEqual({ module: 'claude', tool: 'mcp__' });
     });
 
-    it('should only treat tools starting with exact mcp__ prefix as MCP tools', () => {
+    test('should only treat tools starting with exact mcp__ prefix as MCP tools', () => {
         // This test kills the mutant that changes 'mcp__' to '' in the startsWith check.
         // If 'mcp__' is mutated to '', startsWith(toolName, '') would be true for ALL strings,
         // causing all tool names to be incorrectly parsed as MCP tools.
@@ -97,117 +97,117 @@ describe('parseToolName', () => {
     });
 });
 
-describe('redactSensitiveArgs', () => {
+describe.concurrent('redactSensitiveArgs', () => {
     describe('basic redaction', () => {
-        it('should redact apiKey', () => {
+        test('should redact apiKey', () => {
             const input = { apiKey: 'sk-secret-123' };
             expect(redactSensitiveArgs(input)).toEqual({ apiKey: '[REDACTED]' });
         });
 
-        it('should redact password', () => {
+        test('should redact password', () => {
             const input = { password: 'mypassword123' };
             expect(redactSensitiveArgs(input)).toEqual({ password: '[REDACTED]' });
         });
 
-        it('should redact secret', () => {
+        test('should redact secret', () => {
             const input = { secret: 'super-secret' };
             expect(redactSensitiveArgs(input)).toEqual({ secret: '[REDACTED]' });
         });
 
-        it('should redact token', () => {
+        test('should redact token', () => {
             const input = { token: 'jwt-token-here' };
             expect(redactSensitiveArgs(input)).toEqual({ token: '[REDACTED]' });
         });
 
-        it('should redact credential', () => {
+        test('should redact credential', () => {
             const input = { credential: 'cred-value' };
             expect(redactSensitiveArgs(input)).toEqual({ credential: '[REDACTED]' });
         });
 
-        it('should redact auth', () => {
+        test('should redact auth', () => {
             const input = { auth: 'auth-value' };
             expect(redactSensitiveArgs(input)).toEqual({ auth: '[REDACTED]' });
         });
 
-        it('should redact privateKey', () => {
+        test('should redact privateKey', () => {
             const input = { privateKey: '-----BEGIN PRIVATE KEY-----' };
             expect(redactSensitiveArgs(input)).toEqual({ privateKey: '[REDACTED]' });
         });
 
-        it('should redact secretKey', () => {
+        test('should redact secretKey', () => {
             const input = { secretKey: 'secret-key-value' };
             expect(redactSensitiveArgs(input)).toEqual({ secretKey: '[REDACTED]' });
         });
 
-        it('should redact accessKey', () => {
+        test('should redact accessKey', () => {
             const input = { accessKey: 'AKIA...' };
             expect(redactSensitiveArgs(input)).toEqual({ accessKey: '[REDACTED]' });
         });
 
-        it('should redact authKey', () => {
+        test('should redact authKey', () => {
             const input = { authKey: 'auth-key-value' };
             expect(redactSensitiveArgs(input)).toEqual({ authKey: '[REDACTED]' });
         });
 
-        it('should redact passwd', () => {
+        test('should redact passwd', () => {
             const input = { passwd: 'unix-style-password' };
             expect(redactSensitiveArgs(input)).toEqual({ passwd: '[REDACTED]' });
         });
     });
 
     describe('case insensitivity', () => {
-        it('should redact PASSWORD (uppercase)', () => {
+        test('should redact PASSWORD (uppercase)', () => {
             const input = { PASSWORD: 'value' };
             expect(redactSensitiveArgs(input)).toEqual({ PASSWORD: '[REDACTED]' });
         });
 
-        it('should redact ApiKey (mixed case)', () => {
+        test('should redact ApiKey (mixed case)', () => {
             const input = { ApiKey: 'value' };
             expect(redactSensitiveArgs(input)).toEqual({ ApiKey: '[REDACTED]' });
         });
 
-        it('should redact API_KEY with key pattern', () => {
+        test('should redact API_KEY with key pattern', () => {
             const input = { API_KEY: 'value' };
             expect(redactSensitiveArgs(input)).toEqual({ API_KEY: '[REDACTED]' });
         });
     });
 
     describe('key pattern matching', () => {
-        it('should redact keys containing "key" (broad matching per requirements)', () => {
+        test('should redact keys containing "key" (broad matching per requirements)', () => {
             const input = { primaryKey: 'db-key', sortKey: 'sort-value' };
             expect(redactSensitiveArgs(input)).toEqual({ primaryKey: '[REDACTED]', sortKey: '[REDACTED]' });
         });
 
-        it('should redact keyboardType (contains key)', () => {
+        test('should redact keyboardType (contains key)', () => {
             const input = { keyboardType: 'numeric' };
             expect(redactSensitiveArgs(input)).toEqual({ keyboardType: '[REDACTED]' });
         });
     });
 
     describe('non-sensitive keys', () => {
-        it('should NOT redact path', () => {
+        test('should NOT redact path', () => {
             const input = { path: '/memories/test' };
             expect(redactSensitiveArgs(input)).toEqual({ path: '/memories/test' });
         });
 
-        it('should NOT redact content', () => {
+        test('should NOT redact content', () => {
             const input = { content: 'Hello world' };
             expect(redactSensitiveArgs(input)).toEqual({ content: 'Hello world' });
         });
 
-        it('should NOT redact name', () => {
+        test('should NOT redact name', () => {
             const input = { name: 'my-tool' };
             expect(redactSensitiveArgs(input)).toEqual({ name: 'my-tool' });
         });
 
-        it('should NOT redact id', () => {
+        test('should NOT redact id', () => {
             const input = { id: '12345' };
             expect(redactSensitiveArgs(input)).toEqual({ id: '12345' });
         });
     });
 
     describe('nested objects', () => {
-        it('should redact sensitive keys in nested objects', () => {
+        test('should redact sensitive keys in nested objects', () => {
             const input = {
                 config: {
                     apiKey:   'secret',
@@ -222,7 +222,7 @@ describe('redactSensitiveArgs', () => {
             });
         });
 
-        it('should redact deeply nested sensitive keys', () => {
+        test('should redact deeply nested sensitive keys', () => {
             const input = {
                 level1: {
                     level2: {
@@ -245,7 +245,7 @@ describe('redactSensitiveArgs', () => {
     });
 
     describe('arrays', () => {
-        it('should redact sensitive keys in objects within arrays', () => {
+        test('should redact sensitive keys in objects within arrays', () => {
             const input = {
                 users: [
                     { name: 'Alice', password: 'secret1' },
@@ -260,12 +260,12 @@ describe('redactSensitiveArgs', () => {
             });
         });
 
-        it('should handle arrays of primitives unchanged', () => {
+        test('should handle arrays of primitives unchanged', () => {
             const input = { tags: ['a', 'b', 'c'] };
             expect(redactSensitiveArgs(input)).toEqual({ tags: ['a', 'b', 'c'] });
         });
 
-        it('should handle mixed arrays', () => {
+        test('should handle mixed arrays', () => {
             const input = {
                 items: [
                     'string',
@@ -286,46 +286,46 @@ describe('redactSensitiveArgs', () => {
     });
 
     describe('edge cases', () => {
-        it('should return primitive values unchanged', () => {
+        test('should return primitive values unchanged', () => {
             expect(redactSensitiveArgs('string')).toBe('string');
             expect(redactSensitiveArgs(123)).toBe(123);
             expect(redactSensitiveArgs(true)).toBe(true);
         });
 
-        it('should handle null gracefully', () => {
+        test('should handle null gracefully', () => {
             expect(redactSensitiveArgs(null)).toBeNull();
         });
 
-        it('should handle undefined gracefully', () => {
+        test('should handle undefined gracefully', () => {
             expect(redactSensitiveArgs(undefined)).toBeUndefined();
         });
 
-        it('should handle empty object', () => {
+        test('should handle empty object', () => {
             expect(redactSensitiveArgs({})).toEqual({});
         });
 
-        it('should handle empty array', () => {
+        test('should handle empty array', () => {
             expect(redactSensitiveArgs([])).toEqual([]);
         });
 
-        it('should handle object with null value for sensitive key', () => {
+        test('should handle object with null value for sensitive key', () => {
             const input = { password: null };
             expect(redactSensitiveArgs(input)).toEqual({ password: '[REDACTED]' });
         });
 
-        it('should handle object with undefined value for sensitive key', () => {
+        test('should handle object with undefined value for sensitive key', () => {
             const input = { password: undefined };
             expect(redactSensitiveArgs(input)).toEqual({ password: '[REDACTED]' });
         });
 
-        it('should handle object with numeric value for sensitive key', () => {
+        test('should handle object with numeric value for sensitive key', () => {
             const input = { token: 12345 };
             expect(redactSensitiveArgs(input)).toEqual({ token: '[REDACTED]' });
         });
     });
 
     describe('multiple sensitive keys', () => {
-        it('should redact all sensitive keys in same object', () => {
+        test('should redact all sensitive keys in same object', () => {
             const input = {
                 apiKey:   'key1',
                 password: 'pass1',
@@ -347,7 +347,7 @@ describe('logStreamEvent', () => {
         mockLogger.debug.mockClear();
     });
 
-    it('should log user events as "Sending message to Claude LLM"', () => {
+    test('should log user events as "Sending message to Claude LLM"', () => {
         const event: AgentStreamEvent = { type: 'user' };
 
         logStreamEvent(event);
@@ -358,7 +358,7 @@ describe('logStreamEvent', () => {
         });
     });
 
-    it('should log assistant events with text as "Claude LLM responding" with hasText: true', () => {
+    test('should log assistant events with text as "Claude LLM responding" with hasText: true', () => {
         const event: AgentStreamEvent = {
             type:    'assistant',
             message: {
@@ -375,7 +375,7 @@ describe('logStreamEvent', () => {
         });
     });
 
-    it('should log assistant events without text as "Claude LLM thinking"', () => {
+    test('should log assistant events without text as "Claude LLM thinking"', () => {
         const event: AgentStreamEvent = {
             type:    'assistant',
             message: {
@@ -392,7 +392,7 @@ describe('logStreamEvent', () => {
         });
     });
 
-    it('should log tool_progress events with parsed module and tool for MCP tools', () => {
+    test('should log tool_progress events with parsed module and tool for MCP tools', () => {
         const event: AgentStreamEvent = {
             type:      'tool_progress',
             tool_name: 'mcp__memory__view',
@@ -408,7 +408,7 @@ describe('logStreamEvent', () => {
         });
     });
 
-    it('should log tool_progress events with claude module for regular tools', () => {
+    test('should log tool_progress events with claude module for regular tools', () => {
         const event: AgentStreamEvent = {
             type:      'tool_progress',
             tool_name: 'Read',
@@ -424,7 +424,7 @@ describe('logStreamEvent', () => {
         });
     });
 
-    it('should log tool_result events with parsed module and tool', () => {
+    test('should log tool_result events with parsed module and tool', () => {
         const event: AgentStreamEvent = {
             type:      'tool_result',
             tool_name: 'mcp__memory__view',
@@ -440,7 +440,7 @@ describe('logStreamEvent', () => {
         });
     });
 
-    it('should log result events with status from subtype', () => {
+    test('should log result events with status from subtype', () => {
         const event: AgentStreamEvent = {
             type:    'result',
             subtype: 'success',
@@ -455,7 +455,7 @@ describe('logStreamEvent', () => {
         });
     });
 
-    it('should log result events with error_during_execution status', () => {
+    test('should log result events with error_during_execution status', () => {
         const event: AgentStreamEvent = {
             type:    'result',
             subtype: 'error_during_execution',
@@ -470,7 +470,7 @@ describe('logStreamEvent', () => {
         });
     });
 
-    it('should log result events with undefined subtype', () => {
+    test('should log result events with undefined subtype', () => {
         const event: AgentStreamEvent = {
             type: 'result',
         };
@@ -485,18 +485,18 @@ describe('logStreamEvent', () => {
     });
 });
 
-describe('extractToolUses', () => {
-    it('should return empty array for non-assistant messages', () => {
+describe.concurrent('extractToolUses', () => {
+    test('should return empty array for non-assistant messages', () => {
         const message = { type: 'user', message: { content: [] } };
         expect(extractToolUses(message)).toEqual([]);
     });
 
-    it('should return empty array for assistant messages with no content', () => {
+    test('should return empty array for assistant messages with no content', () => {
         const message = { type: 'assistant', message: {} };
         expect(extractToolUses(message)).toEqual([]);
     });
 
-    it('should return empty array for assistant messages with no tool_use blocks', () => {
+    test('should return empty array for assistant messages with no tool_use blocks', () => {
         const message = {
             type:    'assistant',
             message: {
@@ -508,7 +508,7 @@ describe('extractToolUses', () => {
         expect(extractToolUses(message)).toEqual([]);
     });
 
-    it('should extract single tool_use block correctly', () => {
+    test('should extract single tool_use block correctly', () => {
         const message = {
             type:    'assistant',
             message: {
@@ -532,7 +532,7 @@ describe('extractToolUses', () => {
         });
     });
 
-    it('should extract multiple tool_use blocks', () => {
+    test('should extract multiple tool_use blocks', () => {
         const message = {
             type:    'assistant',
             message: {
@@ -560,22 +560,22 @@ describe('extractToolUses', () => {
         expect(result[1].name).toBe('memory_store');
     });
 
-    it('should handle undefined content gracefully', () => {
+    test('should handle undefined content gracefully', () => {
         const message = { type: 'assistant', message: { content: undefined } };
         expect(extractToolUses(message)).toEqual([]);
     });
 
-    it('should handle null content gracefully', () => {
+    test('should handle null content gracefully', () => {
         const message = { type: 'assistant', message: { content: null } };
         expect(extractToolUses(message)).toEqual([]);
     });
 
-    it('should handle missing message property gracefully', () => {
+    test('should handle missing message property gracefully', () => {
         const message = { type: 'assistant' };
         expect(extractToolUses(message)).toEqual([]);
     });
 
-    it('should handle undefined message property gracefully', () => {
+    test('should handle undefined message property gracefully', () => {
         const message = { type: 'assistant', message: undefined };
         expect(extractToolUses(message)).toEqual([]);
     });
@@ -633,14 +633,14 @@ describe('createClaudeAgent', () => {
         querySpy.mockRestore();
     });
 
-    it('should create an agent with chat method', () => {
+    test('should create an agent with chat method', () => {
         const agent = createClaudeAgent({});
 
         expect(agent).toBeDefined();
         expect(typeof agent.chat).toBe('function');
     });
 
-    it('should call query with user message', async () => {
+    test('should call query with user message', async () => {
         const agent = createClaudeAgent({});
 
         await agent.chat(mockMessageContext);
@@ -652,7 +652,7 @@ describe('createClaudeAgent', () => {
         );
     });
 
-    it('should use claude-sonnet-4-5 model', async () => {
+    test('should use claude-sonnet-4-5 model', async () => {
         const agent = createClaudeAgent({});
 
         await agent.chat(mockMessageContext);
@@ -666,7 +666,7 @@ describe('createClaudeAgent', () => {
         );
     });
 
-    it('should return text content from Claude response', async () => {
+    test('should return text content from Claude response', async () => {
         const agent = createClaudeAgent({});
 
         const response = await agent.chat(mockMessageContext);
@@ -674,7 +674,7 @@ describe('createClaudeAgent', () => {
         expect(response).toBe('Hello! This is a test response.');
     });
 
-    it('should return full responses without truncating (chunking handled by Discord handlers)', async () => {
+    test('should return full responses without truncating (chunking handled by Discord handlers)', async () => {
         const longText = _.repeat('a', 2000);
         querySpy.mockImplementation((_params: any): any => {
             async function* mockGenerator() {
@@ -701,7 +701,7 @@ describe('createClaudeAgent', () => {
         expect(response?.length).toBe(2000);
     });
 
-    it('should include memory MCP server when provided', async () => {
+    test('should include memory MCP server when provided', async () => {
         const mockMcpServer = { name: 'memory', version: '1.0.0' };
 
         const agent = createClaudeAgent({
@@ -720,7 +720,7 @@ describe('createClaudeAgent', () => {
         );
     });
 
-    it('should not include MCP servers when not provided', async () => {
+    test('should not include MCP servers when not provided', async () => {
         const agent = createClaudeAgent({});
 
         await agent.chat(mockMessageContext);
@@ -730,7 +730,7 @@ describe('createClaudeAgent', () => {
         expect(callArgs.options.mcpServers).toBeUndefined();
     });
 
-    it('should return null on API error', async () => {
+    test('should return null on API error', async () => {
         querySpy.mockImplementation((_params: any): any => {
             throw new Error('API rate limit exceeded');
         });
@@ -741,7 +741,7 @@ describe('createClaudeAgent', () => {
         expect(response).toBeNull();
     });
 
-    it('should return null when response has no text content', async () => {
+    test('should return null when response has no text content', async () => {
         querySpy.mockImplementation((_params: any): any => {
             async function* mockGenerator() {
                 yield {
@@ -760,7 +760,7 @@ describe('createClaudeAgent', () => {
         expect(response).toBeNull();
     });
 
-    it('should handle empty message content', async () => {
+    test('should handle empty message content', async () => {
         const emptyMessageContext: DiscordMessageContext = {
             ...mockMessageContext,
             content: '',
@@ -776,7 +776,7 @@ describe('createClaudeAgent', () => {
         );
     });
 
-    it('should preserve whitespace in message content', async () => {
+    test('should preserve whitespace in message content', async () => {
         const messageWithWhitespace: DiscordMessageContext = {
             ...mockMessageContext,
             content: '  Hello   World  ',
@@ -792,7 +792,7 @@ describe('createClaudeAgent', () => {
         );
     });
 
-    it('should handle special characters in message content', async () => {
+    test('should handle special characters in message content', async () => {
         const messageWithSpecialChars: DiscordMessageContext = {
             ...mockMessageContext,
             content: 'Hello! @user <#channel> **bold** `code`',
@@ -808,7 +808,7 @@ describe('createClaudeAgent', () => {
         );
     });
 
-    it('should extract latest assistant message from stream', async () => {
+    test('should extract latest assistant message from stream', async () => {
         querySpy.mockImplementation((_params: any): any => {
             async function* mockGenerator() {
                 yield {
@@ -843,7 +843,7 @@ describe('createClaudeAgent', () => {
         expect(response).toBe('Latest message');
     });
 
-    it('should not truncate responses exactly at MAX_RESPONSE_LENGTH (1900)', async () => {
+    test('should not truncate responses exactly at MAX_RESPONSE_LENGTH (1900)', async () => {
         const exactText = _.repeat('x', 1900);
         querySpy.mockImplementation((_params: any): any => {
             async function* mockGenerator() {
@@ -869,7 +869,7 @@ describe('createClaudeAgent', () => {
         expect(response?.length).toBe(1900);
     });
 
-    it('should return full response even when just over typical Discord limit', async () => {
+    test('should return full response even when just over typical Discord limit', async () => {
         const longText = _.repeat('y', 1901);
         querySpy.mockImplementation((_params: any): any => {
             async function* mockGenerator() {
@@ -897,7 +897,7 @@ describe('createClaudeAgent', () => {
     });
 
     describe('tool configuration', () => {
-        it('should include explicit tools list', async () => {
+        test('should include explicit tools list', async () => {
             const agent = createClaudeAgent({});
 
             await agent.chat(mockMessageContext);
@@ -910,7 +910,7 @@ describe('createClaudeAgent', () => {
             ]);
         });
 
-        it('should include explicit agents without statusline-setup', async () => {
+        test('should include explicit agents without statusline-setup', async () => {
             const agent = createClaudeAgent({});
 
             await agent.chat(mockMessageContext);
@@ -937,7 +937,7 @@ describe('createClaudeAgent', () => {
             });
         });
 
-        it('should include allowedTools for auto-approved tools', async () => {
+        test('should include allowedTools for auto-approved tools', async () => {
             const agent = createClaudeAgent({});
 
             await agent.chat(mockMessageContext);
@@ -957,7 +957,7 @@ describe('createClaudeAgent', () => {
             ]);
         });
 
-        it('should use acceptEdits permission mode without allowDangerouslySkipPermissions', async () => {
+        test('should use acceptEdits permission mode without allowDangerouslySkipPermissions', async () => {
             const agent = createClaudeAgent({});
 
             await agent.chat(mockMessageContext);
@@ -967,7 +967,7 @@ describe('createClaudeAgent', () => {
             expect(callArgs.options.allowDangerouslySkipPermissions).toBeUndefined();
         });
 
-        it('should provide stderr callback in options', async () => {
+        test('should provide stderr callback in options', async () => {
             const agent = createClaudeAgent({});
 
             await agent.chat(mockMessageContext);
@@ -976,7 +976,7 @@ describe('createClaudeAgent', () => {
             expect(typeof callArgs.options.stderr).toBe('function');
         });
 
-        it('should include memory MCP server when provided', async () => {
+        test('should include memory MCP server when provided', async () => {
             const mockMcpServer = { name: 'memory', version: '1.0.0' };
 
             const agent = createClaudeAgent({
@@ -994,7 +994,7 @@ describe('createClaudeAgent', () => {
             );
         });
 
-        it('should not include mcpServers when no MCP server provided', async () => {
+        test('should not include mcpServers when no MCP server provided', async () => {
             const agent = createClaudeAgent({});
 
             await agent.chat(mockMessageContext);
@@ -1003,7 +1003,7 @@ describe('createClaudeAgent', () => {
             expect(callArgs.options.mcpServers).toBeUndefined();
         });
 
-        it('should include discord MCP server when provided', async () => {
+        test('should include discord MCP server when provided', async () => {
             const mockDiscordMcpServer = { name: 'discord', version: '1.0.0' };
 
             const agent = createClaudeAgent({
@@ -1021,7 +1021,7 @@ describe('createClaudeAgent', () => {
             );
         });
 
-        it('should NOT include memory MCP server when only discord MCP server provided', async () => {
+        test('should NOT include memory MCP server when only discord MCP server provided', async () => {
             const mockDiscordMcpServer = { name: 'discord', version: '1.0.0' };
 
             const agent = createClaudeAgent({
@@ -1044,7 +1044,7 @@ describe('createClaudeAgent', () => {
             expect(_.has(callArgs.options.mcpServers, 'memory')).toBe(false);
         });
 
-        it('should NOT include discord MCP server when only memory MCP server provided', async () => {
+        test('should NOT include discord MCP server when only memory MCP server provided', async () => {
             const mockMemoryMcpServer = { name: 'memory', version: '1.0.0' };
 
             const agent = createClaudeAgent({
@@ -1067,7 +1067,7 @@ describe('createClaudeAgent', () => {
             expect(_.has(callArgs.options.mcpServers, 'discord')).toBe(false);
         });
 
-        it('should include both memory and discord MCP servers when both provided', async () => {
+        test('should include both memory and discord MCP servers when both provided', async () => {
             const mockMemoryMcpServer = { name: 'memory', version: '1.0.0' };
             const mockDiscordMcpServer = { name: 'discord', version: '1.0.0' };
 
@@ -1090,7 +1090,7 @@ describe('createClaudeAgent', () => {
             );
         });
 
-        it('should include Discord MCP tools in allowedTools when discord MCP server provided', async () => {
+        test('should include Discord MCP tools in allowedTools when discord MCP server provided', async () => {
             const mockDiscordMcpServer = { name: 'discord', version: '1.0.0' };
 
             const agent = createClaudeAgent({

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import {
     DynamoDBDocumentClient,
@@ -10,7 +10,7 @@ import { MemoryRepository } from '@/storage/repositories/memory';
 import { ValidationError } from '@/storage/errors';
 import type { MemoryItem } from '@/storage/models/memory';
 
-describe('MemoryRepository', () => {
+describe.concurrent('MemoryRepository', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let repository: MemoryRepository;
 
@@ -27,7 +27,7 @@ describe('MemoryRepository', () => {
     });
 
     describe('create', () => {
-        it('should generate id if not provided', async () => {
+        test('should generate id if not provided', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const memory = await repository.create({
@@ -39,7 +39,7 @@ describe('MemoryRepository', () => {
             expect(memory.id.length).toBe(36); // UUID length
         });
 
-        it('should use provided id', async () => {
+        test('should use provided id', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const memory = await repository.create({
@@ -51,7 +51,7 @@ describe('MemoryRepository', () => {
             expect(memory.id).toBe('550e8400-e29b-41d4-a716-446655440000');
         });
 
-        it('should set createdAt and updatedAt timestamps', async () => {
+        test('should set createdAt and updatedAt timestamps', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const before = new Date().toISOString();
@@ -66,7 +66,7 @@ describe('MemoryRepository', () => {
             expect(memory.updatedAt).toBe(memory.createdAt);
         });
 
-        it('should set default version to 0', async () => {
+        test('should set default version to 0', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const memory = await repository.create({
@@ -77,7 +77,7 @@ describe('MemoryRepository', () => {
             expect(memory.version).toBe(0);
         });
 
-        it('should set default empty metadata', async () => {
+        test('should set default empty metadata', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const memory = await repository.create({
@@ -88,7 +88,7 @@ describe('MemoryRepository', () => {
             expect(memory.metadata).toEqual({});
         });
 
-        it('should call putItem with default metadata when metadata undefined', async () => {
+        test('should call putItem with default metadata when metadata undefined', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             await repository.create({
@@ -104,7 +104,7 @@ describe('MemoryRepository', () => {
             expect(item.metadata).toEqual({});
         });
 
-        it('should use provided metadata when metadata is empty object', async () => {
+        test('should use provided metadata when metadata is empty object', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const memory = await repository.create({
@@ -116,7 +116,7 @@ describe('MemoryRepository', () => {
             expect(memory.metadata).toEqual({});
         });
 
-        it('should use provided metadata when metadata has values', async () => {
+        test('should use provided metadata when metadata has values', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const memory = await repository.create({
@@ -128,7 +128,7 @@ describe('MemoryRepository', () => {
             expect(memory.metadata).toEqual({ key: 'value' });
         });
 
-        it('should accept optional TTL', async () => {
+        test('should accept optional TTL', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const memory = await repository.create({
@@ -140,7 +140,7 @@ describe('MemoryRepository', () => {
             expect(memory.TTL).toBe(3600);
         });
 
-        it('should throw on invalid input', async () => {
+        test('should throw on invalid input', async () => {
             expect(
                 repository.create({
                     memory_type: 'identity',
@@ -149,7 +149,7 @@ describe('MemoryRepository', () => {
             ).rejects.toThrow();
         });
 
-        it('should throw ValidationError on invalid input', async () => {
+        test('should throw ValidationError on invalid input', async () => {
             expect(
                 repository.create({
                     memory_type: 'identity',
@@ -158,7 +158,7 @@ describe('MemoryRepository', () => {
             ).rejects.toThrow(ValidationError);
         });
 
-        it('should call putItem with correct DynamoDB keys', async () => {
+        test('should call putItem with correct DynamoDB keys', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             await repository.create({
@@ -180,7 +180,7 @@ describe('MemoryRepository', () => {
     describe('getById', () => {
         const testId = '550e8400-e29b-41d4-a716-446655440003';
 
-        it('should return memory when found', async () => {
+        test('should return memory when found', async () => {
             const mockItem: MemoryItem = {
                 PK:          `MEMORY#${testId}`,
                 SK:          'TYPE#identity',
@@ -203,7 +203,7 @@ describe('MemoryRepository', () => {
             expect(result?.content).toBe('Test content');
         });
 
-        it('should return undefined when not found', async () => {
+        test('should return undefined when not found', async () => {
             ddbMock.on(GetCommand).resolves({ Item: undefined });
 
             const result = await repository.getById('550e8400-e29b-41d4-a716-446655440004', 'identity');
@@ -211,7 +211,7 @@ describe('MemoryRepository', () => {
             expect(result).toBeUndefined();
         });
 
-        it('should strip DynamoDB keys from returned object', async () => {
+        test('should strip DynamoDB keys from returned object', async () => {
             const mockItem: MemoryItem = {
                 PK:          `MEMORY#${testId}`,
                 SK:          'TYPE#identity',
@@ -235,7 +235,7 @@ describe('MemoryRepository', () => {
             expect(result).not.toHaveProperty('GSI1SK');
         });
 
-        it('should construct correct DynamoDB key format for getItem', async () => {
+        test('should construct correct DynamoDB key format for getItem', async () => {
             ddbMock.on(GetCommand).resolves({ Item: undefined });
 
             await repository.getById(testId, 'identity');
@@ -250,7 +250,7 @@ describe('MemoryRepository', () => {
     });
 
     describe('delete', () => {
-        it('should call deleteItem with correct key', async () => {
+        test('should call deleteItem with correct key', async () => {
             const testId = '550e8400-e29b-41d4-a716-446655440005';
             ddbMock.on(DeleteCommand).resolves({});
 

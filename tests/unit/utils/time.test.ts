@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import {
     timeContextSchema,
     timeOfDaySchema,
@@ -6,72 +6,72 @@ import {
     type TimeContext
 } from '@/utils/time';
 
-describe('timeOfDaySchema', () => {
-    it('should accept "morning"', () => {
+describe.concurrent('timeOfDaySchema', () => {
+    test('should accept "morning"', () => {
         expect(timeOfDaySchema.safeParse('morning').success).toBe(true);
     });
 
-    it('should accept "afternoon"', () => {
+    test('should accept "afternoon"', () => {
         expect(timeOfDaySchema.safeParse('afternoon').success).toBe(true);
     });
 
-    it('should accept "evening"', () => {
+    test('should accept "evening"', () => {
         expect(timeOfDaySchema.safeParse('evening').success).toBe(true);
     });
 
-    it('should accept "night"', () => {
+    test('should accept "night"', () => {
         expect(timeOfDaySchema.safeParse('night').success).toBe(true);
     });
 
-    it('should reject invalid time of day', () => {
+    test('should reject invalid time of day', () => {
         expect(timeOfDaySchema.safeParse('dawn').success).toBe(false);
     });
 
-    it('should reject empty string', () => {
+    test('should reject empty string', () => {
         expect(timeOfDaySchema.safeParse('').success).toBe(false);
     });
 });
 
 describe('dayOfWeekSchema', () => {
-    it('should accept "Sunday"', () => {
+    test('should accept "Sunday"', () => {
         expect(dayOfWeekSchema.safeParse('Sunday').success).toBe(true);
     });
 
-    it('should accept "Monday"', () => {
+    test('should accept "Monday"', () => {
         expect(dayOfWeekSchema.safeParse('Monday').success).toBe(true);
     });
 
-    it('should accept "Tuesday"', () => {
+    test('should accept "Tuesday"', () => {
         expect(dayOfWeekSchema.safeParse('Tuesday').success).toBe(true);
     });
 
-    it('should accept "Wednesday"', () => {
+    test('should accept "Wednesday"', () => {
         expect(dayOfWeekSchema.safeParse('Wednesday').success).toBe(true);
     });
 
-    it('should accept "Thursday"', () => {
+    test('should accept "Thursday"', () => {
         expect(dayOfWeekSchema.safeParse('Thursday').success).toBe(true);
     });
 
-    it('should accept "Friday"', () => {
+    test('should accept "Friday"', () => {
         expect(dayOfWeekSchema.safeParse('Friday').success).toBe(true);
     });
 
-    it('should accept "Saturday"', () => {
+    test('should accept "Saturday"', () => {
         expect(dayOfWeekSchema.safeParse('Saturday').success).toBe(true);
     });
 
-    it('should reject invalid day name', () => {
+    test('should reject invalid day name', () => {
         expect(dayOfWeekSchema.safeParse('Funday').success).toBe(false);
     });
 
-    it('should reject empty string', () => {
+    test('should reject empty string', () => {
         expect(dayOfWeekSchema.safeParse('').success).toBe(false);
     });
 });
 
 describe('timeContextSchema', () => {
-    it('should validate a complete TimeContext', () => {
+    test('should validate a complete TimeContext', () => {
         const context: TimeContext = {
             utc:           '2025-01-15T12:00:00.000Z',
             dayOfWeek:     'Wednesday',
@@ -83,7 +83,7 @@ describe('timeContextSchema', () => {
         expect(result.success).toBe(true);
     });
 
-    it('should validate TimeContext without optional fields', () => {
+    test('should validate TimeContext without optional fields', () => {
         const context = {
             utc:       '2025-01-15T12:00:00.000Z',
             dayOfWeek: 'Wednesday',
@@ -93,7 +93,7 @@ describe('timeContextSchema', () => {
         expect(result.success).toBe(true);
     });
 
-    it('should reject invalid timeOfDay', () => {
+    test('should reject invalid timeOfDay', () => {
         const context = {
             utc:       '2025-01-15T12:00:00.000Z',
             dayOfWeek: 'Wednesday',
@@ -103,7 +103,7 @@ describe('timeContextSchema', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should reject invalid dayOfWeek', () => {
+    test('should reject invalid dayOfWeek', () => {
         const context = {
             utc:       '2025-01-15T12:00:00.000Z',
             dayOfWeek: 'Funday',
@@ -113,7 +113,7 @@ describe('timeContextSchema', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should reject missing required fields', () => {
+    test('should reject missing required fields', () => {
         const context = {
             utc: '2025-01-15T12:00:00.000Z',
         };

@@ -4,7 +4,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks */
 /* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
 
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { constant as _constant, endsWith as _endsWith, filter as _filter, find as _find, repeat as _repeat, some as _some, startsWith as _startsWith } from 'lodash';
 import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
 import type { PresencePhase, SynopsisContext } from '@/integrations/discord/presence/types';
@@ -51,7 +51,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('event mapping to presence phases', () => {
-        it('should map assistant event to thinking phase', async () => {
+        test('should map assistant event to thinking phase', async () => {
             // Create middleware that will receive stream events
             const events: AgentStreamEvent[] = [];
             const wrappedAgent = {
@@ -77,7 +77,7 @@ describe('StatusMiddleware', () => {
             );
         });
 
-        it('should map tool_progress event to using_tool phase with tool name', async () => {
+        test('should map tool_progress event to using_tool phase with tool name', async () => {
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                     if(onEvent) {
@@ -103,7 +103,7 @@ describe('StatusMiddleware', () => {
             );
         });
 
-        it('should map assistant event with delta text to responding phase', async () => {
+        test('should map assistant event with delta text to responding phase', async () => {
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                     if(onEvent) {
@@ -126,7 +126,7 @@ describe('StatusMiddleware', () => {
             );
         });
 
-        it('should map result event to idle phase', async () => {
+        test('should map result event to idle phase', async () => {
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                     if(onEvent) {
@@ -151,7 +151,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('typing indicator management', () => {
-        it('should start typing before processing', async () => {
+        test('should start typing before processing', async () => {
             const mockChannel = {
                 sendTyping: mock(async () => undefined),
             };
@@ -167,7 +167,7 @@ describe('StatusMiddleware', () => {
             expect(mockChannel.sendTyping).toHaveBeenCalled();
         });
 
-        it('should stop typing after completion', async () => {
+        test('should stop typing after completion', async () => {
             const mockChannel = {
                 sendTyping: mock(async () => undefined),
             };
@@ -200,7 +200,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('error handling', () => {
-        it('should handle errors gracefully and clear presence', async () => {
+        test('should handle errors gracefully and clear presence', async () => {
             const errorAgent = {
                 chat: mock(async () => {
                     throw new Error('Test error');
@@ -227,7 +227,7 @@ describe('StatusMiddleware', () => {
             );
         });
 
-        it('should handle stream callback errors without crashing', async () => {
+        test('should handle stream callback errors without crashing', async () => {
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                     if(onEvent) {
@@ -260,7 +260,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('concurrent message handling', () => {
-        it('should handle concurrent messages independently', async () => {
+        test('should handle concurrent messages independently', async () => {
             let callbackCount = 0;
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -293,7 +293,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('backward compatibility', () => {
-        it('should work with agents that do not support stream callbacks', async () => {
+        test('should work with agents that do not support stream callbacks', async () => {
             // Agent that doesn't accept onEvent parameter
             const legacyAgent = {
                 chat: mock(_constant(Promise.resolve('Response'))),
@@ -313,7 +313,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('tool name extraction', () => {
-        it('should extract tool name from tool_progress events', async () => {
+        test('should extract tool name from tool_progress events', async () => {
             const toolNames: string[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -346,7 +346,7 @@ describe('StatusMiddleware', () => {
             expect(toolNames).toEqual(['mcp__memory__view', 'mcp__memory__storeSelf']);
         });
 
-        it('should handle missing tool_name gracefully', async () => {
+        test('should handle missing tool_name gracefully', async () => {
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                     if(onEvent) {
@@ -377,7 +377,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('logging behavior', () => {
-        it('should log debug message with messageId when typing indicator starts', async () => {
+        test('should log debug message with messageId when typing indicator starts', async () => {
             const mockChannel = {
                 sendTyping: mock(async () => undefined),
             };
@@ -396,7 +396,7 @@ describe('StatusMiddleware', () => {
             );
         });
 
-        it('should log error with correct context when main error occurs', async () => {
+        test('should log error with correct context when main error occurs', async () => {
             const testError = new Error('Test error');
             const errorAgent = {
                 chat: mock(async () => {
@@ -418,7 +418,7 @@ describe('StatusMiddleware', () => {
             );
         });
 
-        it('should log error when stream event presence update fails', async () => {
+        test('should log error when stream event presence update fails', async () => {
             const presenceError = new Error('Presence update failed');
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -457,7 +457,7 @@ describe('StatusMiddleware', () => {
             );
         });
 
-        it('should log error when final idle presence update fails', async () => {
+        test('should log error when final idle presence update fails', async () => {
             const presenceError = new Error('Final idle update failed');
             const wrappedAgent = {
                 chat: mock(_constant(Promise.resolve('Response'))),
@@ -487,7 +487,7 @@ describe('StatusMiddleware', () => {
             );
         });
 
-        it('should log error when idle update fails after main error', async () => {
+        test('should log error when idle update fails after main error', async () => {
             const mainError = new Error('Main error');
             const presenceError = new Error('Presence error after main error');
             const errorAgent = {
@@ -526,7 +526,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('no channel handling', () => {
-        it('should not call sendTyping when channel is undefined', async () => {
+        test('should not call sendTyping when channel is undefined', async () => {
             const middleware = createStatusMiddleware({
                 presenceManager: mockPresenceManager,
                 agent:           mockAgent,
@@ -545,7 +545,7 @@ describe('StatusMiddleware', () => {
             );
         });
 
-        it('should process message normally when channel is undefined', async () => {
+        test('should process message normally when channel is undefined', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -579,7 +579,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('conditional branch coverage for event types', () => {
-        it('should map assistant event with empty delta object to thinking phase', async () => {
+        test('should map assistant event with empty delta object to thinking phase', async () => {
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                     if(onEvent) {
@@ -603,7 +603,7 @@ describe('StatusMiddleware', () => {
             );
         });
 
-        it('should map assistant event with empty string delta.text to thinking phase', async () => {
+        test('should map assistant event with empty string delta.text to thinking phase', async () => {
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                     if(onEvent) {
@@ -627,7 +627,7 @@ describe('StatusMiddleware', () => {
             );
         });
 
-        it('should ignore unknown event types', async () => {
+        test('should ignore unknown event types', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -660,7 +660,7 @@ describe('StatusMiddleware', () => {
             expect(phases[0]?.type).toBe('idle');
         });
 
-        it('should verify result event triggers idle with since date', async () => {
+        test('should verify result event triggers idle with since date', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -699,7 +699,7 @@ describe('StatusMiddleware', () => {
             }
         });
 
-        it('should correctly call updatePhase with idle type string on result event', async () => {
+        test('should correctly call updatePhase with idle type string on result event', async () => {
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                     if(onEvent) {
@@ -728,7 +728,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('final idle transition after completion', () => {
-        it('should call updatePhase with idle after chat completes', async () => {
+        test('should call updatePhase with idle after chat completes', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(_constant(Promise.resolve('Response'))),
@@ -755,7 +755,7 @@ describe('StatusMiddleware', () => {
             expect(idlePhases.length).toBeGreaterThanOrEqual(1);
         });
 
-        it('should verify final idle update has since property as Date', async () => {
+        test('should verify final idle update has since property as Date', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(_constant(Promise.resolve('Response'))),
@@ -786,7 +786,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('idle transition after error', () => {
-        it('should call updatePhase with idle after agent.chat throws', async () => {
+        test('should call updatePhase with idle after agent.chat throws', async () => {
             const phases: PresencePhase[] = [];
             const errorAgent = {
                 chat: mock(async () => {
@@ -815,7 +815,7 @@ describe('StatusMiddleware', () => {
             expect(idlePhases.length).toBeGreaterThanOrEqual(1);
         });
 
-        it('should verify idle transition after error has since Date', async () => {
+        test('should verify idle transition after error has since Date', async () => {
             const phases: PresencePhase[] = [];
             const errorAgent = {
                 chat: mock(async () => {
@@ -848,7 +848,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('typing indicator refresh interval', () => {
-        it('should set up interval to refresh typing every 8 seconds', async () => {
+        test('should set up interval to refresh typing every 8 seconds', async () => {
             const mockChannel = {
                 sendTyping: mock(async () => undefined),
             };
@@ -874,7 +874,7 @@ describe('StatusMiddleware', () => {
             }
         });
 
-        it('should clear interval in finally block after successful completion', async () => {
+        test('should clear interval in finally block after successful completion', async () => {
             const mockChannel = {
                 sendTyping: mock(async () => undefined),
             };
@@ -911,7 +911,7 @@ describe('StatusMiddleware', () => {
             }
         });
 
-        it('should clear interval in finally block even when agent.chat throws', async () => {
+        test('should clear interval in finally block even when agent.chat throws', async () => {
             const mockChannel = {
                 sendTyping: mock(async () => undefined),
             };
@@ -951,7 +951,7 @@ describe('StatusMiddleware', () => {
             }
         });
 
-        it('should not set interval when channel is undefined', async () => {
+        test('should not set interval when channel is undefined', async () => {
             const originalSetInterval = globalThis.setInterval;
             const setIntervalSpy = mock((fn: () => void, ms: number) => originalSetInterval(fn, ms));
             globalThis.setInterval = setIntervalSpy as any;
@@ -972,7 +972,7 @@ describe('StatusMiddleware', () => {
             }
         });
 
-        it('should log when stopping typing indicator', async () => {
+        test('should log when stopping typing indicator', async () => {
             const mockChannel = {
                 sendTyping: mock(async () => undefined),
             };
@@ -991,7 +991,7 @@ describe('StatusMiddleware', () => {
             );
         });
 
-        it('should call sendTyping when interval fires', async () => {
+        test('should call sendTyping when interval fires', async () => {
             const mockChannel = {
                 sendTyping: mock(async () => undefined),
             };
@@ -1027,7 +1027,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('sendTyping error handling', () => {
-        it('should handle sendTyping errors gracefully and return null', async () => {
+        test('should handle sendTyping errors gracefully and return null', async () => {
             const typingError = new Error('Typing failed');
             const mockChannel = {
                 sendTyping: mock(async () => {
@@ -1053,7 +1053,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('tool_progress event mutant killers', () => {
-        it('should not treat non-tool_progress event as tool_progress', async () => {
+        test('should not treat non-tool_progress event as tool_progress', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1087,7 +1087,7 @@ describe('StatusMiddleware', () => {
             expect(toolPhases.length).toBe(0);
         });
 
-        it('should transition to using_tool when currentPhase is thinking (not using_tool)', async () => {
+        test('should transition to using_tool when currentPhase is thinking (not using_tool)', async () => {
             // This test kills the ConditionalExpression mutant at line 178 which changes:
             // `currentPhase !== 'using_tool' || toolName !== lastToolName` to
             // `false || toolName !== lastToolName`
@@ -1136,7 +1136,7 @@ describe('StatusMiddleware', () => {
             expect((toolPhases[0] as any).toolName).toBe('first_tool');
         });
 
-        it('should transition to using_tool when returning to same tool after thinking phase', async () => {
+        test('should transition to using_tool when returning to same tool after thinking phase', async () => {
             // This test SPECIFICALLY kills the ConditionalExpression mutant at line 180 which changes:
             // `currentPhase !== 'using_tool' || toolName !== lastToolName` to
             // `false || toolName !== lastToolName`
@@ -1191,7 +1191,7 @@ describe('StatusMiddleware', () => {
             expect(thinkingPhases.length).toBe(1);
         });
 
-        it('should transition to using_tool from null currentPhase on first event', async () => {
+        test('should transition to using_tool from null currentPhase on first event', async () => {
             // This test verifies that when currentPhase starts as null (initial state),
             // receiving a tool_progress event triggers phase update.
             // The mutant would skip this because `null !== 'using_tool'` is true,
@@ -1232,7 +1232,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('result event mutant killers', () => {
-        it('should not treat non-result event as result event', async () => {
+        test('should not treat non-result event as result event', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1271,7 +1271,7 @@ describe('StatusMiddleware', () => {
             expect(idlePhases.length).toBe(1);
         });
 
-        it('should add idle phase when result event occurs', async () => {
+        test('should add idle phase when result event occurs', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1306,7 +1306,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('tool_name nullish coalescing edge cases', () => {
-        it('should use "unknown" when tool_name is null', async () => {
+        test('should use "unknown" when tool_name is null', async () => {
             const toolNames: string[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1341,7 +1341,7 @@ describe('StatusMiddleware', () => {
             expect(toolNames).toEqual(['unknown']);
         });
 
-        it('should keep empty string tool_name (not replace with unknown)', async () => {
+        test('should keep empty string tool_name (not replace with unknown)', async () => {
             const toolNames: string[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1376,7 +1376,7 @@ describe('StatusMiddleware', () => {
             expect(toolNames).toEqual(['']);
         });
 
-        it('should use "unknown" when tool_name is undefined', async () => {
+        test('should use "unknown" when tool_name is undefined', async () => {
             const toolNames: string[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1411,7 +1411,7 @@ describe('StatusMiddleware', () => {
             expect(toolNames).toEqual(['unknown']);
         });
 
-        it('should preserve actual tool_name value', async () => {
+        test('should preserve actual tool_name value', async () => {
             const toolNames: string[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1447,7 +1447,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('phase type string literal verification', () => {
-        it('should use "responding" when delta.text is truthy, not empty string', async () => {
+        test('should use "responding" when delta.text is truthy, not empty string', async () => {
             // This test specifically targets the ternary: event.delta?.text ? 'responding' : 'thinking'
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
@@ -1484,7 +1484,7 @@ describe('StatusMiddleware', () => {
             expect(respondingPhase!.type.length).toBeGreaterThan(0);
         });
 
-        it('should use "thinking" when delta.text is falsy, not empty string', async () => {
+        test('should use "thinking" when delta.text is falsy, not empty string', async () => {
             // This test specifically targets the ternary: event.delta?.text ? 'responding' : 'thinking'
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
@@ -1521,7 +1521,7 @@ describe('StatusMiddleware', () => {
             expect(thinkingPhase!.type.length).toBeGreaterThan(0);
         });
 
-        it('should use exact string "thinking" not empty string', async () => {
+        test('should use exact string "thinking" not empty string', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1556,7 +1556,7 @@ describe('StatusMiddleware', () => {
             expect(thinkingPhase!.type.length).toBe(8); // 'thinking' has 8 chars
         });
 
-        it('should use exact string "responding" not empty string', async () => {
+        test('should use exact string "responding" not empty string', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1591,7 +1591,7 @@ describe('StatusMiddleware', () => {
             expect(respondingPhase!.type.length).toBe(10); // 'responding' has 10 chars
         });
 
-        it('should use exact string "using_tool" not empty string', async () => {
+        test('should use exact string "using_tool" not empty string', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1626,7 +1626,7 @@ describe('StatusMiddleware', () => {
             expect(toolPhase!.type.length).toBe(10); // 'using_tool' has 10 chars
         });
 
-        it('should use exact string "idle" not empty string', async () => {
+        test('should use exact string "idle" not empty string', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(_constant(Promise.resolve('Response'))),
@@ -1657,7 +1657,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('Date instance verification for all phases', () => {
-        it('should include startedAt as Date for thinking phase', async () => {
+        test('should include startedAt as Date for thinking phase', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1692,7 +1692,7 @@ describe('StatusMiddleware', () => {
             }
         });
 
-        it('should include startedAt as Date for responding phase', async () => {
+        test('should include startedAt as Date for responding phase', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1727,7 +1727,7 @@ describe('StatusMiddleware', () => {
             }
         });
 
-        it('should include startedAt as Date for using_tool phase', async () => {
+        test('should include startedAt as Date for using_tool phase', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1762,7 +1762,7 @@ describe('StatusMiddleware', () => {
             }
         });
 
-        it('should include since as Date for result event idle phase', async () => {
+        test('should include since as Date for result event idle phase', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1801,7 +1801,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('error isolation edge cases', () => {
-        it('should return response even when safeUpdatePhase throws multiple times', async () => {
+        test('should return response even when safeUpdatePhase throws multiple times', async () => {
             let callCount = 0;
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1839,7 +1839,7 @@ describe('StatusMiddleware', () => {
             expect(mockLogger.error).toHaveBeenCalled();
         });
 
-        it('should still attempt idle transition when agent throws after events', async () => {
+        test('should still attempt idle transition when agent throws after events', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1874,7 +1874,7 @@ describe('StatusMiddleware', () => {
             expect(_some(phases, ['type', 'idle'])).toBe(true);
         });
 
-        it('should return null and log when sendTyping fails before agent.chat', async () => {
+        test('should return null and log when sendTyping fails before agent.chat', async () => {
             const typingError = new Error('sendTyping failed');
             const mockChannel = {
                 sendTyping: mock(async () => {
@@ -1901,7 +1901,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('assistant event type discrimination', () => {
-        it('should distinguish assistant event from tool_progress by type field', async () => {
+        test('should distinguish assistant event from tool_progress by type field', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1939,7 +1939,7 @@ describe('StatusMiddleware', () => {
             expect(toolPhases.length).toBe(1);
         });
 
-        it('should distinguish result event from assistant by type field', async () => {
+        test('should distinguish result event from assistant by type field', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
                 chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -1987,7 +1987,7 @@ describe('StatusMiddleware', () => {
         });
 
         describe('synopsis generation on phase transitions', () => {
-            it('should call generateSynopsis for thinking phase on first assistant event', async () => {
+            test('should call generateSynopsis for thinking phase on first assistant event', async () => {
                 const wrappedAgent = {
                     chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                         if(onEvent) {
@@ -2015,7 +2015,7 @@ describe('StatusMiddleware', () => {
                 );
             });
 
-            it('should call generateSynopsis for responding phase with responseFragment', async () => {
+            test('should call generateSynopsis for responding phase with responseFragment', async () => {
                 const wrappedAgent = {
                     chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                         if(onEvent) {
@@ -2044,7 +2044,7 @@ describe('StatusMiddleware', () => {
                 );
             });
 
-            it('should call generateSynopsis for using_tool phase with toolName', async () => {
+            test('should call generateSynopsis for using_tool phase with toolName', async () => {
                 const wrappedAgent = {
                     chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                         if(onEvent) {
@@ -2075,7 +2075,7 @@ describe('StatusMiddleware', () => {
         });
 
         describe('generatedStatus passed to updatePhase', () => {
-            it('should pass generatedStatus to updatePhase for thinking phase', async () => {
+            test('should pass generatedStatus to updatePhase for thinking phase', async () => {
                 const phases: PresencePhase[] = [];
                 (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
                     _constant(Promise.resolve('Pondering deeply...'))
@@ -2115,7 +2115,7 @@ describe('StatusMiddleware', () => {
                 }
             });
 
-            it('should pass generatedStatus to updatePhase for responding phase', async () => {
+            test('should pass generatedStatus to updatePhase for responding phase', async () => {
                 const phases: PresencePhase[] = [];
                 (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
                     _constant(Promise.resolve('Crafting response...'))
@@ -2155,7 +2155,7 @@ describe('StatusMiddleware', () => {
                 }
             });
 
-            it('should pass generatedStatus to updatePhase for using_tool phase', async () => {
+            test('should pass generatedStatus to updatePhase for using_tool phase', async () => {
                 const phases: PresencePhase[] = [];
                 (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
                     _constant(Promise.resolve('Searching memories...'))
@@ -2197,7 +2197,7 @@ describe('StatusMiddleware', () => {
         });
 
         describe('fallback behavior', () => {
-            it('should use exact type "using_tool" in fallback when generateSynopsis throws for tool_progress', async () => {
+            test('should use exact type "using_tool" in fallback when generateSynopsis throws for tool_progress', async () => {
                 const phases: PresencePhase[] = [];
                 (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
                     () => Promise.reject(new Error('Synopsis generation failed'))
@@ -2242,7 +2242,7 @@ describe('StatusMiddleware', () => {
                 }
             });
 
-            it('should work without dynamicStatusGenerator (backwards compatibility)', async () => {
+            test('should work without dynamicStatusGenerator (backwards compatibility)', async () => {
                 const phases: PresencePhase[] = [];
                 const wrappedAgent = {
                     chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -2280,7 +2280,7 @@ describe('StatusMiddleware', () => {
                 }
             });
 
-            it('should update phase without generatedStatus when generateSynopsis throws', async () => {
+            test('should update phase without generatedStatus when generateSynopsis throws', async () => {
                 const phases: PresencePhase[] = [];
                 (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
                     () => Promise.reject(new Error('Synopsis generation failed'))
@@ -2324,7 +2324,7 @@ describe('StatusMiddleware', () => {
         });
 
         describe('phase transition detection', () => {
-            it('should not call generateSynopsis for duplicate thinking events', async () => {
+            test('should not call generateSynopsis for duplicate thinking events', async () => {
                 const wrappedAgent = {
                     chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                         if(onEvent) {
@@ -2355,7 +2355,7 @@ describe('StatusMiddleware', () => {
                 expect(thinkingCalls.length).toBe(1);
             });
 
-            it('should not call generateSynopsis for duplicate responding events', async () => {
+            test('should not call generateSynopsis for duplicate responding events', async () => {
                 const wrappedAgent = {
                     chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                         if(onEvent) {
@@ -2386,7 +2386,7 @@ describe('StatusMiddleware', () => {
                 expect(respondingCalls.length).toBe(1);
             });
 
-            it('should call generateSynopsis when tool name changes', async () => {
+            test('should call generateSynopsis when tool name changes', async () => {
                 const wrappedAgent = {
                     chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                         if(onEvent) {
@@ -2417,7 +2417,7 @@ describe('StatusMiddleware', () => {
                 expect(toolCalls[1][0].toolName).toBe('tool_b');
             });
 
-            it('should not call generateSynopsis for duplicate tool_progress with same tool', async () => {
+            test('should not call generateSynopsis for duplicate tool_progress with same tool', async () => {
                 const wrappedAgent = {
                     chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                         if(onEvent) {
@@ -2447,7 +2447,7 @@ describe('StatusMiddleware', () => {
                 expect(toolCalls.length).toBe(1);
             });
 
-            it('should call generateSynopsis when transitioning between phases', async () => {
+            test('should call generateSynopsis when transitioning between phases', async () => {
                 const wrappedAgent = {
                     chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                         if(onEvent) {
@@ -2475,7 +2475,7 @@ describe('StatusMiddleware', () => {
         });
 
         describe('pre-generation of thinking synopsis', () => {
-            it('should pre-generate thinking synopsis before agent.chat is called', async () => {
+            test('should pre-generate thinking synopsis before agent.chat is called', async () => {
                 let generateSynopsisCalledBeforeChat = false;
                 let chatCalled = false;
 
@@ -2509,7 +2509,7 @@ describe('StatusMiddleware', () => {
                 expect(generateSynopsisCalledBeforeChat).toBe(true);
             });
 
-            it('should use pre-generated thinking synopsis when thinking event occurs', async () => {
+            test('should use pre-generated thinking synopsis when thinking event occurs', async () => {
                 const phases: PresencePhase[] = [];
                 let callCount = 0;
 
@@ -2552,7 +2552,7 @@ describe('StatusMiddleware', () => {
                 }
             });
 
-            it('should pass userMessage to pre-generation call', async () => {
+            test('should pass userMessage to pre-generation call', async () => {
                 const wrappedAgent = {
                     chat: mock(_constant(Promise.resolve('Response'))),
                 };
@@ -2576,7 +2576,7 @@ describe('StatusMiddleware', () => {
         });
 
         describe('responseFragment optional chaining behavior', () => {
-            it('should pass undefined responseFragment when event.delta is undefined', async () => {
+            test('should pass undefined responseFragment when event.delta is undefined', async () => {
                 const wrappedAgent = {
                     chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                         if(onEvent) {
@@ -2607,7 +2607,7 @@ describe('StatusMiddleware', () => {
                 expect(thinkingCall[0].responseFragment).toBeUndefined();
             });
 
-            it('should pass undefined responseFragment when event.delta.text is undefined', async () => {
+            test('should pass undefined responseFragment when event.delta.text is undefined', async () => {
                 const wrappedAgent = {
                     chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                         if(onEvent) {
@@ -2637,7 +2637,7 @@ describe('StatusMiddleware', () => {
                 expect(thinkingCall[0].responseFragment).toBeUndefined();
             });
 
-            it('should correctly slice responseFragment from event.delta.text', async () => {
+            test('should correctly slice responseFragment from event.delta.text', async () => {
                 const wrappedAgent = {
                     chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                         if(onEvent) {
@@ -2667,7 +2667,7 @@ describe('StatusMiddleware', () => {
         });
 
         describe('truncation of responseFragment', () => {
-            it('should truncate responseFragment to 100 characters', async () => {
+            test('should truncate responseFragment to 100 characters', async () => {
                 const longText = _repeat('A', 200);
                 const wrappedAgent = {
                     chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
@@ -2699,7 +2699,7 @@ describe('StatusMiddleware', () => {
         });
 
         describe('pre-chat synopsis generation guard', () => {
-            it('should not attempt to call generateSynopsis when dynamicStatusGenerator is undefined', async () => {
+            test('should not attempt to call generateSynopsis when dynamicStatusGenerator is undefined', async () => {
                 // This test kills the mutation: if(dynamicStatusGenerator) → if(true)
                 // If the guard is mutated to always true, calling undefined.generateSynopsis() would throw
                 const wrappedAgent = {
@@ -2730,7 +2730,7 @@ describe('StatusMiddleware', () => {
                 expect(wrappedAgent.chat).toHaveBeenCalledTimes(1);
             });
 
-            it('should skip pre-chat synopsis generation without crashing when generator is undefined', async () => {
+            test('should skip pre-chat synopsis generation without crashing when generator is undefined', async () => {
                 // Explicit test: undefined dynamicStatusGenerator should skip generateSynopsis call
                 // With mutation if(dynamicStatusGenerator) → if(true), this would throw:
                 // "TypeError: Cannot read properties of undefined (reading 'generateSynopsis')"
@@ -2774,7 +2774,7 @@ describe('StatusMiddleware', () => {
     });
 
     describe('rich context passing to generateSynopsis', () => {
-        it('should pass toolInput to generateSynopsis for using_tool phase', async () => {
+        test('should pass toolInput to generateSynopsis for using_tool phase', async () => {
             const capturedContexts: SynopsisContext[] = [];
             const mockDynamicStatusGenerator = {
                 generateSynopsis: mock(async (ctx: SynopsisContext) => {
@@ -2821,7 +2821,7 @@ describe('StatusMiddleware', () => {
             expect(toolContext!.toolInput).toEqual({ file_path: '/test.txt' });
         });
 
-        it('should pass toolDescription to generateSynopsis for using_tool phase', async () => {
+        test('should pass toolDescription to generateSynopsis for using_tool phase', async () => {
             const capturedContexts: SynopsisContext[] = [];
             const mockDynamicStatusGenerator = {
                 generateSynopsis: mock(async (ctx: SynopsisContext) => {
@@ -2855,7 +2855,7 @@ describe('StatusMiddleware', () => {
             expect(toolContext!.toolDescription).toBe('Reading a file');
         });
 
-        it('should pass accumulatedText to generateSynopsis for using_tool phase', async () => {
+        test('should pass accumulatedText to generateSynopsis for using_tool phase', async () => {
             const capturedContexts: SynopsisContext[] = [];
             const mockDynamicStatusGenerator = {
                 generateSynopsis: mock(async (ctx: SynopsisContext) => {
@@ -2892,7 +2892,7 @@ describe('StatusMiddleware', () => {
             expect(toolContext!.accumulatedText).toBe('Hello world!');
         });
 
-        it('should pass accumulatedText to generateSynopsis for responding phase', async () => {
+        test('should pass accumulatedText to generateSynopsis for responding phase', async () => {
             const capturedContexts: SynopsisContext[] = [];
             const mockDynamicStatusGenerator = {
                 generateSynopsis: mock(async (ctx: SynopsisContext) => {
@@ -2927,7 +2927,7 @@ describe('StatusMiddleware', () => {
             expect(respondingContext!.accumulatedText).toBe('First chunk');
         });
 
-        it('should redact sensitive tool inputs before passing to generateSynopsis', async () => {
+        test('should redact sensitive tool inputs before passing to generateSynopsis', async () => {
             const capturedContexts: SynopsisContext[] = [];
             const mockDynamicStatusGenerator = {
                 generateSynopsis: mock(async (ctx: SynopsisContext) => {
@@ -2978,7 +2978,7 @@ describe('StatusMiddleware', () => {
             expect(toolInput.apiKey).toBe('[REDACTED]');
         });
 
-        it('should accumulate text up to 200 characters, truncating older text', async () => {
+        test('should accumulate text up to 200 characters, truncating older text', async () => {
             const capturedContexts: SynopsisContext[] = [];
             const mockDynamicStatusGenerator = {
                 generateSynopsis: mock(async (ctx: SynopsisContext) => {
@@ -3024,7 +3024,7 @@ describe('StatusMiddleware', () => {
             expect(_startsWith(toolContext!.accumulatedText, _repeat('X', 140))).toBe(true);
         });
 
-        it('should handle undefined toolDescription for unknown tools', async () => {
+        test('should handle undefined toolDescription for unknown tools', async () => {
             const capturedContexts: SynopsisContext[] = [];
             const mockDynamicStatusGenerator = {
                 generateSynopsis: mock(async (ctx: SynopsisContext) => {
@@ -3058,7 +3058,7 @@ describe('StatusMiddleware', () => {
             expect(toolContext!.toolDescription).toBeUndefined();
         });
 
-        it('should pass undefined accumulatedText when no text has been accumulated', async () => {
+        test('should pass undefined accumulatedText when no text has been accumulated', async () => {
             const capturedContexts: SynopsisContext[] = [];
             const mockDynamicStatusGenerator = {
                 generateSynopsis: mock(async (ctx: SynopsisContext) => {
@@ -3093,7 +3093,7 @@ describe('StatusMiddleware', () => {
             expect(toolContext!.accumulatedText).toBeUndefined();
         });
 
-        it('should handle undefined toolInput when no tool_use block was sent for the tool', async () => {
+        test('should handle undefined toolInput when no tool_use block was sent for the tool', async () => {
             const capturedContexts: SynopsisContext[] = [];
             const mockDynamicStatusGenerator = {
                 generateSynopsis: mock(async (ctx: SynopsisContext) => {

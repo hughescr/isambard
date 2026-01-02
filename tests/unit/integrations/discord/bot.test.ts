@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks */
 /* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
 /* eslint-disable lodash/prefer-constant -- Test callbacks */
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import { filter, repeat } from 'lodash';
 import type { Client } from 'discord.js';
 import { createDiscordBot } from '@/integrations/discord/bot';
@@ -12,7 +12,7 @@ import * as clientModule from '@/integrations/discord/client';
 import * as handlersModule from '@/integrations/discord/handlers';
 import * as presenceModule from '@/integrations/discord/presence';
 
-describe('createDiscordBot', () => {
+describe.concurrent('createDiscordBot', () => {
     let mockConfig: DiscordConfig;
     let mockOnMessage: (context: DiscordMessageContext) => Promise<string | null>;
     const spies: ReturnType<typeof spyOn>[] = [];
@@ -35,7 +35,7 @@ describe('createDiscordBot', () => {
         spies.length = 0;
     });
 
-    it('should return an object with start and stop methods', () => {
+    test('should return an object with start and stop methods', () => {
         const bot = createDiscordBot({
             config:    mockConfig,
             onMessage: mockOnMessage,
@@ -46,7 +46,7 @@ describe('createDiscordBot', () => {
         expect(typeof bot.stop).toBe('function');
     });
 
-    it('should create a Discord client with the config', () => {
+    test('should create a Discord client with the config', () => {
         const mockClient = {
             on:      mock(() => mockClient),
             login:   mock(async () => 'mock-token'),
@@ -65,7 +65,7 @@ describe('createDiscordBot', () => {
         expect(spy).toHaveBeenCalledWith(mockConfig);
     });
 
-    it('should register error handler on client', () => {
+    test('should register error handler on client', () => {
         const mockClient = {
             on:      mock(() => mockClient),
             login:   mock(async () => 'mock-token'),
@@ -83,7 +83,7 @@ describe('createDiscordBot', () => {
         expect(mockClient.on).toHaveBeenCalledWith('error', expect.any(Function));
     });
 
-    it('should register clientReady handler on client', () => {
+    test('should register clientReady handler on client', () => {
         const mockClient = {
             on:      mock(() => mockClient),
             login:   mock(async () => 'mock-token'),
@@ -101,7 +101,7 @@ describe('createDiscordBot', () => {
         expect(mockClient.on).toHaveBeenCalledWith('clientReady', expect.any(Function));
     });
 
-    it('should call client.login with bot token when start() is called', async () => {
+    test('should call client.login with bot token when start() is called', async () => {
         const mockClient = {
             on:      mock(() => mockClient),
             login:   mock(async () => 'mock-token'),
@@ -121,7 +121,7 @@ describe('createDiscordBot', () => {
         expect(mockClient.login).toHaveBeenCalledWith('test-bot-token');
     });
 
-    it('should call client.destroy when stop() is called', async () => {
+    test('should call client.destroy when stop() is called', async () => {
         const mockClient = {
             on:      mock(() => mockClient),
             login:   mock(async () => 'mock-token'),
@@ -141,7 +141,7 @@ describe('createDiscordBot', () => {
         expect(mockClient.destroy).toHaveBeenCalled();
     });
 
-    it('should propagate login errors to caller', async () => {
+    test('should propagate login errors to caller', async () => {
         const loginError = new Error('Invalid bot token');
         const mockClient = {
             on:      mock(() => mockClient),
@@ -160,7 +160,7 @@ describe('createDiscordBot', () => {
         expect(bot.start()).rejects.toThrow('Invalid bot token');
     });
 
-    it('should propagate destroy errors to caller', async () => {
+    test('should propagate destroy errors to caller', async () => {
         const destroyError = new Error('Destroy failed');
         const mockClient = {
             on:      mock(() => mockClient),
@@ -179,7 +179,7 @@ describe('createDiscordBot', () => {
         expect(bot.stop()).rejects.toThrow('Destroy failed');
     });
 
-    it('should allow multiple start/stop cycles', async () => {
+    test('should allow multiple start/stop cycles', async () => {
         const mockClient = {
             on:      mock(() => mockClient),
             login:   mock(async () => 'mock-token'),
@@ -203,7 +203,7 @@ describe('createDiscordBot', () => {
         expect(mockClient.destroy).toHaveBeenCalledTimes(2);
     });
 
-    it('should register messageCreate handler on ready event with correct options', () => {
+    test('should register messageCreate handler on ready event with correct options', () => {
         const mockClient = {
             on:      mock(() => mockClient),
             login:   mock(async () => 'mock-token'),
@@ -245,7 +245,7 @@ describe('createDiscordBot', () => {
         expect(mockClient.on).toHaveBeenCalledWith('messageCreate', expect.any(Function));
     });
 
-    it('should use createReadyHandler for logging ready event', () => {
+    test('should use createReadyHandler for logging ready event', () => {
         const mockClient = {
             on:      mock(() => mockClient),
             login:   mock(async () => 'mock-token'),
@@ -265,7 +265,7 @@ describe('createDiscordBot', () => {
         expect(readyHandlerSpy).toHaveBeenCalled();
     });
 
-    it('should use createErrorHandler for error events', () => {
+    test('should use createErrorHandler for error events', () => {
         const mockClient = {
             on:      mock(() => mockClient),
             login:   mock(async () => 'mock-token'),
@@ -286,7 +286,7 @@ describe('createDiscordBot', () => {
     });
 
     describe('Presence Manager Integration', () => {
-        it('should accept optional presence dependencies without errors', () => {
+        test('should accept optional presence dependencies without errors', () => {
             const mockClient = {
                 on:      mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
@@ -309,7 +309,7 @@ describe('createDiscordBot', () => {
             })).not.toThrow();
         });
 
-        it('should accept agent option without anthropicClient or identityContext', () => {
+        test('should accept agent option without anthropicClient or identityContext', () => {
             const mockClient = {
                 on:      mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
@@ -331,7 +331,7 @@ describe('createDiscordBot', () => {
         });
 
         describe('Presence manager creation conditions', () => {
-            it('should NOT create presence manager when identityContext is missing (without anthropicClient)', () => {
+            test('should NOT create presence manager when identityContext is missing (without anthropicClient)', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -367,7 +367,7 @@ describe('createDiscordBot', () => {
                 expect(presenceManagerSpy).not.toHaveBeenCalled();
             });
 
-            it('should NOT create presence manager when identityContext is missing', () => {
+            test('should NOT create presence manager when identityContext is missing', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -403,7 +403,7 @@ describe('createDiscordBot', () => {
                 expect(presenceManagerSpy).not.toHaveBeenCalled();
             });
 
-            it('should NOT create presence manager when config.presence is missing', () => {
+            test('should NOT create presence manager when config.presence is missing', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -430,7 +430,7 @@ describe('createDiscordBot', () => {
                 expect(presenceManagerSpy).not.toHaveBeenCalled();
             });
 
-            it('should create presence manager when ALL three deps are present', () => {
+            test('should create presence manager when ALL three deps are present', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -484,7 +484,7 @@ describe('createDiscordBot', () => {
         });
 
         describe('Presence manager lifecycle', () => {
-            it('should call presenceManager.start() after creation', () => {
+            test('should call presenceManager.start() after creation', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -533,7 +533,7 @@ describe('createDiscordBot', () => {
                 expect(mockPresenceManager.start).toHaveBeenCalled();
             });
 
-            it('should call presenceManager.stop() on bot stop() when manager exists', async () => {
+            test('should call presenceManager.stop() on bot stop() when manager exists', async () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -585,7 +585,7 @@ describe('createDiscordBot', () => {
                 expect(mockClient.destroy).toHaveBeenCalled();
             });
 
-            it('should NOT call presenceManager.stop() when manager does not exist', async () => {
+            test('should NOT call presenceManager.stop() when manager does not exist', async () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -608,7 +608,7 @@ describe('createDiscordBot', () => {
                 expect(mockClient.destroy).toHaveBeenCalled();
             });
 
-            it('should call presenceManager.stop() before client.destroy()', async () => {
+            test('should call presenceManager.stop() before client.destroy()', async () => {
                 const callOrder: string[] = [];
 
                 const mockClient = {
@@ -663,7 +663,7 @@ describe('createDiscordBot', () => {
         });
 
         describe('Status generator creation', () => {
-            it('should create active status generator with ActivityType.Custom', () => {
+            test('should create active status generator with ActivityType.Custom', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -715,7 +715,7 @@ describe('createDiscordBot', () => {
                 }));
             });
 
-            it('should create idle status generator with identityContext and getRecentContext', () => {
+            test('should create idle status generator with identityContext and getRecentContext', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -770,7 +770,7 @@ describe('createDiscordBot', () => {
                 }));
             });
 
-            it('should create presence manager with config.presence', () => {
+            test('should create presence manager with config.presence', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -823,7 +823,7 @@ describe('createDiscordBot', () => {
                 }));
             });
 
-            it('should provide getRecentContext that returns undefined when no messages tracked', async () => {
+            test('should provide getRecentContext that returns undefined when no messages tracked', async () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -878,7 +878,7 @@ describe('createDiscordBot', () => {
                 expect(result).toBeUndefined();
             });
 
-            it('should pass addRecentMessage callback to createMessageHandler', () => {
+            test('should pass addRecentMessage callback to createMessageHandler', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -933,7 +933,7 @@ describe('createDiscordBot', () => {
                 }));
             });
 
-            it('should provide getRecentContext that returns formatted messages when messages tracked via addRecentMessage', async () => {
+            test('should provide getRecentContext that returns formatted messages when messages tracked via addRecentMessage', async () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -1000,7 +1000,7 @@ describe('createDiscordBot', () => {
                 expect(result).toBe('First message\n• Second message');
             });
 
-            it('should limit recent messages to MAX_RECENT_MESSAGES (5)', async () => {
+            test('should limit recent messages to MAX_RECENT_MESSAGES (5)', async () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -1071,7 +1071,7 @@ describe('createDiscordBot', () => {
                 expect(result).toBe('Message 2\n• Message 3\n• Message 4\n• Message 5\n• Message 6');
             });
 
-            it('should truncate long messages to 200 characters', async () => {
+            test('should truncate long messages to 200 characters', async () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -1140,7 +1140,7 @@ describe('createDiscordBot', () => {
         });
 
         describe('Message handler with presence manager', () => {
-            it('should pass presenceManager to createMessageHandler when created', () => {
+            test('should pass presenceManager to createMessageHandler when created', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -1194,7 +1194,7 @@ describe('createDiscordBot', () => {
                 }));
             });
 
-            it('should pass agent to createMessageHandler when provided', () => {
+            test('should pass agent to createMessageHandler when provided', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -1252,7 +1252,7 @@ describe('createDiscordBot', () => {
                 }));
             });
 
-            it('should pass undefined presenceManager when not created', () => {
+            test('should pass undefined presenceManager when not created', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -1281,7 +1281,7 @@ describe('createDiscordBot', () => {
                 }));
             });
 
-            it('should pass undefined agent when not provided', () => {
+            test('should pass undefined agent when not provided', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -1313,7 +1313,7 @@ describe('createDiscordBot', () => {
         });
 
         describe('Dynamic status generator', () => {
-            it('should create dynamicStatusGenerator when identityContext is provided', () => {
+            test('should create dynamicStatusGenerator when identityContext is provided', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -1376,7 +1376,7 @@ describe('createDiscordBot', () => {
                 }));
             });
 
-            it('should NOT create dynamicStatusGenerator when identityContext is missing', () => {
+            test('should NOT create dynamicStatusGenerator when identityContext is missing', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -1410,7 +1410,7 @@ describe('createDiscordBot', () => {
                 }));
             });
 
-            it('should pass undefined dynamicStatusGenerator when identityContext missing but presence config exists', () => {
+            test('should pass undefined dynamicStatusGenerator when identityContext missing but presence config exists', () => {
                 const mockClient = {
                     on:      mock(() => mockClient),
                     login:   mock(async () => 'mock-token'),
@@ -1456,7 +1456,7 @@ describe('createDiscordBot', () => {
     });
 
     describe('Optional client parameter', () => {
-        it('should use provided client instead of creating a new one', () => {
+        test('should use provided client instead of creating a new one', () => {
             const mockProvidedClient = {
                 on:      mock(() => mockProvidedClient),
                 login:   mock(async () => 'mock-token'),
@@ -1477,7 +1477,7 @@ describe('createDiscordBot', () => {
             expect(createClientSpy).not.toHaveBeenCalled();
         });
 
-        it('should create new client when client is not provided', () => {
+        test('should create new client when client is not provided', () => {
             const mockClient = {
                 on:      mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
@@ -1498,7 +1498,7 @@ describe('createDiscordBot', () => {
             expect(createClientSpy).toHaveBeenCalledWith(mockConfig);
         });
 
-        it('should use the provided client for login', async () => {
+        test('should use the provided client for login', async () => {
             const mockProvidedClient = {
                 on:      mock(() => mockProvidedClient),
                 login:   mock(async () => 'mock-token'),
@@ -1520,7 +1520,7 @@ describe('createDiscordBot', () => {
     });
 
     describe('Handler registration', () => {
-        it('should register TWO clientReady handlers', () => {
+        test('should register TWO clientReady handlers', () => {
             const mockClient = {
                 on:      mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
@@ -1541,7 +1541,7 @@ describe('createDiscordBot', () => {
             expect(readyHandlerCalls.length).toBe(2);
         });
 
-        it('should register error handler first, then clientReady handlers', () => {
+        test('should register error handler first, then clientReady handlers', () => {
             const mockClient = {
                 on:      mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),

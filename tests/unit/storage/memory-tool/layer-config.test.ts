@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import _ from 'lodash';
 import {
     layerConfigSchema,
@@ -9,7 +9,7 @@ import type { LayerName } from '@/storage/memory-tool/types';
 
 describe('layerConfigSchema', () => {
     // First Zod parse has slight cold-start, allow 5ms
-    it('should validate config with all fields', () => {
+    test('should validate config with all fields', () => {
         const config = {
             maxVersions: 5,
             autoLoad:    'conditional' as const,
@@ -18,7 +18,7 @@ describe('layerConfigSchema', () => {
         expect(result.success).toBe(true);
     }, { timeout: process.env.CI ? 50 : 5 });
 
-    it('should apply default maxVersions of 1', () => {
+    test('should apply default maxVersions of 1', () => {
         const config = {
             autoLoad: false,
         };
@@ -29,7 +29,7 @@ describe('layerConfigSchema', () => {
         }
     });
 
-    it('should apply default autoLoad of false', () => {
+    test('should apply default autoLoad of false', () => {
         const config = {
             maxVersions: 3,
         };
@@ -40,7 +40,7 @@ describe('layerConfigSchema', () => {
         }
     });
 
-    it('should accept boolean autoLoad', () => {
+    test('should accept boolean autoLoad', () => {
         const configTrue = {
             maxVersions: 3,
             autoLoad:    true,
@@ -56,7 +56,7 @@ describe('layerConfigSchema', () => {
         expect(resultFalse.success).toBe(true);
     });
 
-    it('should accept "conditional" for autoLoad', () => {
+    test('should accept "conditional" for autoLoad', () => {
         const config = {
             maxVersions: 3,
             autoLoad:    'conditional' as const,
@@ -65,7 +65,7 @@ describe('layerConfigSchema', () => {
         expect(result.success).toBe(true);
     });
 
-    it('should reject invalid string for autoLoad', () => {
+    test('should reject invalid string for autoLoad', () => {
         const config = {
             maxVersions: 3,
             autoLoad:    'always',
@@ -74,7 +74,7 @@ describe('layerConfigSchema', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should reject negative maxVersions', () => {
+    test('should reject negative maxVersions', () => {
         const config = {
             maxVersions: -1,
             autoLoad:    false,
@@ -83,7 +83,7 @@ describe('layerConfigSchema', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should reject zero maxVersions', () => {
+    test('should reject zero maxVersions', () => {
         const config = {
             maxVersions: 0,
             autoLoad:    false,
@@ -92,7 +92,7 @@ describe('layerConfigSchema', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should reject non-integer maxVersions', () => {
+    test('should reject non-integer maxVersions', () => {
         const config = {
             maxVersions: 3.5,
             autoLoad:    false,
@@ -102,33 +102,33 @@ describe('layerConfigSchema', () => {
     });
 });
 
-describe('LAYER_CONFIGS', () => {
-    it('should have entries for all 3 layers', () => {
+describe.concurrent('LAYER_CONFIGS', () => {
+    test('should have entries for all 3 layers', () => {
         expect(LAYER_CONFIGS).toHaveProperty('identity');
         expect(LAYER_CONFIGS).toHaveProperty('state');
         expect(LAYER_CONFIGS).toHaveProperty('events');
         expect(_.keys(LAYER_CONFIGS)).toHaveLength(3);
     });
 
-    it('should have identity config with correct values', () => {
+    test('should have identity config with correct values', () => {
         const config = getLayerConfig('identity' as LayerName);
         expect(config.maxVersions).toBe(10);
         expect(config.autoLoad).toBe(true);
     });
 
-    it('should have state config with correct values', () => {
+    test('should have state config with correct values', () => {
         const config = getLayerConfig('state' as LayerName);
         expect(config.maxVersions).toBe(5);
         expect(config.autoLoad).toBe('conditional');
     });
 
-    it('should have events config with correct values', () => {
+    test('should have events config with correct values', () => {
         const config = getLayerConfig('events' as LayerName);
         expect(config.maxVersions).toBe(1);
         expect(config.autoLoad).toBe(false);
     });
 
-    it('should have all configs validate against schema', () => {
+    test('should have all configs validate against schema', () => {
         for(const layer of ['identity', 'state', 'events'] as const) {
             const config = getLayerConfig(layer as LayerName);
             const result = layerConfigSchema.safeParse(config);
@@ -137,26 +137,26 @@ describe('LAYER_CONFIGS', () => {
     });
 });
 
-describe('getLayerConfig', () => {
-    it('should return identity config with correct values', () => {
+describe.concurrent('getLayerConfig', () => {
+    test('should return identity config with correct values', () => {
         const config = getLayerConfig('identity' as LayerName);
         expect(config.maxVersions).toBe(10);
         expect(config.autoLoad).toBe(true);
     });
 
-    it('should return state config with correct values', () => {
+    test('should return state config with correct values', () => {
         const config = getLayerConfig('state' as LayerName);
         expect(config.maxVersions).toBe(5);
         expect(config.autoLoad).toBe('conditional');
     });
 
-    it('should return events config with correct values', () => {
+    test('should return events config with correct values', () => {
         const config = getLayerConfig('events' as LayerName);
         expect(config.maxVersions).toBe(1);
         expect(config.autoLoad).toBe(false);
     });
 
-    it('should return the same reference for repeated calls', () => {
+    test('should return the same reference for repeated calls', () => {
         const config1 = getLayerConfig('identity' as LayerName);
         const config2 = getLayerConfig('identity' as LayerName);
         expect(config1).toBe(config2);

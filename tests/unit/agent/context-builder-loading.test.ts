@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import _ from 'lodash';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { mockLogger } from '../../setup';
@@ -7,7 +7,7 @@ import { createContextBuilder } from '../../../src/agent/context-builder';
 import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import { createMemoryPath } from '../../../src/storage/memory-tool/types';
 
-describe('createContextBuilder loading methods', () => {
+describe.concurrent('createContextBuilder loading methods', () => {
     let mockDocClient: DynamoDBDocumentClient;
     let backend: MemoryToolBackend;
 
@@ -23,7 +23,7 @@ describe('createContextBuilder loading methods', () => {
     });
 
     describe('recordAccess', () => {
-        it('should update accessCount for a single path', async () => {
+        test('should update accessCount for a single path', async () => {
             const path = createMemoryPath('/state/task.md');
 
             backend.get = mock(async () => ({
@@ -65,7 +65,7 @@ describe('createContextBuilder loading methods', () => {
             );
         });
 
-        it('should initialize accessCount to 1 if not present', async () => {
+        test('should initialize accessCount to 1 if not present', async () => {
             const path = createMemoryPath('/state/new.md');
 
             backend.get = mock(async () => ({
@@ -107,7 +107,7 @@ describe('createContextBuilder loading methods', () => {
             );
         });
 
-        it('should update multiple paths', async () => {
+        test('should update multiple paths', async () => {
             const path1 = createMemoryPath('/state/task1.md');
             const path2 = createMemoryPath('/state/task2.md');
 
@@ -139,7 +139,7 @@ describe('createContextBuilder loading methods', () => {
             expect(backend.update).toHaveBeenCalledTimes(2);
         });
 
-        it('should handle empty path array', async () => {
+        test('should handle empty path array', async () => {
             backend.update = mock(async () => {
                 throw new Error('Should not be called');
             });
@@ -151,7 +151,7 @@ describe('createContextBuilder loading methods', () => {
             expect(backend.update).not.toHaveBeenCalled();
         });
 
-        it('should skip paths that do not exist', async () => {
+        test('should skip paths that do not exist', async () => {
             const path = createMemoryPath('/state/nonexistent.md');
 
             backend.get = mock(async () => undefined);
@@ -166,7 +166,7 @@ describe('createContextBuilder loading methods', () => {
             expect(backend.update).not.toHaveBeenCalled();
         });
 
-        it('should handle metadata.accessCount being non-numeric', async () => {
+        test('should handle metadata.accessCount being non-numeric', async () => {
             const path = createMemoryPath('/state/task.md');
 
             backend.get = mock(async () => ({
@@ -209,7 +209,7 @@ describe('createContextBuilder loading methods', () => {
             );
         });
 
-        it('should handle item with metadata that has undefined accessCount (optional chaining test)', async () => {
+        test('should handle item with metadata that has undefined accessCount (optional chaining test)', async () => {
             const path = createMemoryPath('/state/task.md');
 
             // Metadata exists but doesn't have accessCount property
@@ -256,7 +256,7 @@ describe('createContextBuilder loading methods', () => {
     });
 
     describe('loadCoreIdentity', () => {
-        it('should return empty string when no identity items exist', async () => {
+        test('should return empty string when no identity items exist', async () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
@@ -265,7 +265,7 @@ describe('createContextBuilder loading methods', () => {
             expect(identity).toBe('');
         });
 
-        it('should join identity items with double newlines', async () => {
+        test('should join identity items with double newlines', async () => {
             backend.listByLayer = mock(async () => ({
                 items: [
                     {
@@ -298,7 +298,7 @@ describe('createContextBuilder loading methods', () => {
             expect(identity).not.toBe('First identitySecond identity');
         });
 
-        it('should truncate content with ellipsis when exceeding maxIdentityChars', async () => {
+        test('should truncate content with ellipsis when exceeding maxIdentityChars', async () => {
             const longContent = _.repeat('x', 3000);
 
             backend.listByLayer = mock(async () => ({
@@ -329,7 +329,7 @@ describe('createContextBuilder loading methods', () => {
             expect(_.slice(identity, -3).join('')).toBe('...');
         });
 
-        it('should use exactly slice(0, maxIdentityChars - 3) for truncation', async () => {
+        test('should use exactly slice(0, maxIdentityChars - 3) for truncation', async () => {
             const content = _.repeat('y', 500);
 
             backend.listByLayer = mock(async () => ({
@@ -360,7 +360,7 @@ describe('createContextBuilder loading methods', () => {
             expect(contentPart).toBe(_.repeat('y', 397));
         });
 
-        it('should NOT truncate when content equals maxIdentityChars exactly', async () => {
+        test('should NOT truncate when content equals maxIdentityChars exactly', async () => {
             const content = _.repeat('z', 400);
 
             backend.listByLayer = mock(async () => ({
@@ -389,7 +389,7 @@ describe('createContextBuilder loading methods', () => {
             expect(identity).not.toContain('...');
         });
 
-        it('should NOT truncate when content is less than maxIdentityChars', async () => {
+        test('should NOT truncate when content is less than maxIdentityChars', async () => {
             const content = _.repeat('w', 300);
 
             backend.listByLayer = mock(async () => ({
@@ -418,7 +418,7 @@ describe('createContextBuilder loading methods', () => {
             expect(identity).not.toContain('...');
         });
 
-        it('should handle single character over limit (boundary test)', async () => {
+        test('should handle single character over limit (boundary test)', async () => {
             const content = _.repeat('a', 401);
 
             backend.listByLayer = mock(async () => ({
@@ -447,7 +447,7 @@ describe('createContextBuilder loading methods', () => {
             expect(_.endsWith(identity, '...')).toBe(true);
         });
 
-        it('should extract content from each item correctly', async () => {
+        test('should extract content from each item correctly', async () => {
             backend.listByLayer = mock(async () => ({
                 items: [
                     {
@@ -479,7 +479,7 @@ describe('createContextBuilder loading methods', () => {
             expect(identity).toContain('Content B');
         });
 
-        it('should log when loading core identity starts', async () => {
+        test('should log when loading core identity starts', async () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
@@ -492,7 +492,7 @@ describe('createContextBuilder loading methods', () => {
             );
         });
 
-        it('should log identityLength: 0 when no identity items exist', async () => {
+        test('should log identityLength: 0 when no identity items exist', async () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
@@ -506,7 +506,7 @@ describe('createContextBuilder loading methods', () => {
             );
         });
 
-        it('should log identityLength matching result length when items exist', async () => {
+        test('should log identityLength matching result length when items exist', async () => {
             const content = 'Test identity content';
 
             backend.listByLayer = mock(async () => ({
@@ -536,7 +536,7 @@ describe('createContextBuilder loading methods', () => {
     });
 
     describe('loadRecentContext', () => {
-        it('should load recent context for a specific user', async () => {
+        test('should load recent context for a specific user', async () => {
             const userId = 'user123';
             const now = new Date('2025-01-15T12:00:00.000Z');
 
@@ -561,7 +561,7 @@ describe('createContextBuilder loading methods', () => {
             expect(context).toEqual(['- /state/recent1.md (2w ago): Recent memory 1']);
         });
 
-        it('should use default limit of 3', async () => {
+        test('should use default limit of 3', async () => {
             backend.searchByTag = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
@@ -570,7 +570,7 @@ describe('createContextBuilder loading methods', () => {
             expect(backend.searchByTag).toHaveBeenCalledWith('user:user456', undefined, { limit: 3 });
         });
 
-        it('should use custom limit when provided', async () => {
+        test('should use custom limit when provided', async () => {
             backend.searchByTag = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
@@ -579,7 +579,7 @@ describe('createContextBuilder loading methods', () => {
             expect(backend.searchByTag).toHaveBeenCalledWith('user:user789', undefined, { limit: 10 });
         });
 
-        it('should format user tag correctly in search', async () => {
+        test('should format user tag correctly in search', async () => {
             backend.searchByTag = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
@@ -589,7 +589,7 @@ describe('createContextBuilder loading methods', () => {
             expect(backend.searchByTag).toHaveBeenCalledWith('user:test-user', undefined, { limit: 3 });
         });
 
-        it('should extract content from all returned items', async () => {
+        test('should extract content from all returned items', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
             backend.searchByTag = mock(async () => ({
@@ -635,7 +635,7 @@ describe('createContextBuilder loading methods', () => {
             expect(context.length).toBe(3);
         });
 
-        it('should return empty array when no items found', async () => {
+        test('should return empty array when no items found', async () => {
             backend.searchByTag = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
@@ -644,7 +644,7 @@ describe('createContextBuilder loading methods', () => {
             expect(context).toEqual([]);
         });
 
-        it('should map each item to formatted string with path and content', async () => {
+        test('should map each item to formatted string with path and content', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
             backend.searchByTag = mock(async () => ({
@@ -668,7 +668,7 @@ describe('createContextBuilder loading methods', () => {
             expect(context).toEqual(['- /state/a.md (2w ago): Content A']);
         });
 
-        it('should log when loading user context starts', async () => {
+        test('should log when loading user context starts', async () => {
             const userId = 'test-user-log';
 
             backend.searchByTag = mock(async () => ({ items: [] }));
@@ -684,7 +684,7 @@ describe('createContextBuilder loading methods', () => {
             );
         });
 
-        it('should log userId and memoryCount when user context loaded', async () => {
+        test('should log userId and memoryCount when user context loaded', async () => {
             const userId = 'test-user-loaded';
 
             backend.searchByTag = mock(async () => ({
@@ -724,7 +724,7 @@ describe('createContextBuilder loading methods', () => {
     });
 
     describe('loadRecentEvents', () => {
-        it('should call searchByTimeRange with 14-day window', async () => {
+        test('should call searchByTimeRange with 14-day window', async () => {
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
 
@@ -751,7 +751,7 @@ describe('createContextBuilder loading methods', () => {
             expect(endTime.getTime()).toBeLessThanOrEqual(afterCall + 1000); // Allow 1s tolerance
         });
 
-        it('should verify 14-day calculation uses multiplication not division', async () => {
+        test('should verify 14-day calculation uses multiplication not division', async () => {
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
 
@@ -776,7 +776,7 @@ describe('createContextBuilder loading methods', () => {
             expect(diffMs).toBeLessThan(expectedMs + 1000);
         });
 
-        it('should pass limit to backend with default value of 50', async () => {
+        test('should pass limit to backend with default value of 50', async () => {
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
 
@@ -788,7 +788,7 @@ describe('createContextBuilder loading methods', () => {
             expect(optionsArg).toEqual({ limit: 50 });
         });
 
-        it('should pass custom limit to backend', async () => {
+        test('should pass custom limit to backend', async () => {
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
 
@@ -799,7 +799,7 @@ describe('createContextBuilder loading methods', () => {
             expect(optionsArg).toEqual({ limit: 10 });
         });
 
-        it('should pass events layer to backend', async () => {
+        test('should pass events layer to backend', async () => {
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
 
@@ -811,7 +811,7 @@ describe('createContextBuilder loading methods', () => {
             expect(layerArg).toBe('events');
         });
 
-        it('should extract content from results and format with path and age', async () => {
+        test('should extract content from results and format with path and age', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
             backend.searchByTimeRange = mock(async () => [
@@ -844,7 +844,7 @@ describe('createContextBuilder loading methods', () => {
             ]);
         });
 
-        it('should return empty array when no events found', async () => {
+        test('should return empty array when no events found', async () => {
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
 
@@ -854,7 +854,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toEqual([]);
         });
 
-        it('should format as string not object', async () => {
+        test('should format as string not object', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
             backend.searchByTimeRange = mock(async () => [
@@ -879,7 +879,7 @@ describe('createContextBuilder loading methods', () => {
             expect(typeof result[0]).toBe('string');
         });
 
-        it('should log when loading recent events starts', async () => {
+        test('should log when loading recent events starts', async () => {
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
 
@@ -893,7 +893,7 @@ describe('createContextBuilder loading methods', () => {
             );
         });
 
-        it('should log eventCount when recent events loaded', async () => {
+        test('should log eventCount when recent events loaded', async () => {
             backend.searchByTimeRange = mock(async () => [
                 {
                     path:        createMemoryPath('/events/event1.md'),
@@ -935,7 +935,7 @@ describe('createContextBuilder loading methods', () => {
             );
         });
 
-        it('should format events with path, age, and content preview', async () => {
+        test('should format events with path, age, and content preview', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
             backend.searchByTimeRange = mock(async () => [
@@ -957,7 +957,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result[0]).toBe('- /events/event1.md (2h ago): Event content here');
         });
 
-        it('should truncate event content at 100 chars with ellipsis', async () => {
+        test('should truncate event content at 100 chars with ellipsis', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
             const longContent = _.repeat('x', 150);
 
@@ -982,7 +982,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result[0]).not.toContain(_.repeat('x', 101));
         });
 
-        it('should not truncate event content at exactly 100 chars', async () => {
+        test('should not truncate event content at exactly 100 chars', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
             const exactContent = _.repeat('y', 100);
 
@@ -1006,7 +1006,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result[0]).not.toContain('...');
         });
 
-        it('should fallback to listByLayer when no events in 14-day window', async () => {
+        test('should fallback to listByLayer when no events in 14-day window', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
             // searchByTimeRange returns empty (no events in 14 days)
@@ -1040,7 +1040,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toHaveLength(2);
         });
 
-        it('should not add warning note when events found within 14-day window', async () => {
+        test('should not add warning note when events found within 14-day window', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
             backend.searchByTimeRange = mock(async () => [
@@ -1064,7 +1064,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toHaveLength(1);
         });
 
-        it('should not call listByLayer when events found within 14-day window', async () => {
+        test('should not call listByLayer when events found within 14-day window', async () => {
             backend.searchByTimeRange = mock(async () => [
                 {
                     path:        createMemoryPath('/events/recent.md'),
@@ -1086,7 +1086,7 @@ describe('createContextBuilder loading methods', () => {
             expect(backend.listByLayer).not.toHaveBeenCalled();
         });
 
-        it('should not add warning note when fallback also returns empty', async () => {
+        test('should not add warning note when fallback also returns empty', async () => {
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] }));
 
@@ -1097,7 +1097,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toEqual([]);
         });
 
-        it('should pass limit to listByLayer in fallback', async () => {
+        test('should pass limit to listByLayer in fallback', async () => {
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] }));
 
@@ -1107,7 +1107,7 @@ describe('createContextBuilder loading methods', () => {
             expect(backend.listByLayer).toHaveBeenCalledWith('events', { limit: 25 });
         });
 
-        it('should sort events by updatedAt ascending (oldest first, newest last)', async () => {
+        test('should sort events by updatedAt ascending (oldest first, newest last)', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
             // Events returned from backend in random order (not sorted)
@@ -1151,7 +1151,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result[2]).toBe('- /events/newest.md (1h ago): Newest event');
         });
 
-        it('should sort fallback results by updatedAt ascending', async () => {
+        test('should sort fallback results by updatedAt ascending', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
             // Primary search returns empty (triggers fallback)
@@ -1193,7 +1193,7 @@ describe('createContextBuilder loading methods', () => {
     });
 
     describe('loadRecentContext - new format', () => {
-        it('should format context with path, age, and content preview', async () => {
+        test('should format context with path, age, and content preview', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
             backend.searchByTag = mock(async () => ({
@@ -1217,7 +1217,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result[0]).toBe('- /state/task.md (2h ago): Working on feature');
         });
 
-        it('should truncate context content at 100 chars with ellipsis', async () => {
+        test('should truncate context content at 100 chars with ellipsis', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
             const longContent = _.repeat('a', 150);
 
@@ -1243,7 +1243,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result[0]).not.toContain(_.repeat('a', 101));
         });
 
-        it('should not truncate context content at exactly 100 chars', async () => {
+        test('should not truncate context content at exactly 100 chars', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
             const exactContent = _.repeat('b', 100);
 
@@ -1269,7 +1269,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result[0]).not.toContain('...');
         });
 
-        it('should format multiple context items correctly', async () => {
+        test('should format multiple context items correctly', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
             backend.searchByTag = mock(async () => ({
@@ -1303,7 +1303,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result[1]).toBe('- /state/task2.md (1d ago): Second task');
         });
 
-        it('should use current time when now parameter not provided', async () => {
+        test('should use current time when now parameter not provided', async () => {
             backend.searchByTag = mock(async () => ({
                 items: [
                     {
@@ -1328,7 +1328,7 @@ describe('createContextBuilder loading methods', () => {
     });
 
     describe('loadUserTimezone', () => {
-        it('should return timezone content when found', async () => {
+        test('should return timezone content when found', async () => {
             const userId = 'user123';
 
             backend.get = mock(async () => ({
@@ -1347,7 +1347,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toBe('America/Los_Angeles');
         });
 
-        it('should return undefined when timezone not found', async () => {
+        test('should return undefined when timezone not found', async () => {
             const userId = 'user-no-tz';
 
             backend.get = mock(async () => undefined);
@@ -1358,7 +1358,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toBeUndefined();
         });
 
-        it('should construct correct path from userId', async () => {
+        test('should construct correct path from userId', async () => {
             const userId = 'test-user-path';
 
             backend.get = mock(async () => undefined);
@@ -1369,7 +1369,7 @@ describe('createContextBuilder loading methods', () => {
             expect(backend.get).toHaveBeenCalledWith(createMemoryPath('/users/test-user-path/timezone'));
         });
 
-        it('should log debug message when timezone not found', async () => {
+        test('should log debug message when timezone not found', async () => {
             const userId = 'user-log-test';
 
             backend.get = mock(async () => undefined);
@@ -1385,7 +1385,7 @@ describe('createContextBuilder loading methods', () => {
             );
         });
 
-        it('should not log "not found" when timezone is found', async () => {
+        test('should not log "not found" when timezone is found', async () => {
             const userId = 'user-found';
 
             backend.get = mock(async () => ({
@@ -1413,7 +1413,7 @@ describe('createContextBuilder loading methods', () => {
             expect(notFoundCalls).toHaveLength(0);
         });
 
-        it('should handle different timezone formats', async () => {
+        test('should handle different timezone formats', async () => {
             const userId = 'user-tz-format';
 
             backend.get = mock(async () => ({

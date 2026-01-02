@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn as _spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn as _spyOn } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import { assign as _assign, isError as _isError, some as _some, filter as _filter, startsWith as _startsWith, size as _size } from 'lodash';
 import {
@@ -13,7 +13,7 @@ import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import { ItemNotFoundError as _ItemNotFoundError, ConflictError as _ConflictError, ValidationError as _ValidationError } from '@/storage/errors';
 import type { MemoryToolItem, MemoryPath, ContentType, LayerName } from '@/storage/memory-tool/types';
 
-describe('MemoryToolBackend - Search Operations', () => {
+describe.concurrent('MemoryToolBackend - Search Operations', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let backend: MemoryToolBackend;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Spy type is complex
@@ -37,7 +37,7 @@ describe('MemoryToolBackend - Search Operations', () => {
     });
 
     describe('searchByTag', () => {
-        it('should return items matching tag', async () => {
+        test('should return items matching tag', async () => {
             const items: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/identity',
@@ -65,7 +65,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result.items[0].tags).toEqual(['important']);
         });
 
-        it('should filter by layer when provided', async () => {
+        test('should filter by layer when provided', async () => {
             const items: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/state',
@@ -96,7 +96,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result.items).toHaveLength(1);
         });
 
-        it('should return empty list when no matches', async () => {
+        test('should return empty list when no matches', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const result = await backend.searchByTag('nonexistent');
@@ -104,7 +104,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result.items).toEqual([]);
         });
 
-        it('should support pagination with cursor', async () => {
+        test('should support pagination with cursor', async () => {
             const exclusiveStartKey = { GSI2PK: 'TAG#tag1', GSI2SK: 'LAYER#identity#UPDATED#2024-01-01T00:00:00.000Z' };
             const cursor = Buffer.from(JSON.stringify(exclusiveStartKey)).toString('base64');
 
@@ -116,7 +116,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(calls[0].args[0].input.ExclusiveStartKey).toEqual(exclusiveStartKey);
         });
 
-        it('should support limit option', async () => {
+        test('should support limit option', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.searchByTag('tag1', undefined, { limit: 5 });
@@ -125,7 +125,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(calls[0].args[0].input.Limit).toBe(5);
         });
 
-        it('should return nextCursor when more results available', async () => {
+        test('should return nextCursor when more results available', async () => {
             ddbMock.on(QueryCommand).resolves({
                 Items:            [],
                 LastEvaluatedKey: { GSI2PK: 'TAG#tag1', GSI2SK: 'LAYER#identity#UPDATED#2024-01-01T00:00:00.000Z' },
@@ -136,7 +136,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result.nextCursor).toBeDefined();
         });
 
-        it('should strip DynamoDB keys from results', async () => {
+        test('should strip DynamoDB keys from results', async () => {
             const items: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/identity',
@@ -163,7 +163,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result.items[0]).not.toHaveProperty('GSI2PK');
         });
 
-        it('should query GSI2 with correct parameters', async () => {
+        test('should query GSI2 with correct parameters', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.searchByTag('mytag');
@@ -175,7 +175,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(queryInput.ExpressionAttributeValues?.[':gsi2pk']).toBe('TAG#mytag');
         });
 
-        it('should not include layer filter in KeyConditionExpression when layer not provided', async () => {
+        test('should not include layer filter in KeyConditionExpression when layer not provided', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.searchByTag('mytag');
@@ -187,7 +187,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(queryInput.ExpressionAttributeValues).not.toHaveProperty(':layerPrefix');
         });
 
-        it('should include layer filter in KeyConditionExpression when layer provided', async () => {
+        test('should include layer filter in KeyConditionExpression when layer provided', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.searchByTag('mytag', 'identity' as LayerName);
@@ -201,7 +201,7 @@ describe('MemoryToolBackend - Search Operations', () => {
     });
 
     describe('listByLayer', () => {
-        it('should list all identity items', async () => {
+        test('should list all identity items', async () => {
             const items: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/identity',
@@ -225,7 +225,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result.items[0].path).toBe('/identity/core-values.md' as MemoryPath);
         });
 
-        it('should list all state items', async () => {
+        test('should list all state items', async () => {
             const items: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/state',
@@ -249,7 +249,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result.items[0].path).toBe('/state/context.md' as MemoryPath);
         });
 
-        it('should list all events items', async () => {
+        test('should list all events items', async () => {
             const items: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/events',
@@ -273,7 +273,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result.items[0].path).toBe('/events/meeting.md' as MemoryPath);
         });
 
-        it('should return empty list for empty layer', async () => {
+        test('should return empty list for empty layer', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const result = await backend.listByLayer('identity' as LayerName);
@@ -281,7 +281,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result.items).toEqual([]);
         });
 
-        it('should support pagination', async () => {
+        test('should support pagination', async () => {
             const exclusiveStartKey = { PK: 'DIR#/identity', SK: 'FILE#file.md' };
             const cursor = Buffer.from(JSON.stringify(exclusiveStartKey)).toString('base64');
 
@@ -293,7 +293,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(calls[calls.length - 1].args[0].input.ExclusiveStartKey).toEqual(exclusiveStartKey);
         });
 
-        it('should support limit option', async () => {
+        test('should support limit option', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.listByLayer('state' as LayerName, { limit: 10 });
@@ -302,7 +302,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(calls[calls.length - 1].args[0].input.Limit).toBe(10);
         });
 
-        it('should return nextCursor when more results available', async () => {
+        test('should return nextCursor when more results available', async () => {
             ddbMock.on(QueryCommand).resolves({
                 Items:            [],
                 LastEvaluatedKey: { PK: 'DIR#/identity', SK: 'FILE#file.md' },
@@ -313,7 +313,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result.nextCursor).toBeDefined();
         });
 
-        it('should query with correct directory path', async () => {
+        test('should query with correct directory path', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.listByLayer('identity' as LayerName);
@@ -325,7 +325,7 @@ describe('MemoryToolBackend - Search Operations', () => {
     });
 
     describe('searchByTimeRange', () => {
-        it('should return items created within range', async () => {
+        test('should return items created within range', async () => {
             const items: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/identity',
@@ -366,7 +366,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result[1].path).toBe('/state/file2.md' as MemoryPath);
         });
 
-        it('should filter by layer when provided', async () => {
+        test('should filter by layer when provided', async () => {
             const items: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/identity',
@@ -394,7 +394,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result[0].path).toBe('/identity/file1.md' as MemoryPath);
         });
 
-        it('should return empty array when no matches', async () => {
+        test('should return empty array when no matches', async () => {
             ddbMock.on(ScanCommand).resolves({ Items: [] });
 
             const result = await backend.searchByTimeRange(
@@ -405,7 +405,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result).toEqual([]);
         });
 
-        it('should filter by updatedAt as well as createdAt', async () => {
+        test('should filter by updatedAt as well as createdAt', async () => {
             const items: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/identity',
@@ -431,7 +431,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result).toHaveLength(1);
         });
 
-        it('should support limit option', async () => {
+        test('should support limit option', async () => {
             const items: MemoryToolItem[] = Array.from({ length: 10 }, (_, i) => ({
                 PK:          'DIR#/identity',
                 SK:          `FILE#file${i}.md`,
@@ -457,7 +457,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result).toHaveLength(5);
         });
 
-        it('should strip DynamoDB keys from results', async () => {
+        test('should strip DynamoDB keys from results', async () => {
             const items: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/identity',
@@ -484,7 +484,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result[0]).not.toHaveProperty('GSI1PK');
         });
 
-        it('should not include layer filter when layer not provided', async () => {
+        test('should not include layer filter when layer not provided', async () => {
             ddbMock.on(ScanCommand).resolves({ Items: [] });
 
             await backend.searchByTimeRange(
@@ -502,7 +502,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             });
         });
 
-        it('should include layer filter when layer provided', async () => {
+        test('should include layer filter when layer provided', async () => {
             ddbMock.on(ScanCommand).resolves({ Items: [] });
 
             await backend.searchByTimeRange(
@@ -522,7 +522,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             });
         });
 
-        it('should not apply limit when result length equals limit', async () => {
+        test('should not apply limit when result length equals limit', async () => {
             const items: MemoryToolItem[] = Array.from({ length: 5 }, (_, i) => ({
                 PK:          'DIR#/identity',
                 SK:          `FILE#file${i}.md`,
@@ -548,7 +548,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result).toHaveLength(5);
         });
 
-        it('should not apply limit when no limit option provided', async () => {
+        test('should not apply limit when no limit option provided', async () => {
             const items: MemoryToolItem[] = Array.from({ length: 10 }, (_, i) => ({
                 PK:          'DIR#/identity',
                 SK:          `FILE#file${i}.md`,
@@ -572,7 +572,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result).toHaveLength(10);
         });
 
-        it('should sort results by updatedAt ascending (oldest first, newest last)', async () => {
+        test('should sort results by updatedAt ascending (oldest first, newest last)', async () => {
             // Items returned from DynamoDB in random order
             const items: MemoryToolItem[] = [
                 {
@@ -629,7 +629,7 @@ describe('MemoryToolBackend - Search Operations', () => {
             expect(result[2].path).toBe('/events/newest.md' as MemoryPath);
         });
 
-        it('should sort by updatedAt before applying limit (returns newest N items)', async () => {
+        test('should sort by updatedAt before applying limit (returns newest N items)', async () => {
             const items: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/events',

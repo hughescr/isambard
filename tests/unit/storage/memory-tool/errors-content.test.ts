@@ -1,4 +1,4 @@
-import { describe, expect, it, spyOn } from 'bun:test';
+import { describe, expect, test, spyOn } from 'bun:test';
 import {
     MemoryToolError,
     PathNotFoundError,
@@ -11,63 +11,63 @@ import {
 } from '../../../../src/storage/memory-tool/errors';
 
 describe('Memory Tool Content Errors', () => {
-    describe('TextNotFoundError', () => {
+    describe.concurrent('TextNotFoundError', () => {
         const testPath = '/memories/search/location';
         const testText = 'search query';
 
-        it('should be an instance of TextNotFoundError', () => {
+        test('should be an instance of TextNotFoundError', () => {
             const error = new TextNotFoundError(testPath, testText);
             expect(error).toBeInstanceOf(TextNotFoundError);
         });
 
-        it('should have correct name', () => {
+        test('should have correct name', () => {
             const error = new TextNotFoundError(testPath, testText);
             expect(error.name).toBe('TextNotFoundError');
         });
 
-        it('should have correct message format', () => {
+        test('should have correct message format', () => {
             const error = new TextNotFoundError(testPath, testText);
             expect(error.message).toBe(`Text "${testText}" not found in memory at ${testPath}`);
         });
 
-        it('should have correct code', () => {
+        test('should have correct code', () => {
             const error = new TextNotFoundError(testPath, testText);
             expect(error.code).toBe('TEXT_NOT_FOUND');
         });
 
-        it('should store path property', () => {
+        test('should store path property', () => {
             const error = new TextNotFoundError(testPath, testText);
             expect(error.path).toBe(testPath);
         });
 
-        it('should store text property', () => {
+        test('should store text property', () => {
             const error = new TextNotFoundError(testPath, testText);
             expect(error.text).toBe(testText);
         });
     });
 
-    describe('ContentTooLargeError', () => {
+    describe.concurrent('ContentTooLargeError', () => {
         const testPath = '/memories/large/content';
         const testSize = 400000;
 
-        it('should be an instance of ContentTooLargeError', () => {
+        test('should be an instance of ContentTooLargeError', () => {
             const error = new ContentTooLargeError(testPath, testSize);
             expect(error).toBeInstanceOf(ContentTooLargeError);
         });
 
-        it('should have correct name', () => {
+        test('should have correct name', () => {
             const error = new ContentTooLargeError(testPath, testSize);
             expect(error.name).toBe('ContentTooLargeError');
         });
 
-        it('should have correct message format with default max size', () => {
+        test('should have correct message format with default max size', () => {
             const error = new ContentTooLargeError(testPath, testSize);
             expect(error.message).toBe(
                 `Memory content at ${testPath} is too large: ${testSize} bytes (max: 350000 bytes)`
             );
         });
 
-        it('should have correct message format with custom max size', () => {
+        test('should have correct message format with custom max size', () => {
             const customMax = 300000;
             const error = new ContentTooLargeError(testPath, testSize, customMax);
             expect(error.message).toBe(
@@ -75,76 +75,76 @@ describe('Memory Tool Content Errors', () => {
             );
         });
 
-        it('should have correct code', () => {
+        test('should have correct code', () => {
             const error = new ContentTooLargeError(testPath, testSize);
             expect(error.code).toBe('CONTENT_TOO_LARGE');
         });
 
-        it('should store path property', () => {
+        test('should store path property', () => {
             const error = new ContentTooLargeError(testPath, testSize);
             expect(error.path).toBe(testPath);
         });
 
-        it('should store size property', () => {
+        test('should store size property', () => {
             const error = new ContentTooLargeError(testPath, testSize);
             expect(error.size).toBe(testSize);
         });
 
-        it('should store maxSize property with default value', () => {
+        test('should store maxSize property with default value', () => {
             const error = new ContentTooLargeError(testPath, testSize);
             expect(error.maxSize).toBe(350000);
         });
 
-        it('should store maxSize property with custom value', () => {
+        test('should store maxSize property with custom value', () => {
             const customMax = 300000;
             const error = new ContentTooLargeError(testPath, testSize, customMax);
             expect(error.maxSize).toBe(customMax);
         });
     });
 
-    describe('TextNotUniqueError', () => {
+    describe.concurrent('TextNotUniqueError', () => {
         const testPath = '/memories/search/location';
         const testText = 'duplicate text';
         const testCount = 3;
 
-        it('should be an instance of TextNotUniqueError', () => {
+        test('should be an instance of TextNotUniqueError', () => {
             const error = new TextNotUniqueError(testPath, testText, testCount);
             expect(error).toBeInstanceOf(TextNotUniqueError);
         });
 
-        it('should have correct name', () => {
+        test('should have correct name', () => {
             const error = new TextNotUniqueError(testPath, testText, testCount);
             expect(error.name).toBe('TextNotUniqueError');
         });
 
-        it('should have correct message format', () => {
+        test('should have correct message format', () => {
             const error = new TextNotUniqueError(testPath, testText, testCount);
             expect(error.message).toBe(
                 `Text "${testText}" appears ${testCount} times in memory at ${testPath}, expected exactly once`
             );
         });
 
-        it('should have correct code', () => {
+        test('should have correct code', () => {
             const error = new TextNotUniqueError(testPath, testText, testCount);
             expect(error.code).toBe('TEXT_NOT_UNIQUE');
         });
 
-        it('should store path property', () => {
+        test('should store path property', () => {
             const error = new TextNotUniqueError(testPath, testText, testCount);
             expect(error.path).toBe(testPath);
         });
 
-        it('should store text property', () => {
+        test('should store text property', () => {
             const error = new TextNotUniqueError(testPath, testText, testCount);
             expect(error.text).toBe(testText);
         });
 
-        it('should store count property', () => {
+        test('should store count property', () => {
             const error = new TextNotUniqueError(testPath, testText, testCount);
             expect(error.count).toBe(testCount);
         });
 
-        it('should handle different count values', () => {
+        test('should handle different count values', () => {
             const counts = [2, 5, 10, 100];
 
             for(const count of counts) {
@@ -155,68 +155,68 @@ describe('Memory Tool Content Errors', () => {
         });
     });
 
-    describe('InvalidLineNumberError', () => {
+    describe.concurrent('InvalidLineNumberError', () => {
         const testPath = '/memories/line/location';
         const testLineNumber = 150;
         const testTotalLines = 100;
 
-        it('should be an instance of InvalidLineNumberError', () => {
+        test('should be an instance of InvalidLineNumberError', () => {
             const error = new InvalidLineNumberError(testPath, testLineNumber, testTotalLines);
             expect(error).toBeInstanceOf(InvalidLineNumberError);
         });
 
-        it('should have correct name', () => {
+        test('should have correct name', () => {
             const error = new InvalidLineNumberError(testPath, testLineNumber, testTotalLines);
             expect(error.name).toBe('InvalidLineNumberError');
         });
 
-        it('should have correct message format', () => {
+        test('should have correct message format', () => {
             const error = new InvalidLineNumberError(testPath, testLineNumber, testTotalLines);
             expect(error.message).toBe(
                 `Invalid line number ${testLineNumber} in memory at ${testPath} (total lines: ${testTotalLines})`
             );
         });
 
-        it('should have correct code', () => {
+        test('should have correct code', () => {
             const error = new InvalidLineNumberError(testPath, testLineNumber, testTotalLines);
             expect(error.code).toBe('INVALID_LINE_NUMBER');
         });
 
-        it('should store path property', () => {
+        test('should store path property', () => {
             const error = new InvalidLineNumberError(testPath, testLineNumber, testTotalLines);
             expect(error.path).toBe(testPath);
         });
 
-        it('should store lineNumber property', () => {
+        test('should store lineNumber property', () => {
             const error = new InvalidLineNumberError(testPath, testLineNumber, testTotalLines);
             expect(error.lineNumber).toBe(testLineNumber);
         });
 
-        it('should store totalLines property', () => {
+        test('should store totalLines property', () => {
             const error = new InvalidLineNumberError(testPath, testLineNumber, testTotalLines);
             expect(error.totalLines).toBe(testTotalLines);
         });
 
-        it('should handle edge case: line number 0', () => {
+        test('should handle edge case: line number 0', () => {
             const error = new InvalidLineNumberError(testPath, 0, testTotalLines);
             expect(error.lineNumber).toBe(0);
             expect(error.message).toContain('Invalid line number 0');
         });
 
-        it('should handle edge case: negative line number', () => {
+        test('should handle edge case: negative line number', () => {
             const error = new InvalidLineNumberError(testPath, -5, testTotalLines);
             expect(error.lineNumber).toBe(-5);
             expect(error.message).toContain('Invalid line number -5');
         });
 
-        it('should handle edge case: large line numbers', () => {
+        test('should handle edge case: large line numbers', () => {
             const largeLineNumber = 999999;
             const error = new InvalidLineNumberError(testPath, largeLineNumber, testTotalLines);
             expect(error.lineNumber).toBe(largeLineNumber);
             expect(error.message).toContain(`Invalid line number ${largeLineNumber}`);
         });
 
-        it('should handle various totalLines values', () => {
+        test('should handle various totalLines values', () => {
             const totalLinesCases = [0, 1, 50, 1000];
 
             for(const total of totalLinesCases) {
@@ -228,14 +228,14 @@ describe('Memory Tool Content Errors', () => {
     });
 
     describe('Error.captureStackTrace handling', () => {
-        it('should use captureStackTrace when available', () => {
+        test('should use captureStackTrace when available', () => {
             const spy = spyOn(Error, 'captureStackTrace');
             const error = new MemoryToolError('test', 'TEST_CODE');
             expect(spy).toHaveBeenCalledWith(error, MemoryToolError);
             spy.mockRestore();
         });
 
-        it('should call captureStackTrace with correct constructor for subclasses', () => {
+        test('should call captureStackTrace with correct constructor for subclasses', () => {
             const spy = spyOn(Error, 'captureStackTrace');
 
             const pathNotFoundError = new PathNotFoundError('/test/path');
@@ -244,7 +244,7 @@ describe('Memory Tool Content Errors', () => {
             spy.mockRestore();
         });
 
-        it('should handle missing captureStackTrace gracefully', () => {
+        test('should handle missing captureStackTrace gracefully', () => {
             // eslint-disable-next-line @typescript-eslint/unbound-method -- Storing method for restoration
             const original = Error.captureStackTrace;
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Intentionally testing behavior when captureStackTrace is undefined
@@ -257,7 +257,7 @@ describe('Memory Tool Content Errors', () => {
             Error.captureStackTrace = original;
         });
 
-        it('should actually invoke captureStackTrace function (not just check truthiness)', () => {
+        test('should actually invoke captureStackTrace function (not just check truthiness)', () => {
             // This test kills mutants that replace the if-condition with true/false
             // by verifying the function is actually called, not just the condition checked
             let captureWasCalled = false;
@@ -283,7 +283,7 @@ describe('Memory Tool Content Errors', () => {
             spy.mockRestore();
         });
 
-        it('should skip captureStackTrace when it is not available', () => {
+        test('should skip captureStackTrace when it is not available', () => {
             // eslint-disable-next-line @typescript-eslint/unbound-method -- Storing method for restoration
             const original = Error.captureStackTrace;
 

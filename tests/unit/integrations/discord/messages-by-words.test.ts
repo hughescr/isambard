@@ -1,13 +1,13 @@
 import _ from 'lodash';
-import { describe, it, expect } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import {
     splitMessage
 } from '@/integrations/discord/messages';
 
-describe('Discord Message Splitting', () => {
+describe.concurrent('Discord Message Splitting', () => {
     describe('splitMessage', () => {
         describe('mutation coverage - splitByWords', () => {
-            it('should return empty string for whitespace-only input', () => {
+            test('should return empty string for whitespace-only input', () => {
                 // Tests: if(words.length === 0) return ['']
                 const result = splitMessage('     ', 100);
                 expect(result).toEqual(['']);
@@ -15,7 +15,7 @@ describe('Discord Message Splitting', () => {
                 expect(result.length).toBe(1);
             });
 
-            it('should return exactly empty string array element, not Stryker string', () => {
+            test('should return exactly empty string array element, not Stryker string', () => {
                 // Verifies [''] is returned not ["Stryker was here!"]
                 const result = splitMessage('   \t\n   ', 100);
                 expect(result).toHaveLength(1);
@@ -23,7 +23,7 @@ describe('Discord Message Splitting', () => {
                 expect(result[0].length).toBe(0);
             });
 
-            it('should handle filter condition for zero-length words', () => {
+            test('should handle filter condition for zero-length words', () => {
                 // Tests: w.length > 0 filter - multiple spaces create empty strings in split
                 // Force splitting by using maxLength smaller than the message
                 const message = 'aa    bb    cc    dd';
@@ -36,7 +36,7 @@ describe('Discord Message Splitting', () => {
                 }
             });
 
-            it('should respect \\s+ regex not just \\s', () => {
+            test('should respect \\s+ regex not just \\s', () => {
                 // Tests regex mutation: /\s+/ vs /\s/
                 // Force splitting by using maxLength smaller than the message
                 const message = 'aa   bb   cc   dd   ee';
@@ -47,7 +47,7 @@ describe('Discord Message Splitting', () => {
                 }
             });
 
-            it('should normalize multiple spaces when splitting - exact assertion', () => {
+            test('should normalize multiple spaces when splitting - exact assertion', () => {
                 // Verify that \s+ regex treats multiple spaces as ONE separator
                 // With \s (wrong), 'a   b' would split to ['a', '', '', 'b'] then filter to ['a', 'b']
                 // But the words would still be ['a', 'b'] either way with the filter
@@ -62,7 +62,7 @@ describe('Discord Message Splitting', () => {
                 expect(result[0]).toBe('aaa bbb');
             });
 
-            it('should flush non-empty currentChunk before character-splitting long word', () => {
+            test('should flush non-empty currentChunk before character-splitting long word', () => {
                 // Tests: if(currentChunk.length > 0) push and reset before character split
                 const message = 'short ' + _.repeat('x', 100);
                 const result = splitMessage(message, 50);
@@ -71,7 +71,7 @@ describe('Discord Message Splitting', () => {
                 expect(result[2]).toBe(_.repeat('x', 50));
             });
 
-            it('should not push empty string when currentChunk is empty before long word', () => {
+            test('should not push empty string when currentChunk is empty before long word', () => {
                 // Tests currentChunk.length > 0 check - should not push empty chunk
                 const longWord = _.repeat('x', 100);
                 const result = splitMessage(longWord, 50);
@@ -79,7 +79,7 @@ describe('Discord Message Splitting', () => {
                 expect(result).not.toContain('');
             });
 
-            it('should trim currentChunk when pushing', () => {
+            test('should trim currentChunk when pushing', () => {
                 // Tests: _.trim(currentChunk) - verify trimming happens
                 const message = 'word1 word2 word3';
                 const result = splitMessage(message, 12);
@@ -90,7 +90,7 @@ describe('Discord Message Splitting', () => {
                 }
             });
 
-            it('should reset currentChunk to empty after flushing for long word', () => {
+            test('should reset currentChunk to empty after flushing for long word', () => {
                 // Tests: currentChunk = '' after pushing
                 const message = 'aa ' + _.repeat('x', 60) + ' bb';
                 const result = splitMessage(message, 50);
@@ -100,21 +100,21 @@ describe('Discord Message Splitting', () => {
                 expect(result[3]).toBe('bb');
             });
 
-            it('should use space separator when currentChunk is not empty', () => {
+            test('should use space separator when currentChunk is not empty', () => {
                 // Tests: currentChunk.length > 0 ? ' ' : ''
                 const message = 'aa bb cc';
                 const result = splitMessage(message, 10);
                 expect(result[0]).toBe('aa bb cc');
             });
 
-            it('should use empty separator when currentChunk is empty', () => {
+            test('should use empty separator when currentChunk is empty', () => {
                 // Tests the else branch of separator logic
                 const message = 'firstword';
                 const result = splitMessage(message, 100);
                 expect(result).toEqual(['firstword']);
             });
 
-            it('should correctly calculate overflow with separator', () => {
+            test('should correctly calculate overflow with separator', () => {
                 // Tests: currentChunk.length + separator.length + word.length > maxLength
                 // 'aaa bbb' = 7 chars, adding ' ccc' = 11 chars > 10
                 const message = 'aaa bbb ccc';
@@ -123,14 +123,14 @@ describe('Discord Message Splitting', () => {
                 expect(result[1]).toBe('ccc');
             });
 
-            it('should push final chunk when not empty', () => {
+            test('should push final chunk when not empty', () => {
                 // Tests: if(currentChunk.length > 0) at end of function
                 const message = 'final';
                 const result = splitMessage(message, 100);
                 expect(result).toEqual(['final']);
             });
 
-            it('should return chunks not empty array when chunks exist', () => {
+            test('should return chunks not empty array when chunks exist', () => {
                 // Tests: return chunks.length > 0 ? chunks : ['']
                 const message = 'test word';
                 const result = splitMessage(message, 100);

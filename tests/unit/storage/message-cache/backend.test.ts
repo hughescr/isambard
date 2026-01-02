@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import {
     DynamoDBDocumentClient,
@@ -12,7 +12,7 @@ import { ValidationError } from '@/storage/errors';
 import type { MessageId, CachedSegmentItem, CachedMessage } from '@/storage/message-cache/types';
 import type { ChannelId } from '@/integrations/discord/types';
 
-describe('MessageCacheBackend', () => {
+describe.concurrent('MessageCacheBackend', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let backend: MessageCacheBackend;
 
@@ -42,7 +42,7 @@ describe('MessageCacheBackend', () => {
     });
 
     describe('storeSegment', () => {
-        it('should store a new segment', async () => {
+        test('should store a new segment', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const segment = await backend.storeSegment({
@@ -58,7 +58,7 @@ describe('MessageCacheBackend', () => {
             expect(segment.messages).toHaveLength(1);
         });
 
-        it('should set fetchedAt timestamp', async () => {
+        test('should set fetchedAt timestamp', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const before = new Date().toISOString();
@@ -74,7 +74,7 @@ describe('MessageCacheBackend', () => {
             expect(segment.fetchedAt <= after).toBe(true);
         });
 
-        it('should store empty messages array', async () => {
+        test('should store empty messages array', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const segment = await backend.storeSegment({
@@ -87,7 +87,7 @@ describe('MessageCacheBackend', () => {
             expect(segment.messages).toHaveLength(0);
         });
 
-        it('should call putItem with correct DynamoDB keys', async () => {
+        test('should call putItem with correct DynamoDB keys', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             await backend.storeSegment({
@@ -104,7 +104,7 @@ describe('MessageCacheBackend', () => {
             expect(item.SK).toBe('SEGMENT#100#200');
         });
 
-        it('should throw ValidationError for empty channelId', async () => {
+        test('should throw ValidationError for empty channelId', async () => {
             expect(
                 backend.storeSegment({
                     channelId: '' as ChannelId,
@@ -115,7 +115,7 @@ describe('MessageCacheBackend', () => {
             ).rejects.toThrow(ValidationError);
         });
 
-        it('should throw ValidationError for empty startSnowflake', async () => {
+        test('should throw ValidationError for empty startSnowflake', async () => {
             expect(
                 backend.storeSegment({
                     channelId,
@@ -126,7 +126,7 @@ describe('MessageCacheBackend', () => {
             ).rejects.toThrow(ValidationError);
         });
 
-        it('should throw ValidationError for invalid message in array', async () => {
+        test('should throw ValidationError for invalid message in array', async () => {
             expect(
                 backend.storeSegment({
                     channelId,
@@ -139,7 +139,7 @@ describe('MessageCacheBackend', () => {
     });
 
     describe('getSegment', () => {
-        it('should return segment when found', async () => {
+        test('should return segment when found', async () => {
             const mockItem: CachedSegmentItem = {
                 PK:        'CHANNEL#123456789012345678',
                 SK:        'SEGMENT#100#200',
@@ -160,7 +160,7 @@ describe('MessageCacheBackend', () => {
             expect(segment?.endSnowflake).toBe(endSnowflake);
         });
 
-        it('should call getItem with correct DynamoDB keys', async () => {
+        test('should call getItem with correct DynamoDB keys', async () => {
             const mockItem: CachedSegmentItem = {
                 PK:        'CHANNEL#123456789012345678',
                 SK:        'SEGMENT#100#200',
@@ -184,7 +184,7 @@ describe('MessageCacheBackend', () => {
             });
         });
 
-        it('should return undefined when not found', async () => {
+        test('should return undefined when not found', async () => {
             ddbMock.on(GetCommand).resolves({});
 
             const segment = await backend.getSegment(channelId, startSnowflake, endSnowflake);
@@ -192,7 +192,7 @@ describe('MessageCacheBackend', () => {
             expect(segment).toBeUndefined();
         });
 
-        it('should strip DynamoDB keys from response', async () => {
+        test('should strip DynamoDB keys from response', async () => {
             const mockItem: CachedSegmentItem = {
                 PK:        'CHANNEL#123456789012345678',
                 SK:        'SEGMENT#100#200',
@@ -213,7 +213,7 @@ describe('MessageCacheBackend', () => {
     });
 
     describe('listSegments', () => {
-        it('should return all segments for a channel', async () => {
+        test('should return all segments for a channel', async () => {
             const mockItems: CachedSegmentItem[] = [
                 {
                     PK:             'CHANNEL#123456789012345678',
@@ -244,7 +244,7 @@ describe('MessageCacheBackend', () => {
             expect(segments[1].startSnowflake).toBe('200' as MessageId);
         });
 
-        it('should return empty array when no segments exist', async () => {
+        test('should return empty array when no segments exist', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const segments = await backend.listSegments(channelId);
@@ -252,7 +252,7 @@ describe('MessageCacheBackend', () => {
             expect(segments).toHaveLength(0);
         });
 
-        it('should query with correct PK', async () => {
+        test('should query with correct PK', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.listSegments(channelId);
@@ -266,7 +266,7 @@ describe('MessageCacheBackend', () => {
     });
 
     describe('deleteSegment', () => {
-        it('should delete a segment', async () => {
+        test('should delete a segment', async () => {
             ddbMock.on(DeleteCommand).resolves({});
 
             await backend.deleteSegment(channelId, startSnowflake, endSnowflake);
@@ -282,7 +282,7 @@ describe('MessageCacheBackend', () => {
     });
 
     describe('deleteAllSegments', () => {
-        it('should delete all segments for a channel', async () => {
+        test('should delete all segments for a channel', async () => {
             const mockItems: CachedSegmentItem[] = [
                 {
                     PK:             'CHANNEL#123456789012345678',
@@ -314,7 +314,7 @@ describe('MessageCacheBackend', () => {
             expect(deleteCalls).toHaveLength(2);
         });
 
-        it('should call DeleteCommand with correct TableName and Key for each segment', async () => {
+        test('should call DeleteCommand with correct TableName and Key for each segment', async () => {
             const mockItems: CachedSegmentItem[] = [
                 {
                     PK:             'CHANNEL#123456789012345678',
@@ -359,7 +359,7 @@ describe('MessageCacheBackend', () => {
             });
         });
 
-        it('should return 0 when no segments exist', async () => {
+        test('should return 0 when no segments exist', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const count = await backend.deleteAllSegments(channelId);

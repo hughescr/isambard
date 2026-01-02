@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import {
     DynamoDBDocumentClient,
@@ -31,7 +31,7 @@ class TestRepository extends BaseRepository<{ id: string, name: string }> {
     }
 }
 
-describe('BaseRepository', () => {
+describe.concurrent('BaseRepository', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let repository: TestRepository;
 
@@ -48,13 +48,13 @@ describe('BaseRepository', () => {
     });
 
     describe('constructor', () => {
-        it('should store docClient and tableName', () => {
+        test('should store docClient and tableName', () => {
             expect(repository).toBeDefined();
         });
     });
 
     describe('putItem', () => {
-        it('should call PutCommand with correct parameters', async () => {
+        test('should call PutCommand with correct parameters', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             await repository.testPut({ PK: 'test', SK: 'test', name: 'value' });
@@ -69,7 +69,7 @@ describe('BaseRepository', () => {
     });
 
     describe('getItem', () => {
-        it('should call GetCommand with correct key', async () => {
+        test('should call GetCommand with correct key', async () => {
             ddbMock.on(GetCommand).resolves({ Item: { id: '123', name: 'test' } });
 
             await repository.testGet({ PK: 'pk-value', SK: 'sk-value' });
@@ -82,7 +82,7 @@ describe('BaseRepository', () => {
             });
         });
 
-        it('should return item when found', async () => {
+        test('should return item when found', async () => {
             ddbMock.on(GetCommand).resolves({ Item: { id: '123', name: 'found' } });
 
             const result = await repository.testGet({ PK: 'test', SK: 'test' });
@@ -90,7 +90,7 @@ describe('BaseRepository', () => {
             expect(result).toEqual({ id: '123', name: 'found' });
         });
 
-        it('should return undefined when item not found', async () => {
+        test('should return undefined when item not found', async () => {
             ddbMock.on(GetCommand).resolves({ Item: undefined });
 
             const result = await repository.testGet({ PK: 'test', SK: 'test' });
@@ -100,7 +100,7 @@ describe('BaseRepository', () => {
     });
 
     describe('deleteItem', () => {
-        it('should call DeleteCommand with correct key', async () => {
+        test('should call DeleteCommand with correct key', async () => {
             ddbMock.on(DeleteCommand).resolves({});
 
             await repository.testDelete({ PK: 'pk-value', SK: 'sk-value' });
@@ -115,7 +115,7 @@ describe('BaseRepository', () => {
     });
 
     describe('query', () => {
-        it('should call QueryCommand with correct parameters', async () => {
+        test('should call QueryCommand with correct parameters', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await repository.testQuery('TYPE#identity');
@@ -126,7 +126,7 @@ describe('BaseRepository', () => {
             expect(calls[0].args[0].input.KeyConditionExpression).toBe('PK = :pk');
         });
 
-        it('should return items when found', async () => {
+        test('should return items when found', async () => {
             ddbMock.on(QueryCommand).resolves({
                 Items: [
                     { id: '1', name: 'first' },
@@ -142,7 +142,7 @@ describe('BaseRepository', () => {
             ]);
         });
 
-        it('should return empty array when no items found', async () => {
+        test('should return empty array when no items found', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: undefined });
 
             const result = await repository.testQuery('test');

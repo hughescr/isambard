@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- Handler return values are typed as any in tests */
 import { constant as _constant, isArray as _isArray } from 'lodash';
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { createDiscordMCPServer } from '../../../src/agent/discord-mcp-server';
 import type { MessageSearchService } from '../../../src/integrations/discord/message-history/search';
 import type { SearchResponse, DiscordSearchResult } from '../../../src/integrations/discord/message-history/types';
@@ -38,7 +38,7 @@ const createMockSearchResponse = (overrides: Partial<SearchResponse> = {}): Sear
     ...overrides,
 });
 
-describe('createDiscordMCPServer', () => {
+describe.concurrent('createDiscordMCPServer', () => {
     let mockSearchService: MessageSearchService;
 
     beforeEach(() => {
@@ -58,33 +58,33 @@ describe('createDiscordMCPServer', () => {
     };
 
     describe('createDiscordMCPServer function', () => {
-        it('should create MCP server with correct name', () => {
+        test('should create MCP server with correct name', () => {
             const server = createDiscordMCPServer(mockSearchService);
 
             expect(server).toBeDefined();
             expect(server.name).toBe('discord');
         });
 
-        it('should create MCP server with instance', () => {
+        test('should create MCP server with instance', () => {
             const server = createDiscordMCPServer(mockSearchService);
 
             expect(server.instance).toBeDefined();
         });
 
-        it('should create MCP server with type', () => {
+        test('should create MCP server with type', () => {
             const server = createDiscordMCPServer(mockSearchService);
 
             expect(server.type).toBe('sdk');
         });
 
-        it('should create MCP server with version 1.0.0', () => {
+        test('should create MCP server with version 1.0.0', () => {
             const server = createDiscordMCPServer(mockSearchService);
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing server version
             expect((server.instance as any).server._serverInfo.version).toBe('1.0.0');
         });
 
-        it('should have searchMessages tool with description', () => {
+        test('should have searchMessages tool with description', () => {
             const server = createDiscordMCPServer(mockSearchService);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const searchTool = (server.instance as any)._registeredTools.searchMessages;
@@ -93,7 +93,7 @@ describe('createDiscordMCPServer', () => {
             expect(searchTool.description).toBe('Search Discord message history by text, time range, or both. Returns messages with overflow summaries if results exceed limit.');
         });
 
-        it('should have getRecentMessages tool with description', () => {
+        test('should have getRecentMessages tool with description', () => {
             const server = createDiscordMCPServer(mockSearchService);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const recentTool = (server.instance as any)._registeredTools.getRecentMessages;
@@ -102,7 +102,7 @@ describe('createDiscordMCPServer', () => {
             expect(recentTool.description).toBe('Get the most recent messages from a Discord channel');
         });
 
-        it('should have getMessageById tool with description', () => {
+        test('should have getMessageById tool with description', () => {
             const server = createDiscordMCPServer(mockSearchService);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const byIdTool = (server.instance as any)._registeredTools.getMessageById;
@@ -111,7 +111,7 @@ describe('createDiscordMCPServer', () => {
             expect(byIdTool.description).toBe('Fetch a specific Discord message by its ID, or multiple messages by an array of IDs');
         });
 
-        it('should have searchMessages tool with correct input schema', () => {
+        test('should have searchMessages tool with correct input schema', () => {
             const server = createDiscordMCPServer(mockSearchService);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const searchTool = (server.instance as any)._registeredTools.searchMessages;
@@ -132,7 +132,7 @@ describe('createDiscordMCPServer', () => {
             expect(searchTool.inputSchema.shape.limit).toBeDefined();
         });
 
-        it('should have getRecentMessages tool with correct input schema', () => {
+        test('should have getRecentMessages tool with correct input schema', () => {
             const server = createDiscordMCPServer(mockSearchService);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const recentTool = (server.instance as any)._registeredTools.getRecentMessages;
@@ -147,7 +147,7 @@ describe('createDiscordMCPServer', () => {
             expect(recentTool.inputSchema.shape.limit).toBeDefined();
         });
 
-        it('should have getMessageById tool with correct input schema', () => {
+        test('should have getMessageById tool with correct input schema', () => {
             const server = createDiscordMCPServer(mockSearchService);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const byIdTool = (server.instance as any)._registeredTools.getMessageById;
@@ -164,7 +164,7 @@ describe('createDiscordMCPServer', () => {
     });
 
     describe('searchMessages tool', () => {
-        it('should return search results as JSON when messages found', async () => {
+        test('should return search results as JSON when messages found', async () => {
             const mockMessages = [
                 createMockSearchResult({ id: '111', content: 'First message' }),
                 createMockSearchResult({ id: '222', content: 'Second message' }),
@@ -200,7 +200,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        it('should call searchService.searchMessages with channelId only', async () => {
+        test('should call searchService.searchMessages with channelId only', async () => {
             mockSearchService.searchMessages = mock(async () => createMockSearchResponse());
 
             const server = createDiscordMCPServer(mockSearchService);
@@ -218,7 +218,7 @@ describe('createDiscordMCPServer', () => {
             });
         });
 
-        it('should call searchService.searchMessages with query', async () => {
+        test('should call searchService.searchMessages with query', async () => {
             mockSearchService.searchMessages = mock(async () => createMockSearchResponse());
 
             const server = createDiscordMCPServer(mockSearchService);
@@ -236,7 +236,7 @@ describe('createDiscordMCPServer', () => {
             });
         });
 
-        it('should parse startTime from ISO string', async () => {
+        test('should parse startTime from ISO string', async () => {
             mockSearchService.searchMessages = mock(async () => createMockSearchResponse());
 
             const server = createDiscordMCPServer(mockSearchService);
@@ -255,7 +255,7 @@ describe('createDiscordMCPServer', () => {
             );
         });
 
-        it('should parse endTime from ISO string', async () => {
+        test('should parse endTime from ISO string', async () => {
             mockSearchService.searchMessages = mock(async () => createMockSearchResponse());
 
             const server = createDiscordMCPServer(mockSearchService);
@@ -274,7 +274,7 @@ describe('createDiscordMCPServer', () => {
             );
         });
 
-        it('should pass limit when provided', async () => {
+        test('should pass limit when provided', async () => {
             mockSearchService.searchMessages = mock(async () => createMockSearchResponse());
 
             const server = createDiscordMCPServer(mockSearchService);
@@ -290,7 +290,7 @@ describe('createDiscordMCPServer', () => {
             );
         });
 
-        it('should use default limit of 10 when not provided', async () => {
+        test('should use default limit of 10 when not provided', async () => {
             mockSearchService.searchMessages = mock(async () => createMockSearchResponse());
 
             const server = createDiscordMCPServer(mockSearchService);
@@ -306,7 +306,7 @@ describe('createDiscordMCPServer', () => {
             );
         });
 
-        it('should return error when searchService throws Error', async () => {
+        test('should return error when searchService throws Error', async () => {
             mockSearchService.searchMessages = mock(async () => {
                 throw new Error('Discord API error');
             });
@@ -327,7 +327,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should return error when searchService throws non-Error', async () => {
+        test('should return error when searchService throws non-Error', async () => {
             mockSearchService.searchMessages = mock(async () => {
                 // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw 'Network failure';
@@ -345,7 +345,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should format result as pretty-printed JSON', async () => {
+        test('should format result as pretty-printed JSON', async () => {
             mockSearchService.searchMessages = mock(async () => createMockSearchResponse({
                 messages: [createMockSearchResult()],
             }));
@@ -362,7 +362,7 @@ describe('createDiscordMCPServer', () => {
             expect(text).toContain('  ');
         });
 
-        it('should include overflow summaries in response when present', async () => {
+        test('should include overflow summaries in response when present', async () => {
             mockSearchService.searchMessages = mock(async () => createMockSearchResponse({
                 messages: [createMockSearchResult()],
                 overflow: {
@@ -391,7 +391,7 @@ describe('createDiscordMCPServer', () => {
     });
 
     describe('getRecentMessages tool', () => {
-        it('should return recent messages as JSON', async () => {
+        test('should return recent messages as JSON', async () => {
             const mockMessages = [
                 createMockSearchResult({ id: '111', content: 'Recent message 1' }),
                 createMockSearchResult({ id: '222', content: 'Recent message 2' }),
@@ -425,7 +425,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        it('should call searchService.getRecentMessages with channelId and default limit', async () => {
+        test('should call searchService.getRecentMessages with channelId and default limit', async () => {
             mockSearchService.getRecentMessages = mock(async () => createMockSearchResponse());
 
             const server = createDiscordMCPServer(mockSearchService);
@@ -437,7 +437,7 @@ describe('createDiscordMCPServer', () => {
             expect(mockSearchService.getRecentMessages).toHaveBeenCalledWith('123456789012345678', 10);
         });
 
-        it('should call searchService.getRecentMessages with custom limit', async () => {
+        test('should call searchService.getRecentMessages with custom limit', async () => {
             mockSearchService.getRecentMessages = mock(async () => createMockSearchResponse());
 
             const server = createDiscordMCPServer(mockSearchService);
@@ -449,7 +449,7 @@ describe('createDiscordMCPServer', () => {
             expect(mockSearchService.getRecentMessages).toHaveBeenCalledWith('123456789012345678', 25);
         });
 
-        it('should return error when searchService throws Error', async () => {
+        test('should return error when searchService throws Error', async () => {
             mockSearchService.getRecentMessages = mock(async () => {
                 throw new Error('Channel not found');
             });
@@ -466,7 +466,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should return error when searchService throws non-Error', async () => {
+        test('should return error when searchService throws non-Error', async () => {
             mockSearchService.getRecentMessages = mock(async () => {
                 // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw { code: 'TIMEOUT' };
@@ -484,7 +484,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should format result as pretty-printed JSON', async () => {
+        test('should format result as pretty-printed JSON', async () => {
             mockSearchService.getRecentMessages = mock(async () => createMockSearchResponse({
                 messages: [createMockSearchResult()],
             }));
@@ -502,7 +502,7 @@ describe('createDiscordMCPServer', () => {
     });
 
     describe('getMessageById tool', () => {
-        it('should return message as JSON when found', async () => {
+        test('should return message as JSON when found', async () => {
             const mockMessage = createMockSearchResult({
                 id:      '999888777666555444',
                 content: 'Specific message content',
@@ -530,7 +530,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        it('should return "Message not found" when message does not exist', async () => {
+        test('should return "Message not found" when message does not exist', async () => {
             mockSearchService.getMessageById = mock(_constant(Promise.resolve(null)));
 
             const server = createDiscordMCPServer(mockSearchService);
@@ -552,7 +552,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        it('should call searchService.getMessageById with correct parameters', async () => {
+        test('should call searchService.getMessageById with correct parameters', async () => {
             mockSearchService.getMessageById = mock(_constant(Promise.resolve(null)));
 
             const server = createDiscordMCPServer(mockSearchService);
@@ -570,7 +570,7 @@ describe('createDiscordMCPServer', () => {
             );
         });
 
-        it('should return error when searchService throws Error', async () => {
+        test('should return error when searchService throws Error', async () => {
             mockSearchService.getMessageById = mock(async () => {
                 throw new Error('Access denied');
             });
@@ -590,7 +590,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should return error when searchService throws non-Error', async () => {
+        test('should return error when searchService throws non-Error', async () => {
             mockSearchService.getMessageById = mock(async () => {
                 // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw 'Unknown error';
@@ -611,7 +611,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should format result as pretty-printed JSON', async () => {
+        test('should format result as pretty-printed JSON', async () => {
             mockSearchService.getMessageById = mock(async () => createMockSearchResult());
 
             const server = createDiscordMCPServer(mockSearchService);
@@ -629,7 +629,7 @@ describe('createDiscordMCPServer', () => {
             expect(text).toContain('  ');
         });
 
-        it('should fetch multiple messages when given array', async () => {
+        test('should fetch multiple messages when given array', async () => {
             const mockMessages = [
                 createMockSearchResult({ id: '111111111111111111', content: 'First message' }),
                 createMockSearchResult({ id: '222222222222222222', content: 'Second message' }),
@@ -658,7 +658,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        it('should return array for array input even with single element', async () => {
+        test('should return array for array input even with single element', async () => {
             const mockMessages = [
                 createMockSearchResult({ id: '111111111111111111', content: 'Single message' }),
             ];
@@ -679,7 +679,7 @@ describe('createDiscordMCPServer', () => {
             expect(parsed).toHaveLength(1);
         });
 
-        it('should handle empty array', async () => {
+        test('should handle empty array', async () => {
             mockSearchService.getMessagesById = mock(async () => []);
 
             const server = createDiscordMCPServer(mockSearchService);
@@ -698,7 +698,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        it('should handle some messages not found in batch', async () => {
+        test('should handle some messages not found in batch', async () => {
             // Only 2 of 3 messages found
             const mockMessages = [
                 createMockSearchResult({ id: '111111111111111111', content: 'First message' }),
@@ -722,7 +722,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        it('should call getMessagesById with correct parameters for array input', async () => {
+        test('should call getMessagesById with correct parameters for array input', async () => {
             mockSearchService.getMessagesById = mock(async () => []);
 
             const server = createDiscordMCPServer(mockSearchService);
@@ -740,7 +740,7 @@ describe('createDiscordMCPServer', () => {
             );
         });
 
-        it('should return error when getMessagesById throws Error', async () => {
+        test('should return error when getMessagesById throws Error', async () => {
             mockSearchService.getMessagesById = mock(async () => {
                 throw new Error('Batch fetch failed');
             });
@@ -760,7 +760,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should accept union schema for messageId (string or array)', () => {
+        test('should accept union schema for messageId (string or array)', () => {
             const server = createDiscordMCPServer(mockSearchService);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const byIdTool = (server.instance as any)._registeredTools.getMessageById;
@@ -780,7 +780,7 @@ describe('createDiscordMCPServer', () => {
     });
 
     describe('limit validation', () => {
-        it('should have searchMessages limit schema that accepts valid values', () => {
+        test('should have searchMessages limit schema that accepts valid values', () => {
             const server = createDiscordMCPServer(mockSearchService);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const searchTool = (server.instance as any)._registeredTools.searchMessages;
@@ -790,7 +790,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.success).toBe(true);
         });
 
-        it('should have searchMessages limit schema that accepts max 100', () => {
+        test('should have searchMessages limit schema that accepts max 100', () => {
             const server = createDiscordMCPServer(mockSearchService);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const searchTool = (server.instance as any)._registeredTools.searchMessages;
@@ -800,7 +800,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.success).toBe(true);
         });
 
-        it('should have searchMessages limit schema that rejects values over 100', () => {
+        test('should have searchMessages limit schema that rejects values over 100', () => {
             const server = createDiscordMCPServer(mockSearchService);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const searchTool = (server.instance as any)._registeredTools.searchMessages;
@@ -810,7 +810,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.success).toBe(false);
         });
 
-        it('should have searchMessages limit schema that rejects zero', () => {
+        test('should have searchMessages limit schema that rejects zero', () => {
             const server = createDiscordMCPServer(mockSearchService);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const searchTool = (server.instance as any)._registeredTools.searchMessages;
@@ -820,7 +820,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.success).toBe(false);
         });
 
-        it('should have searchMessages limit schema that rejects negative values', () => {
+        test('should have searchMessages limit schema that rejects negative values', () => {
             const server = createDiscordMCPServer(mockSearchService);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const searchTool = (server.instance as any)._registeredTools.searchMessages;
@@ -830,7 +830,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.success).toBe(false);
         });
 
-        it('should have getRecentMessages limit schema that accepts valid values', () => {
+        test('should have getRecentMessages limit schema that accepts valid values', () => {
             const server = createDiscordMCPServer(mockSearchService);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const recentTool = (server.instance as any)._registeredTools.getRecentMessages;
@@ -840,7 +840,7 @@ describe('createDiscordMCPServer', () => {
             expect(result.success).toBe(true);
         });
 
-        it('should have getRecentMessages limit schema that rejects values over 100', () => {
+        test('should have getRecentMessages limit schema that rejects values over 100', () => {
             const server = createDiscordMCPServer(mockSearchService);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const recentTool = (server.instance as any)._registeredTools.getRecentMessages;

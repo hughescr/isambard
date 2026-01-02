@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import { assign as _assign, isError as _isError, some as _some, filter as _filter, startsWith as _startsWith, size as _size } from 'lodash';
 import {
@@ -36,8 +36,8 @@ describe('MemoryToolBackend', () => {
         }
     });
 
-    describe('create', () => {
-        it('should create a new memory tool item', async () => {
+    describe.concurrent('create', () => {
+        test('should create a new memory tool item', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const item = await backend.create({
@@ -52,7 +52,7 @@ describe('MemoryToolBackend', () => {
             expect(item.version).toBe(1);
         });
 
-        it('should set createdAt and updatedAt timestamps', async () => {
+        test('should set createdAt and updatedAt timestamps', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const before = new Date().toISOString();
@@ -68,7 +68,7 @@ describe('MemoryToolBackend', () => {
             expect(item.updatedAt).toBe(item.createdAt);
         });
 
-        it('should set default version to 1', async () => {
+        test('should set default version to 1', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const item = await backend.create({
@@ -80,7 +80,7 @@ describe('MemoryToolBackend', () => {
             expect(item.version).toBe(1);
         });
 
-        it('should set default empty metadata', async () => {
+        test('should set default empty metadata', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const item = await backend.create({
@@ -92,7 +92,7 @@ describe('MemoryToolBackend', () => {
             expect(item.metadata).toEqual({});
         });
 
-        it('should accept optional metadata', async () => {
+        test('should accept optional metadata', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const item = await backend.create({
@@ -105,7 +105,7 @@ describe('MemoryToolBackend', () => {
             expect(item.metadata).toEqual({ key: 'value' });
         });
 
-        it('should accept optional tags', async () => {
+        test('should accept optional tags', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const item = await backend.create({
@@ -118,7 +118,7 @@ describe('MemoryToolBackend', () => {
             expect(item.tags).toEqual(['important', 'work']);
         });
 
-        it('should throw ValidationError on empty content', async () => {
+        test('should throw ValidationError on empty content', async () => {
             expect(
                 backend.create({
                     path:        '/test/file.md' as MemoryPath,
@@ -128,7 +128,7 @@ describe('MemoryToolBackend', () => {
             ).rejects.toThrow(ValidationError);
         });
 
-        it('should throw ValidationError on invalid content type', async () => {
+        test('should throw ValidationError on invalid content type', async () => {
             expect(
                 backend.create({
                     path:        '/test/file.md' as MemoryPath,
@@ -138,7 +138,7 @@ describe('MemoryToolBackend', () => {
             ).rejects.toThrow(ValidationError);
         });
 
-        it('should call putItem with correct DynamoDB keys', async () => {
+        test('should call putItem with correct DynamoDB keys', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             await backend.create({
@@ -156,7 +156,7 @@ describe('MemoryToolBackend', () => {
             expect(item.GSI1SK).toContain('CREATED#');
         });
 
-        it('should create GSI2 keys when tags are provided', async () => {
+        test('should create GSI2 keys when tags are provided', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             await backend.create({
@@ -173,7 +173,7 @@ describe('MemoryToolBackend', () => {
             expect(item.GSI2SK).toMatch(/^LAYER#identity#UPDATED#/);
         });
 
-        it('should not create GSI2 keys when no tags provided', async () => {
+        test('should not create GSI2 keys when no tags provided', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             await backend.create({
@@ -190,10 +190,10 @@ describe('MemoryToolBackend', () => {
         });
     });
 
-    describe('get', () => {
+    describe.concurrent('get', () => {
         const testPath = '/test/file.md' as MemoryPath;
 
-        it('should return item when found', async () => {
+        test('should return item when found', async () => {
             const mockItem: MemoryToolItem = {
                 PK:          'DIR#/test',
                 SK:          'FILE#file.md',
@@ -216,7 +216,7 @@ describe('MemoryToolBackend', () => {
             expect(result?.content).toBe('Test content');
         });
 
-        it('should call GetCommand with correct DynamoDB keys', async () => {
+        test('should call GetCommand with correct DynamoDB keys', async () => {
             ddbMock.on(GetCommand).resolves({ Item: undefined });
 
             await backend.get(testPath);
@@ -229,7 +229,7 @@ describe('MemoryToolBackend', () => {
             });
         });
 
-        it('should return undefined when not found', async () => {
+        test('should return undefined when not found', async () => {
             ddbMock.on(GetCommand).resolves({ Item: undefined });
 
             const result = await backend.get('/nonexistent/file.md' as MemoryPath);
@@ -237,7 +237,7 @@ describe('MemoryToolBackend', () => {
             expect(result).toBeUndefined();
         });
 
-        it('should strip DynamoDB keys from returned object', async () => {
+        test('should strip DynamoDB keys from returned object', async () => {
             const mockItem: MemoryToolItem = {
                 PK:          'DIR#/test',
                 SK:          'FILE#file.md',
@@ -278,7 +278,7 @@ describe('MemoryToolBackend', () => {
             updatedAt:   '2024-01-01T00:00:00.000Z',
         };
 
-        it('should update existing item', async () => {
+        test('should update existing item', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
 
@@ -289,7 +289,7 @@ describe('MemoryToolBackend', () => {
             expect(result.content).toBe('Updated content');
         });
 
-        it('should update updatedAt timestamp', async () => {
+        test('should update updatedAt timestamp', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
 
@@ -302,7 +302,7 @@ describe('MemoryToolBackend', () => {
             expect(result.createdAt).toBe('2024-01-01T00:00:00.000Z'); // unchanged
         });
 
-        it('should throw ItemNotFoundError if item does not exist', async () => {
+        test('should throw ItemNotFoundError if item does not exist', async () => {
             ddbMock.on(GetCommand).resolves({ Item: undefined });
 
             expect(
@@ -310,7 +310,7 @@ describe('MemoryToolBackend', () => {
             ).rejects.toThrow(ItemNotFoundError);
         });
 
-        it('should increment version on update', async () => {
+        test('should increment version on update', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
 
@@ -321,7 +321,7 @@ describe('MemoryToolBackend', () => {
             expect(result.version).toBe(2);
         });
 
-        it('should throw ConflictError on concurrent update (version mismatch)', async () => {
+        test('should throw ConflictError on concurrent update (version mismatch)', async () => {
             ddbMock.on(GetCommand)
                 .resolvesOnce({ Item: existingItem })
                 .resolvesOnce({ Item: { ...existingItem, version: 5 } });
@@ -335,7 +335,7 @@ describe('MemoryToolBackend', () => {
             ).rejects.toThrow(ConflictError);
         });
 
-        it('should update ONLY content when only content provided', async () => {
+        test('should update ONLY content when only content provided', async () => {
             const itemWithAllFields = {
                 ...existingItem,
                 metadata: { key: 'original' },
@@ -353,7 +353,7 @@ describe('MemoryToolBackend', () => {
             expect(result.tags).toEqual(['tag1']); // unchanged
         });
 
-        it('should update ONLY metadata when only metadata provided', async () => {
+        test('should update ONLY metadata when only metadata provided', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
 
@@ -365,7 +365,7 @@ describe('MemoryToolBackend', () => {
             expect(result.metadata).toEqual({ key: 'new' });
         });
 
-        it('should update ONLY tags when only tags provided', async () => {
+        test('should update ONLY tags when only tags provided', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
 
@@ -377,7 +377,7 @@ describe('MemoryToolBackend', () => {
             expect(result.tags).toEqual(['newtag']);
         });
 
-        it('should throw ConflictError when item deleted after initial fetch', async () => {
+        test('should throw ConflictError when item deleted after initial fetch', async () => {
             ddbMock.on(GetCommand)
                 .resolvesOnce({ Item: existingItem })
                 .resolvesOnce({ Item: undefined }); // Item deleted
@@ -396,7 +396,7 @@ describe('MemoryToolBackend', () => {
             });
         });
 
-        it('should re-throw non-ConditionalCheckFailedException errors', async () => {
+        test('should re-throw non-ConditionalCheckFailedException errors', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
 
             const otherError = new Error('Network timeout');
@@ -409,7 +409,7 @@ describe('MemoryToolBackend', () => {
             ).rejects.toThrow('Network timeout');
         });
 
-        it('should NOT convert to ConflictError when error name does not match', async () => {
+        test('should NOT convert to ConflictError when error name does not match', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
 
             const differentNameError = new Error('Different error');
@@ -423,7 +423,7 @@ describe('MemoryToolBackend', () => {
             expect(error).toHaveProperty('message', 'Different error');
         });
 
-        it.each([
+        test.each([
             { name: 'null', value: null },
             { name: 'number', value: 999 },
             { name: 'object without name property', value: { code: 'SomeError', message: 'No name prop' } },
@@ -447,7 +447,7 @@ describe('MemoryToolBackend', () => {
             }
         });
 
-        it('should send PutCommand with correct version check and incremented version', async () => {
+        test('should send PutCommand with correct version check and incremented version', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
 
@@ -466,7 +466,7 @@ describe('MemoryToolBackend', () => {
             expect(putInput.Item?.version).toBe(2);
         });
 
-        it('should throw ValidationError on invalid update data', async () => {
+        test('should throw ValidationError on invalid update data', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
@@ -475,7 +475,7 @@ describe('MemoryToolBackend', () => {
             ).rejects.toThrow(ValidationError);
         });
 
-        it('should regenerate GSI2SK with new updatedAt when updating tags', async () => {
+        test('should regenerate GSI2SK with new updatedAt when updating tags', async () => {
             const existingWithTags: MemoryToolItem = {
                 ...existingItem,
                 path:   '/identity/beliefs.md' as MemoryPath,
@@ -498,7 +498,7 @@ describe('MemoryToolBackend', () => {
             expect(item.GSI2SK).not.toBe('LAYER#identity#UPDATED#2024-01-01T00:00:00.000Z');
         });
 
-        it('should remove GSI2 keys when tags are removed', async () => {
+        test('should remove GSI2 keys when tags are removed', async () => {
             const existingWithTags: MemoryToolItem = {
                 ...existingItem,
                 tags:   ['tag1'],
@@ -519,7 +519,7 @@ describe('MemoryToolBackend', () => {
             expect(item.GSI2SK).toBeUndefined();
         });
 
-        it('should create GSI2 keys when adding tags to untagged item', async () => {
+        test('should create GSI2 keys when adding tags to untagged item', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
 
@@ -535,8 +535,8 @@ describe('MemoryToolBackend', () => {
         });
     });
 
-    describe('delete', () => {
-        it('should call deleteItem with correct key', async () => {
+    describe.concurrent('delete', () => {
+        test('should call deleteItem with correct key', async () => {
             const testPath = '/test/file.md' as MemoryPath;
             ddbMock.on(DeleteCommand).resolves({});
 

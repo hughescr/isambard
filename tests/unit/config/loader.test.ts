@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import _ from 'lodash';
 import { loadConfig, loadDynamoDBConfig, type ResourceProvider, type DynamoDBResourceProvider } from '@/config/loader';
 
@@ -32,9 +32,9 @@ function createMockResources(
     return { ...defaults, ...overrides };
 }
 
-describe('loadConfig', () => {
+describe.concurrent('loadConfig', () => {
     describe('Happy Path', () => {
-        it('should load configuration with all valid values', () => {
+        test('should load configuration with all valid values', () => {
             const resources = createMockResources();
             const config = loadConfig(resources);
 
@@ -47,7 +47,7 @@ describe('loadConfig', () => {
             expect(config.box).toBeDefined();
         });
 
-        it('should return properly typed Config object', () => {
+        test('should return properly typed Config object', () => {
             const resources = createMockResources();
             const config = loadConfig(resources);
 
@@ -81,7 +81,7 @@ describe('loadConfig', () => {
             expect(config.box.clientSecret).toBe('box-secret');
         });
 
-        it('should map SST Resource names to schema fields correctly', () => {
+        test('should map SST Resource names to schema fields correctly', () => {
             const resources = createMockResources({
                 NodeEnv:   { value: 'production' },
                 Port:      { value: '8080' },
@@ -96,7 +96,7 @@ describe('loadConfig', () => {
     });
 
     describe('Missing Resources', () => {
-        it('should throw descriptive error when NodeEnv is undefined', () => {
+        test('should throw descriptive error when NodeEnv is undefined', () => {
             const resources = createMockResources({
                 NodeEnv: { value: undefined },
             });
@@ -105,7 +105,7 @@ describe('loadConfig', () => {
             expect(() => loadConfig(resources)).toThrow(/app\.nodeEnv/);
         });
 
-        it('should throw descriptive error when required secrets are undefined', () => {
+        test('should throw descriptive error when required secrets are undefined', () => {
             const resources = createMockResources({
                 CaldavPassword: { value: undefined },
             });
@@ -114,7 +114,7 @@ describe('loadConfig', () => {
             expect(() => loadConfig(resources)).toThrow(/caldav\.password|password/);
         });
 
-        it('should throw descriptive error when DiscordBotToken is undefined', () => {
+        test('should throw descriptive error when DiscordBotToken is undefined', () => {
             const resources = createMockResources({
                 DiscordBotToken: { value: undefined },
             });
@@ -123,7 +123,7 @@ describe('loadConfig', () => {
             expect(() => loadConfig(resources)).toThrow(/discord\.botToken|botToken/);
         });
 
-        it('should throw descriptive error when ClaudeCodeOAuthToken is undefined', () => {
+        test('should throw descriptive error when ClaudeCodeOAuthToken is undefined', () => {
             const resources = createMockResources({
                 ClaudeCodeOAuthToken: { value: undefined },
             });
@@ -132,7 +132,7 @@ describe('loadConfig', () => {
             expect(() => loadConfig(resources)).toThrow(/agent\.oauthToken|oauthToken/);
         });
 
-        it('should identify which field is missing in error message', () => {
+        test('should identify which field is missing in error message', () => {
             const resources = createMockResources({
                 BoxClientSecret: { value: undefined },
             });
@@ -142,7 +142,7 @@ describe('loadConfig', () => {
     });
 
     describe('Malformed Values', () => {
-        it('should throw error for invalid port (non-numeric string)', () => {
+        test('should throw error for invalid port (non-numeric string)', () => {
             const resources = createMockResources({
                 Port: { value: 'not-a-number' },
             });
@@ -150,7 +150,7 @@ describe('loadConfig', () => {
             expect(() => loadConfig(resources)).toThrow();
         });
 
-        it('should throw error for invalid IMAP port', () => {
+        test('should throw error for invalid IMAP port', () => {
             const resources = createMockResources({
                 ImapPort: { value: 'abc' },
             });
@@ -158,7 +158,7 @@ describe('loadConfig', () => {
             expect(() => loadConfig(resources)).toThrow();
         });
 
-        it('should throw error for invalid URL format', () => {
+        test('should throw error for invalid URL format', () => {
             const resources = createMockResources({
                 CaldavUrl: { value: 'not-a-valid-url' },
             });
@@ -166,7 +166,7 @@ describe('loadConfig', () => {
             expect(() => loadConfig(resources)).toThrow();
         });
 
-        it('should throw error for invalid nodeEnv value', () => {
+        test('should throw error for invalid nodeEnv value', () => {
             const resources = createMockResources({
                 NodeEnv: { value: 'invalid-env' },
             });
@@ -174,7 +174,7 @@ describe('loadConfig', () => {
             expect(() => loadConfig(resources)).toThrow();
         });
 
-        it('should throw error for port out of valid range', () => {
+        test('should throw error for port out of valid range', () => {
             const resources = createMockResources({
                 SmtpPort: { value: '99999' },
             });
@@ -182,7 +182,7 @@ describe('loadConfig', () => {
             expect(() => loadConfig(resources)).toThrow();
         });
 
-        it('should throw error for negative port', () => {
+        test('should throw error for negative port', () => {
             const resources = createMockResources({
                 ImapPort: { value: '-1' },
             });
@@ -190,7 +190,7 @@ describe('loadConfig', () => {
             expect(() => loadConfig(resources)).toThrow();
         });
 
-        it('should throw error for empty ClaudeCodeOAuthToken', () => {
+        test('should throw error for empty ClaudeCodeOAuthToken', () => {
             const resources = createMockResources({
                 ClaudeCodeOAuthToken: { value: '' },
             });
@@ -200,7 +200,7 @@ describe('loadConfig', () => {
     });
 
     describe('Secret Redaction (SECURITY CRITICAL)', () => {
-        it('should NOT contain actual secret values in error messages', () => {
+        test('should NOT contain actual secret values in error messages', () => {
             const resources = createMockResources({
                 CaldavPassword: { value: 'super-secret-password-123' },
                 Port:           { value: 'invalid' }, // Force an error
@@ -215,7 +215,7 @@ describe('loadConfig', () => {
             }
         });
 
-        it('should show [REDACTED] for password field errors (caldav.password)', () => {
+        test('should show [REDACTED] for password field errors (caldav.password)', () => {
             const resources = createMockResources({
                 CaldavPassword: { value: '' }, // Empty password fails min(1) validation
             });
@@ -230,7 +230,7 @@ describe('loadConfig', () => {
             }
         });
 
-        it('should show [REDACTED] for password field errors (email.password)', () => {
+        test('should show [REDACTED] for password field errors (email.password)', () => {
             const resources = createMockResources({
                 EmailPassword: { value: '' }, // Empty password should fail validation
             });
@@ -245,7 +245,7 @@ describe('loadConfig', () => {
             }
         });
 
-        it('should show [REDACTED] for token field errors (discord.botToken)', () => {
+        test('should show [REDACTED] for token field errors (discord.botToken)', () => {
             const resources = createMockResources({
                 DiscordBotToken: { value: '' }, // Empty token should fail
             });
@@ -260,7 +260,7 @@ describe('loadConfig', () => {
             }
         });
 
-        it('should show [REDACTED] for secret field errors (box.clientSecret)', () => {
+        test('should show [REDACTED] for secret field errors (box.clientSecret)', () => {
             const resources = createMockResources({
                 BoxClientSecret: { value: '' },
             });
@@ -275,7 +275,7 @@ describe('loadConfig', () => {
             }
         });
 
-        it('should show [REDACTED] for token field errors (agent.oauthToken)', () => {
+        test('should show [REDACTED] for token field errors (agent.oauthToken)', () => {
             const resources = createMockResources({
                 ClaudeCodeOAuthToken: { value: '' },
             });
@@ -290,7 +290,7 @@ describe('loadConfig', () => {
             }
         });
 
-        it('should redact based on case-insensitive matching (Password)', () => {
+        test('should redact based on case-insensitive matching (Password)', () => {
             const resources = createMockResources({
                 EmailPassword: { value: undefined }, // Undefined password
             });
@@ -305,7 +305,7 @@ describe('loadConfig', () => {
             }
         });
 
-        it('should redact based on case-insensitive matching (Token)', () => {
+        test('should redact based on case-insensitive matching (Token)', () => {
             const resources = createMockResources({
                 DiscordBotToken: { value: undefined }, // Undefined token
             });
@@ -320,7 +320,7 @@ describe('loadConfig', () => {
             }
         });
 
-        it('should redact based on case-insensitive matching (Secret)', () => {
+        test('should redact based on case-insensitive matching (Secret)', () => {
             const resources = createMockResources({
                 BoxClientSecret: { value: undefined }, // Undefined secret
             });
@@ -335,7 +335,7 @@ describe('loadConfig', () => {
             }
         });
 
-        it('should NOT redact non-sensitive field errors', () => {
+        test('should NOT redact non-sensitive field errors', () => {
             const resources = createMockResources({
                 Port: { value: 'not-a-number' }, // Invalid port
             });
@@ -353,7 +353,7 @@ describe('loadConfig', () => {
             }
         });
 
-        it('should NOT redact non-sensitive URL field errors', () => {
+        test('should NOT redact non-sensitive URL field errors', () => {
             const resources = createMockResources({
                 CaldavUrl: { value: 'not-a-valid-url' }, // Invalid URL
             });
@@ -370,7 +370,7 @@ describe('loadConfig', () => {
             }
         });
 
-        it('should NOT redact username field errors', () => {
+        test('should NOT redact username field errors', () => {
             const resources = createMockResources({
                 CaldavUsername: { value: '' }, // Empty username
             });
@@ -386,7 +386,7 @@ describe('loadConfig', () => {
             }
         });
 
-        it('should handle multiple errors with mixed sensitivity', () => {
+        test('should handle multiple errors with mixed sensitivity', () => {
             const resources = createMockResources({
                 Port:            { value: 'invalid' },      // Non-sensitive
                 EmailPassword:   { value: '' },             // Sensitive
@@ -426,7 +426,7 @@ describe('loadConfig', () => {
     });
 
     describe('Comma-Separated Values (Discord Channel IDs)', () => {
-        it('should split comma-separated monitored channel IDs', () => {
+        test('should split comma-separated monitored channel IDs', () => {
             const resources = createMockResources({
                 DiscordMonitoredChannels: { value: 'channel1,channel2,channel3' },
             });
@@ -434,7 +434,7 @@ describe('loadConfig', () => {
             expect(config.discord.monitoredChannelIds).toEqual(['channel1', 'channel2', 'channel3']);
         });
 
-        it('should trim whitespace from monitored channel IDs', () => {
+        test('should trim whitespace from monitored channel IDs', () => {
             const resources = createMockResources({
                 DiscordMonitoredChannels: { value: '  channel1 , channel2  ,  channel3  ' },
             });
@@ -442,7 +442,7 @@ describe('loadConfig', () => {
             expect(config.discord.monitoredChannelIds).toEqual(['channel1', 'channel2', 'channel3']);
         });
 
-        it('should handle single channel ID', () => {
+        test('should handle single channel ID', () => {
             const resources = createMockResources({
                 DiscordMonitoredChannels: { value: 'channel1' },
             });
@@ -450,7 +450,7 @@ describe('loadConfig', () => {
             expect(config.discord.monitoredChannelIds).toEqual(['channel1']);
         });
 
-        it('should return empty array when monitored channel IDs are not provided', () => {
+        test('should return empty array when monitored channel IDs are not provided', () => {
             const resources = createMockResources({
                 DiscordMonitoredChannels: { value: undefined },
             });
@@ -460,7 +460,7 @@ describe('loadConfig', () => {
     });
 
     describe('Presence Config Defaults', () => {
-        it('includes default presence config in discord config', () => {
+        test('includes default presence config in discord config', () => {
             const resources = createMockResources();
             const config = loadConfig(resources);
 
@@ -470,7 +470,7 @@ describe('loadConfig', () => {
             expect(config.discord.presence?.idleRefreshIntervalMs).toBe(300000);
         });
 
-        it('presence config is explicitly set with all three required properties', () => {
+        test('presence config is explicitly set with all three required properties', () => {
             const resources = createMockResources();
             const config = loadConfig(resources);
 
@@ -485,7 +485,7 @@ describe('loadConfig', () => {
             });
         });
 
-        it('presence object contains all default fields when loader provides defaults', () => {
+        test('presence object contains all default fields when loader provides defaults', () => {
             const resources = createMockResources();
             const config = loadConfig(resources);
 
@@ -499,7 +499,7 @@ describe('loadConfig', () => {
             expect(_.keys(presence!)).toContain('idleRefreshIntervalMs');
         });
 
-        it('presence defaults from loader have exact numeric values not just truthy', () => {
+        test('presence defaults from loader have exact numeric values not just truthy', () => {
             // This test kills the ObjectLiteral mutant by verifying EXACT numeric values
             // that cannot be satisfied by schema defaults or modified values
             const resources = createMockResources();
@@ -532,7 +532,7 @@ describe('loadConfig', () => {
     });
 
     describe('Type Coercion', () => {
-        it('should coerce string ports to numbers', () => {
+        test('should coerce string ports to numbers', () => {
             const resources = createMockResources({
                 Port:     { value: '9000' },
                 ImapPort: { value: '993' },
@@ -549,7 +549,7 @@ describe('loadConfig', () => {
             expect(typeof config.email.smtpPort).toBe('number');
         });
 
-        it('should handle numeric strings correctly', () => {
+        test('should handle numeric strings correctly', () => {
             const resources = createMockResources({
                 Port: { value: '8080' },
             });
@@ -559,7 +559,7 @@ describe('loadConfig', () => {
             expect(config.app.port).not.toBe('8080');
         });
 
-        it('should apply default logLevel when not provided', () => {
+        test('should apply default logLevel when not provided', () => {
             const resources = createMockResources({
                 LogLevel: { value: undefined },
             });
@@ -568,7 +568,7 @@ describe('loadConfig', () => {
             expect(config.app.logLevel).toBe('info');
         });
 
-        it('should accept valid logLevel values', () => {
+        test('should accept valid logLevel values', () => {
             const resources = createMockResources({
                 LogLevel: { value: 'debug' },
             });
@@ -580,7 +580,7 @@ describe('loadConfig', () => {
 });
 
 describe('loadDynamoDBConfig', () => {
-    it('should load valid DynamoDB configuration', () => {
+    test('should load valid DynamoDB configuration', () => {
         const resources: DynamoDBResourceProvider = {
             DynamoDBTableName: { value: 'IsambardMemory' },
             DynamoDBRegion:    { value: 'us-west-2' },
@@ -592,7 +592,7 @@ describe('loadDynamoDBConfig', () => {
         expect(config.endpoint).toBeUndefined();
     });
 
-    it('should load config with endpoint for local development', () => {
+    test('should load config with endpoint for local development', () => {
         const resources: DynamoDBResourceProvider = {
             DynamoDBTableName: { value: 'IsambardMemory' },
             DynamoDBRegion:    { value: 'us-west-2' },
@@ -602,7 +602,7 @@ describe('loadDynamoDBConfig', () => {
         expect(config.endpoint).toBe('http://localhost:8000');
     });
 
-    it('should throw on missing tableName', () => {
+    test('should throw on missing tableName', () => {
         const resources: DynamoDBResourceProvider = {
             DynamoDBTableName: { value: undefined },
             DynamoDBRegion:    { value: 'us-west-2' },
@@ -611,7 +611,7 @@ describe('loadDynamoDBConfig', () => {
         expect(() => loadDynamoDBConfig(resources)).toThrow('DynamoDB config validation failed');
     });
 
-    it('should throw on missing region', () => {
+    test('should throw on missing region', () => {
         const resources: DynamoDBResourceProvider = {
             DynamoDBTableName: { value: 'IsambardMemory' },
             DynamoDBRegion:    { value: undefined },

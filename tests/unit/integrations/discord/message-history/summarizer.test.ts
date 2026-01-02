@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach } from 'bun:test';
 import _ from 'lodash';
 import { createMessageSummarizer, createSemaphore } from '@/integrations/discord/message-history/summarizer';
 import type { DiscordSearchResult } from '@/integrations/discord/message-history/types';
@@ -35,14 +35,14 @@ function createMockSearchResult(overrides: Partial<{
     };
 }
 
-describe('createMessageSummarizer', () => {
+describe.concurrent('createMessageSummarizer', () => {
     beforeEach(() => {
         mockGenerateText.mockReset();
         mockGenerateText.mockResolvedValue('This is a test summary.');
     });
 
     describe('summarizeMessages', () => {
-        it('should return empty array for empty input', async () => {
+        test('should return empty array for empty input', async () => {
             const summarizer = createMessageSummarizer({});
 
             const result = await summarizer.summarizeMessages([]);
@@ -51,7 +51,7 @@ describe('createMessageSummarizer', () => {
             expect(mockGenerateText).not.toHaveBeenCalled();
         });
 
-        it('should return empty array immediately without calling Haiku when messages is empty', async () => {
+        test('should return empty array immediately without calling Haiku when messages is empty', async () => {
             // Explicitly tests the _.isEmpty(messages) early return branch
             // This verifies no API calls are made for empty input
             let apiCallCount = 0;
@@ -74,7 +74,7 @@ describe('createMessageSummarizer', () => {
             expect(mockGenerateText).not.toHaveBeenCalled();
         });
 
-        it('should summarize a single message', async () => {
+        test('should summarize a single message', async () => {
             const message = createMockSearchResult({
                 id:             '100000000000000000',
                 content:        'Hello world!',
@@ -93,7 +93,7 @@ describe('createMessageSummarizer', () => {
             expect(result[0].synopsis).toBe('This is a test summary.');
         });
 
-        it('should preserve message IDs from our code, not from Haiku', async () => {
+        test('should preserve message IDs from our code, not from Haiku', async () => {
             const message = createMockSearchResult({
                 id:      '999888777666555444',
                 content: 'Important message',
@@ -113,7 +113,7 @@ describe('createMessageSummarizer', () => {
             expect(promptArg).not.toContain('999888777666555444');
         });
 
-        it('should NOT pass message ID to Haiku prompt', async () => {
+        test('should NOT pass message ID to Haiku prompt', async () => {
             const message = createMockSearchResult({
                 id:      '123456789012345678',
                 content: 'Some content here',
@@ -132,7 +132,7 @@ describe('createMessageSummarizer', () => {
             expect(promptArg).toContain('Some content here');
         });
 
-        it('should summarize multiple messages in parallel', async () => {
+        test('should summarize multiple messages in parallel', async () => {
             const messages = [
                 createMockSearchResult({ id: '100000000000000001', content: 'First message', authorUsername: 'alice' }),
                 createMockSearchResult({ id: '100000000000000002', content: 'Second message', authorUsername: 'bob' }),
@@ -153,7 +153,7 @@ describe('createMessageSummarizer', () => {
             expect(mockGenerateText).toHaveBeenCalledTimes(3);
         });
 
-        it('should return summaries in same order as input messages', async () => {
+        test('should return summaries in same order as input messages', async () => {
             const messages = [
                 createMockSearchResult({ id: '100000000000000001', authorUsername: 'alice', timestamp: '2025-01-15T10:00:00.000Z' }),
                 createMockSearchResult({ id: '100000000000000002', authorUsername: 'bob', timestamp: '2025-01-15T11:00:00.000Z' }),
@@ -180,7 +180,7 @@ describe('createMessageSummarizer', () => {
             expect(result[2].author).toBe('charlie');
         });
 
-        it('should propagate error when Haiku API fails', async () => {
+        test('should propagate error when Haiku API fails', async () => {
             const message = createMockSearchResult();
 
             mockGenerateText.mockImplementation(async () => {
@@ -193,7 +193,7 @@ describe('createMessageSummarizer', () => {
             await expect(summarizer.summarizeMessages([message])).rejects.toThrow('API rate limit exceeded');
         });
 
-        it('should propagate error when one message fails in batch', async () => {
+        test('should propagate error when one message fails in batch', async () => {
             const messages = [
                 createMockSearchResult({ id: '100000000000000001' }),
                 createMockSearchResult({ id: '100000000000000002' }),
@@ -215,7 +215,7 @@ describe('createMessageSummarizer', () => {
             await expect(summarizer.summarizeMessages(messages)).rejects.toThrow('Network error on second call');
         });
 
-        it('should include message content in prompt', async () => {
+        test('should include message content in prompt', async () => {
             const message = createMockSearchResult({
                 content: 'This is the specific content to summarize',
             });
@@ -229,7 +229,7 @@ describe('createMessageSummarizer', () => {
             expect(promptArg).toContain('This is the specific content to summarize');
         });
 
-        it('should include summarization instructions in prompt', async () => {
+        test('should include summarization instructions in prompt', async () => {
             const message = createMockSearchResult();
 
             const summarizer = createMessageSummarizer({});
@@ -246,7 +246,7 @@ describe('createMessageSummarizer', () => {
     });
 
     describe('concurrency limiting', () => {
-        it('should default to maxConcurrent of 10', async () => {
+        test('should default to maxConcurrent of 10', async () => {
             // Create 15 messages to test default concurrency
             const messages = _.times(15, i =>
                 createMockSearchResult({ id: `10000000000000000${i}` })
@@ -289,7 +289,7 @@ describe('createMessageSummarizer', () => {
             await resultPromise;
         });
 
-        it('should respect custom maxConcurrent setting', async () => {
+        test('should respect custom maxConcurrent setting', async () => {
             const messages = _.times(10, i =>
                 createMockSearchResult({ id: `10000000000000000${i}` })
             );
@@ -332,7 +332,7 @@ describe('createMessageSummarizer', () => {
             await resultPromise;
         });
 
-        it('should process all messages even with concurrency limit', async () => {
+        test('should process all messages even with concurrency limit', async () => {
             const messages = _.times(25, i =>
                 createMockSearchResult({ id: `10000000000000000${i}` })
             );
@@ -347,7 +347,7 @@ describe('createMessageSummarizer', () => {
             expect(mockGenerateText).toHaveBeenCalledTimes(25);
         });
 
-        it('should handle maxConcurrent of 1 (sequential processing)', async () => {
+        test('should handle maxConcurrent of 1 (sequential processing)', async () => {
             const messages = _.times(3, i =>
                 createMockSearchResult({ id: `10000000000000000${i}` })
             );
@@ -374,7 +374,7 @@ describe('createMessageSummarizer', () => {
             expect(mockGenerateText).toHaveBeenCalledTimes(3);
         });
 
-        it('should decrement semaphore count after each task completes', async () => {
+        test('should decrement semaphore count after each task completes', async () => {
             // This test verifies that current-- works correctly in release()
             // If current-- were mutated to current++, concurrency would grow unbounded
             const messages = _.times(20, i =>
@@ -422,7 +422,7 @@ describe('createMessageSummarizer', () => {
             expect(Math.max(...concurrencySnapshots)).toBeLessThanOrEqual(3);
         });
 
-        it('should increment semaphore count when acquiring for queued task', async () => {
+        test('should increment semaphore count when acquiring for queued task', async () => {
             // This test verifies that current++ in release() works correctly
             // when processing the next queued task
             const messages = _.times(6, i =>
@@ -471,7 +471,7 @@ describe('createMessageSummarizer', () => {
             expect(peakConcurrency).toBeLessThanOrEqual(2);
         });
 
-        it('should respect maxConcurrent limit throughout entire batch (verifies current-- works)', async () => {
+        test('should respect maxConcurrent limit throughout entire batch (verifies current-- works)', async () => {
             // This test catches the current-- -> current++ mutation
             //
             // The semaphore internal counter is not directly observable. However, we can
@@ -549,7 +549,7 @@ describe('createMessageSummarizer', () => {
             expect(mockGenerateText).toHaveBeenCalledTimes(6);
         });
 
-        it('should release semaphore slot on error', async () => {
+        test('should release semaphore slot on error', async () => {
             // This test verifies the semaphore is released even when an error occurs
             const message1 = createMockSearchResult({ id: '100000000000000001' });
             const message2 = createMockSearchResult({ id: '100000000000000002' });
@@ -578,7 +578,7 @@ describe('createMessageSummarizer', () => {
     });
 
     describe('edge cases', () => {
-        it('should handle message with empty content', async () => {
+        test('should handle message with empty content', async () => {
             const message = createMockSearchResult({
                 content: '',
             });
@@ -592,7 +592,7 @@ describe('createMessageSummarizer', () => {
             expect(mockGenerateText).toHaveBeenCalledTimes(1);
         });
 
-        it('should handle message with very long content', async () => {
+        test('should handle message with very long content', async () => {
             const message = createMockSearchResult({
                 content: _.repeat('Long content. ', 1000),
             });
@@ -605,7 +605,7 @@ describe('createMessageSummarizer', () => {
             expect(mockGenerateText).toHaveBeenCalledTimes(1);
         });
 
-        it('should handle message with special characters', async () => {
+        test('should handle message with special characters', async () => {
             const message = createMockSearchResult({
                 content: 'Message with emoji and special chars: <>&"\'',
             });
@@ -619,7 +619,7 @@ describe('createMessageSummarizer', () => {
             expect(promptArg).toContain('<>&"\'');
         });
 
-        it('should use author username not displayName', async () => {
+        test('should use author username not displayName', async () => {
             const message = createMockSearchResult({
                 authorUsername:    'actual_username',
                 authorDisplayName: 'Display Name',
@@ -635,8 +635,8 @@ describe('createMessageSummarizer', () => {
     });
 });
 
-describe('createSemaphore', () => {
-    it('should allow acquire after release frees a slot (verifies current-- works)', async () => {
+describe.concurrent('createSemaphore', () => {
+    test('should allow acquire after release frees a slot (verifies current-- works)', async () => {
         // This test directly verifies the semaphore's current-- behavior
         // If current-- is mutated to current++, the second acquire will never complete
         // because the internal counter will be 2 instead of 0 after release
@@ -666,7 +666,7 @@ describe('createSemaphore', () => {
         expect(true).toBe(true);
     });
 
-    it('should allow new tasks after batch completes (verifies current-- works)', async () => {
+    test('should allow new tasks after batch completes (verifies current-- works)', async () => {
         // More comprehensive test: run a batch of tasks, then verify new tasks can acquire
         const semaphore = createSemaphore(2);
 

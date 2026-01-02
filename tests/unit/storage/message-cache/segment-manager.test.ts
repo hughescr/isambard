@@ -1,10 +1,10 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import { map as _map } from 'lodash';
 import { SegmentManager } from '@/storage/message-cache/segment-manager';
 import type { MessageId, CachedSegmentData } from '@/storage/message-cache/types';
 import type { ChannelId } from '@/integrations/discord/types';
 
-describe('SegmentManager', () => {
+describe.concurrent('SegmentManager', () => {
     const channelId = '123456789' as ChannelId;
 
     const createSegment = (
@@ -25,7 +25,7 @@ describe('SegmentManager', () => {
     });
 
     describe('findGaps', () => {
-        it('should return full range as gap when no cached segments exist', () => {
+        test('should return full range as gap when no cached segments exist', () => {
             const gaps = SegmentManager.findGaps(
                 [],
                 '100' as MessageId,
@@ -37,7 +37,7 @@ describe('SegmentManager', () => {
             expect(gaps[0].end).toBe('200' as MessageId);
         });
 
-        it('should return exactly one gap covering entire range when cachedSegments is empty array', () => {
+        test('should return exactly one gap covering entire range when cachedSegments is empty array', () => {
             // Explicitly tests the cachedSegments.length === 0 branch
             const emptySegments: CachedSegmentData[] = [];
 
@@ -55,7 +55,7 @@ describe('SegmentManager', () => {
             });
         });
 
-        it('should handle empty cachedSegments with early return optimization', () => {
+        test('should handle empty cachedSegments with early return optimization', () => {
             // This test kills the mutation: if(cachedSegments.length === 0) → if(false)
             // The early return at line 30 is an optimization that avoids unnecessary processing.
             // This test verifies the exact output format when the array is truly empty.
@@ -80,7 +80,7 @@ describe('SegmentManager', () => {
             expect(gaps[0].end).toBe('12345678901234569999' as MessageId);
         });
 
-        it('should return empty array when range is fully covered by single segment', () => {
+        test('should return empty array when range is fully covered by single segment', () => {
             const segments = [createSegment('50', '250')];
 
             const gaps = SegmentManager.findGaps(
@@ -92,7 +92,7 @@ describe('SegmentManager', () => {
             expect(gaps).toHaveLength(0);
         });
 
-        it('should find gap before cached segment', () => {
+        test('should find gap before cached segment', () => {
             const segments = [createSegment('150', '250')];
 
             const gaps = SegmentManager.findGaps(
@@ -107,7 +107,7 @@ describe('SegmentManager', () => {
             expect(gaps[0].end).toBe('149' as MessageId);
         });
 
-        it('should find gap after cached segment', () => {
+        test('should find gap after cached segment', () => {
             const segments = [createSegment('50', '120')];
 
             const gaps = SegmentManager.findGaps(
@@ -122,7 +122,7 @@ describe('SegmentManager', () => {
             expect(gaps[0].end).toBe('200' as MessageId);
         });
 
-        it('should find gaps before and after cached segment', () => {
+        test('should find gaps before and after cached segment', () => {
             const segments = [createSegment('130', '170')];
 
             const gaps = SegmentManager.findGaps(
@@ -138,7 +138,7 @@ describe('SegmentManager', () => {
             expect(gaps[1].end).toBe('200' as MessageId);
         });
 
-        it('should find gap between two cached segments', () => {
+        test('should find gap between two cached segments', () => {
             const segments = [
                 createSegment('100', '120'),
                 createSegment('150', '200'),
@@ -155,7 +155,7 @@ describe('SegmentManager', () => {
             expect(gaps[0].end).toBe('149' as MessageId);
         });
 
-        it('should handle adjacent segments with no gap', () => {
+        test('should handle adjacent segments with no gap', () => {
             const segments = [
                 createSegment('100', '149'),
                 createSegment('150', '200'),
@@ -170,7 +170,7 @@ describe('SegmentManager', () => {
             expect(gaps).toHaveLength(0);
         });
 
-        it('should handle overlapping segments', () => {
+        test('should handle overlapping segments', () => {
             const segments = [
                 createSegment('100', '160'),
                 createSegment('140', '200'),
@@ -185,7 +185,7 @@ describe('SegmentManager', () => {
             expect(gaps).toHaveLength(0);
         });
 
-        it('should handle segments outside requested range', () => {
+        test('should handle segments outside requested range', () => {
             const segments = [
                 createSegment('10', '50'),
                 createSegment('250', '300'),
@@ -202,7 +202,7 @@ describe('SegmentManager', () => {
             expect(gaps[0].end).toBe('200' as MessageId);
         });
 
-        it('should return full range as gap when no segments overlap the requested range', () => {
+        test('should return full range as gap when no segments overlap the requested range', () => {
             // Explicitly tests the relevantSegments.length === 0 branch
             // Segments exist but none overlap with the requested range
             const segments = [
@@ -224,7 +224,7 @@ describe('SegmentManager', () => {
             });
         });
 
-        it('should use BigInt arithmetic for large snowflake IDs', () => {
+        test('should use BigInt arithmetic for large snowflake IDs', () => {
             const segments = [createSegment('1234567890123456790', '1234567890123456900')];
 
             const gaps = SegmentManager.findGaps(
@@ -242,7 +242,7 @@ describe('SegmentManager', () => {
             expect(gaps[1].end).toBe('1234567890123457000' as MessageId);
         });
 
-        it('should handle unsorted segments', () => {
+        test('should handle unsorted segments', () => {
             const segments = [
                 createSegment('150', '200'),
                 createSegment('100', '120'),
@@ -259,7 +259,7 @@ describe('SegmentManager', () => {
             expect(gaps[0].end).toBe('149' as MessageId);
         });
 
-        it('should handle segments with equal start times (sort stability)', () => {
+        test('should handle segments with equal start times (sort stability)', () => {
             const segments = [
                 createSegment('100', '150'),
                 createSegment('100', '200'),
@@ -278,7 +278,7 @@ describe('SegmentManager', () => {
             expect(gaps[1].start).toBe('201' as MessageId);
         });
 
-        it('should include gap that ends exactly at requested start boundary', () => {
+        test('should include gap that ends exactly at requested start boundary', () => {
             // Segment at 200-300 leaves gap from 100-199
             // When requested start is 199, gap end equals startBigInt
             const segments = [createSegment('200', '300')];
@@ -294,7 +294,7 @@ describe('SegmentManager', () => {
             expect(gaps[0].end).toBe('199' as MessageId);
         });
 
-        it('should handle when current position equals end boundary exactly', () => {
+        test('should handle when current position equals end boundary exactly', () => {
             // Segment ends at 199, so currentPosition becomes 200
             // When endBigInt is 200, currentPosition === endBigInt
             const segments = [createSegment('100', '199')];
@@ -313,7 +313,7 @@ describe('SegmentManager', () => {
     });
 
     describe('findOverlappingSegments', () => {
-        it('should return empty array when no segments overlap', () => {
+        test('should return empty array when no segments overlap', () => {
             const segments = [
                 createSegment('10', '50'),
                 createSegment('250', '300'),
@@ -328,7 +328,7 @@ describe('SegmentManager', () => {
             expect(overlapping).toHaveLength(0);
         });
 
-        it('should find segment that fully contains requested range', () => {
+        test('should find segment that fully contains requested range', () => {
             const segments = [createSegment('50', '250')];
 
             const overlapping = SegmentManager.findOverlappingSegments(
@@ -341,7 +341,7 @@ describe('SegmentManager', () => {
             expect(overlapping[0].startSnowflake).toBe('50' as MessageId);
         });
 
-        it('should find segment that overlaps at start', () => {
+        test('should find segment that overlaps at start', () => {
             const segments = [createSegment('50', '150')];
 
             const overlapping = SegmentManager.findOverlappingSegments(
@@ -354,7 +354,7 @@ describe('SegmentManager', () => {
             expect(overlapping[0].startSnowflake).toBe('50' as MessageId);
         });
 
-        it('should find segment that overlaps at end', () => {
+        test('should find segment that overlaps at end', () => {
             const segments = [createSegment('150', '250')];
 
             const overlapping = SegmentManager.findOverlappingSegments(
@@ -367,7 +367,7 @@ describe('SegmentManager', () => {
             expect(overlapping[0].startSnowflake).toBe('150' as MessageId);
         });
 
-        it('should find segment fully contained within requested range', () => {
+        test('should find segment fully contained within requested range', () => {
             const segments = [createSegment('130', '170')];
 
             const overlapping = SegmentManager.findOverlappingSegments(
@@ -380,7 +380,7 @@ describe('SegmentManager', () => {
             expect(overlapping[0].startSnowflake).toBe('130' as MessageId);
         });
 
-        it('should find multiple overlapping segments', () => {
+        test('should find multiple overlapping segments', () => {
             const segments = [
                 createSegment('50', '120'),
                 createSegment('180', '250'),
@@ -395,7 +395,7 @@ describe('SegmentManager', () => {
             expect(overlapping).toHaveLength(2);
         });
 
-        it('should NOT include adjacent segments (conservative overlap)', () => {
+        test('should NOT include adjacent segments (conservative overlap)', () => {
             const segments = [
                 createSegment('50', '99'),   // ends just before requested start
                 createSegment('201', '250'), // starts just after requested end
@@ -410,7 +410,7 @@ describe('SegmentManager', () => {
             expect(overlapping).toHaveLength(0);
         });
 
-        it('should include segment that touches boundary', () => {
+        test('should include segment that touches boundary', () => {
             const segments = [
                 createSegment('50', '100'),  // ends at requested start
                 createSegment('200', '250'), // starts at requested end
@@ -425,7 +425,7 @@ describe('SegmentManager', () => {
             expect(overlapping).toHaveLength(2);
         });
 
-        it('should include segment when segEnd equals startBigInt exactly', () => {
+        test('should include segment when segEnd equals startBigInt exactly', () => {
             // Segment ends exactly at 100, requested range starts at 100
             // segEnd >= startBigInt: 100 >= 100 should be true
             const segments = [createSegment('50', '100')];
@@ -440,7 +440,7 @@ describe('SegmentManager', () => {
             expect(overlapping[0].endSnowflake).toBe('100' as MessageId);
         });
 
-        it('should include segment when segStart equals endBigInt exactly', () => {
+        test('should include segment when segStart equals endBigInt exactly', () => {
             // Segment starts exactly at 200, requested range ends at 200
             // segStart <= endBigInt: 200 <= 200 should be true
             const segments = [createSegment('200', '250')];
@@ -455,7 +455,7 @@ describe('SegmentManager', () => {
             expect(overlapping[0].startSnowflake).toBe('200' as MessageId);
         });
 
-        it('should NOT include segment when segEnd is one less than startBigInt', () => {
+        test('should NOT include segment when segEnd is one less than startBigInt', () => {
             // Segment ends at 99, requested range starts at 100
             // segEnd >= startBigInt: 99 >= 100 should be false
             const segments = [createSegment('50', '99')];
@@ -469,7 +469,7 @@ describe('SegmentManager', () => {
             expect(overlapping).toHaveLength(0);
         });
 
-        it('should NOT include segment when segStart is one more than endBigInt', () => {
+        test('should NOT include segment when segStart is one more than endBigInt', () => {
             // Segment starts at 201, requested range ends at 200
             // segStart <= endBigInt: 201 <= 200 should be false
             const segments = [createSegment('201', '250')];
@@ -485,7 +485,7 @@ describe('SegmentManager', () => {
     });
 
     describe('mergeMessages', () => {
-        it('should return empty array for empty segments', () => {
+        test('should return empty array for empty segments', () => {
             const messages = SegmentManager.mergeMessages(
                 [],
                 '100' as MessageId,
@@ -495,7 +495,7 @@ describe('SegmentManager', () => {
             expect(messages).toHaveLength(0);
         });
 
-        it('should filter messages within requested range', () => {
+        test('should filter messages within requested range', () => {
             const segments = [createSegment('50', '250', [
                 { id: '80', content: 'Before', authorId: 'a', timestamp: '2024-01-15T10:00:00.000Z' },
                 { id: '120', content: 'Within 1', authorId: 'a', timestamp: '2024-01-15T10:10:00.000Z' },
@@ -514,7 +514,7 @@ describe('SegmentManager', () => {
             expect(messages[1].id).toBe('180' as MessageId);
         });
 
-        it('should include messages at range boundaries', () => {
+        test('should include messages at range boundaries', () => {
             const segments = [createSegment('100', '200', [
                 { id: '100', content: 'At start', authorId: 'a', timestamp: '2024-01-15T10:00:00.000Z' },
                 { id: '150', content: 'Middle', authorId: 'a', timestamp: '2024-01-15T10:10:00.000Z' },
@@ -530,7 +530,7 @@ describe('SegmentManager', () => {
             expect(messages).toHaveLength(3);
         });
 
-        it('should deduplicate messages by ID', () => {
+        test('should deduplicate messages by ID', () => {
             const segments = [
                 createSegment('100', '150', [
                     { id: '120', content: 'First copy', authorId: 'a', timestamp: '2024-01-15T10:00:00.000Z' },
@@ -555,7 +555,7 @@ describe('SegmentManager', () => {
             expect(ids).toContain('160' as MessageId);
         });
 
-        it('should sort messages by ID ascending', () => {
+        test('should sort messages by ID ascending', () => {
             const segments = [createSegment('100', '200', [
                 { id: '180', content: 'Third', authorId: 'a', timestamp: '2024-01-15T10:20:00.000Z' },
                 { id: '120', content: 'First', authorId: 'a', timestamp: '2024-01-15T10:00:00.000Z' },
@@ -574,7 +574,7 @@ describe('SegmentManager', () => {
             expect(messages[2].id).toBe('180' as MessageId);
         });
 
-        it('should sort large snowflake IDs numerically not lexically', () => {
+        test('should sort large snowflake IDs numerically not lexically', () => {
             const segments = [createSegment('1234567890123456700', '1234567890123457000', [
                 { id: '1234567890123456900', content: 'Third', authorId: 'a', timestamp: '2024-01-15T10:20:00.000Z' },
                 { id: '1234567890123456700', content: 'First', authorId: 'a', timestamp: '2024-01-15T10:00:00.000Z' },
@@ -592,7 +592,7 @@ describe('SegmentManager', () => {
             expect(messages[2].id).toBe('1234567890123456900' as MessageId);
         });
 
-        it('should maintain stable sort when messages have identical IDs (dedup case)', () => {
+        test('should maintain stable sort when messages have identical IDs (dedup case)', () => {
             // Two segments with same message ID - tests sort comparator returning 0
             const segments = [
                 createSegment('100', '200', [
@@ -615,7 +615,7 @@ describe('SegmentManager', () => {
             expect(messages[0].content).toBe('First occurrence');
         });
 
-        it('should handle sort comparator when aId equals bId', () => {
+        test('should handle sort comparator when aId equals bId', () => {
             // Create messages that will be compared with equal IDs during sort
             // The comparator should return 0, maintaining stable order
             const segments = [createSegment('100', '200', [
@@ -638,7 +638,7 @@ describe('SegmentManager', () => {
     });
 
     describe('sort comparator boundary conditions', () => {
-        it('should correctly order segments when earlier segment appears second in input', () => {
+        test('should correctly order segments when earlier segment appears second in input', () => {
             // This test kills: if(aStart > bStart) block removal
             // If the > check is removed, sorting would be wrong
             const segments = [
@@ -661,7 +661,7 @@ describe('SegmentManager', () => {
             expect(gaps[1].end).toBe('199' as MessageId);
         });
 
-        it('should advance currentPosition when segment end exactly equals current position', () => {
+        test('should advance currentPosition when segment end exactly equals current position', () => {
             // This test kills: if(segEnd >= currentPosition) → if(segEnd > currentPosition)
             // Two adjacent segments that touch exactly
             const segments = [
@@ -679,7 +679,7 @@ describe('SegmentManager', () => {
             expect(gaps).toHaveLength(0);
         });
 
-        it('should handle single-point segment at start of range', () => {
+        test('should handle single-point segment at start of range', () => {
             // Edge case: segment start === segment end === range start
             const segments = [
                 createSegment('100', '100'),  // Single point
@@ -698,7 +698,7 @@ describe('SegmentManager', () => {
     });
 
     describe('mergeMessages sort comparator boundary conditions', () => {
-        it('should correctly order messages when later ID appears first in input', () => {
+        test('should correctly order messages when later ID appears first in input', () => {
             // This test kills: if(aId > bId) mutations
             const segments = [createSegment('100', '200', [
                 { id: '180', content: 'Later', authorId: 'a', timestamp: '2024-01-15T10:20:00.000Z' },

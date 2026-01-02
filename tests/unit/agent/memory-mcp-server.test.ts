@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- Handler return values are typed as any in tests */
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { MemoryPath, ContentType, MemoryToolItemData } from '../../../src/storage/memory-tool/types';
@@ -17,7 +17,7 @@ const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryTool
     ...overrides,
 });
 
-describe('createMemoryMCPServer', () => {
+describe.concurrent('createMemoryMCPServer', () => {
     let mockBackend: MemoryToolBackend;
 
     beforeEach(() => {
@@ -39,33 +39,33 @@ describe('createMemoryMCPServer', () => {
     };
 
     describe('createMemoryMCPServer function', () => {
-        it('should create MCP server with correct name', () => {
+        test('should create MCP server with correct name', () => {
             const server = createMemoryMCPServer(mockBackend);
 
             expect(server).toBeDefined();
             expect(server.name).toBe('memory');
         });
 
-        it('should create MCP server with instance', () => {
+        test('should create MCP server with instance', () => {
             const server = createMemoryMCPServer(mockBackend);
 
             expect(server.instance).toBeDefined();
         });
 
-        it('should create MCP server with type', () => {
+        test('should create MCP server with type', () => {
             const server = createMemoryMCPServer(mockBackend);
 
             expect(server.type).toBe('sdk');
         });
 
-        it('should create MCP server with version 1.0.0', () => {
+        test('should create MCP server with version 1.0.0', () => {
             const server = createMemoryMCPServer(mockBackend);
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing server version
             expect((server.instance as any).server._serverInfo.version).toBe('1.0.0');
         });
 
-        it('should have view tool with description', () => {
+        test('should have view tool with description', () => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const viewTool = (server.instance as any)._registeredTools.view;
@@ -74,7 +74,7 @@ describe('createMemoryMCPServer', () => {
             expect(viewTool.description).toBe('View memory by path');
         });
 
-        it('should have storeSelf tool with description', () => {
+        test('should have storeSelf tool with description', () => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const storeSelfTool = (server.instance as any)._registeredTools.storeSelf;
@@ -83,7 +83,7 @@ describe('createMemoryMCPServer', () => {
             expect(storeSelfTool.description).toBe('Store self-knowledge in identity or state layer');
         });
 
-        it('should have storeUserMemory tool with description', () => {
+        test('should have storeUserMemory tool with description', () => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const storeUserMemoryTool = (server.instance as any)._registeredTools.storeUserMemory;
@@ -92,7 +92,7 @@ describe('createMemoryMCPServer', () => {
             expect(storeUserMemoryTool.description).toBe('Store user-specific memory');
         });
 
-        it('should have logEvent tool with description', () => {
+        test('should have logEvent tool with description', () => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const logEventTool = (server.instance as any)._registeredTools.logEvent;
@@ -101,7 +101,7 @@ describe('createMemoryMCPServer', () => {
             expect(logEventTool.description).toBe('Log an event to the events layer');
         });
 
-        it('should have search tool with description', () => {
+        test('should have search tool with description', () => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const searchTool = (server.instance as any)._registeredTools.search;
@@ -110,7 +110,7 @@ describe('createMemoryMCPServer', () => {
             expect(searchTool.description).toBe('Search memories by tag with optional filters');
         });
 
-        it('should have view tool with path input schema', () => {
+        test('should have view tool with path input schema', () => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const viewTool = (server.instance as any)._registeredTools.view;
@@ -125,7 +125,7 @@ describe('createMemoryMCPServer', () => {
             expect(viewTool.inputSchema.shape.path.description).toContain('Memory path');
         });
 
-        it('should have storeSelf tool with layer, name, content, and tags input schema', () => {
+        test('should have storeSelf tool with layer, name, content, and tags input schema', () => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const storeSelfTool = (server.instance as any)._registeredTools.storeSelf;
@@ -144,7 +144,7 @@ describe('createMemoryMCPServer', () => {
             expect(storeSelfTool.inputSchema.shape.tags).toBeDefined();
         });
 
-        it('should have storeUserMemory tool with userId, name, content, and tags input schema', () => {
+        test('should have storeUserMemory tool with userId, name, content, and tags input schema', () => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const storeUserMemoryTool = (server.instance as any)._registeredTools.storeUserMemory;
@@ -163,7 +163,7 @@ describe('createMemoryMCPServer', () => {
             expect(storeUserMemoryTool.inputSchema.shape.tags).toBeDefined();
         });
 
-        it('should have logEvent tool with eventType, summary, details, and tags input schema', () => {
+        test('should have logEvent tool with eventType, summary, details, and tags input schema', () => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const logEventTool = (server.instance as any)._registeredTools.logEvent;
@@ -182,7 +182,7 @@ describe('createMemoryMCPServer', () => {
             expect(logEventTool.inputSchema.shape.tags).toBeDefined();
         });
 
-        it('should have search tool with tag, layer, and limit input schema', () => {
+        test('should have search tool with tag, layer, and limit input schema', () => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const searchTool = (server.instance as any)._registeredTools.search;
@@ -201,7 +201,7 @@ describe('createMemoryMCPServer', () => {
     });
 
     describe('view tool', () => {
-        it('should return memory content when found', async () => {
+        test('should return memory content when found', async () => {
             mockBackend.get = mock(async () => ({
                 path:        '/memories/test.md' as MemoryPath,
                 content:     'Test content',
@@ -230,7 +230,7 @@ describe('createMemoryMCPServer', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        it('should return error when memory not found', async () => {
+        test('should return error when memory not found', async () => {
             mockBackend.get = mock(async () => undefined);
 
             const server = createMemoryMCPServer(mockBackend);
@@ -249,7 +249,7 @@ describe('createMemoryMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should return error message when backend.get throws Error', async () => {
+        test('should return error message when backend.get throws Error', async () => {
             mockBackend.get = mock(async () => {
                 throw new Error('Database connection failed');
             });
@@ -270,7 +270,7 @@ describe('createMemoryMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should return error message when backend.get throws non-Error', async () => {
+        test('should return error message when backend.get throws non-Error', async () => {
             mockBackend.get = mock(async () => {
                 // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw 'String error message';
@@ -292,7 +292,7 @@ describe('createMemoryMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should call backend.get with correct memory path', async () => {
+        test('should call backend.get with correct memory path', async () => {
             mockBackend.get = mock(async () => ({
                 path:        '/memories/identity/core.md' as MemoryPath,
                 content:     'Core identity',
@@ -312,7 +312,7 @@ describe('createMemoryMCPServer', () => {
             expect(mockBackend.get).toHaveBeenCalledWith('/memories/identity/core.md');
         });
 
-        it('should return content as text type with const assertion', async () => {
+        test('should return content as text type with const assertion', async () => {
             mockBackend.get = mock(async () => ({
                 path:        '/test.md' as MemoryPath,
                 content:     'Content',
@@ -335,7 +335,7 @@ describe('createMemoryMCPServer', () => {
     });
 
     describe('storeSelf tool', () => {
-        it('should store identity memory successfully', async () => {
+        test('should store identity memory successfully', async () => {
             mockBackend.create = mock(async () => ({
                 path:        '/identity/core-values' as MemoryPath,
                 content:     'My core values',
@@ -362,7 +362,7 @@ describe('createMemoryMCPServer', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        it('should store state memory successfully', async () => {
+        test('should store state memory successfully', async () => {
             mockBackend.create = mock(async () => ({
                 path:        '/state/current-goals' as MemoryPath,
                 content:     'Current goals',
@@ -385,7 +385,7 @@ describe('createMemoryMCPServer', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        it('should call backend.create with correct path for identity layer', async () => {
+        test('should call backend.create with correct path for identity layer', async () => {
             mockBackend.create = mock(async () => createMockItem());
 
             const server = createMemoryMCPServer(mockBackend);
@@ -402,7 +402,7 @@ describe('createMemoryMCPServer', () => {
             });
         });
 
-        it('should call backend.create with correct path for state layer', async () => {
+        test('should call backend.create with correct path for state layer', async () => {
             mockBackend.create = mock(async () => createMockItem());
 
             const server = createMemoryMCPServer(mockBackend);
@@ -419,7 +419,7 @@ describe('createMemoryMCPServer', () => {
             });
         });
 
-        it('should pass tags to backend.create when provided', async () => {
+        test('should pass tags to backend.create when provided', async () => {
             mockBackend.create = mock(async () => createMockItem());
 
             const server = createMemoryMCPServer(mockBackend);
@@ -436,7 +436,7 @@ describe('createMemoryMCPServer', () => {
             });
         });
 
-        it('should return error when backend.create throws Error', async () => {
+        test('should return error when backend.create throws Error', async () => {
             mockBackend.create = mock(async () => {
                 throw new Error('Path already exists');
             });
@@ -453,7 +453,7 @@ describe('createMemoryMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should return error when backend.create throws non-Error', async () => {
+        test('should return error when backend.create throws non-Error', async () => {
             mockBackend.create = mock(async () => {
                 // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw { code: 'VALIDATION_ERROR' };
@@ -471,7 +471,7 @@ describe('createMemoryMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should use text/plain content type', async () => {
+        test('should use text/plain content type', async () => {
             mockBackend.create = mock(async () => createMockItem());
 
             const server = createMemoryMCPServer(mockBackend);
@@ -488,7 +488,7 @@ describe('createMemoryMCPServer', () => {
         });
 
         describe('layer enum validation', () => {
-            it('should have layer schema that accepts identity', () => {
+            test('should have layer schema that accepts identity', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
                 const storeSelfTool = (server.instance as any)._registeredTools.storeSelf;
@@ -498,7 +498,7 @@ describe('createMemoryMCPServer', () => {
                 expect(result.success).toBe(true);
             });
 
-            it('should have layer schema that accepts state', () => {
+            test('should have layer schema that accepts state', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
                 const storeSelfTool = (server.instance as any)._registeredTools.storeSelf;
@@ -508,7 +508,7 @@ describe('createMemoryMCPServer', () => {
                 expect(result.success).toBe(true);
             });
 
-            it('should have layer schema that rejects invalid values', () => {
+            test('should have layer schema that rejects invalid values', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
                 const storeSelfTool = (server.instance as any)._registeredTools.storeSelf;
@@ -518,7 +518,7 @@ describe('createMemoryMCPServer', () => {
                 expect(result.success).toBe(false);
             });
 
-            it('should have layer schema that rejects empty string', () => {
+            test('should have layer schema that rejects empty string', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
                 const storeSelfTool = (server.instance as any)._registeredTools.storeSelf;
@@ -528,7 +528,7 @@ describe('createMemoryMCPServer', () => {
                 expect(result.success).toBe(false);
             });
 
-            it('should have layer schema that rejects events for storeSelf', () => {
+            test('should have layer schema that rejects events for storeSelf', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
                 const storeSelfTool = (server.instance as any)._registeredTools.storeSelf;
@@ -541,7 +541,7 @@ describe('createMemoryMCPServer', () => {
     });
 
     describe('storeUserMemory tool', () => {
-        it('should store user memory successfully', async () => {
+        test('should store user memory successfully', async () => {
             mockBackend.create = mock(async () => ({
                 path:        '/users/user123/preferences' as MemoryPath,
                 content:     'User preferences',
@@ -568,7 +568,7 @@ describe('createMemoryMCPServer', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        it('should call backend.create with correct path including userId', async () => {
+        test('should call backend.create with correct path including userId', async () => {
             mockBackend.create = mock(async () => createMockItem());
 
             const server = createMemoryMCPServer(mockBackend);
@@ -585,7 +585,7 @@ describe('createMemoryMCPServer', () => {
             });
         });
 
-        it('should pass tags to backend.create when provided', async () => {
+        test('should pass tags to backend.create when provided', async () => {
             mockBackend.create = mock(async () => createMockItem());
 
             const server = createMemoryMCPServer(mockBackend);
@@ -602,7 +602,7 @@ describe('createMemoryMCPServer', () => {
             });
         });
 
-        it('should return error when backend.create throws Error', async () => {
+        test('should return error when backend.create throws Error', async () => {
             mockBackend.create = mock(async () => {
                 throw new Error('Storage quota exceeded');
             });
@@ -619,7 +619,7 @@ describe('createMemoryMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should return error when backend.create throws non-Error', async () => {
+        test('should return error when backend.create throws non-Error', async () => {
             mockBackend.create = mock(async () => {
                 // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw 'Network error';
@@ -637,7 +637,7 @@ describe('createMemoryMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should use text/plain content type', async () => {
+        test('should use text/plain content type', async () => {
             mockBackend.create = mock(async () => createMockItem());
 
             const server = createMemoryMCPServer(mockBackend);
@@ -655,7 +655,7 @@ describe('createMemoryMCPServer', () => {
     });
 
     describe('logEvent tool', () => {
-        it('should log event with summary only and return success message', async () => {
+        test('should log event with summary only and return success message', async () => {
             mockBackend.create = mock(async () => createMockItem());
 
             const server = createMemoryMCPServer(mockBackend);
@@ -674,7 +674,7 @@ describe('createMemoryMCPServer', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        it('should log event with summary and details combining content', async () => {
+        test('should log event with summary and details combining content', async () => {
             mockBackend.create = mock(async () => createMockItem());
 
             const server = createMemoryMCPServer(mockBackend);
@@ -694,7 +694,7 @@ describe('createMemoryMCPServer', () => {
             );
         });
 
-        it('should call backend.create with summary only when no details provided', async () => {
+        test('should call backend.create with summary only when no details provided', async () => {
             mockBackend.create = mock(async () => createMockItem());
 
             const server = createMemoryMCPServer(mockBackend);
@@ -710,7 +710,7 @@ describe('createMemoryMCPServer', () => {
             );
         });
 
-        it('should pass tags to backend.create when provided', async () => {
+        test('should pass tags to backend.create when provided', async () => {
             mockBackend.create = mock(async () => createMockItem());
 
             const server = createMemoryMCPServer(mockBackend);
@@ -726,7 +726,7 @@ describe('createMemoryMCPServer', () => {
             );
         });
 
-        it('should generate path with events prefix and eventType', async () => {
+        test('should generate path with events prefix and eventType', async () => {
             mockBackend.create = mock(async () => createMockItem());
 
             const server = createMemoryMCPServer(mockBackend);
@@ -742,7 +742,7 @@ describe('createMemoryMCPServer', () => {
             );
         });
 
-        it('should generate path without colons or dots', async () => {
+        test('should generate path without colons or dots', async () => {
             mockBackend.create = mock(async () => createMockItem());
 
             const server = createMemoryMCPServer(mockBackend);
@@ -758,7 +758,7 @@ describe('createMemoryMCPServer', () => {
             expect(calledPath).not.toContain('.');
         });
 
-        it('should return error when backend.create throws Error', async () => {
+        test('should return error when backend.create throws Error', async () => {
             mockBackend.create = mock(async () => {
                 throw new Error('DynamoDB write failed');
             });
@@ -775,7 +775,7 @@ describe('createMemoryMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should return error when backend.create throws non-Error', async () => {
+        test('should return error when backend.create throws non-Error', async () => {
             mockBackend.create = mock(async () => {
                 // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw { statusCode: 500 };
@@ -793,7 +793,7 @@ describe('createMemoryMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        it('should use text/plain content type', async () => {
+        test('should use text/plain content type', async () => {
             mockBackend.create = mock(async () => createMockItem());
 
             const server = createMemoryMCPServer(mockBackend);

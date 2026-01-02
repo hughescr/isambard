@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument -- Test mocks require unsafe type operations */
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach } from 'bun:test';
 import _ from 'lodash';
 import { generateText, generateTextWithSystemPrompt } from '../../../src/agent/text-generator';
 // Import the shared mocks from setup.ts (already registered via mock.module in preload)
@@ -11,7 +11,7 @@ import {
     originalGenerateTextWithSystemPrompt
 } from '../../setup';
 
-describe('generateText', () => {
+describe.concurrent('generateText', () => {
     beforeEach(() => {
         // Reset text-generator mocks to call through to real implementations
         // (in case another test file set mockImplementation to a stub)
@@ -29,7 +29,7 @@ describe('generateText', () => {
     });
 
     describe('successful text generation', () => {
-        it('should call unstable_v2_prompt with the provided prompt', async () => {
+        test('should call unstable_v2_prompt with the provided prompt', async () => {
             await generateText('Test prompt');
 
             expect(mockUnstableV2Prompt).toHaveBeenCalledWith(
@@ -38,7 +38,7 @@ describe('generateText', () => {
             );
         });
 
-        it('should use claude-haiku-4-5-20251001 model', async () => {
+        test('should use claude-haiku-4-5-20251001 model', async () => {
             await generateText('Test prompt');
 
             expect(mockUnstableV2Prompt).toHaveBeenCalledWith(
@@ -49,7 +49,7 @@ describe('generateText', () => {
             );
         });
 
-        it('should return trimmed text from result', async () => {
+        test('should return trimmed text from result', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  '  Hello, world!  ',
@@ -60,7 +60,7 @@ describe('generateText', () => {
             expect(result).toBe('Hello, world!');
         });
 
-        it('should trim leading whitespace', async () => {
+        test('should trim leading whitespace', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  '\n\t  Leading whitespace',
@@ -71,7 +71,7 @@ describe('generateText', () => {
             expect(result).toBe('Leading whitespace');
         });
 
-        it('should trim trailing whitespace', async () => {
+        test('should trim trailing whitespace', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  'Trailing whitespace  \n\t',
@@ -82,7 +82,7 @@ describe('generateText', () => {
             expect(result).toBe('Trailing whitespace');
         });
 
-        it('should trim both leading and trailing whitespace', async () => {
+        test('should trim both leading and trailing whitespace', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  '   \n  Both ends  \t  ',
@@ -93,7 +93,7 @@ describe('generateText', () => {
             expect(result).toBe('Both ends');
         });
 
-        it('should preserve internal whitespace', async () => {
+        test('should preserve internal whitespace', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  '  Hello   world  ',
@@ -104,7 +104,7 @@ describe('generateText', () => {
             expect(result).toBe('Hello   world');
         });
 
-        it('should handle empty result after trimming', async () => {
+        test('should handle empty result after trimming', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  '   \n\t   ',
@@ -115,7 +115,7 @@ describe('generateText', () => {
             expect(result).toBe('');
         });
 
-        it('should handle result with no whitespace', async () => {
+        test('should handle result with no whitespace', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  'NoWhitespace',
@@ -128,7 +128,7 @@ describe('generateText', () => {
     });
 
     describe('error result handling', () => {
-        it('should return empty string when subtype is error_during_execution', async () => {
+        test('should return empty string when subtype is error_during_execution', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'error_during_execution',
                 errors:  ['Something went wrong'],
@@ -139,7 +139,7 @@ describe('generateText', () => {
             expect(result).toBe('');
         });
 
-        it('should return empty string when subtype is error_max_turns', async () => {
+        test('should return empty string when subtype is error_max_turns', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'error_max_turns',
                 errors:  ['Max turns exceeded'],
@@ -150,7 +150,7 @@ describe('generateText', () => {
             expect(result).toBe('');
         });
 
-        it('should return empty string when subtype is error_max_budget_usd', async () => {
+        test('should return empty string when subtype is error_max_budget_usd', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'error_max_budget_usd',
                 errors:  ['Budget exceeded'],
@@ -161,7 +161,7 @@ describe('generateText', () => {
             expect(result).toBe('');
         });
 
-        it('should return empty string when subtype is not success', async () => {
+        test('should return empty string when subtype is not success', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'error_max_structured_output_retries',
                 errors:  ['Retries exceeded'],
@@ -172,7 +172,7 @@ describe('generateText', () => {
             expect(result).toBe('');
         });
 
-        it('should return empty string for non-success even if result property exists', async () => {
+        test('should return empty string for non-success even if result property exists', async () => {
             // This test kills the mutation: if(result.subtype === 'success') -> if(true)
             // An error response shouldn't have .result, but if it does, we still return ''
             mockUnstableV2Prompt.mockResolvedValue({
@@ -190,13 +190,13 @@ describe('generateText', () => {
     });
 
     describe('prompt parameter handling', () => {
-        it('should pass empty prompt correctly', async () => {
+        test('should pass empty prompt correctly', async () => {
             await generateText('');
 
             expect(mockUnstableV2Prompt).toHaveBeenCalledWith('', expect.any(Object));
         });
 
-        it('should pass prompt with special characters', async () => {
+        test('should pass prompt with special characters', async () => {
             const specialPrompt = 'Hello! @user <tag> **bold** `code` "quotes"';
 
             await generateText(specialPrompt);
@@ -204,7 +204,7 @@ describe('generateText', () => {
             expect(mockUnstableV2Prompt).toHaveBeenCalledWith(specialPrompt, expect.any(Object));
         });
 
-        it('should pass multiline prompt', async () => {
+        test('should pass multiline prompt', async () => {
             const multilinePrompt = 'Line 1\nLine 2\nLine 3';
 
             await generateText(multilinePrompt);
@@ -212,7 +212,7 @@ describe('generateText', () => {
             expect(mockUnstableV2Prompt).toHaveBeenCalledWith(multilinePrompt, expect.any(Object));
         });
 
-        it('should pass prompt with unicode characters', async () => {
+        test('should pass prompt with unicode characters', async () => {
             const unicodePrompt = 'Hello 你好 مرحبا 🎉';
 
             await generateText(unicodePrompt);
@@ -220,7 +220,7 @@ describe('generateText', () => {
             expect(mockUnstableV2Prompt).toHaveBeenCalledWith(unicodePrompt, expect.any(Object));
         });
 
-        it('should pass very long prompt', async () => {
+        test('should pass very long prompt', async () => {
             const longPrompt = _.repeat('a', 10000);
 
             await generateText(longPrompt);
@@ -230,7 +230,7 @@ describe('generateText', () => {
     });
 
     describe('model configuration', () => {
-        it('should always use the lightweight haiku model', async () => {
+        test('should always use the lightweight haiku model', async () => {
             await generateText('First prompt');
             await generateText('Second prompt');
             await generateText('Third prompt');
@@ -247,7 +247,7 @@ describe('generateText', () => {
             }
         });
 
-        it('should pass only model in options object', async () => {
+        test('should pass only model in options object', async () => {
             await generateText('Test prompt');
 
             const callArgs = mockUnstableV2Prompt.mock.calls[0];
@@ -259,7 +259,7 @@ describe('generateText', () => {
     });
 
     describe('return value types', () => {
-        it('should return a string', async () => {
+        test('should return a string', async () => {
             mockUnstableV2Prompt.mockResolvedValue({ subtype: 'success', result: 'test' } as any);
 
             const result = await generateText('Test prompt');
@@ -267,7 +267,7 @@ describe('generateText', () => {
             expect(typeof result).toBe('string');
         });
 
-        it('should return string even for error result', async () => {
+        test('should return string even for error result', async () => {
             mockUnstableV2Prompt.mockResolvedValue({ subtype: 'error_during_execution', errors: ['error'] } as any);
 
             const result = await generateText('Test prompt');
@@ -275,7 +275,7 @@ describe('generateText', () => {
             expect(typeof result).toBe('string');
         });
 
-        it('should return Promise that resolves to string', async () => {
+        test('should return Promise that resolves to string', async () => {
             const promise = generateText('Test prompt');
 
             expect(promise).toBeInstanceOf(Promise);
@@ -286,7 +286,7 @@ describe('generateText', () => {
     });
 });
 
-describe('generateTextWithSystemPrompt', () => {
+describe.concurrent('generateTextWithSystemPrompt', () => {
     beforeEach(() => {
         // Reset text-generator mocks to call through to real implementations
         // (in case another test file set mockImplementation to a stub)
@@ -304,7 +304,7 @@ describe('generateTextWithSystemPrompt', () => {
     });
 
     describe('prompt formatting', () => {
-        it('should combine system and user prompts with correct format', async () => {
+        test('should combine system and user prompts with correct format', async () => {
             await generateTextWithSystemPrompt('Be helpful', 'What is 2+2?');
 
             expect(mockUnstableV2Prompt).toHaveBeenCalledWith(
@@ -313,7 +313,7 @@ describe('generateTextWithSystemPrompt', () => {
             );
         });
 
-        it('should place system prompt before user prompt', async () => {
+        test('should place system prompt before user prompt', async () => {
             await generateTextWithSystemPrompt('System instructions', 'User request');
 
             const calledPrompt = mockUnstableV2Prompt.mock.calls[0][0];
@@ -321,7 +321,7 @@ describe('generateTextWithSystemPrompt', () => {
             expect(calledPrompt.indexOf('System:')).toBeLessThan(calledPrompt.indexOf('User:'));
         });
 
-        it('should include System: header', async () => {
+        test('should include System: header', async () => {
             await generateTextWithSystemPrompt('Test system', 'Test user');
 
             const calledPrompt = mockUnstableV2Prompt.mock.calls[0][0];
@@ -329,7 +329,7 @@ describe('generateTextWithSystemPrompt', () => {
             expect(calledPrompt).toContain('System:');
         });
 
-        it('should include User: header', async () => {
+        test('should include User: header', async () => {
             await generateTextWithSystemPrompt('Test system', 'Test user');
 
             const calledPrompt = mockUnstableV2Prompt.mock.calls[0][0];
@@ -337,7 +337,7 @@ describe('generateTextWithSystemPrompt', () => {
             expect(calledPrompt).toContain('User:');
         });
 
-        it('should separate sections with blank line', async () => {
+        test('should separate sections with blank line', async () => {
             await generateTextWithSystemPrompt('System content', 'User content');
 
             const calledPrompt = mockUnstableV2Prompt.mock.calls[0][0];
@@ -345,7 +345,7 @@ describe('generateTextWithSystemPrompt', () => {
             expect(calledPrompt).toContain('\n\n');
         });
 
-        it('should preserve multiline system prompt', async () => {
+        test('should preserve multiline system prompt', async () => {
             const multilineSystem = 'Line 1\nLine 2\nLine 3';
 
             await generateTextWithSystemPrompt(multilineSystem, 'User prompt');
@@ -355,7 +355,7 @@ describe('generateTextWithSystemPrompt', () => {
             expect(calledPrompt).toContain(multilineSystem);
         });
 
-        it('should preserve multiline user prompt', async () => {
+        test('should preserve multiline user prompt', async () => {
             const multilineUser = 'Question 1\nQuestion 2\nQuestion 3';
 
             await generateTextWithSystemPrompt('System prompt', multilineUser);
@@ -367,7 +367,7 @@ describe('generateTextWithSystemPrompt', () => {
     });
 
     describe('edge cases', () => {
-        it('should handle empty system prompt', async () => {
+        test('should handle empty system prompt', async () => {
             await generateTextWithSystemPrompt('', 'User prompt');
 
             expect(mockUnstableV2Prompt).toHaveBeenCalledWith(
@@ -376,7 +376,7 @@ describe('generateTextWithSystemPrompt', () => {
             );
         });
 
-        it('should handle empty user prompt', async () => {
+        test('should handle empty user prompt', async () => {
             await generateTextWithSystemPrompt('System prompt', '');
 
             expect(mockUnstableV2Prompt).toHaveBeenCalledWith(
@@ -385,7 +385,7 @@ describe('generateTextWithSystemPrompt', () => {
             );
         });
 
-        it('should handle both prompts empty', async () => {
+        test('should handle both prompts empty', async () => {
             await generateTextWithSystemPrompt('', '');
 
             expect(mockUnstableV2Prompt).toHaveBeenCalledWith(
@@ -394,7 +394,7 @@ describe('generateTextWithSystemPrompt', () => {
             );
         });
 
-        it('should handle prompts with special characters', async () => {
+        test('should handle prompts with special characters', async () => {
             const specialSystem = '<xml>tag</xml> @mention **bold**';
             const specialUser = '{"json": true} `code` $variable';
 
@@ -406,7 +406,7 @@ describe('generateTextWithSystemPrompt', () => {
             expect(calledPrompt).toContain(specialUser);
         });
 
-        it('should handle prompts with unicode characters', async () => {
+        test('should handle prompts with unicode characters', async () => {
             const unicodeSystem = '你好 مرحبا';
             const unicodeUser = '🎉 emoji test';
 
@@ -418,7 +418,7 @@ describe('generateTextWithSystemPrompt', () => {
             expect(calledPrompt).toContain(unicodeUser);
         });
 
-        it('should handle very long prompts', async () => {
+        test('should handle very long prompts', async () => {
             const longSystem = _.repeat('s', 5000);
             const longUser = _.repeat('u', 5000);
 
@@ -432,7 +432,7 @@ describe('generateTextWithSystemPrompt', () => {
     });
 
     describe('successful text generation', () => {
-        it('should return trimmed text from result', async () => {
+        test('should return trimmed text from result', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  '  Hello, world!  ',
@@ -443,7 +443,7 @@ describe('generateTextWithSystemPrompt', () => {
             expect(result).toBe('Hello, world!');
         });
 
-        it('should trim leading whitespace', async () => {
+        test('should trim leading whitespace', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  '\n\t  Leading whitespace',
@@ -454,7 +454,7 @@ describe('generateTextWithSystemPrompt', () => {
             expect(result).toBe('Leading whitespace');
         });
 
-        it('should trim trailing whitespace', async () => {
+        test('should trim trailing whitespace', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  'Trailing whitespace  \n\t',
@@ -465,7 +465,7 @@ describe('generateTextWithSystemPrompt', () => {
             expect(result).toBe('Trailing whitespace');
         });
 
-        it('should preserve internal whitespace', async () => {
+        test('should preserve internal whitespace', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  '  Hello   world  ',
@@ -478,7 +478,7 @@ describe('generateTextWithSystemPrompt', () => {
     });
 
     describe('error result handling', () => {
-        it('should return empty string when subtype is error_during_execution', async () => {
+        test('should return empty string when subtype is error_during_execution', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'error_during_execution',
                 errors:  ['Something went wrong'],
@@ -489,7 +489,7 @@ describe('generateTextWithSystemPrompt', () => {
             expect(result).toBe('');
         });
 
-        it('should return empty string when subtype is error_max_turns', async () => {
+        test('should return empty string when subtype is error_max_turns', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'error_max_turns',
                 errors:  ['Max turns exceeded'],
@@ -500,7 +500,7 @@ describe('generateTextWithSystemPrompt', () => {
             expect(result).toBe('');
         });
 
-        it('should return empty string when subtype is error_max_budget_usd', async () => {
+        test('should return empty string when subtype is error_max_budget_usd', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'error_max_budget_usd',
                 errors:  ['Budget exceeded'],
@@ -511,7 +511,7 @@ describe('generateTextWithSystemPrompt', () => {
             expect(result).toBe('');
         });
 
-        it('should return empty string for non-success even if result property exists', async () => {
+        test('should return empty string for non-success even if result property exists', async () => {
             // This test kills the mutation: if(result.subtype === 'success') -> if(true)
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'error_during_execution',
@@ -527,7 +527,7 @@ describe('generateTextWithSystemPrompt', () => {
     });
 
     describe('model configuration', () => {
-        it('should use the lightweight haiku model', async () => {
+        test('should use the lightweight haiku model', async () => {
             await generateTextWithSystemPrompt('System', 'User');
 
             expect(mockUnstableV2Prompt).toHaveBeenCalledWith(
@@ -538,7 +538,7 @@ describe('generateTextWithSystemPrompt', () => {
             );
         });
 
-        it('should pass only model in options object', async () => {
+        test('should pass only model in options object', async () => {
             await generateTextWithSystemPrompt('System', 'User');
 
             const callArgs = mockUnstableV2Prompt.mock.calls[0];
@@ -549,7 +549,7 @@ describe('generateTextWithSystemPrompt', () => {
     });
 
     describe('return value types', () => {
-        it('should return a string', async () => {
+        test('should return a string', async () => {
             mockUnstableV2Prompt.mockResolvedValue({ subtype: 'success', result: 'test' } as any);
 
             const result = await generateTextWithSystemPrompt('System', 'User');
@@ -557,7 +557,7 @@ describe('generateTextWithSystemPrompt', () => {
             expect(typeof result).toBe('string');
         });
 
-        it('should return string even for error result', async () => {
+        test('should return string even for error result', async () => {
             mockUnstableV2Prompt.mockResolvedValue({ subtype: 'error_during_execution', errors: ['error'] } as any);
 
             const result = await generateTextWithSystemPrompt('System', 'User');
@@ -565,7 +565,7 @@ describe('generateTextWithSystemPrompt', () => {
             expect(typeof result).toBe('string');
         });
 
-        it('should return Promise that resolves to string', async () => {
+        test('should return Promise that resolves to string', async () => {
             const promise = generateTextWithSystemPrompt('System', 'User');
 
             expect(promise).toBeInstanceOf(Promise);

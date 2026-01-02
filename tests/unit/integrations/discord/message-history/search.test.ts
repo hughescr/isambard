@@ -4,7 +4,7 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Mock methods */
 /* eslint-disable @typescript-eslint/await-thenable -- expect().rejects returns a promise */
 
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import _ from 'lodash';
 import {
     createMessageSearchService,
@@ -72,7 +72,7 @@ function createMockCachedMessage(overrides: Partial<{
     };
 }
 
-describe('createMessageSearchService', () => {
+describe.concurrent('createMessageSearchService', () => {
     let mockFetcher: MessageFetcher;
     let mockCache: MessageCache;
     let mockSummarizer: MessageSummarizer;
@@ -110,7 +110,7 @@ describe('createMessageSearchService', () => {
 
     describe('searchMessages', () => {
         describe('cache behavior', () => {
-            it('should return cached messages when cache is fully resolved', async () => {
+            test('should return cached messages when cache is fully resolved', async () => {
                 const cachedMessage = createMockCachedMessage({
                     id:        '100000000000000001',
                     content:   'Cached content',
@@ -134,7 +134,7 @@ describe('createMessageSearchService', () => {
                 expect(mockFetcher.fetchMessages).not.toHaveBeenCalled();
             });
 
-            it('should fetch from Discord API when cache has gaps', async () => {
+            test('should fetch from Discord API when cache has gaps', async () => {
                 const startTime = new Date('2025-01-10T00:00:00.000Z');
                 const endTime = new Date('2025-01-15T00:00:00.000Z');
                 const gapStart = timestampToSnowflake(startTime);
@@ -182,7 +182,7 @@ describe('createMessageSearchService', () => {
                 expect(result.messages[0].content).toBe('Fetched content');
             });
 
-            it('should merge cached and fetched messages for partial cache hits', async () => {
+            test('should merge cached and fetched messages for partial cache hits', async () => {
                 const now = new Date('2025-01-20T00:00:00.000Z');
                 const cachedTime = new Date('2025-01-15T00:00:00.000Z');
                 const gapStartTime = new Date('2025-01-10T00:00:00.000Z');
@@ -236,7 +236,7 @@ describe('createMessageSearchService', () => {
                 expect(result.messages[1].content).toBe('Cached message');
             });
 
-            it('should cache fetched messages when gap end time is in the past', async () => {
+            test('should cache fetched messages when gap end time is in the past', async () => {
                 const now = new Date();
                 const pastTime = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000); // 2 days ago
                 const olderTime = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000); // 5 days ago
@@ -278,7 +278,7 @@ describe('createMessageSearchService', () => {
                 expect(mockCache.storeMessages).toHaveBeenCalled();
             });
 
-            it('should NOT cache fetched messages when gap end time is now or in the future', async () => {
+            test('should NOT cache fetched messages when gap end time is now or in the future', async () => {
                 const now = new Date();
                 const futureTime = new Date(now.getTime() + 1000); // 1 second in the future
                 const pastTime = new Date(now.getTime() - 24 * 60 * 60 * 1000); // 1 day ago
@@ -320,7 +320,7 @@ describe('createMessageSearchService', () => {
                 expect(mockCache.storeMessages).not.toHaveBeenCalled();
             });
 
-            it('should NOT cache fetched messages when gap end time equals now exactly (boundary test)', async () => {
+            test('should NOT cache fetched messages when gap end time equals now exactly (boundary test)', async () => {
                 // Tests: gapEndTime < now
                 // When gapEndTime === now, condition is false, so should NOT cache
                 const now = new Date();
@@ -366,7 +366,7 @@ describe('createMessageSearchService', () => {
         });
 
         describe('time range handling', () => {
-            it('should use default time range of 7 days when not specified', async () => {
+            test('should use default time range of 7 days when not specified', async () => {
                 await service.searchMessages({
                     channelId: createChannelId(testChannelId),
                 });
@@ -386,7 +386,7 @@ describe('createMessageSearchService', () => {
                 expect(Math.abs(startTime.getTime() - sevenDaysAgo.getTime())).toBeLessThan(1000);
             });
 
-            it('should use provided startTime and endTime', async () => {
+            test('should use provided startTime and endTime', async () => {
                 const startTime = new Date('2025-01-01T00:00:00.000Z');
                 const endTime = new Date('2025-01-10T00:00:00.000Z');
 
@@ -407,7 +407,7 @@ describe('createMessageSearchService', () => {
                 expect(resultEnd.getTime()).toBe(endTime.getTime());
             });
 
-            it('should include time range in response metadata', async () => {
+            test('should include time range in response metadata', async () => {
                 const startTime = new Date('2025-01-01T00:00:00.000Z');
                 const endTime = new Date('2025-01-10T00:00:00.000Z');
 
@@ -421,7 +421,7 @@ describe('createMessageSearchService', () => {
                 expect(result.metadata.timeRange.end).toBe(endTime.toISOString());
             });
 
-            it('should allow custom default time range via options', async () => {
+            test('should allow custom default time range via options', async () => {
                 const customService = createMessageSearchService({
                     fetcher:              mockFetcher,
                     cache:                mockCache,
@@ -446,7 +446,7 @@ describe('createMessageSearchService', () => {
         });
 
         describe('text query filtering', () => {
-            it('should filter messages by text query (case-insensitive)', async () => {
+            test('should filter messages by text query (case-insensitive)', async () => {
                 const messages = [
                     createMockCachedMessage({ id: '100000000000000001', content: 'Hello World' }),
                     createMockCachedMessage({ id: '100000000000000002', content: 'Goodbye World' }),
@@ -471,7 +471,7 @@ describe('createMessageSearchService', () => {
                 expect(_.some(result.messages, ['content', 'HELLO again'])).toBe(true);
             });
 
-            it('should include query in response metadata', async () => {
+            test('should include query in response metadata', async () => {
                 const result = await service.searchMessages({
                     channelId: createChannelId(testChannelId),
                     query:     'test query',
@@ -480,7 +480,7 @@ describe('createMessageSearchService', () => {
                 expect(result.metadata.query).toBe('test query');
             });
 
-            it('should return all messages when no query provided', async () => {
+            test('should return all messages when no query provided', async () => {
                 const messages = [
                     createMockCachedMessage({ id: '100000000000000001', content: 'First' }),
                     createMockCachedMessage({ id: '100000000000000002', content: 'Second' }),
@@ -502,7 +502,7 @@ describe('createMessageSearchService', () => {
                 expect(result.metadata.query).toBeUndefined();
             });
 
-            it('should NOT filter messages when query is undefined - all messages returned unfiltered', async () => {
+            test('should NOT filter messages when query is undefined - all messages returned unfiltered', async () => {
                 // This test explicitly verifies that without a query, NO filtering occurs
                 // even when message content would NOT match any search term
                 const messages = [
@@ -534,7 +534,7 @@ describe('createMessageSearchService', () => {
                 expect(result.messages[3].content).toBe('date');
             });
 
-            it('should NOT filter messages when query is empty string - all messages returned unfiltered', async () => {
+            test('should NOT filter messages when query is empty string - all messages returned unfiltered', async () => {
                 // Empty string is falsy in JavaScript, so it should NOT trigger the filter block
                 // This test kills mutants that change `if(query)` to `if(true)` or remove the check
                 const messages = [
@@ -569,7 +569,7 @@ describe('createMessageSearchService', () => {
         });
 
         describe('limit and overflow handling', () => {
-            it('should respect limit parameter', async () => {
+            test('should respect limit parameter', async () => {
                 const messages = _.times(15, i =>
                     createMockCachedMessage({
                         id:      `10000000000000000${i}`,
@@ -593,7 +593,7 @@ describe('createMessageSearchService', () => {
                 expect(result.messages).toHaveLength(5);
             });
 
-            it('should use default limit of 10 when not specified', async () => {
+            test('should use default limit of 10 when not specified', async () => {
                 const messages = _.times(15, i =>
                     createMockCachedMessage({
                         id:      `10000000000000000${i}`,
@@ -616,7 +616,7 @@ describe('createMessageSearchService', () => {
                 expect(result.messages).toHaveLength(10);
             });
 
-            it('should allow custom default limit via options', async () => {
+            test('should allow custom default limit via options', async () => {
                 const customService = createMessageSearchService({
                     fetcher:      mockFetcher,
                     cache:        mockCache,
@@ -646,7 +646,7 @@ describe('createMessageSearchService', () => {
                 expect(result.messages).toHaveLength(5);
             });
 
-            it('should generate overflow summaries for messages beyond limit', async () => {
+            test('should generate overflow summaries for messages beyond limit', async () => {
                 const messages = _.times(15, i =>
                     createMockCachedMessage({
                         id:      `10000000000000000${i}`,
@@ -683,7 +683,7 @@ describe('createMessageSearchService', () => {
                 expect(result.overflow!.summaries).toHaveLength(5);
             });
 
-            it('should include totalFound in metadata', async () => {
+            test('should include totalFound in metadata', async () => {
                 const messages = _.times(15, i =>
                     createMockCachedMessage({
                         id:      `10000000000000000${i}`,
@@ -707,7 +707,7 @@ describe('createMessageSearchService', () => {
                 expect(result.metadata.totalFound).toBe(15);
             });
 
-            it('should not have overflow when messages are within limit', async () => {
+            test('should not have overflow when messages are within limit', async () => {
                 const messages = _.times(5, i =>
                     createMockCachedMessage({
                         id:      `10000000000000000${i}`,
@@ -731,7 +731,7 @@ describe('createMessageSearchService', () => {
                 expect(result.overflow).toBeUndefined();
             });
 
-            it('should NOT generate overflow when message count equals limit exactly (boundary test)', async () => {
+            test('should NOT generate overflow when message count equals limit exactly (boundary test)', async () => {
                 // Tests: allMessages.length > limit
                 // When length === limit, condition is false, so NO overflow
                 const messages = _.times(10, i =>
@@ -759,7 +759,7 @@ describe('createMessageSearchService', () => {
                 expect(mockSummarizer.summarizeMessages).not.toHaveBeenCalled();
             });
 
-            it('should generate overflow when message count is one more than limit (boundary test)', async () => {
+            test('should generate overflow when message count is one more than limit (boundary test)', async () => {
                 // Tests the boundary: length > limit
                 // When length === limit + 1, condition is true, so overflow IS generated
                 const messages = _.times(11, i =>
@@ -801,7 +801,7 @@ describe('createMessageSearchService', () => {
         });
 
         describe('message ordering', () => {
-            it('should return messages sorted chronologically (oldest first)', async () => {
+            test('should return messages sorted chronologically (oldest first)', async () => {
                 // Create messages in random order
                 const messages = [
                     createMockCachedMessage({ id: '100000000000000003', content: 'Third' }),
@@ -828,7 +828,7 @@ describe('createMessageSearchService', () => {
         });
 
         describe('empty results', () => {
-            it('should return empty array when no messages found', async () => {
+            test('should return empty array when no messages found', async () => {
                 const result = await service.searchMessages({
                     channelId: createChannelId(testChannelId),
                 });
@@ -838,7 +838,7 @@ describe('createMessageSearchService', () => {
                 expect(result.metadata.totalFound).toBe(0);
             });
 
-            it('should return empty array when query matches nothing', async () => {
+            test('should return empty array when query matches nothing', async () => {
                 const messages = [
                     createMockCachedMessage({ id: '100000000000000001', content: 'Hello World' }),
                 ];
@@ -862,7 +862,7 @@ describe('createMessageSearchService', () => {
         });
 
         describe('error propagation', () => {
-            it('should propagate cache errors', async () => {
+            test('should propagate cache errors', async () => {
                 (mockCache.getMessagesInRange as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.reject(new Error('Cache error'))
                 );
@@ -872,7 +872,7 @@ describe('createMessageSearchService', () => {
                 ).rejects.toThrow('Cache error');
             });
 
-            it('should propagate fetcher errors', async () => {
+            test('should propagate fetcher errors', async () => {
                 const gap: CacheGap = {
                     start: createMessageId('100000000000000000'),
                     end:   createMessageId('100000000000000001'),
@@ -895,7 +895,7 @@ describe('createMessageSearchService', () => {
                 ).rejects.toThrow('Fetcher error');
             });
 
-            it('should propagate summarizer errors', async () => {
+            test('should propagate summarizer errors', async () => {
                 const messages = _.times(15, i =>
                     createMockCachedMessage({
                         id:      `10000000000000000${i}`,
@@ -926,7 +926,7 @@ describe('createMessageSearchService', () => {
     });
 
     describe('getRecentMessages', () => {
-        it('should call searchMessages with default parameters', async () => {
+        test('should call searchMessages with default parameters', async () => {
             const result = await service.getRecentMessages(testChannelId);
 
             expect(mockCache.getMessagesInRange).toHaveBeenCalled();
@@ -934,7 +934,7 @@ describe('createMessageSearchService', () => {
             expect(result.metadata).toBeDefined();
         });
 
-        it('should respect limit parameter', async () => {
+        test('should respect limit parameter', async () => {
             const messages = _.times(20, i =>
                 createMockCachedMessage({
                     id:      `10000000000000000${i}`,
@@ -955,7 +955,7 @@ describe('createMessageSearchService', () => {
             expect(result.messages).toHaveLength(5);
         });
 
-        it('should use default limit when not specified', async () => {
+        test('should use default limit when not specified', async () => {
             const messages = _.times(20, i =>
                 createMockCachedMessage({
                     id:      `10000000000000000${i}`,
@@ -976,7 +976,7 @@ describe('createMessageSearchService', () => {
             expect(result.messages).toHaveLength(10);
         });
 
-        it('should accept plain string channel ID', async () => {
+        test('should accept plain string channel ID', async () => {
             await service.getRecentMessages('999999999999999999');
 
             const cacheCall = (mockCache.getMessagesInRange as ReturnType<typeof mock>).mock.calls[0];
@@ -985,7 +985,7 @@ describe('createMessageSearchService', () => {
     });
 
     describe('getMessageById', () => {
-        it('should delegate to fetcher.fetchById', async () => {
+        test('should delegate to fetcher.fetchById', async () => {
             const mockMessage = createMockSearchResult({
                 id:      '100000000000000000',
                 content: 'Specific message',
@@ -1001,7 +1001,7 @@ describe('createMessageSearchService', () => {
             expect(result).toBe(mockMessage);
         });
 
-        it('should return null when message not found', async () => {
+        test('should return null when message not found', async () => {
             (mockFetcher.fetchById as ReturnType<typeof mock>).mockImplementation(() =>
                 Promise.resolve(null)
             );
@@ -1011,7 +1011,7 @@ describe('createMessageSearchService', () => {
             expect(result).toBeNull();
         });
 
-        it('should propagate fetcher errors', async () => {
+        test('should propagate fetcher errors', async () => {
             (mockFetcher.fetchById as ReturnType<typeof mock>).mockImplementation(() =>
                 Promise.reject(new Error('Fetch error'))
             );
@@ -1023,7 +1023,7 @@ describe('createMessageSearchService', () => {
     });
 
     describe('getMessagesById', () => {
-        it('should delegate to fetcher.fetchByIds', async () => {
+        test('should delegate to fetcher.fetchByIds', async () => {
             const mockMessages = [
                 createMockSearchResult({ id: '100000000000000001', content: 'First message' }),
                 createMockSearchResult({ id: '100000000000000002', content: 'Second message' }),
@@ -1041,7 +1041,7 @@ describe('createMessageSearchService', () => {
             expect(result[1].content).toBe('Second message');
         });
 
-        it('should return empty array when all messages not found', async () => {
+        test('should return empty array when all messages not found', async () => {
             (mockFetcher.fetchByIds as ReturnType<typeof mock>).mockImplementation(() =>
                 Promise.resolve([])
             );
@@ -1051,7 +1051,7 @@ describe('createMessageSearchService', () => {
             expect(result).toHaveLength(0);
         });
 
-        it('should propagate fetcher errors', async () => {
+        test('should propagate fetcher errors', async () => {
             (mockFetcher.fetchByIds as ReturnType<typeof mock>).mockImplementation(() =>
                 Promise.reject(new Error('Batch fetch error'))
             );
@@ -1063,7 +1063,7 @@ describe('createMessageSearchService', () => {
     });
 
     describe('cached message conversion', () => {
-        it('should convert cached messages to DiscordSearchResult format', async () => {
+        test('should convert cached messages to DiscordSearchResult format', async () => {
             const cachedMessage = createMockCachedMessage({
                 id:        '100000000000000001',
                 content:   'Cached content',
@@ -1095,7 +1095,7 @@ describe('createMessageSearchService', () => {
             expect(message.reactions).toEqual([]);
         });
 
-        it('should convert DiscordSearchResult to CachedMessage when storing fetched messages', async () => {
+        test('should convert DiscordSearchResult to CachedMessage when storing fetched messages', async () => {
             // This tests the convertSearchResultToCached function at line 122
             const now = new Date();
             const pastTime = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000); // 2 days ago
@@ -1151,7 +1151,7 @@ describe('createMessageSearchService', () => {
             expect(storedMessages[0].timestamp).toBe(olderTime.toISOString());
         });
 
-        it('should correctly map all fields when converting search result to cached', async () => {
+        test('should correctly map all fields when converting search result to cached', async () => {
             // Verify that convertSearchResultToCached correctly maps id, content, authorId, timestamp
             const now = new Date();
             const pastTime = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);

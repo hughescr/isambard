@@ -1,10 +1,10 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { MemoryToolKeyGenerator } from '@/storage/memory-tool/key-generator';
 import type { MemoryPath } from '@/storage/memory-tool/types';
 
-describe('MemoryToolKeyGenerator', () => {
+describe.concurrent('MemoryToolKeyGenerator', () => {
     describe('createKeys', () => {
-        it('should create keys for a file in root directory', () => {
+        test('should create keys for a file in root directory', () => {
             const path = '/file.xml' as MemoryPath;
             const timestamp = '2024-01-15T10:30:00.000Z';
 
@@ -18,7 +18,7 @@ describe('MemoryToolKeyGenerator', () => {
             });
         });
 
-        it('should create keys for a file in nested directory', () => {
+        test('should create keys for a file in nested directory', () => {
             const path = '/memories/events/party.xml' as MemoryPath;
             const timestamp = '2024-01-15T10:30:00.000Z';
 
@@ -32,7 +32,7 @@ describe('MemoryToolKeyGenerator', () => {
             });
         });
 
-        it('should create keys for a file in single-level directory', () => {
+        test('should create keys for a file in single-level directory', () => {
             const path = '/configs/settings.xml' as MemoryPath;
             const timestamp = '2024-01-15T10:30:00.000Z';
 
@@ -46,7 +46,7 @@ describe('MemoryToolKeyGenerator', () => {
             });
         });
 
-        it('should auto-generate timestamp if not provided', () => {
+        test('should auto-generate timestamp if not provided', () => {
             const path = '/file.xml' as MemoryPath;
             const beforeCall = new Date().toISOString();
 
@@ -65,7 +65,7 @@ describe('MemoryToolKeyGenerator', () => {
             expect(timestamp <= afterCall).toBe(true);
         });
 
-        it('should handle filenames with special characters', () => {
+        test('should handle filenames with special characters', () => {
             const path = '/docs/my-file_v2.0.xml' as MemoryPath;
             const timestamp = '2024-01-15T10:30:00.000Z';
 
@@ -79,7 +79,7 @@ describe('MemoryToolKeyGenerator', () => {
             });
         });
 
-        it('should handle deeply nested paths', () => {
+        test('should handle deeply nested paths', () => {
             const path = '/a/b/c/d/e/file.xml' as MemoryPath;
             const timestamp = '2024-01-15T10:30:00.000Z';
 
@@ -95,7 +95,7 @@ describe('MemoryToolKeyGenerator', () => {
     });
 
     describe('parsePath', () => {
-        it('should parse keys for a root-level file', () => {
+        test('should parse keys for a root-level file', () => {
             const pk = 'DIR#/';
             const sk = 'FILE#file.xml';
 
@@ -104,7 +104,7 @@ describe('MemoryToolKeyGenerator', () => {
             expect(path).toBe('/file.xml');
         });
 
-        it('should parse keys for a nested file', () => {
+        test('should parse keys for a nested file', () => {
             const pk = 'DIR#/memories/events';
             const sk = 'FILE#party.xml';
 
@@ -113,7 +113,7 @@ describe('MemoryToolKeyGenerator', () => {
             expect(path).toBe('/memories/events/party.xml');
         });
 
-        it('should parse keys for a single-level directory file', () => {
+        test('should parse keys for a single-level directory file', () => {
             const pk = 'DIR#/configs';
             const sk = 'FILE#settings.xml';
 
@@ -122,7 +122,7 @@ describe('MemoryToolKeyGenerator', () => {
             expect(path).toBe('/configs/settings.xml');
         });
 
-        it('should throw error if PK does not start with DIR#', () => {
+        test('should throw error if PK does not start with DIR#', () => {
             const pk = 'INVALID#/configs';
             const sk = 'FILE#settings.xml';
 
@@ -131,7 +131,7 @@ describe('MemoryToolKeyGenerator', () => {
             );
         });
 
-        it('should throw error if SK does not start with FILE#', () => {
+        test('should throw error if SK does not start with FILE#', () => {
             const pk = 'DIR#/configs';
             const sk = 'INVALID#settings.xml';
 
@@ -140,7 +140,7 @@ describe('MemoryToolKeyGenerator', () => {
             );
         });
 
-        it('should throw error if PK is malformed', () => {
+        test('should throw error if PK is malformed', () => {
             const pk = 'DIR';
             const sk = 'FILE#settings.xml';
 
@@ -149,7 +149,7 @@ describe('MemoryToolKeyGenerator', () => {
             );
         });
 
-        it('should throw error if SK is malformed', () => {
+        test('should throw error if SK is malformed', () => {
             const pk = 'DIR#/configs';
             const sk = 'FILE';
 
@@ -158,7 +158,7 @@ describe('MemoryToolKeyGenerator', () => {
             );
         });
 
-        it('should handle filenames with special characters', () => {
+        test('should handle filenames with special characters', () => {
             const pk = 'DIR#/docs';
             const sk = 'FILE#my-file_v2.0.xml';
 
@@ -167,7 +167,7 @@ describe('MemoryToolKeyGenerator', () => {
             expect(path).toBe('/docs/my-file_v2.0.xml');
         });
 
-        it('should handle deeply nested paths', () => {
+        test('should handle deeply nested paths', () => {
             const pk = 'DIR#/a/b/c/d/e';
             const sk = 'FILE#file.xml';
 
@@ -176,7 +176,7 @@ describe('MemoryToolKeyGenerator', () => {
             expect(path).toBe('/a/b/c/d/e/file.xml');
         });
 
-        it('should be inverse of createKeys', () => {
+        test('should be inverse of createKeys', () => {
             const originalPath = '/memories/events/party.xml' as MemoryPath;
             const timestamp = '2024-01-15T10:30:00.000Z';
 
@@ -188,7 +188,7 @@ describe('MemoryToolKeyGenerator', () => {
     });
 
     describe('round-trip consistency', () => {
-        it('should maintain path through create->parse cycle', () => {
+        test('should maintain path through create->parse cycle', () => {
             const testPaths: MemoryPath[] = [
                 '/file.xml' as MemoryPath,
                 '/docs/readme.xml' as MemoryPath,
@@ -205,7 +205,7 @@ describe('MemoryToolKeyGenerator', () => {
     });
 
     describe('createTagKeys', () => {
-        it('should create GSI2 keys with tag and layer', () => {
+        test('should create GSI2 keys with tag and layer', () => {
             const path = '/identity/core-values.md' as MemoryPath;
             const tags = ['beliefs', 'philosophy'];
             const updatedAt = '2024-01-15T10:30:00.000Z';
@@ -218,7 +218,7 @@ describe('MemoryToolKeyGenerator', () => {
             });
         });
 
-        it('should use first tag only when multiple tags provided', () => {
+        test('should use first tag only when multiple tags provided', () => {
             const path = '/state/current-context.md' as MemoryPath;
             const tags = ['important', 'urgent', 'active'];
             const updatedAt = '2024-01-15T10:30:00.000Z';
@@ -229,7 +229,7 @@ describe('MemoryToolKeyGenerator', () => {
             expect(tagKeys!.GSI2PK).toBe('TAG#important');
         });
 
-        it('should handle path without recognized layer', () => {
+        test('should handle path without recognized layer', () => {
             const path = '/unknown/file.md' as MemoryPath;
             const tags = ['test'];
             const updatedAt = '2024-01-15T10:30:00.000Z';
@@ -242,7 +242,7 @@ describe('MemoryToolKeyGenerator', () => {
             });
         });
 
-        it('should return null if no tags provided', () => {
+        test('should return null if no tags provided', () => {
             const path = '/identity/core-values.md' as MemoryPath;
             const updatedAt = '2024-01-15T10:30:00.000Z';
 
@@ -251,7 +251,7 @@ describe('MemoryToolKeyGenerator', () => {
             expect(tagKeys).toBeNull();
         });
 
-        it('should return null if tags array is undefined', () => {
+        test('should return null if tags array is undefined', () => {
             const path = '/identity/core-values.md' as MemoryPath;
             const updatedAt = '2024-01-15T10:30:00.000Z';
 
@@ -260,7 +260,7 @@ describe('MemoryToolKeyGenerator', () => {
             expect(tagKeys).toBeNull();
         });
 
-        it('should auto-generate timestamp if not provided', () => {
+        test('should auto-generate timestamp if not provided', () => {
             const path = '/events/meeting.md' as MemoryPath;
             const tags = ['meeting'];
             const beforeCall = new Date().toISOString();
@@ -282,7 +282,7 @@ describe('MemoryToolKeyGenerator', () => {
             expect(timestamp <= afterCall).toBe(true);
         });
 
-        it('should handle tags with special characters', () => {
+        test('should handle tags with special characters', () => {
             const path = '/state/work-in-progress.md' as MemoryPath;
             const tags = ['work_in_progress', 'v2.0'];
             const updatedAt = '2024-01-15T10:30:00.000Z';
@@ -292,7 +292,7 @@ describe('MemoryToolKeyGenerator', () => {
             expect(tagKeys!.GSI2PK).toBe('TAG#work_in_progress');
         });
 
-        it('should extract layer from path correctly', () => {
+        test('should extract layer from path correctly', () => {
             const testCases = [
                 { path: '/identity/file.md' as MemoryPath, expectedLayer: 'identity' },
                 { path: '/state/file.md' as MemoryPath, expectedLayer: 'state' },
@@ -308,7 +308,7 @@ describe('MemoryToolKeyGenerator', () => {
     });
 
     describe('createVersionKeys', () => {
-        it('should create version keys with correct PK and SK format', () => {
+        test('should create version keys with correct PK and SK format', () => {
             const path = '/test/file.md' as MemoryPath;
             const version = 1;
             const timestamp = '2024-01-15T10:30:00.000Z';
@@ -319,7 +319,7 @@ describe('MemoryToolKeyGenerator', () => {
             expect(keys.SK).toBe('VERSION#1#2024-01-15T10:30:00.000Z');
         });
 
-        it('should create version keys for root-level file', () => {
+        test('should create version keys for root-level file', () => {
             const path = '/file.md' as MemoryPath;
             const version = 2;
             const timestamp = '2024-01-20T15:45:00.000Z';
@@ -330,7 +330,7 @@ describe('MemoryToolKeyGenerator', () => {
             expect(keys.SK).toBe('VERSION#2#2024-01-20T15:45:00.000Z');
         });
 
-        it('should create version keys for nested directory', () => {
+        test('should create version keys for nested directory', () => {
             const path = '/memories/events/party.xml' as MemoryPath;
             const version = 5;
             const timestamp = '2024-02-10T08:00:00.000Z';
@@ -341,7 +341,7 @@ describe('MemoryToolKeyGenerator', () => {
             expect(keys.SK).toBe('VERSION#5#2024-02-10T08:00:00.000Z');
         });
 
-        it('should handle large version numbers', () => {
+        test('should handle large version numbers', () => {
             const path = '/test/file.md' as MemoryPath;
             const version = 999;
             const timestamp = '2024-01-15T10:30:00.000Z';

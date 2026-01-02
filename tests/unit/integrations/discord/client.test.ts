@@ -1,21 +1,21 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import { createDiscordClient } from '@/integrations/discord/client';
 import type { DiscordConfig } from '@/config/schemas';
 
-describe('createDiscordClient', () => {
+describe.concurrent('createDiscordClient', () => {
     const validConfig: DiscordConfig = {
         botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
         applicationId:       '123456789012345678',
         monitoredChannelIds: ['987654321098765432'],
     };
 
-    it('should create a Discord Client instance', () => {
+    test('should create a Discord Client instance', () => {
         const client = createDiscordClient(validConfig);
         expect(client).toBeInstanceOf(Client);
     });
 
-    it('should configure client with GuildMessages intent', () => {
+    test('should configure client with GuildMessages intent', () => {
         const client = createDiscordClient(validConfig);
 
         // discord.js stores intents as a bitfield in client.options.intents
@@ -28,7 +28,7 @@ describe('createDiscordClient', () => {
         expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
     });
 
-    it('should configure client with MessageContent intent', () => {
+    test('should configure client with MessageContent intent', () => {
         const client = createDiscordClient(validConfig);
 
         const intents = client.options.intents;
@@ -40,7 +40,7 @@ describe('createDiscordClient', () => {
         expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
     });
 
-    it('should configure client with Guilds intent', () => {
+    test('should configure client with Guilds intent', () => {
         const client = createDiscordClient(validConfig);
 
         const intents = client.options.intents;
@@ -52,7 +52,7 @@ describe('createDiscordClient', () => {
         expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
     });
 
-    it('should configure client with DirectMessages intent', () => {
+    test('should configure client with DirectMessages intent', () => {
         const client = createDiscordClient(validConfig);
 
         const intents = client.options.intents;
@@ -64,7 +64,7 @@ describe('createDiscordClient', () => {
         expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
     });
 
-    it('should configure client with GuildMessageReactions intent', () => {
+    test('should configure client with GuildMessageReactions intent', () => {
         const client = createDiscordClient(validConfig);
 
         const intents = client.options.intents;
@@ -76,7 +76,7 @@ describe('createDiscordClient', () => {
         expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
     });
 
-    it('should configure client with DirectMessageReactions intent', () => {
+    test('should configure client with DirectMessageReactions intent', () => {
         const client = createDiscordClient(validConfig);
 
         const intents = client.options.intents;
@@ -88,7 +88,7 @@ describe('createDiscordClient', () => {
         expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
     });
 
-    it('should configure client with GuildPresences intent', () => {
+    test('should configure client with GuildPresences intent', () => {
         const client = createDiscordClient(validConfig);
 
         const intents = client.options.intents;
@@ -100,7 +100,7 @@ describe('createDiscordClient', () => {
         expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
     });
 
-    it('should configure client with all seven required intents', () => {
+    test('should configure client with all seven required intents', () => {
         const client = createDiscordClient(validConfig);
 
         const intents = client.options.intents;
@@ -121,7 +121,7 @@ describe('createDiscordClient', () => {
         /* eslint-enable no-bitwise -- Re-enable after bitfield operations */
     });
 
-    it('should configure client with Channel partial for DM support', () => {
+    test('should configure client with Channel partial for DM support', () => {
         const client = createDiscordClient(validConfig);
 
         const partials = client.options.partials;
@@ -129,18 +129,18 @@ describe('createDiscordClient', () => {
         expect(partials).toContain(Partials.Channel);
     });
 
-    it('should create client without calling login', () => {
+    test('should create client without calling login', () => {
         const client = createDiscordClient(validConfig);
 
         // The client should not be logged in yet (no ready state)
         expect(client.isReady()).toBe(false);
     });
 
-    it('should not throw error when creating client', () => {
+    test('should not throw error when creating client', () => {
         expect(() => createDiscordClient(validConfig)).not.toThrow();
     });
 
-    it('should accept config with empty monitoredChannelIds', () => {
+    test('should accept config with empty monitoredChannelIds', () => {
         const configWithNoChannels: DiscordConfig = {
             botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId:       '123456789012345678',
@@ -151,7 +151,7 @@ describe('createDiscordClient', () => {
         expect(client).toBeInstanceOf(Client);
     });
 
-    it('should accept config with multiple monitoredChannelIds', () => {
+    test('should accept config with multiple monitoredChannelIds', () => {
         const configWithMultipleChannels: DiscordConfig = {
             botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId:       '123456789012345678',

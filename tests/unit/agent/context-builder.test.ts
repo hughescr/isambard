@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import _ from 'lodash';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { createContextBuilder } from '../../../src/agent/context-builder';
 import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import { createMemoryPath } from '../../../src/storage/memory-tool/types';
 
-describe('createContextBuilder', () => {
+describe.concurrent('createContextBuilder', () => {
     let mockDocClient: DynamoDBDocumentClient;
     let backend: MemoryToolBackend;
 
@@ -15,7 +15,7 @@ describe('createContextBuilder', () => {
     });
 
     describe('buildSystemContext', () => {
-        it('should return empty context when no memories exist', async () => {
+        test('should return empty context when no memories exist', async () => {
             // Mock getAutoLoadItems to return empty array
             backend.getAutoLoadItems = mock(async () => []);
 
@@ -25,7 +25,7 @@ describe('createContextBuilder', () => {
             expect(context).toBe('=== MEMORY CONTEXT ===\n\n(No memories loaded)');
         });
 
-        it('should format identity layer memories', async () => {
+        test('should format identity layer memories', async () => {
             backend.getAutoLoadItems = mock(async () => [
                 {
                     path:        createMemoryPath('/identity/core-values.md'),
@@ -45,7 +45,7 @@ describe('createContextBuilder', () => {
             expect(context).toContain('I value honesty and clarity');
         });
 
-        it('should format state layer memories as "Current State"', async () => {
+        test('should format state layer memories as "Current State"', async () => {
             backend.getAutoLoadItems = mock(async () => [
                 {
                     path:        createMemoryPath('/state/current-task.md'),
@@ -65,7 +65,7 @@ describe('createContextBuilder', () => {
             expect(context).toContain('Working on context builder');
         });
 
-        it('should group memories by layer', async () => {
+        test('should group memories by layer', async () => {
             backend.getAutoLoadItems = mock(async () => [
                 {
                     path:        createMemoryPath('/identity/values.md'),
@@ -100,7 +100,7 @@ describe('createContextBuilder', () => {
             expect(identityIndex).toBeLessThan(stateIndex);
         });
 
-        it('should truncate content if it exceeds maxIdentityTokens', async () => {
+        test('should truncate content if it exceeds maxIdentityTokens', async () => {
             // Create content that's ~2000 characters (~500 tokens at 4 chars/token)
             const longContent = _.repeat('a', 2000);
 
@@ -128,7 +128,7 @@ describe('createContextBuilder', () => {
             expect(context).toContain('...');
         });
 
-        it('should truncate content if it exceeds maxStateTokens', async () => {
+        test('should truncate content if it exceeds maxStateTokens', async () => {
             const longContent = _.repeat('b', 2000);
 
             backend.getAutoLoadItems = mock(async () => [
@@ -154,7 +154,7 @@ describe('createContextBuilder', () => {
             expect(context).toContain('...');
         });
 
-        it('should use default token limits when not specified', async () => {
+        test('should use default token limits when not specified', async () => {
             backend.getAutoLoadItems = mock(async () => []);
 
             const contextBuilder = createContextBuilder({ backend });
@@ -164,7 +164,7 @@ describe('createContextBuilder', () => {
             expect(result).toBeDefined();
         });
 
-        it('should correctly calculate character limits from token limits', async () => {
+        test('should correctly calculate character limits from token limits', async () => {
             // At 4 chars/token, 100 tokens = 400 chars
             // Create content that's exactly 401 chars (path + separator + content)
             const path = '/identity/test.md';
@@ -197,7 +197,7 @@ describe('createContextBuilder', () => {
             expect(_.size(identityContent)).toBe(400); // 397 chars + '...' (3 chars)
         });
 
-        it('should use exact token multiplication for character limits', async () => {
+        test('should use exact token multiplication for character limits', async () => {
             // Test that we're using multiplication, not division
             // With maxIdentityTokens: 50, should allow 50 * 4 = 200 chars
             const path = '/identity/test.md';
@@ -226,7 +226,7 @@ describe('createContextBuilder', () => {
             expect(context).not.toContain('...');
         });
 
-        it('should format output with exact string structure', async () => {
+        test('should format output with exact string structure', async () => {
             backend.getAutoLoadItems = mock(async () => [
                 {
                     path:        createMemoryPath('/identity/values.md'),
@@ -263,7 +263,7 @@ describe('createContextBuilder', () => {
             expect(context).toMatch(/\/state\/task\.md:[\s\S]*Current task content/);
         });
 
-        it('should join multiple identity items with double newlines', async () => {
+        test('should join multiple identity items with double newlines', async () => {
             backend.getAutoLoadItems = mock(async () => [
                 {
                     path:        createMemoryPath('/identity/item1.md'),
@@ -301,7 +301,7 @@ describe('createContextBuilder', () => {
             expect(betweenContent).toMatch(/\n\s*\n/);
         });
 
-        it('should join multiple state items with double newlines', async () => {
+        test('should join multiple state items with double newlines', async () => {
             backend.getAutoLoadItems = mock(async () => [
                 {
                     path:        createMemoryPath('/state/task1.md'),
@@ -339,7 +339,7 @@ describe('createContextBuilder', () => {
             expect(betweenContent).toMatch(/\n\s*\n/);
         });
 
-        it('should default grouped layer to "other" when layer is null and not render it', async () => {
+        test('should default grouped layer to "other" when layer is null and not render it', async () => {
             backend.getAutoLoadItems = mock(async () => [
                 {
                     path:        createMemoryPath('/unknown/test.md'),
@@ -365,7 +365,7 @@ describe('createContextBuilder', () => {
             expect(context).toBe('=== MEMORY CONTEXT ===\n');
         });
 
-        it('should require identity array to have length > 0 to render section', async () => {
+        test('should require identity array to have length > 0 to render section', async () => {
             // Mock groupBy to return empty array for identity
             backend.getAutoLoadItems = mock(async () => [
                 {
@@ -388,7 +388,7 @@ describe('createContextBuilder', () => {
             expect(context).toContain('## Current State');
         });
 
-        it('should require state array to have length > 0 to render section', async () => {
+        test('should require state array to have length > 0 to render section', async () => {
             backend.getAutoLoadItems = mock(async () => [
                 {
                     path:        createMemoryPath('/identity/values.md'),
@@ -413,7 +413,7 @@ describe('createContextBuilder', () => {
             expect(_.size(lines)).toBe(3); // header, Identity, content
         });
 
-        it('should detect when identity section has exactly 1 item (boundary test)', async () => {
+        test('should detect when identity section has exactly 1 item (boundary test)', async () => {
             backend.getAutoLoadItems = mock(async () => [
                 {
                     path:        createMemoryPath('/identity/single.md'),
@@ -434,7 +434,7 @@ describe('createContextBuilder', () => {
             expect(context).toContain('Single identity item');
         });
 
-        it('should detect when state section has exactly 1 item (boundary test)', async () => {
+        test('should detect when state section has exactly 1 item (boundary test)', async () => {
             backend.getAutoLoadItems = mock(async () => [
                 {
                     path:        createMemoryPath('/state/single.md'),
@@ -455,7 +455,7 @@ describe('createContextBuilder', () => {
             expect(context).toContain('Single state item');
         });
 
-        it('should use exactly "other" as grouping key for unknown layers', async () => {
+        test('should use exactly "other" as grouping key for unknown layers', async () => {
             backend.getAutoLoadItems = mock(async () => [
                 {
                     path:        createMemoryPath('/randomlayer/file.md'),
@@ -491,7 +491,7 @@ describe('createContextBuilder', () => {
             expect(sectionCount).toBe(1);
         });
 
-        it('should render exactly 2 sections when both identity and state exist', async () => {
+        test('should render exactly 2 sections when both identity and state exist', async () => {
             backend.getAutoLoadItems = mock(async () => [
                 {
                     path:        createMemoryPath('/identity/id.md'),
@@ -523,7 +523,7 @@ describe('createContextBuilder', () => {
             expect(context).toContain('## Current State');
         });
 
-        it('should truncate at exact boundary (maxChars - 3)', async () => {
+        test('should truncate at exact boundary (maxChars - 3)', async () => {
             // Create content that triggers truncation
             const path = '/identity/test.md';
             // Make content exactly maxIdentityChars + 1 to trigger truncation
@@ -558,7 +558,7 @@ describe('createContextBuilder', () => {
             expect(_.size(identitySection.slice(0, -3))).toBe(397);
         });
 
-        it('should not truncate when content length equals maxChars exactly', async () => {
+        test('should not truncate when content length equals maxChars exactly', async () => {
             const path = '/state/test.md';
             // Make content exactly maxStateChars (no truncation needed)
             const content = _.repeat('w', 400 - path.length - 2);
@@ -586,7 +586,7 @@ describe('createContextBuilder', () => {
             expect(context).not.toContain('...');
         });
 
-        it('should use default maxStateTokens when options.maxStateTokens is undefined', async () => {
+        test('should use default maxStateTokens when options.maxStateTokens is undefined', async () => {
             backend.getAutoLoadItems = mock(async () => [
                 {
                     path:        createMemoryPath('/state/test.md'),
@@ -615,7 +615,7 @@ describe('createContextBuilder', () => {
             expect(_.size(stateSection)).toBe(1200);
         });
 
-        it('should use provided maxStateTokens when explicitly set to 0', async () => {
+        test('should use provided maxStateTokens when explicitly set to 0', async () => {
             backend.getAutoLoadItems = mock(async () => [
                 {
                     path:        createMemoryPath('/state/test.md'),

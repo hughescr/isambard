@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import {
     DynamoDBDocumentClient,
@@ -11,7 +11,7 @@ import { MessageCache } from '@/storage/message-cache/cache';
 import type { MessageId, CachedSegmentItem, CachedMessage } from '@/storage/message-cache/types';
 import type { ChannelId } from '@/integrations/discord/types';
 
-describe('MessageCache', () => {
+describe.concurrent('MessageCache', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let cache: MessageCache;
 
@@ -30,7 +30,7 @@ describe('MessageCache', () => {
     });
 
     describe('getMessagesInRange', () => {
-        it('should return messages from cache when fully covered', async () => {
+        test('should return messages from cache when fully covered', async () => {
             const mockMessages: CachedMessage[] = [
                 { id: '120' as MessageId, content: 'First', authorId: 'a', timestamp: '2024-01-15T10:00:00.000Z' },
                 { id: '150' as MessageId, content: 'Second', authorId: 'a', timestamp: '2024-01-15T10:10:00.000Z' },
@@ -60,7 +60,7 @@ describe('MessageCache', () => {
             expect(result.fullyResolved).toBe(true);
         });
 
-        it('should identify gaps when cache is incomplete', async () => {
+        test('should identify gaps when cache is incomplete', async () => {
             const mockItem: CachedSegmentItem = {
                 PK:             'CHANNEL#123456789012345678',
                 SK:             'SEGMENT#130#170',
@@ -90,7 +90,7 @@ describe('MessageCache', () => {
             expect(result.fullyResolved).toBe(false);
         });
 
-        it('should return full range as gap when no cache exists', async () => {
+        test('should return full range as gap when no cache exists', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const result = await cache.getMessagesInRange(
@@ -106,7 +106,7 @@ describe('MessageCache', () => {
             expect(result.fullyResolved).toBe(false);
         });
 
-        it('should merge messages from multiple overlapping segments', async () => {
+        test('should merge messages from multiple overlapping segments', async () => {
             const mockItems: CachedSegmentItem[] = [
                 {
                     PK:             'CHANNEL#123456789012345678',
@@ -146,7 +146,7 @@ describe('MessageCache', () => {
             expect(result.fullyResolved).toBe(true);
         });
 
-        it('should deduplicate messages from overlapping segments', async () => {
+        test('should deduplicate messages from overlapping segments', async () => {
             const mockItems: CachedSegmentItem[] = [
                 {
                     PK:             'CHANNEL#123456789012345678',
@@ -186,7 +186,7 @@ describe('MessageCache', () => {
     });
 
     describe('storeMessages', () => {
-        it('should store messages as a segment', async () => {
+        test('should store messages as a segment', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             const messages: CachedMessage[] = [
@@ -210,7 +210,7 @@ describe('MessageCache', () => {
             expect(item.messages).toHaveLength(2);
         });
 
-        it('should store empty messages array', async () => {
+        test('should store empty messages array', async () => {
             ddbMock.on(PutCommand).resolves({});
 
             await cache.storeMessages(
@@ -228,7 +228,7 @@ describe('MessageCache', () => {
     });
 
     describe('findGaps', () => {
-        it('should return gaps for uncached range', async () => {
+        test('should return gaps for uncached range', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const gaps = await cache.findGaps(
@@ -242,7 +242,7 @@ describe('MessageCache', () => {
             expect(gaps[0].end).toBe('200' as MessageId);
         });
 
-        it('should return empty array when fully covered', async () => {
+        test('should return empty array when fully covered', async () => {
             const mockItem: CachedSegmentItem = {
                 PK:             'CHANNEL#123456789012345678',
                 SK:             'SEGMENT#50#250',
@@ -266,7 +266,7 @@ describe('MessageCache', () => {
     });
 
     describe('isRangeFullyCached', () => {
-        it('should return true when range is fully covered', async () => {
+        test('should return true when range is fully covered', async () => {
             const mockItem: CachedSegmentItem = {
                 PK:             'CHANNEL#123456789012345678',
                 SK:             'SEGMENT#50#250',
@@ -288,7 +288,7 @@ describe('MessageCache', () => {
             expect(isCached).toBe(true);
         });
 
-        it('should return false when range has gaps', async () => {
+        test('should return false when range has gaps', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const isCached = await cache.isRangeFullyCached(
@@ -302,7 +302,7 @@ describe('MessageCache', () => {
     });
 
     describe('listSegments', () => {
-        it('should return segments from backend', async () => {
+        test('should return segments from backend', async () => {
             // This tests the block at line 160-162
             const mockItems: CachedSegmentItem[] = [
                 {
@@ -334,7 +334,7 @@ describe('MessageCache', () => {
             expect(result[1].startSnowflake).toBe('300' as MessageId);
         });
 
-        it('should return empty array when no segments exist', async () => {
+        test('should return empty array when no segments exist', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const result = await cache.listSegments(channelId);
@@ -345,7 +345,7 @@ describe('MessageCache', () => {
     });
 
     describe('deleteSegment', () => {
-        it('should call backend to delete segment', async () => {
+        test('should call backend to delete segment', async () => {
             // This tests the block at line 175-177
             ddbMock.on(DeleteCommand).resolves({});
 
@@ -365,7 +365,7 @@ describe('MessageCache', () => {
     });
 
     describe('clearChannel', () => {
-        it('should delete all segments and return count', async () => {
+        test('should delete all segments and return count', async () => {
             // This tests the block at line 185-187
             const mockItems: CachedSegmentItem[] = [
                 {
@@ -396,7 +396,7 @@ describe('MessageCache', () => {
             expect(count).toBe(2);
         });
 
-        it('should return 0 when no segments exist', async () => {
+        test('should return 0 when no segments exist', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const count = await cache.clearChannel(channelId);

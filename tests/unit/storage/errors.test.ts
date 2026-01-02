@@ -1,68 +1,68 @@
-import { describe, it, expect, spyOn } from 'bun:test';
+import { describe, test, expect, spyOn } from 'bun:test';
 import { StorageError, ItemNotFoundError, ConflictError, ValidationError } from '@/storage/errors';
 
-describe('StorageError', () => {
-    it('should be an instance of StorageError', () => {
+describe.concurrent('StorageError', () => {
+    test('should be an instance of StorageError', () => {
         const error = new StorageError('test error');
         expect(error).toBeInstanceOf(StorageError);
     });
 
-    it('should have correct name', () => {
+    test('should have correct name', () => {
         const error = new StorageError('test error');
         expect(error.name).toBe('StorageError');
     });
 
-    it('should have correct message', () => {
+    test('should have correct message', () => {
         const error = new StorageError('something went wrong');
         expect(error.message).toBe('something went wrong');
     });
 
-    it('should preserve stack trace', () => {
+    test('should preserve stack trace', () => {
         const error = new StorageError('test');
         expect(error.stack).toBeDefined();
     });
 });
 
-describe('ItemNotFoundError', () => {
-    it('should be an instance of ItemNotFoundError', () => {
+describe.concurrent('ItemNotFoundError', () => {
+    test('should be an instance of ItemNotFoundError', () => {
         const error = new ItemNotFoundError('item-123');
         expect(error).toBeInstanceOf(ItemNotFoundError);
     });
 
-    it('should have correct name', () => {
+    test('should have correct name', () => {
         const error = new ItemNotFoundError('item-123');
         expect(error.name).toBe('ItemNotFoundError');
     });
 
-    it('should include item ID in message', () => {
+    test('should include item ID in message', () => {
         const error = new ItemNotFoundError('item-123');
         expect(error.message).toContain('item-123');
     });
 
-    it('should store itemId property', () => {
+    test('should store itemId property', () => {
         const error = new ItemNotFoundError('item-456');
         expect(error.itemId).toBe('item-456');
     });
 });
 
-describe('ConflictError', () => {
-    it('should be an instance of ConflictError', () => {
+describe.concurrent('ConflictError', () => {
+    test('should be an instance of ConflictError', () => {
         const error = new ConflictError('item-123', 1, 2);
         expect(error).toBeInstanceOf(ConflictError);
     });
 
-    it('should have correct name', () => {
+    test('should have correct name', () => {
         const error = new ConflictError('item-123', 1, 2);
         expect(error.name).toBe('ConflictError');
     });
 
-    it('should include version info in message', () => {
+    test('should include version info in message', () => {
         const error = new ConflictError('item-123', 1, 2);
         expect(error.message).toContain('1');
         expect(error.message).toContain('2');
     });
 
-    it('should store itemId and version properties', () => {
+    test('should store itemId and version properties', () => {
         const error = new ConflictError('item-789', 5, 6);
         expect(error.itemId).toBe('item-789');
         expect(error.expectedVersion).toBe(5);
@@ -70,38 +70,38 @@ describe('ConflictError', () => {
     });
 });
 
-describe('ValidationError', () => {
-    it('should be an instance of ValidationError', () => {
+describe.concurrent('ValidationError', () => {
+    test('should be an instance of ValidationError', () => {
         const error = new ValidationError([{ path: 'content', message: 'required' }]);
         expect(error).toBeInstanceOf(ValidationError);
     });
 
-    it('should have correct name', () => {
+    test('should have correct name', () => {
         const error = new ValidationError([]);
         expect(error.name).toBe('ValidationError');
     });
 
-    it('should store issues array', () => {
+    test('should store issues array', () => {
         const issues = [{ path: 'content', message: 'required' }];
         const error = new ValidationError(issues);
         expect(error.issues).toEqual(issues);
     });
 
-    it('should include issues in message', () => {
+    test('should include issues in message', () => {
         const error = new ValidationError([{ path: 'id', message: 'invalid' }]);
         expect(error.message).toContain('id');
     });
 });
 
-describe('Error.captureStackTrace handling', () => {
-    it('should use captureStackTrace when available', () => {
+describe.concurrent('Error.captureStackTrace handling', () => {
+    test('should use captureStackTrace when available', () => {
         const spy = spyOn(Error, 'captureStackTrace');
         const error = new StorageError('test');
         expect(spy).toHaveBeenCalledWith(error, StorageError);
         spy.mockRestore();
     });
 
-    it('should handle missing captureStackTrace gracefully', () => {
+    test('should handle missing captureStackTrace gracefully', () => {
         // eslint-disable-next-line @typescript-eslint/unbound-method -- Storing method for restoration
         const original = Error.captureStackTrace;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Intentionally testing behavior when captureStackTrace is undefined

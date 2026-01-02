@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn as _spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn as _spyOn } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import { assign as _assign, isError as _isError, some as _some, filter as _filter, startsWith as _startsWith, size as _size } from 'lodash';
 import {
@@ -13,7 +13,7 @@ import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import { ItemNotFoundError as _ItemNotFoundError, ConflictError as _ConflictError, ValidationError as _ValidationError } from '@/storage/errors';
 import type { MemoryToolItem, MemoryPath, ContentType, LayerName as _LayerName } from '@/storage/memory-tool/types';
 
-describe('MemoryToolBackend - Version Operations', () => {
+describe.concurrent('MemoryToolBackend - Version Operations', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let backend: MemoryToolBackend;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Spy type is complex
@@ -37,7 +37,7 @@ describe('MemoryToolBackend - Version Operations', () => {
     });
 
     describe('getAutoLoadItems', () => {
-        it('should return identity items up to limit', async () => {
+        test('should return identity items up to limit', async () => {
             const identityItems: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/identity',
@@ -62,7 +62,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result.some(item => item.path === '/identity/values.md' as MemoryPath)).toBe(true);
         });
 
-        it('should return hot state items', async () => {
+        test('should return hot state items', async () => {
             const stateItems: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/state',
@@ -91,7 +91,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result.some(item => item.path === '/state/context.md' as MemoryPath)).toBe(true);
         });
 
-        it('should respect maxIdentityItems limit', async () => {
+        test('should respect maxIdentityItems limit', async () => {
             const identityItems: MemoryToolItem[] = Array.from({ length: 10 }, (_, i) => ({
                 PK:          'DIR#/identity',
                 SK:          `FILE#file${i}.md`,
@@ -114,7 +114,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(identityCount).toBe(3);
         });
 
-        it('should respect maxStateItems limit', async () => {
+        test('should respect maxStateItems limit', async () => {
             const stateItems: MemoryToolItem[] = Array.from({ length: 10 }, (_, i) => ({
                 PK:          'DIR#/state',
                 SK:          `FILE#file${i}.md`,
@@ -137,7 +137,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(stateCount).toBe(3);
         });
 
-        it('should return empty array when no items exist', async () => {
+        test('should return empty array when no items exist', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const result = await backend.getAutoLoadItems();
@@ -145,7 +145,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result).toEqual([]);
         });
 
-        it('should return combined identity and state items', async () => {
+        test('should return combined identity and state items', async () => {
             const identityItems: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/identity',
@@ -187,7 +187,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result.some(item => item.path === '/state/context.md' as MemoryPath)).toBe(true);
         });
 
-        it('should use updatedAt when lastAccessed metadata is missing', async () => {
+        test('should use updatedAt when lastAccessed metadata is missing', async () => {
             const stateItems: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/state',
@@ -210,7 +210,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result).toHaveLength(1);
         });
 
-        it('should use 0 as default accessCount when metadata is missing', async () => {
+        test('should use 0 as default accessCount when metadata is missing', async () => {
             const stateItems: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/state',
@@ -233,7 +233,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result).toHaveLength(1);
         });
 
-        it('should use default limits when options not provided', async () => {
+        test('should use default limits when options not provided', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.getAutoLoadItems();
@@ -247,7 +247,7 @@ describe('MemoryToolBackend - Version Operations', () => {
     });
 
     describe('list', () => {
-        it('should return items in directory', async () => {
+        test('should return items in directory', async () => {
             const items: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/test',
@@ -271,7 +271,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result.items[0].path).toBe('/test/file1.md' as MemoryPath);
         });
 
-        it('should return empty items when no matches', async () => {
+        test('should return empty items when no matches', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const result = await backend.list('/empty');
@@ -279,7 +279,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result.items).toEqual([]);
         });
 
-        it('should call QueryCommand with correct parameters', async () => {
+        test('should call QueryCommand with correct parameters', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.list('/test');
@@ -292,7 +292,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(queryInput.ScanIndexForward).toBe(true);
         });
 
-        it('should support limit option', async () => {
+        test('should support limit option', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.list('/test', { limit: 10 });
@@ -301,7 +301,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(calls[0].args[0].input.Limit).toBe(10);
         });
 
-        it('should support cursor option', async () => {
+        test('should support cursor option', async () => {
             const exclusiveStartKey = { PK: 'DIR#/test', SK: 'FILE#file.md' };
             const cursor = Buffer.from(JSON.stringify(exclusiveStartKey)).toString('base64');
 
@@ -313,7 +313,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(calls[0].args[0].input.ExclusiveStartKey).toEqual(exclusiveStartKey);
         });
 
-        it('should return nextCursor when LastEvaluatedKey present', async () => {
+        test('should return nextCursor when LastEvaluatedKey present', async () => {
             ddbMock.on(QueryCommand).resolves({
                 Items:            [],
                 LastEvaluatedKey: { PK: 'DIR#/test', SK: 'FILE#file.md' },
@@ -324,7 +324,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result.nextCursor).toBeDefined();
         });
 
-        it('should return undefined nextCursor when LastEvaluatedKey missing', async () => {
+        test('should return undefined nextCursor when LastEvaluatedKey missing', async () => {
             ddbMock.on(QueryCommand).resolves({
                 Items: [],
                 // No LastEvaluatedKey
@@ -335,7 +335,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result.nextCursor).toBeUndefined();
         });
 
-        it('should strip DynamoDB keys from returned items', async () => {
+        test('should strip DynamoDB keys from returned items', async () => {
             const items: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/test',
@@ -359,7 +359,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result.items[0]).not.toHaveProperty('GSI1PK');
         });
 
-        it('should sort results by createdAt ascending (oldest first, newest last)', async () => {
+        test('should sort results by createdAt ascending (oldest first, newest last)', async () => {
             // Items returned from DynamoDB in random order
             const items: MemoryToolItem[] = [
                 {
@@ -417,7 +417,7 @@ describe('MemoryToolBackend - Version Operations', () => {
     describe('getVersion', () => {
         const testPath = '/test/file.md' as MemoryPath;
 
-        it('should return version snapshot when found', async () => {
+        test('should return version snapshot when found', async () => {
             const mockVersion: MemoryToolItem = {
                 PK:          'DIR#/test',
                 SK:          'VERSION#1#2024-01-01T00:00:00.000Z',
@@ -440,7 +440,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result?.content).toBe('Version 1 content');
         });
 
-        it('should return undefined when version not found', async () => {
+        test('should return undefined when version not found', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const result = await backend.getVersion(testPath, 999);
@@ -448,7 +448,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result).toBeUndefined();
         });
 
-        it('should call QueryCommand with correct version keys', async () => {
+        test('should call QueryCommand with correct version keys', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.getVersion(testPath, 2);
@@ -460,7 +460,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(lastCall.args[0].input.ExpressionAttributeValues?.[':skPrefix']).toBe('VERSION#2#');
         });
 
-        it('should strip DynamoDB keys from returned version', async () => {
+        test('should strip DynamoDB keys from returned version', async () => {
             const mockVersion: MemoryToolItem = {
                 PK:          'DIR#/test',
                 SK:          'VERSION#1#2024-01-01T00:00:00.000Z',
@@ -487,7 +487,7 @@ describe('MemoryToolBackend - Version Operations', () => {
     describe('listVersions', () => {
         const testPath = '/test/file.md' as MemoryPath;
 
-        it('should return list of versions with metadata', async () => {
+        test('should return list of versions with metadata', async () => {
             const mockVersions = [
                 {
                     PK:          'DIR#/test',
@@ -540,7 +540,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result[2].version).toBe(1);
         });
 
-        it('should include content preview for versions', async () => {
+        test('should include content preview for versions', async () => {
             const mockVersions = [
                 {
                     PK:          'DIR#/test',
@@ -564,7 +564,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result[0].contentPreview!.length).toBeLessThanOrEqual(50);
         });
 
-        it('should return empty array when no versions found', async () => {
+        test('should return empty array when no versions found', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const result = await backend.listVersions(testPath);
@@ -572,7 +572,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result).toEqual([]);
         });
 
-        it('should respect limit parameter', async () => {
+        test('should respect limit parameter', async () => {
             const mockVersions = Array.from({ length: 10 }, (_, i) => ({
                 PK:          'DIR#/test',
                 SK:          `VERSION#${i + 1}#2024-01-0${i + 1}T00:00:00.000Z`,
@@ -593,7 +593,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result.length).toBeLessThanOrEqual(5);
         });
 
-        it('should query with correct DynamoDB parameters', async () => {
+        test('should query with correct DynamoDB parameters', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.listVersions(testPath);
@@ -607,7 +607,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(queryInput.ExpressionAttributeValues?.[':skPrefix']).toBe('VERSION#');
         });
 
-        it('should sort versions in descending order (newest first)', async () => {
+        test('should sort versions in descending order (newest first)', async () => {
             // Mock returns items in descending order (ScanIndexForward: false)
             const mockVersions = [
                 {
@@ -645,7 +645,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result[0].version).toBeGreaterThan(result[result.length - 1].version);
         });
 
-        it('should not include contentPreview when content is empty', async () => {
+        test('should not include contentPreview when content is empty', async () => {
             const mockVersions = [
                 {
                     PK:          'DIR#/test',
@@ -668,7 +668,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(result[0].contentPreview).toBeUndefined();
         });
 
-        it('should not truncate contentPreview when content is exactly 50 chars', async () => {
+        test('should not truncate contentPreview when content is exactly 50 chars', async () => {
             const exactContent = '12345678901234567890123456789012345678901234567890'; // 50 chars
             const mockVersions = [
                 {
@@ -697,7 +697,7 @@ describe('MemoryToolBackend - Version Operations', () => {
     describe('pruneVersions', () => {
         const testPath = '/test/file.md' as MemoryPath;
 
-        it('should delete old versions keeping specified count', async () => {
+        test('should delete old versions keeping specified count', async () => {
             const mockVersions = [
                 {
                     PK: 'DIR#/test',
@@ -730,7 +730,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(deleteCalls.length).toBe(2);
         });
 
-        it('should return 0 when no versions to prune', async () => {
+        test('should return 0 when no versions to prune', async () => {
             const mockVersions = [
                 {
                     PK: 'DIR#/test',
@@ -751,7 +751,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(_filter(deleteCalls, (_, idx) => idx >= ddbMock.commandCalls(QueryCommand).length - 1).length).toBe(0);
         });
 
-        it('should return 0 when no versions exist', async () => {
+        test('should return 0 when no versions exist', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const deletedCount = await backend.pruneVersions(testPath, 3);
@@ -759,7 +759,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(deletedCount).toBe(0);
         });
 
-        it('should delete versions in correct order (oldest first)', async () => {
+        test('should delete versions in correct order (oldest first)', async () => {
             const mockVersions = [
                 {
                     PK: 'DIR#/test',
@@ -785,7 +785,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(lastDeleteCall.args[0].input.Key?.SK).toBe('VERSION#1#2024-01-01T00:00:00.000Z');
         });
 
-        it('should keep all versions if keepCount is greater than total versions', async () => {
+        test('should keep all versions if keepCount is greater than total versions', async () => {
             const mockVersions = [
                 {
                     PK: 'DIR#/test',
@@ -799,7 +799,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(deletedCount).toBe(0);
         });
 
-        it('should return 0 when items.length exactly equals keepCount', async () => {
+        test('should return 0 when items.length exactly equals keepCount', async () => {
             const mockVersions = [
                 {
                     PK: 'DIR#/test',
@@ -842,7 +842,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             updatedAt:   '2024-01-01T00:00:00.000Z',
         };
 
-        it('should save version snapshot before updating', async () => {
+        test('should save version snapshot before updating', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolves({});
 
@@ -858,7 +858,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(versionPut.args[0].input.Item?.content).toBe('Original content');
         });
 
-        it('should save version with correct version number and timestamp', async () => {
+        test('should save version with correct version number and timestamp', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolves({});
 
@@ -870,7 +870,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(versionPut.args[0].input.Item?.SK).toContain('VERSION#1#');
         });
 
-        it('should include GSI2 keys in version snapshot when tags present', async () => {
+        test('should include GSI2 keys in version snapshot when tags present', async () => {
             const itemWithTags: MemoryToolItem = {
                 ...existingItem,
                 tags:   ['important'],
@@ -888,7 +888,7 @@ describe('MemoryToolBackend - Version Operations', () => {
             expect(versionPut.args[0].input.Item?.GSI2SK).toBe('LAYER#test#UPDATED#2024-01-01T00:00:00.000Z');
         });
 
-        it('should not include GSI2 keys in version snapshot when tags absent', async () => {
+        test('should not include GSI2 keys in version snapshot when tags absent', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolves({});
 

@@ -1,13 +1,13 @@
 import _ from 'lodash';
-import { describe, it, expect } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import {
     splitMessage
 } from '@/integrations/discord/messages';
 
-describe('Discord Message Splitting', () => {
+describe.concurrent('Discord Message Splitting', () => {
     describe('splitMessage', () => {
         describe('mutation coverage - method expression mutations', () => {
-            it('should apply trim to chunks in word splitting', () => {
+            test('should apply trim to chunks in word splitting', () => {
                 // Tests: chunks.push(_.trim(currentChunk)) vs chunks.push(_)
                 const message = 'word1 word2 word3 word4';
                 const result = splitMessage(message, 12);
@@ -17,7 +17,7 @@ describe('Discord Message Splitting', () => {
                 }
             });
 
-            it('should apply trim to chunks in sentence splitting', () => {
+            test('should apply trim to chunks in sentence splitting', () => {
                 const message = 'One. Two. Three.';
                 const result = splitMessage(message, 8);
                 for(const chunk of result) {
@@ -25,7 +25,7 @@ describe('Discord Message Splitting', () => {
                 }
             });
 
-            it('should apply trim to chunks in paragraph splitting', () => {
+            test('should apply trim to chunks in paragraph splitting', () => {
                 const message = 'Para1\n\nPara2\n\nPara3';
                 const result = splitMessage(message, 8);
                 for(const chunk of result) {
@@ -35,7 +35,7 @@ describe('Discord Message Splitting', () => {
         });
 
         describe('mutation coverage - while loop execution', () => {
-            it('should execute sentence extraction loop', () => {
+            test('should execute sentence extraction loop', () => {
                 // Tests: while((match = sentencePattern.exec(text)) !== null)
                 // If while(false), no sentences would be extracted
                 const message = 'First. Second. Third.';
@@ -45,7 +45,7 @@ describe('Discord Message Splitting', () => {
                 expect(result).toContain('First.');
             });
 
-            it('should process all sentences in while loop', () => {
+            test('should process all sentences in while loop', () => {
                 // Tests that loop body executes (not just the condition)
                 const message = 'A. B. C.';
                 const result = splitMessage(message, 5);
@@ -58,21 +58,21 @@ describe('Discord Message Splitting', () => {
         });
 
         describe('mutation coverage - remaining text after sentences', () => {
-            it('should include remaining text after last sentence', () => {
+            test('should include remaining text after last sentence', () => {
                 // Tests: if(lastIndex < text.length) { ... sentences.push(remaining) }
                 const message = 'Complete. Incomplete text';
                 const result = splitMessage(message, 100);
                 expect(result[0]).toContain('Incomplete text');
             });
 
-            it('should slice from lastIndex not use whole text', () => {
+            test('should slice from lastIndex not use whole text', () => {
                 // Tests: text.slice(lastIndex) not just text
                 const message = 'Start. middle remainder';
                 const result = splitMessage(message, 100);
                 expect(result[0]).toBe('Start. middle remainder');
             });
 
-            it('should not add empty remaining text', () => {
+            test('should not add empty remaining text', () => {
                 // Tests: if(remaining.length > 0)
                 const message = 'Complete sentence.';
                 const result = splitMessage(message, 100);
@@ -82,7 +82,7 @@ describe('Discord Message Splitting', () => {
         });
 
         describe('mutation coverage - while loop and sentence extraction', () => {
-            it('should extract all sentences when splitting needed', () => {
+            test('should extract all sentences when splitting needed', () => {
                 // Kill: while(false) - loop never runs
                 const message = 'A. B. C. D. E.';
                 const result = splitMessage(message, 5);
@@ -95,7 +95,7 @@ describe('Discord Message Splitting', () => {
                 expect(allText).toContain('E.');
             });
 
-            it('should update lastIndex during sentence extraction', () => {
+            test('should update lastIndex during sentence extraction', () => {
                 // Kill: empty while loop body
                 // If loop body doesn't execute, lastIndex stays 0
                 // and remaining text logic would capture entire text
@@ -106,7 +106,7 @@ describe('Discord Message Splitting', () => {
         });
 
         describe('mutation coverage - currentChunk flush strictness', () => {
-            it('should push trimmed chunk when flushing before long word', () => {
+            test('should push trimmed chunk when flushing before long word', () => {
                 // Kill: if(currentChunk.length > 0) to if(true) or if(false)
                 // Test the exact behavior when chunk is not empty
                 const message = 'abc ' + _.repeat('x', 60);
@@ -115,7 +115,7 @@ describe('Discord Message Splitting', () => {
                 expect(result.length).toBe(3);
             });
 
-            it('should not add extra empty chunk when starting with long word', () => {
+            test('should not add extra empty chunk when starting with long word', () => {
                 // Kill: if(currentChunk.length > 0) to if(true)
                 // If always true, would push empty string
                 const longWord = _.repeat('x', 100);
@@ -128,7 +128,7 @@ describe('Discord Message Splitting', () => {
         });
 
         describe('mutation coverage - while loop in sentence extraction', () => {
-            it('should execute while loop to extract sentences', () => {
+            test('should execute while loop to extract sentences', () => {
                 // Kill: while(false) - loop must execute
                 const message = 'A. B. C.';
                 const result = splitMessage(message, 4);
@@ -139,7 +139,7 @@ describe('Discord Message Splitting', () => {
                 expect(allText).toContain('C.');
             });
 
-            it('should update lastIndex in while loop body', () => {
+            test('should update lastIndex in while loop body', () => {
                 // Kill: empty while loop body
                 // If body doesn't execute, lastIndex stays 0
                 const message = 'First. Second.';
@@ -149,7 +149,7 @@ describe('Discord Message Splitting', () => {
         });
 
         describe('mutation coverage - while loop and lastIndex', () => {
-            it('should extract all sentences from text', () => {
+            test('should extract all sentences from text', () => {
                 // Kill: while(false) - loop never executes
                 const message = 'A. B. C. D.';
                 const result = splitMessage(message, 5);
@@ -160,7 +160,7 @@ describe('Discord Message Splitting', () => {
                 expect(allText).toContain('D.');
             });
 
-            it('should track lastIndex correctly for remaining text', () => {
+            test('should track lastIndex correctly for remaining text', () => {
                 // Kill: text.slice(lastIndex) -> text
                 const message = 'Sentence. trailing';
                 const result = splitMessage(message, 100);
@@ -169,7 +169,7 @@ describe('Discord Message Splitting', () => {
                 expect(occurrences).toBe(1);
             });
 
-            it('should handle text where lastIndex equals text.length', () => {
+            test('should handle text where lastIndex equals text.length', () => {
                 // Kill: lastIndex < text.length -> lastIndex <= text.length
                 // When sentence ends exactly at text end, no remaining text
                 const message = 'Complete sentence.';
@@ -179,7 +179,7 @@ describe('Discord Message Splitting', () => {
         });
 
         describe('mutation coverage - reset currentChunk', () => {
-            it('should reset currentChunk to empty string after flush', () => {
+            test('should reset currentChunk to empty string after flush', () => {
                 // Kill: currentChunk = '' -> currentChunk = "Stryker was here!"
                 const message = 'aa ' + _.repeat('x', 60) + ' bb';
                 const result = splitMessage(message, 50);
@@ -190,7 +190,7 @@ describe('Discord Message Splitting', () => {
         });
 
         describe('mutation coverage - trimmed sentence handling', () => {
-            it('should handle sentences when forced to split', () => {
+            test('should handle sentences when forced to split', () => {
                 // Kill: if(trimmed !== '') -> if(true)
                 // When sentences are extracted and then combined, they get separated by single space
                 const s1 = _.repeat('a', 40) + '.';
@@ -203,7 +203,7 @@ describe('Discord Message Splitting', () => {
                 expect(result[1]).toBe(s2);
             });
 
-            it('should extract sentences correctly when forcing sentence-level split', () => {
+            test('should extract sentences correctly when forcing sentence-level split', () => {
                 // Create content that must be split at sentence level
                 const s1 = _.repeat('x', 45) + '.';
                 const s2 = _.repeat('y', 45) + '.';

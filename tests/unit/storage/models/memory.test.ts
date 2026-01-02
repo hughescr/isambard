@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import _ from 'lodash';
 import {
     memoryTypeSchema,
@@ -7,29 +7,29 @@ import {
     type Memory
 } from '@/storage/models/memory';
 
-describe('memoryTypeSchema', () => {
-    it('should accept identity type', () => {
+describe.concurrent('memoryTypeSchema', () => {
+    test('should accept identity type', () => {
         const result = memoryTypeSchema.safeParse('identity');
         expect(result.success).toBe(true);
     });
 
-    it('should accept state type', () => {
+    test('should accept state type', () => {
         const result = memoryTypeSchema.safeParse('state');
         expect(result.success).toBe(true);
     });
 
-    it('should accept event type', () => {
+    test('should accept event type', () => {
         const result = memoryTypeSchema.safeParse('event');
         expect(result.success).toBe(true);
     });
 
-    it('should reject invalid type', () => {
+    test('should reject invalid type', () => {
         const result = memoryTypeSchema.safeParse('invalid');
         expect(result.success).toBe(false);
     });
 });
 
-describe('memorySchema', () => {
+describe.concurrent('memorySchema', () => {
     const validMemory = {
         id:          '550e8400-e29b-41d4-a716-446655440000',
         memory_type: 'identity',
@@ -38,12 +38,12 @@ describe('memorySchema', () => {
         updatedAt:   '2024-01-01T00:00:00.000Z',
     };
 
-    it('should validate complete memory object', () => {
+    test('should validate complete memory object', () => {
         const result = memorySchema.safeParse(validMemory);
         expect(result.success).toBe(true);
     });
 
-    it('should apply default empty object for metadata', () => {
+    test('should apply default empty object for metadata', () => {
         const result = memorySchema.safeParse(validMemory);
         expect(result.success).toBe(true);
         if(result.success) {
@@ -51,7 +51,7 @@ describe('memorySchema', () => {
         }
     });
 
-    it('should apply default 0 for version', () => {
+    test('should apply default 0 for version', () => {
         const result = memorySchema.safeParse(validMemory);
         expect(result.success).toBe(true);
         if(result.success) {
@@ -59,47 +59,47 @@ describe('memorySchema', () => {
         }
     });
 
-    it('should require id', () => {
+    test('should require id', () => {
         const { id: _id, ...noId } = validMemory;
         const result = memorySchema.safeParse(noId);
         expect(result.success).toBe(false);
     });
 
-    it('should require id to be uuid', () => {
+    test('should require id to be uuid', () => {
         const result = memorySchema.safeParse({ ...validMemory, id: 'not-a-uuid' });
         expect(result.success).toBe(false);
     });
 
-    it('should require memory_type', () => {
+    test('should require memory_type', () => {
         const { memory_type: _memory_type, ...noType } = validMemory;
         const result = memorySchema.safeParse(noType);
         expect(result.success).toBe(false);
     });
 
-    it('should require content', () => {
+    test('should require content', () => {
         const { content: _content, ...noContent } = validMemory;
         const result = memorySchema.safeParse(noContent);
         expect(result.success).toBe(false);
     });
 
-    it('should reject empty content', () => {
+    test('should reject empty content', () => {
         const result = memorySchema.safeParse({ ...validMemory, content: '' });
         expect(result.success).toBe(false);
     });
 
-    it('should reject content over 350KB', () => {
+    test('should reject content over 350KB', () => {
         const largeContent = _.repeat('x', 350001);
         const result = memorySchema.safeParse({ ...validMemory, content: largeContent });
         expect(result.success).toBe(false);
     });
 
-    it('should accept content at 350KB limit', () => {
+    test('should accept content at 350KB limit', () => {
         const maxContent = _.repeat('x', 350000);
         const result = memorySchema.safeParse({ ...validMemory, content: maxContent });
         expect(result.success).toBe(true);
     });
 
-    it('should accept optional TTL', () => {
+    test('should accept optional TTL', () => {
         const result = memorySchema.safeParse({ ...validMemory, TTL: 3600 });
         expect(result.success).toBe(true);
         if(result.success) {
@@ -107,12 +107,12 @@ describe('memorySchema', () => {
         }
     });
 
-    it('should reject negative TTL', () => {
+    test('should reject negative TTL', () => {
         const result = memorySchema.safeParse({ ...validMemory, TTL: -1 });
         expect(result.success).toBe(false);
     });
 
-    it('should accept optional embeddingId', () => {
+    test('should accept optional embeddingId', () => {
         const result = memorySchema.safeParse({ ...validMemory, embeddingId: 'emb-123' });
         expect(result.success).toBe(true);
         if(result.success) {
@@ -120,17 +120,17 @@ describe('memorySchema', () => {
         }
     });
 
-    it('should validate createdAt as ISO datetime', () => {
+    test('should validate createdAt as ISO datetime', () => {
         const result = memorySchema.safeParse({ ...validMemory, createdAt: 'not-a-date' });
         expect(result.success).toBe(false);
     });
 
-    it('should validate updatedAt as ISO datetime', () => {
+    test('should validate updatedAt as ISO datetime', () => {
         const result = memorySchema.safeParse({ ...validMemory, updatedAt: 'not-a-date' });
         expect(result.success).toBe(false);
     });
 
-    it('should accept custom metadata', () => {
+    test('should accept custom metadata', () => {
         const result = memorySchema.safeParse({
             ...validMemory,
             metadata: { tags: ['test'], priority: 1 },
@@ -142,7 +142,7 @@ describe('memorySchema', () => {
     });
 });
 
-describe('createMemoryKeys', () => {
+describe.concurrent('createMemoryKeys', () => {
     const memory: Memory = {
         id:          '550e8400-e29b-41d4-a716-446655440000',
         memory_type: 'identity',
@@ -153,22 +153,22 @@ describe('createMemoryKeys', () => {
         updatedAt:   '2024-01-01T00:00:00.000Z',
     };
 
-    it('should create correct PK', () => {
+    test('should create correct PK', () => {
         const keys = createMemoryKeys(memory);
         expect(keys.PK).toBe('MEMORY#550e8400-e29b-41d4-a716-446655440000');
     });
 
-    it('should create correct SK', () => {
+    test('should create correct SK', () => {
         const keys = createMemoryKeys(memory);
         expect(keys.SK).toBe('TYPE#identity');
     });
 
-    it('should create correct GSI1PK', () => {
+    test('should create correct GSI1PK', () => {
         const keys = createMemoryKeys(memory);
         expect(keys.GSI1PK).toBe('TYPE#identity');
     });
 
-    it('should create correct GSI1SK', () => {
+    test('should create correct GSI1SK', () => {
         const keys = createMemoryKeys(memory);
         expect(keys.GSI1SK).toBe('CREATED#2024-01-01T00:00:00.000Z');
     });

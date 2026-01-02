@@ -1,48 +1,48 @@
 import _ from 'lodash';
-import { describe, it, expect } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import {
     splitMessage,
     DISCORD_SAFE_LENGTH
 } from '@/integrations/discord/messages';
 
-describe('Discord Message Splitting', () => {
+describe.concurrent('Discord Message Splitting', () => {
     describe('splitMessage', () => {
         describe('short messages (no split needed)', () => {
-            it('should return single-element array for empty string', () => {
+            test('should return single-element array for empty string', () => {
                 const result = splitMessage('');
                 expect(result).toEqual(['']);
             });
 
-            it('should return single-element array for short message', () => {
+            test('should return single-element array for short message', () => {
                 const result = splitMessage('Hello, world!');
                 expect(result).toEqual(['Hello, world!']);
             });
 
-            it('should return single-element array for message exactly at max length', () => {
+            test('should return single-element array for message exactly at max length', () => {
                 const message = _.repeat('a', DISCORD_SAFE_LENGTH);
                 const result = splitMessage(message);
                 expect(result).toEqual([message]);
             });
 
-            it('should return single-element array for message just under max length', () => {
+            test('should return single-element array for message just under max length', () => {
                 const message = _.repeat('a', DISCORD_SAFE_LENGTH - 1);
                 const result = splitMessage(message);
                 expect(result).toEqual([message]);
             });
 
-            it('should handle message with only whitespace', () => {
+            test('should handle message with only whitespace', () => {
                 const result = splitMessage('   ');
                 expect(result).toEqual(['']);
             });
 
-            it('should trim whitespace from short messages', () => {
+            test('should trim whitespace from short messages', () => {
                 const result = splitMessage('  Hello  ');
                 expect(result).toEqual(['Hello']);
             });
         });
 
         describe('paragraph splitting', () => {
-            it('should split long message at paragraph breaks', () => {
+            test('should split long message at paragraph breaks', () => {
                 const paragraph1 = _.repeat('a', 100);
                 const paragraph2 = _.repeat('b', 100);
                 const message = `${paragraph1}\n\n${paragraph2}`;
@@ -54,14 +54,14 @@ describe('Discord Message Splitting', () => {
                 expect(result[1]).toBe(paragraph2);
             });
 
-            it('should combine multiple short paragraphs into one chunk', () => {
+            test('should combine multiple short paragraphs into one chunk', () => {
                 const message = 'Para1\n\nPara2\n\nPara3';
                 const result = splitMessage(message, 100);
 
                 expect(result).toEqual(['Para1\n\nPara2\n\nPara3']);
             });
 
-            it('should keep paragraphs together when they fit', () => {
+            test('should keep paragraphs together when they fit', () => {
                 const paragraph1 = _.repeat('a', 50);
                 const paragraph2 = _.repeat('b', 50);
                 const paragraph3 = _.repeat('c', 50);
@@ -74,7 +74,7 @@ describe('Discord Message Splitting', () => {
                 expect(result[1]).toBe(paragraph3);
             });
 
-            it('should preserve paragraph structure when splitting', () => {
+            test('should preserve paragraph structure when splitting', () => {
                 const para1 = 'First paragraph.';
                 const para2 = 'Second paragraph.';
                 const para3 = 'Third paragraph.';
@@ -89,7 +89,7 @@ describe('Discord Message Splitting', () => {
         });
 
         describe('sentence splitting', () => {
-            it('should split long paragraph at sentences when paragraph too long', () => {
+            test('should split long paragraph at sentences when paragraph too long', () => {
                 const sentence1 = _.repeat('a', 80) + '.';
                 const sentence2 = _.repeat('b', 80) + '.';
                 const message = `${sentence1} ${sentence2}`;
@@ -101,7 +101,7 @@ describe('Discord Message Splitting', () => {
                 expect(result[1]).toBe(sentence2);
             });
 
-            it('should handle sentences ending with exclamation mark', () => {
+            test('should handle sentences ending with exclamation mark', () => {
                 const sentence1 = _.repeat('a', 80) + '!';
                 const sentence2 = _.repeat('b', 80) + '!';
                 const message = `${sentence1} ${sentence2}`;
@@ -113,7 +113,7 @@ describe('Discord Message Splitting', () => {
                 expect(result[1]).toBe(sentence2);
             });
 
-            it('should handle sentences ending with question mark', () => {
+            test('should handle sentences ending with question mark', () => {
                 const sentence1 = _.repeat('a', 80) + '?';
                 const sentence2 = _.repeat('b', 80) + '?';
                 const message = `${sentence1} ${sentence2}`;
@@ -125,14 +125,14 @@ describe('Discord Message Splitting', () => {
                 expect(result[1]).toBe(sentence2);
             });
 
-            it('should combine short sentences that fit together', () => {
+            test('should combine short sentences that fit together', () => {
                 const message = 'Hello. World. Test.';
                 const result = splitMessage(message, 100);
 
                 expect(result).toEqual(['Hello. World. Test.']);
             });
 
-            it('should split at sentence after period followed by space', () => {
+            test('should split at sentence after period followed by space', () => {
                 const message = 'First sentence. Second sentence.';
                 const result = splitMessage(message, 20);
 

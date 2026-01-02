@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import { discordConfigSchema } from '@/config/schemas';
 
-describe('discordConfigSchema - monitoredChannelIds', () => {
-    it('should validate Discord config with empty monitoredChannelIds', () => {
+describe.concurrent('discordConfigSchema - monitoredChannelIds', () => {
+    test('should validate Discord config with empty monitoredChannelIds', () => {
         const validConfig = {
             botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId:       '123456789012345678',
@@ -16,7 +16,7 @@ describe('discordConfigSchema - monitoredChannelIds', () => {
         }
     });
 
-    it('should validate Discord config with single monitoredChannelId', () => {
+    test('should validate Discord config with single monitoredChannelId', () => {
         const validConfig = {
             botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId:       '123456789012345678',
@@ -30,7 +30,7 @@ describe('discordConfigSchema - monitoredChannelIds', () => {
         }
     });
 
-    it('should validate Discord config with multiple monitoredChannelIds', () => {
+    test('should validate Discord config with multiple monitoredChannelIds', () => {
         const validConfig = {
             botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId:       '123456789012345678',
@@ -48,7 +48,7 @@ describe('discordConfigSchema - monitoredChannelIds', () => {
         }
     });
 
-    it('should apply default empty array when monitoredChannelIds not provided', () => {
+    test('should apply default empty array when monitoredChannelIds not provided', () => {
         const configWithoutChannelIds = {
             botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId: '123456789012345678',
@@ -61,7 +61,7 @@ describe('discordConfigSchema - monitoredChannelIds', () => {
         }
     });
 
-    it('should reject empty string in monitoredChannelIds array', () => {
+    test('should reject empty string in monitoredChannelIds array', () => {
         const invalidConfig = {
             botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId:       '123456789012345678',
@@ -72,7 +72,7 @@ describe('discordConfigSchema - monitoredChannelIds', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should reject non-string values in monitoredChannelIds array', () => {
+    test('should reject non-string values in monitoredChannelIds array', () => {
         const invalidConfig = {
             botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId:       '123456789012345678',
@@ -83,7 +83,7 @@ describe('discordConfigSchema - monitoredChannelIds', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should reject non-array monitoredChannelIds', () => {
+    test('should reject non-array monitoredChannelIds', () => {
         const invalidConfig = {
             botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId:       '123456789012345678',

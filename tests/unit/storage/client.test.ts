@@ -1,4 +1,4 @@
-import { describe, it, expect, spyOn, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, spyOn, beforeEach, afterEach } from 'bun:test';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { createDynamoDBClient, buildClientConfig } from '@/storage/client';
@@ -6,8 +6,8 @@ import type { DynamoDBConfig } from '@/config/schemas';
 
 // AWS SDK is mocked globally in tests/setup.ts
 
-describe('buildClientConfig', () => {
-    it('should not include endpoint property when config.endpoint is undefined', () => {
+describe.concurrent('buildClientConfig', () => {
+    test('should not include endpoint property when config.endpoint is undefined', () => {
         // Critical test for mutation: if(config.endpoint) -> if(true)
         const config: DynamoDBConfig = {
             tableName: 'TestTable',
@@ -24,7 +24,7 @@ describe('buildClientConfig', () => {
         expect(clientConfig.maxAttempts).toBe(3);
     });
 
-    it('should include endpoint property when config.endpoint is provided', () => {
+    test('should include endpoint property when config.endpoint is provided', () => {
         const config: DynamoDBConfig = {
             tableName: 'TestTable',
             region:    'us-west-2',
@@ -42,7 +42,7 @@ describe('buildClientConfig', () => {
         expect(clientConfig.maxAttempts).toBe(3);
     });
 
-    it('should always set region and maxAttempts', () => {
+    test('should always set region and maxAttempts', () => {
         const config1: DynamoDBConfig = {
             tableName: 'TestTable',
             region:    'eu-west-1',
@@ -64,8 +64,8 @@ describe('buildClientConfig', () => {
     });
 });
 
-describe('createDynamoDBClient', () => {
-    it('should create DynamoDBClient and DocumentClient', () => {
+describe.concurrent('createDynamoDBClient', () => {
+    test('should create DynamoDBClient and DocumentClient', () => {
         // Spy on DynamoDBDocumentClient.from to verify it's called
         const fromSpy = spyOn(DynamoDBDocumentClient, 'from');
 
@@ -83,7 +83,7 @@ describe('createDynamoDBClient', () => {
         expect(fromSpy).toHaveBeenCalled();
     });
 
-    it('should return tableName in clients object', () => {
+    test('should return tableName in clients object', () => {
         const config: DynamoDBConfig = {
             tableName: 'MyTable',
             region:    'us-west-2',
@@ -95,7 +95,7 @@ describe('createDynamoDBClient', () => {
     });
 
     describe('DynamoDBClient configuration', () => {
-        it('should configure maxAttempts to 3', async () => {
+        test('should configure maxAttempts to 3', async () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
                 region:    'us-west-2',
@@ -108,7 +108,7 @@ describe('createDynamoDBClient', () => {
             expect(maxAttempts).toBe(3);
         });
 
-        it('should pass correct region to DynamoDBClient', async () => {
+        test('should pass correct region to DynamoDBClient', async () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
                 region:    'ap-southeast-1',
@@ -120,7 +120,7 @@ describe('createDynamoDBClient', () => {
             expect(region).toBe('ap-southeast-1');
         });
 
-        it('should include endpoint when provided', async () => {
+        test('should include endpoint when provided', async () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
                 region:    'us-west-2',
@@ -137,7 +137,7 @@ describe('createDynamoDBClient', () => {
             expect(endpoint.protocol).toBe('http:');
         });
 
-        it('should not include endpoint when not provided', () => {
+        test('should not include endpoint when not provided', () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
                 region:    'us-west-2',
@@ -149,7 +149,7 @@ describe('createDynamoDBClient', () => {
             expect(clients.client.config.endpoint).toBeUndefined();
         });
 
-        it('should use different region values correctly', async () => {
+        test('should use different region values correctly', async () => {
             const regions = ['us-west-1', 'eu-central-1', 'ap-northeast-1'];
 
             for(const testRegion of regions) {
@@ -164,7 +164,7 @@ describe('createDynamoDBClient', () => {
             }
         });
 
-        it('should only set endpoint when explicitly provided (not when undefined)', () => {
+        test('should only set endpoint when explicitly provided (not when undefined)', () => {
             // Test that endpoint is NOT set when undefined
             const configNoEndpoint: DynamoDBConfig = {
                 tableName: 'TestTable',
@@ -186,7 +186,7 @@ describe('createDynamoDBClient', () => {
             expect(clientsWithEndpoint.client.config.endpoint).toBeDefined();
         });
 
-        it('should conditionally set endpoint based on config.endpoint truthiness', async () => {
+        test('should conditionally set endpoint based on config.endpoint truthiness', async () => {
             // When endpoint is undefined, the AWS SDK should use default endpoint resolution
             // This means endpoint function will be defined but point to AWS endpoints
             const configNoEndpoint: DynamoDBConfig = {
@@ -221,7 +221,7 @@ describe('createDynamoDBClient', () => {
     });
 
     describe('DynamoDBDocumentClient configuration', () => {
-        it('should configure marshallOptions.removeUndefinedValues to true', () => {
+        test('should configure marshallOptions.removeUndefinedValues to true', () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
                 region:    'us-west-2',
@@ -241,7 +241,7 @@ describe('createDynamoDBClient', () => {
             });
         });
 
-        it('should configure marshallOptions.convertClassInstanceToMap to true', () => {
+        test('should configure marshallOptions.convertClassInstanceToMap to true', () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
                 region:    'us-west-2',
@@ -259,7 +259,7 @@ describe('createDynamoDBClient', () => {
             });
         });
 
-        it('should configure unmarshallOptions.wrapNumbers to false', () => {
+        test('should configure unmarshallOptions.wrapNumbers to false', () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
                 region:    'us-west-2',
@@ -277,7 +277,7 @@ describe('createDynamoDBClient', () => {
             });
         });
 
-        it('should configure all marshallOptions together', () => {
+        test('should configure all marshallOptions together', () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
                 region:    'us-west-2',
@@ -294,7 +294,7 @@ describe('createDynamoDBClient', () => {
             });
         });
 
-        it('should configure all unmarshallOptions correctly', () => {
+        test('should configure all unmarshallOptions correctly', () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
                 region:    'us-west-2',
@@ -310,7 +310,7 @@ describe('createDynamoDBClient', () => {
             });
         });
 
-        it('should set both marshallOptions and unmarshallOptions in one call', () => {
+        test('should set both marshallOptions and unmarshallOptions in one call', () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
                 region:    'us-west-2',
@@ -334,7 +334,7 @@ describe('createDynamoDBClient', () => {
     });
 });
 
-describe('DynamoDBDocumentClient marshalling', () => {
+describe.concurrent('DynamoDBDocumentClient marshalling', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
 
     beforeEach(() => {
@@ -346,7 +346,7 @@ describe('DynamoDBDocumentClient marshalling', () => {
         ddbMock.reset();
     });
 
-    it('should be able to send commands via docClient', async () => {
+    test('should be able to send commands via docClient', async () => {
         const clients = createDynamoDBClient({
             tableName: 'TestTable',
             region:    'us-west-2',

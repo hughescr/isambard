@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import {
     discordAuthorSchema,
     discordAttachmentSchema,
@@ -10,52 +10,52 @@ import {
     type DiscordReaction
 } from '@/integrations/discord/message-history/types';
 
-describe('discordAuthorSchema', () => {
+describe.concurrent('discordAuthorSchema', () => {
     const validAuthor: DiscordAuthor = {
         id:          '123456789012345678',
         username:    'testuser',
         displayName: 'Test User',
     };
 
-    it('should accept valid author data', () => {
+    test('should accept valid author data', () => {
         const result = discordAuthorSchema.safeParse(validAuthor);
         expect(result.success).toBe(true);
     });
 
-    it('should require id field', () => {
+    test('should require id field', () => {
         const { id: _id, ...noId } = validAuthor;
         const result = discordAuthorSchema.safeParse(noId);
         expect(result.success).toBe(false);
     });
 
-    it('should reject empty id', () => {
+    test('should reject empty id', () => {
         const result = discordAuthorSchema.safeParse({ ...validAuthor, id: '' });
         expect(result.success).toBe(false);
     });
 
-    it('should require username field', () => {
+    test('should require username field', () => {
         const { username: _username, ...noUsername } = validAuthor;
         const result = discordAuthorSchema.safeParse(noUsername);
         expect(result.success).toBe(false);
     });
 
-    it('should reject empty username', () => {
+    test('should reject empty username', () => {
         const result = discordAuthorSchema.safeParse({ ...validAuthor, username: '' });
         expect(result.success).toBe(false);
     });
 
-    it('should require displayName field', () => {
+    test('should require displayName field', () => {
         const { displayName: _displayName, ...noDisplayName } = validAuthor;
         const result = discordAuthorSchema.safeParse(noDisplayName);
         expect(result.success).toBe(false);
     });
 
-    it('should reject empty displayName', () => {
+    test('should reject empty displayName', () => {
         const result = discordAuthorSchema.safeParse({ ...validAuthor, displayName: '' });
         expect(result.success).toBe(false);
     });
 
-    it('should reject non-string values', () => {
+    test('should reject non-string values', () => {
         const result = discordAuthorSchema.safeParse({
             id:          12345,
             username:    'test',
@@ -71,12 +71,12 @@ describe('discordAttachmentSchema', () => {
         filename: 'file.png',
     };
 
-    it('should accept valid attachment without contentType', () => {
+    test('should accept valid attachment without contentType', () => {
         const result = discordAttachmentSchema.safeParse(validAttachment);
         expect(result.success).toBe(true);
     });
 
-    it('should accept valid attachment with contentType', () => {
+    test('should accept valid attachment with contentType', () => {
         const result = discordAttachmentSchema.safeParse({
             ...validAttachment,
             contentType: 'image/png',
@@ -84,13 +84,13 @@ describe('discordAttachmentSchema', () => {
         expect(result.success).toBe(true);
     });
 
-    it('should require url field', () => {
+    test('should require url field', () => {
         const { url: _url, ...noUrl } = validAttachment;
         const result = discordAttachmentSchema.safeParse(noUrl);
         expect(result.success).toBe(false);
     });
 
-    it('should require url to be valid URL', () => {
+    test('should require url to be valid URL', () => {
         const result = discordAttachmentSchema.safeParse({
             ...validAttachment,
             url: 'not-a-url',
@@ -98,13 +98,13 @@ describe('discordAttachmentSchema', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should require filename field', () => {
+    test('should require filename field', () => {
         const { filename: _filename, ...noFilename } = validAttachment;
         const result = discordAttachmentSchema.safeParse(noFilename);
         expect(result.success).toBe(false);
     });
 
-    it('should reject empty filename', () => {
+    test('should reject empty filename', () => {
         const result = discordAttachmentSchema.safeParse({
             ...validAttachment,
             filename: '',
@@ -112,7 +112,7 @@ describe('discordAttachmentSchema', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should allow contentType to be undefined', () => {
+    test('should allow contentType to be undefined', () => {
         const result = discordAttachmentSchema.safeParse(validAttachment);
         expect(result.success).toBe(true);
         if(result.success) {
@@ -122,7 +122,7 @@ describe('discordAttachmentSchema', () => {
 });
 
 describe('discordEmbedSchema', () => {
-    it('should accept embed with all fields', () => {
+    test('should accept embed with all fields', () => {
         const fullEmbed: DiscordEmbed = {
             title:       'Test Embed',
             description: 'This is a test embed',
@@ -132,37 +132,37 @@ describe('discordEmbedSchema', () => {
         expect(result.success).toBe(true);
     });
 
-    it('should accept embed with only title', () => {
+    test('should accept embed with only title', () => {
         const result = discordEmbedSchema.safeParse({ title: 'Title Only' });
         expect(result.success).toBe(true);
     });
 
-    it('should accept embed with only description', () => {
+    test('should accept embed with only description', () => {
         const result = discordEmbedSchema.safeParse({ description: 'Description only' });
         expect(result.success).toBe(true);
     });
 
-    it('should accept embed with only url', () => {
+    test('should accept embed with only url', () => {
         const result = discordEmbedSchema.safeParse({ url: 'https://example.com' });
         expect(result.success).toBe(true);
     });
 
-    it('should accept empty embed object', () => {
+    test('should accept empty embed object', () => {
         const result = discordEmbedSchema.safeParse({});
         expect(result.success).toBe(true);
     });
 
-    it('should require url to be valid URL when present', () => {
+    test('should require url to be valid URL when present', () => {
         const result = discordEmbedSchema.safeParse({ url: 'not-a-url' });
         expect(result.success).toBe(false);
     });
 
-    it('should reject non-string title', () => {
+    test('should reject non-string title', () => {
         const result = discordEmbedSchema.safeParse({ title: 123 });
         expect(result.success).toBe(false);
     });
 
-    it('should reject non-string description', () => {
+    test('should reject non-string description', () => {
         const result = discordEmbedSchema.safeParse({ description: 123 });
         expect(result.success).toBe(false);
     });
@@ -174,44 +174,44 @@ describe('discordReactionSchema', () => {
         count: 5,
     };
 
-    it('should accept valid reaction', () => {
+    test('should accept valid reaction', () => {
         const result = discordReactionSchema.safeParse(validReaction);
         expect(result.success).toBe(true);
     });
 
-    it('should require emoji field', () => {
+    test('should require emoji field', () => {
         const { emoji: _emoji, ...noEmoji } = validReaction;
         const result = discordReactionSchema.safeParse(noEmoji);
         expect(result.success).toBe(false);
     });
 
-    it('should reject empty emoji', () => {
+    test('should reject empty emoji', () => {
         const result = discordReactionSchema.safeParse({ ...validReaction, emoji: '' });
         expect(result.success).toBe(false);
     });
 
-    it('should require count field', () => {
+    test('should require count field', () => {
         const { count: _count, ...noCount } = validReaction;
         const result = discordReactionSchema.safeParse(noCount);
         expect(result.success).toBe(false);
     });
 
-    it('should require count to be positive integer', () => {
+    test('should require count to be positive integer', () => {
         const result = discordReactionSchema.safeParse({ ...validReaction, count: 0 });
         expect(result.success).toBe(false);
     });
 
-    it('should reject negative count', () => {
+    test('should reject negative count', () => {
         const result = discordReactionSchema.safeParse({ ...validReaction, count: -1 });
         expect(result.success).toBe(false);
     });
 
-    it('should reject non-integer count', () => {
+    test('should reject non-integer count', () => {
         const result = discordReactionSchema.safeParse({ ...validReaction, count: 1.5 });
         expect(result.success).toBe(false);
     });
 
-    it('should accept custom emoji format', () => {
+    test('should accept custom emoji format', () => {
         const result = discordReactionSchema.safeParse({
             emoji: '<:custom:123456789>',
             count: 1,
