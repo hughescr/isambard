@@ -16,12 +16,17 @@ import { split as _split, startsWith as _startsWith } from 'lodash';
 import { extractLayerFromPath, createMemoryPath } from '../src/storage/memory-tool/types';
 import { generateContentPreview, MemoryToolKeyGenerator } from '../src/storage/memory-tool/key-generator';
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const WRITE_DELAY_MS = 100;  // Delay between individual updates
+const BATCH_DELAY_MS = 500;  // Delay between scan pages
+
 interface MigrationStats {
-    totalScanned:        number
-    memoryUpdated:       number
-    messageCacheSkipped: number
-    versionSkipped:      number
-    errors:              number
+    totalScanned:           number
+    memoryUpdated:          number
+    messageCacheSkipped:    number
+    versionSkipped:         number
+    alreadyMigratedSkipped: number
+    errors:                 number
 }
 
 interface DynamoItem {
@@ -73,7 +78,7 @@ function createDocClient(): DynamoDBDocumentClient {
 /**
  * Determines if an item should be skipped during migration.
  */
-function shouldSkipItem(item: DynamoItem): { skip: boolean, reason?: 'message_cache' | 'version' } {
+function shouldSkipItem(item: DynamoItem): { skip: boolean, reason?: 'message_cache' | 'version' | 'already_migrated' } {
     // Skip message cache items (PK starts with CHANNEL#)
     if(_startsWith(item.PK, 'CHANNEL#')) {
         return { skip: true, reason: 'message_cache' };
@@ -82,6 +87,14 @@ function shouldSkipItem(item: DynamoItem): { skip: boolean, reason?: 'message_ca
     // Skip version history items (SK starts with VERSION#)
     if(_startsWith(item.SK, 'VERSION#')) {
         return { skip: true, reason: 'version' };
+    }
+
+    // Skip items that already have NEW format GSI1 keys (LAYER#/UPDATED#)
+    // Items with OLD format (PATH#/CREATED#) need to be re-migrated
+    if(item.GSI1PK && item.GSI1SK &&
+       _startsWith(item.GSI1PK, 'LAYER#') &&
+       _startsWith(item.GSI1SK, 'UPDATED#')) {
+        return { skip: true, reason: 'already_migrated' };
     }
 
     return { skip: false };
@@ -167,6 +180,9 @@ async function processBatch(
             } else if(skipResult.reason === 'version') {
                 console.log(`  Skipped (version): ${item.PK} ${item.SK}`);
                 stats.versionSkipped++;
+            } else if(skipResult.reason === 'already_migrated') {
+                console.log(`  Skipped (already migrated): ${item.PK} ${item.SK}`);
+                stats.alreadyMigratedSkipped++;
             }
             continue;
         }
@@ -176,6 +192,7 @@ async function processBatch(
             await updateItem(docClient, tableName, item);
             console.log(`  Updated: ${path}`);
             stats.memoryUpdated++;
+            await sleep(WRITE_DELAY_MS);
         } catch (error) {
             console.error(`  Error updating ${item.PK}/${item.SK}:`, error);
             stats.errors++;
@@ -196,11 +213,12 @@ async function migrate(): Promise<void> {
     const docClient = createDocClient();
 
     const stats: MigrationStats = {
-        totalScanned:        0,
-        memoryUpdated:       0,
-        messageCacheSkipped: 0,
-        versionSkipped:      0,
-        errors:              0,
+        totalScanned:           0,
+        memoryUpdated:          0,
+        messageCacheSkipped:    0,
+        versionSkipped:         0,
+        alreadyMigratedSkipped: 0,
+        errors:                 0,
     };
 
     let lastEvaluatedKey: Record<string, unknown> | undefined;
@@ -218,6 +236,7 @@ async function migrate(): Promise<void> {
         stats.totalScanned += items.length;
 
         await processBatch(docClient, tableName, items, batchNumber, stats);
+        await sleep(BATCH_DELAY_MS);
 
         lastEvaluatedKey = scanResult.LastEvaluatedKey as Record<string, unknown> | undefined;
     } while(lastEvaluatedKey);
@@ -227,6 +246,7 @@ async function migrate(): Promise<void> {
     console.log(`  Memory items updated: ${stats.memoryUpdated}`);
     console.log(`  Message cache items skipped: ${stats.messageCacheSkipped}`);
     console.log(`  Version items skipped: ${stats.versionSkipped}`);
+    console.log(`  Already migrated items skipped: ${stats.alreadyMigratedSkipped}`);
     console.log(`  Errors: ${stats.errors}`);
 }
 
