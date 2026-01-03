@@ -2,6 +2,7 @@ import { DynamoDBDocumentClient, QueryCommand, PutCommand } from '@aws-sdk/lib-d
 import { randomUUID } from 'node:crypto';
 import { map as _map, isObject as _isObject } from 'lodash';
 import { BaseRepository, type DynamoDBKey } from './base';
+import { stripDynamoKeys } from '../utils/index.js';
 import {
     memorySchema,
     createMemoryKeys,
@@ -79,7 +80,7 @@ export class MemoryRepository extends BaseRepository<Memory> {
             return undefined;
         }
 
-        return this.stripKeys(item);
+        return stripDynamoKeys(item);
     }
 
     async update(id: string, memoryType: MemoryType, input: UpdateMemoryInput): Promise<Memory> {
@@ -168,7 +169,7 @@ export class MemoryRepository extends BaseRepository<Memory> {
             })
         );
 
-        const items = _map((result.Items ?? []) as MemoryItem[], item => this.stripKeys(item));
+        const items = _map((result.Items ?? []) as MemoryItem[], item => stripDynamoKeys(item));
 
         let nextCursor: string | undefined;
         if(result.LastEvaluatedKey) {
@@ -176,10 +177,5 @@ export class MemoryRepository extends BaseRepository<Memory> {
         }
 
         return { items, nextCursor };
-    }
-
-    private stripKeys(item: MemoryItem): Memory {
-        const { PK: _PK, SK: _SK, GSI1PK: _GSI1PK, GSI1SK: _GSI1SK, ...memory } = item;
-        return memory;
     }
 }

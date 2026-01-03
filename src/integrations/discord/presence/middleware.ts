@@ -145,6 +145,82 @@ export function createStatusMiddleware(
                     }
                 };
 
+                /**
+                 * Generates synopsis and updates phase, with fallback on error.
+                 * Checks shouldUpdate() before making expensive LLM calls.
+                 *
+                 * @param synopsisContext - Context for synopsis generation
+                 * @param basePhase - Phase to update to (without generatedStatus)
+                 */
+                const updatePhaseWithSynopsis = (
+                    synopsisContext: Parameters<NonNullable<typeof dynamicStatusGenerator>['generateSynopsis']>[0],
+                    basePhase: Exclude<PresencePhase, { type: 'idle' }>
+                ): void => {
+                    // Stryker disable next-line ConditionalExpression: Equivalent - try/catch swallows TypeError when undefined
+                    if(dynamicStatusGenerator && presenceManager.shouldUpdate()) {
+                        void (async () => {
+                            try {
+                                const synopsis = await dynamicStatusGenerator.generateSynopsis(synopsisContext);
+                                void safeUpdatePhase({
+                                    ...basePhase,
+                                    generatedStatus: synopsis,
+                                });
+                            } catch{
+                                void safeUpdatePhase(basePhase);
+                            }
+                        })();
+                    } else {
+                        void safeUpdatePhase(basePhase);
+                    }
+                };
+
+                /**
+                 * Handles phase transition to 'using_tool' state.
+                 * Extracted to avoid duplicate logic between 'assistant' and 'tool_progress' event handlers.
+                 *
+                 * @param toolName - Name of the tool being used
+                 * @returns true if a phase transition occurred, false if already in same tool phase
+                 */
+                const handleToolPhaseTransition = (toolName: string): boolean => {
+                    // Check if this is a new tool transition
+                    if(currentPhase === 'using_tool' && toolName === lastToolName) {
+                        return false;
+                    }
+
+                    currentPhase = 'using_tool';
+                    lastToolName = toolName;
+
+                    // Capture current state for async closure (BEFORE adding current tool)
+                    // recentToolCalls represents PREVIOUS tools, not including current
+                    const capturedAccumulatedText = accumulatedText;
+                    const capturedRecentToolCalls = [...recentToolCalls];
+
+                    // Add current tool to recent AFTER capturing (current tool goes into history for next call)
+                    recentToolCalls.unshift(toolName);
+                    if(recentToolCalls.length > MAX_RECENT_TOOLS) {
+                        recentToolCalls.pop();
+                    }
+
+                    updatePhaseWithSynopsis(
+                        {
+                            phase:           'using_tool',
+                            userMessage,
+                            toolName,
+                            toolInput:       pendingToolInputs.get(toolName),
+                            toolDescription: getToolDescription(toolName),
+                            accumulatedText: capturedAccumulatedText || undefined,
+                            recentToolCalls: capturedRecentToolCalls,
+                        },
+                        {
+                            type:      'using_tool',
+                            toolName,
+                            startedAt: new Date(),
+                        }
+                    );
+
+                    return true;
+                };
+
                 // Map stream events to presence phases
                 if(event.type === 'assistant') {
                     // Extract thinking content from message content blocks
@@ -168,58 +244,8 @@ export function createStatusMiddleware(
                         pendingToolInputs.set(toolUse.name, redactSensitiveArgs(toolUse.input));
 
                         // Trigger 'using_tool' presence update when tool_use blocks are detected
-                        const toolName = toolUse.name;
-                        if(currentPhase !== 'using_tool' || toolName !== lastToolName) {
-                            currentPhase = 'using_tool';
-                            lastToolName = toolName;
+                        if(handleToolPhaseTransition(toolUse.name)) {
                             hadToolUseUpdate = true;
-
-                            // Capture current state for async closure (BEFORE adding current tool)
-                            // recentToolCalls represents PREVIOUS tools, not including current
-                            const capturedAccumulatedText = accumulatedText;
-                            const capturedRecentToolCalls = [...recentToolCalls];
-
-                            // Add current tool to recent AFTER capturing (current tool goes into history for next call)
-                            recentToolCalls.unshift(toolName);
-                            if(recentToolCalls.length > MAX_RECENT_TOOLS) {
-                                recentToolCalls.pop();
-                            }
-
-                            // Check shouldUpdate() before generating expensive synopsis
-                            // Stryker disable next-line ConditionalExpression: Equivalent - try/catch swallows TypeError when undefined
-                            if(dynamicStatusGenerator && presenceManager.shouldUpdate()) {
-                                void (async () => {
-                                    try {
-                                        const synopsis = await dynamicStatusGenerator.generateSynopsis({
-                                            phase:           'using_tool',
-                                            userMessage,
-                                            toolName,
-                                            toolInput:       pendingToolInputs.get(toolName),
-                                            toolDescription: getToolDescription(toolName),
-                                            accumulatedText: capturedAccumulatedText || undefined,
-                                            recentToolCalls: capturedRecentToolCalls,
-                                        });
-                                        void safeUpdatePhase({
-                                            type:            'using_tool',
-                                            toolName,
-                                            startedAt:       new Date(),
-                                            generatedStatus: synopsis,
-                                        });
-                                    } catch{
-                                        void safeUpdatePhase({
-                                            type:      'using_tool',
-                                            toolName,
-                                            startedAt: new Date(),
-                                        });
-                                    }
-                                })();
-                            } else {
-                                void safeUpdatePhase({
-                                    type:      'using_tool',
-                                    toolName,
-                                    startedAt: new Date(),
-                                });
-                            }
                         }
                     }
 
@@ -283,93 +309,25 @@ export function createStatusMiddleware(
                                 });
                             }
                         } else {
-                            // Check shouldUpdate() before generating expensive synopsis
-                            // Stryker disable next-line ConditionalExpression: Equivalent - try/catch swallows TypeError when undefined
-                            if(dynamicStatusGenerator && presenceManager.shouldUpdate()) {
-                                void (async () => {
-                                    try {
-                                        const synopsis = await dynamicStatusGenerator.generateSynopsis({
-                                            phase:            'responding',
-                                            userMessage,
-                                            // Stryker disable next-line OptionalChaining: Equivalent - try/catch swallows TypeError when text is undefined
-                                            responseFragment: event.delta?.text?.slice(0, 100),
-                                            accumulatedText:  accumulatedText || undefined,
-                                        });
-                                        void safeUpdatePhase({
-                                            type:            'responding',
-                                            startedAt:       new Date(),
-                                            generatedStatus: synopsis,
-                                        });
-                                    } catch{
-                                        void safeUpdatePhase({
-                                            type:      'responding',
-                                            startedAt: new Date(),
-                                        });
-                                    }
-                                })();
-                            } else {
-                                void safeUpdatePhase({
+                            updatePhaseWithSynopsis(
+                                {
+                                    phase:            'responding',
+                                    userMessage,
+                                    // Stryker disable next-line OptionalChaining: Equivalent - try/catch swallows TypeError when text is undefined
+                                    responseFragment: event.delta?.text?.slice(0, 100),
+                                    accumulatedText:  accumulatedText || undefined,
+                                },
+                                {
                                     type:      'responding',
                                     startedAt: new Date(),
-                                });
-                            }
+                                }
+                            );
                         }
                     }
                 } else if(event.type === 'tool_progress') {
                     // Track tool invocations to show which tool is currently executing.
                     // Only update presence when transitioning to a new tool to minimize API calls.
-                    const toolName = event.tool_name ?? 'unknown';
-
-                    if(currentPhase !== 'using_tool' || toolName !== lastToolName) {
-                        currentPhase = 'using_tool';
-                        lastToolName = toolName;
-
-                        // Capture current state for async closure (BEFORE adding current tool)
-                        // recentToolCalls represents PREVIOUS tools, not including current
-                        const capturedRecentToolCalls = [...recentToolCalls];
-
-                        // Add current tool to recent AFTER capturing (current tool goes into history for next call)
-                        recentToolCalls.unshift(toolName);
-                        if(recentToolCalls.length > MAX_RECENT_TOOLS) {
-                            recentToolCalls.pop();
-                        }
-
-                        // Check shouldUpdate() before generating expensive synopsis
-                        // Stryker disable next-line ConditionalExpression: Equivalent - try/catch swallows TypeError when undefined
-                        if(dynamicStatusGenerator && presenceManager.shouldUpdate()) {
-                            void (async () => {
-                                try {
-                                    const synopsis = await dynamicStatusGenerator.generateSynopsis({
-                                        phase:           'using_tool',
-                                        userMessage,
-                                        toolName,
-                                        toolInput:       pendingToolInputs.get(toolName),
-                                        toolDescription: getToolDescription(toolName),
-                                        accumulatedText: accumulatedText || undefined,
-                                        recentToolCalls: capturedRecentToolCalls,
-                                    });
-                                    void safeUpdatePhase({
-                                        type:            'using_tool',
-                                        toolName,
-                                        startedAt:       new Date(),
-                                        generatedStatus: synopsis,
-                                    });
-                                } catch{
-                                    void safeUpdatePhase({
-                                        type:      'using_tool',
-                                        toolName,
-                                        startedAt: new Date(),
-                                    });
-                                }
-                            })();
-                        } else {
-                            void safeUpdatePhase({
-                                type:      'using_tool',
-                                toolName,
-                                startedAt: new Date(),
-                            });
-                        }
-                    }
+                    handleToolPhaseTransition(event.tool_name ?? 'unknown');
                 } else if(event.type === 'result') {
                     // Processing complete, go idle
                     void safeUpdatePhase({

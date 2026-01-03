@@ -1,9 +1,9 @@
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { BaseRepository } from '../repositories/base';
+import { stripDynamoKeys } from '../utils/index.js';
 import {
     type MemoryPath,
     type MemoryToolItemData,
-    type MemoryToolItem,
     type LayerName
 } from './types';
 import { MemoryToolBackendCore, type CreateMemoryToolItemInput, type UpdateMemoryToolItemInput } from './backend-core';
@@ -27,27 +27,25 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
     constructor(docClient: DynamoDBDocumentClient, tableName: string) {
         super(docClient, tableName);
 
-        const stripKeys = this.stripKeys.bind(this);
-
         this.coreOps = new MemoryToolBackendCore(
             docClient,
             tableName,
             this.putItem.bind(this),
             this.getItem.bind(this),
             this.deleteItem.bind(this),
-            stripKeys
+            stripDynamoKeys
         );
 
         this.queryOps = new MemoryToolBackendQuery(
             docClient,
             tableName,
-            stripKeys
+            stripDynamoKeys
         );
 
         this.versionOps = new MemoryToolBackendVersions(
             docClient,
             tableName,
-            stripKeys,
+            stripDynamoKeys,
             this.listByLayer.bind(this)
         );
     }
@@ -115,10 +113,5 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         options?: { maxIdentityItems?: number, maxStateItems?: number }
     ): Promise<MemoryToolItemData[]> {
         return this.versionOps.getAutoLoadItems(options);
-    }
-
-    private stripKeys(item: MemoryToolItem): MemoryToolItemData {
-        const { PK: _PK, SK: _SK, GSI1PK: _GSI1PK, GSI1SK: _GSI1SK, GSI2PK: _GSI2PK, GSI2SK: _GSI2SK, ...data } = item;
-        return data;
     }
 }

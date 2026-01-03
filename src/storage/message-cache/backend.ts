@@ -2,6 +2,7 @@ import { DynamoDBDocumentClient, QueryCommand, DeleteCommand } from '@aws-sdk/li
 import { map as _map } from 'lodash';
 import { BaseRepository, type DynamoDBKey } from '../repositories/base';
 import { ValidationError } from '../errors';
+import { stripDynamoKeys } from '../utils/index.js';
 import {
     cachedSegmentSchema,
     type CachedSegmentData,
@@ -92,7 +93,7 @@ export class MessageCacheBackend extends BaseRepository<CachedSegmentData> {
             return undefined;
         }
 
-        return this.stripKeys(item);
+        return stripDynamoKeys(item);
     }
 
     /**
@@ -113,7 +114,7 @@ export class MessageCacheBackend extends BaseRepository<CachedSegmentData> {
         }));
 
         const items = (result.Items ?? []) as CachedSegmentItem[];
-        return _map(items, item => this.stripKeys(item));
+        return _map(items, item => stripDynamoKeys(item));
     }
 
     /**
@@ -157,13 +158,5 @@ export class MessageCacheBackend extends BaseRepository<CachedSegmentData> {
         }
 
         return segments.length;
-    }
-
-    /**
-     * Strips DynamoDB keys from the item.
-     */
-    private stripKeys(item: CachedSegmentItem): CachedSegmentData {
-        const { PK: _PK, SK: _SK, ...data } = item;
-        return data;
     }
 }

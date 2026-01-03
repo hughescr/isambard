@@ -23,3 +23,6 @@ export {
     type QueryOptions,
     type QueryResult
 } from './repositories/memory';
+
+// Utils
+export { stripDynamoKeys } from './utils/index.js';
