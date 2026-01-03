@@ -351,9 +351,10 @@ describe('Discord Event Handlers', () => {
 
         it('should accept optional presenceManager and agent in options', async () => {
             const mockPresenceManager = {
-                start:       mock(() => undefined),
-                stop:        mock(() => undefined),
-                updatePhase: mock(async () => undefined),
+                start:        mock(() => undefined),
+                stop:         mock(() => undefined),
+                shouldUpdate: mock(() => true),
+                updatePhase:  mock(async () => undefined),
             };
 
             const mockAgent = {
@@ -410,9 +411,10 @@ describe('Discord Event Handlers', () => {
 
             it('should pass dynamicStatusGenerator to statusMiddleware when all deps present', async () => {
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
 
                 const mockAgent = {
@@ -443,9 +445,10 @@ describe('Discord Event Handlers', () => {
 
             it('should work without dynamicStatusGenerator (backward compatible)', async () => {
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
 
                 const mockAgent = {
@@ -473,9 +476,10 @@ describe('Discord Event Handlers', () => {
         describe('statusMiddleware creation (logical AND behavior)', () => {
             it('should NOT use statusMiddleware when only presenceManager is provided (no agent)', async () => {
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
 
                 // Create onMessage mock that returns a value so we can verify it was called
@@ -528,9 +532,10 @@ describe('Discord Event Handlers', () => {
                 // This test specifically kills the && vs || mutant by verifying
                 // that agent.chat is ONLY called when BOTH are present
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
 
                 const mockAgent = {
@@ -588,9 +593,10 @@ describe('Discord Event Handlers', () => {
                 // This test ensures that having ONLY presenceManager doesn't trigger middleware
                 // If && was mutated to ||, this test would fail because middleware would be truthy
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
 
                 const onMessageMock = mock(async () => 'onMessage response');

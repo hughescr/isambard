@@ -3,6 +3,9 @@
  *
  * Wraps message processing to update Discord presence based on agent stream events.
  * Maps agent activity (thinking, tool usage, responding) to Discord presence phases.
+ *
+ * Uses shouldUpdate() from PresenceManager to avoid wasted LLM calls for synopsis
+ * generation when the update would be throttled anyway.
  */
 
 import type { PresenceManager } from './manager.js';
@@ -54,6 +57,7 @@ export type StatusMiddleware = (
  * - Starts typing indicator when processing begins
  * - Updates presence based on agent stream events
  * - Maps stream events to presence phases (thinking, using_tool, responding)
+ * - Checks shouldUpdate() before generating expensive LLM synopses
  * - Stops typing and clears presence when complete or on error
  * - Handles concurrent messages independently
  *
@@ -93,12 +97,12 @@ export function createStatusMiddleware(
         const pendingToolInputs = new Map<string, unknown>();
         let accumulatedText = '';
 
-        // Pre-generate thinking synopsis at start (before agent.chat).
+        // Pre-generate thinking synopsis at start (before agent.chat) if update would apply.
         // This allows immediate status display without waiting for the first stream event.
         // The synopsis is cached and reused when transitioning to 'thinking' phase.
         let thinkingSynopsis: string | undefined;
         // Stryker disable next-line ConditionalExpression: Equivalent - try/catch swallows TypeError when undefined
-        if(dynamicStatusGenerator) {
+        if(dynamicStatusGenerator && presenceManager.shouldUpdate()) {
             try {
                 thinkingSynopsis = await dynamicStatusGenerator.generateSynopsis({
                     phase: 'thinking',
@@ -157,7 +161,7 @@ export function createStatusMiddleware(
                         currentPhase = newPhase;
 
                         if(newPhase === 'thinking') {
-                            // Use pre-generated thinking synopsis
+                            // Use pre-generated thinking synopsis (already checked shouldUpdate at start)
                             void safeUpdatePhase({
                                 type:            'thinking',
                                 startedAt:       new Date(),
@@ -165,9 +169,9 @@ export function createStatusMiddleware(
                                 generatedStatus: thinkingSynopsis,
                             });
                         } else {
-                            // Generate responding synopsis asynchronously
+                            // Check shouldUpdate() before generating expensive synopsis
                             // Stryker disable next-line ConditionalExpression: Equivalent - try/catch swallows TypeError when undefined
-                            if(dynamicStatusGenerator) {
+                            if(dynamicStatusGenerator && presenceManager.shouldUpdate()) {
                                 void (async () => {
                                     try {
                                         const synopsis = await dynamicStatusGenerator.generateSynopsis({
@@ -206,8 +210,9 @@ export function createStatusMiddleware(
                         currentPhase = 'using_tool';
                         lastToolName = toolName;
 
+                        // Check shouldUpdate() before generating expensive synopsis
                         // Stryker disable next-line ConditionalExpression: Equivalent - try/catch swallows TypeError when undefined
-                        if(dynamicStatusGenerator) {
+                        if(dynamicStatusGenerator && presenceManager.shouldUpdate()) {
                             void (async () => {
                                 try {
                                     const synopsis = await dynamicStatusGenerator.generateSynopsis({

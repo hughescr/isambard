@@ -20,7 +20,7 @@ describe('PresenceManager Lifecycle', () => {
         jest.useFakeTimers();
         jest.clearAllTimers();
         // Set to 1000ms (not 0) to avoid rate limit check failing on first update
-        // (lastUpdateTime initializes to 0, so Date.now() must be >= updateDebounceMs)
+        // (lastUpdateTime initializes to 0, so Date.now() must be >= updateThrottleMs)
         jest.setSystemTime(1000);
 
         mockClient = {
@@ -51,7 +51,7 @@ describe('PresenceManager Lifecycle', () => {
         };
 
         config = {
-            updateDebounceMs:      10,
+            updateThrottleMs:      100, // 100ms throttle for testing
             idleTimeoutMs:         100,
             idleRefreshIntervalMs: 200,
         };
@@ -256,7 +256,7 @@ describe('PresenceManager Lifecycle', () => {
             expect(mockLogger.info).toHaveBeenCalled();
         });
 
-        it('should clear pending debounced update', async () => {
+        it('should clear idle refresh interval', async () => {
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -265,16 +265,18 @@ describe('PresenceManager Lifecycle', () => {
                 logger:                mockLogger,
             });
 
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            // Start idle to create interval
+            await manager.updatePhase({ type: 'idle', since: new Date() });
+            const initialIdleCount = mockIdleGenerator.generate.mock.calls.length;
 
             manager.stop();
 
-            // Wait past debounce time
-            jest.advanceTimersByTime(20);
+            // Wait past idle refresh interval
+            jest.advanceTimersByTime(config.idleRefreshIntervalMs + 50);
             await Promise.resolve();
 
-            // Update should not have happened (cleared by stop)
-            expect(mockClient.user.setActivity).not.toHaveBeenCalled();
+            // Idle refresh should not have happened again (cleared by stop)
+            expect(mockIdleGenerator.generate.mock.calls.length).toBe(initialIdleCount);
         });
     });
 
@@ -297,40 +299,30 @@ describe('PresenceManager Lifecycle', () => {
             );
         });
 
-        it('should log rate limit skip with timing parameters', async () => {
-            // The rate limit can trigger when transitioning to idle immediately after an active update
-            // because startIdleRefresh -> refreshIdleStatus -> applyPresenceUpdate bypasses the debounce
-            // Use a very long debounce to ensure the rate limit triggers
-            const rateConfig = { ...config, updateDebounceMs: 5000 };
+        it('should log throttle skip with timing parameters', async () => {
+            // Test that throttle skip is logged with correct parameters
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
-                config:                rateConfig,
+                config,
                 logger:                mockLogger,
             });
 
-            // First: go idle (this will set lastUpdateTime via applyPresenceUpdate)
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-            // Now lastUpdateTime is set
-
-            // Second: immediately transition to active (stops idle refresh)
+            // First active update - goes through immediately
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            // This doesn't trigger applyPresenceUpdate immediately - it schedules a debounce
+            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
 
-            // Third: immediately go back to idle (before debounce fires)
-            // This calls startIdleRefresh -> refreshIdleStatus -> applyPresenceUpdate IMMEDIATELY
-            // At this point, almost no time has passed since the first idle update
-            // So timeSinceLastUpdate will be ~0, which is < 5000ms debounce, triggering rate limit
-            await manager.updatePhase({ type: 'idle', since: new Date() });
+            // Second active update immediately - should be throttled
+            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
 
-            // Should have logged the rate limit skip
+            // Should have logged the throttle skip
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     timeSinceLastUpdate: expect.any(Number),
-                    debounceMs:          rateConfig.updateDebounceMs,
+                    throttleMs:          config.updateThrottleMs,
                 }),
-                'Skipping presence update due to rate limit'
+                'Skipping presence update due to throttle cooldown'
             );
         });
 
@@ -343,9 +335,8 @@ describe('PresenceManager Lifecycle', () => {
                 logger:                mockLogger,
             });
 
+            // With leading-edge throttle, update happens immediately
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            jest.advanceTimersByTime(config.updateDebounceMs);
-            await Promise.resolve();
 
             expect(mockLogger.info).toHaveBeenCalledWith(
                 expect.objectContaining({ activity: expect.any(Object) }),
@@ -371,9 +362,8 @@ describe('PresenceManager Lifecycle', () => {
                 logger:                mockLogger,
             });
 
+            // With leading-edge throttle, update happens immediately
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            jest.advanceTimersByTime(config.updateDebounceMs);
-            await Promise.resolve();
 
             expect(mockLogger.error).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -475,7 +465,7 @@ describe('PresenceManager Lifecycle', () => {
 
             // Set to active phase via updatePhase
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            jest.advanceTimersByTime(config.updateDebounceMs);
+            jest.advanceTimersByTime(config.updateThrottleMs);
             await Promise.resolve();
 
             // Clear mocks before calling start()
@@ -811,35 +801,29 @@ describe('PresenceManager Lifecycle', () => {
     });
 
     describe('mutant-killing boundary tests', () => {
-        it('should allow update when timeSinceLastUpdate equals exactly debounceMs (kills < -> <= mutant)', async () => {
-            // This test kills: manager.ts:114 - if(timeSinceLastUpdate < config.updateDebounceMs)
+        it('should allow update when timeSinceLastUpdate equals exactly throttleMs (kills < -> <= mutant)', async () => {
+            // This test kills: manager.ts - if(timeSinceLastUpdate < config.updateThrottleMs)
             // Mutant: < -> <=
-            // At exactly debounceMs, the update SHOULD go through with <, but would be skipped with <=
-            const debounceConfig = { ...config, updateDebounceMs: 100 };
+            // At exactly throttleMs, the update SHOULD go through with <, but would be skipped with <=
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
-                config:                debounceConfig,
+                config,
                 logger:                mockLogger,
             });
 
-            // First update via idle (bypasses debounce scheduling, goes directly to applyPresenceUpdate)
-            await manager.updatePhase({ type: 'idle', since: new Date() });
+            // First update - goes through immediately (leading-edge)
+            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
             expect(mockClient.user.setActivity.mock.calls.length).toBe(1);
 
-            // Advance time by EXACTLY debounceMs
+            // Advance time by EXACTLY throttleMs (100ms)
             jest.advanceTimersByTime(100);
 
-            // Stop idle refresh so we can test manually
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-
-            // Clear the debounce timer and manually trigger a second idle phase
-            // This will call applyPresenceUpdate directly via refreshIdleStatus
-            // At this point, timeSinceLastUpdate === 100 === debounceMs
+            // Second active update - at exactly throttleMs
             // With <: 100 < 100 = false, so update goes through
             // With <=: 100 <= 100 = true, so update is SKIPPED (mutant behavior)
-            await manager.updatePhase({ type: 'idle', since: new Date() });
+            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
 
             // If the mutant survives, the second update would be skipped
             // If the test kills the mutant, the second update goes through
@@ -1022,7 +1006,7 @@ describe('PresenceManager Lifecycle', () => {
 
             // Set to active phase first
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            jest.advanceTimersByTime(config.updateDebounceMs);
+            jest.advanceTimersByTime(config.updateThrottleMs);
             await Promise.resolve();
 
             // Clear mock to track new calls
@@ -1088,8 +1072,8 @@ describe('PresenceManager Lifecycle', () => {
         });
 
         it('should allow update at EXACTLY debounceMs boundary (line 114: < vs <= mutant)', async () => {
-            // This test PRECISELY kills the mutant: timeSinceLastUpdate < config.updateDebounceMs
-            // Changed to: timeSinceLastUpdate <= config.updateDebounceMs
+            // This test PRECISELY kills the mutant: timeSinceLastUpdate < config.updateThrottleMs
+            // Changed to: timeSinceLastUpdate <= config.updateThrottleMs
             //
             // At EXACTLY debounceMs:
             // - With <:  100 < 100 = FALSE, update ALLOWED
@@ -1098,7 +1082,7 @@ describe('PresenceManager Lifecycle', () => {
             // Strategy: Use two consecutive idle updates separated by EXACTLY debounceMs.
             // We transition idle->active->idle to avoid the idleRefreshInterval guard
             // that prevents duplicate startIdleRefresh calls.
-            const debounceConfig = { ...config, updateDebounceMs: 100 };
+            const debounceConfig = { ...config, updateThrottleMs: 100 };
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -1258,7 +1242,7 @@ describe('PresenceManager Lifecycle', () => {
 
             // Set phase to active
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            jest.advanceTimersByTime(config.updateDebounceMs);
+            jest.advanceTimersByTime(config.updateThrottleMs);
             await Promise.resolve();
 
             // Clear mocks to track only start() effects
@@ -1306,7 +1290,7 @@ describe('PresenceManager Lifecycle', () => {
     });
 
     describe('assignment mutations', () => {
-        it('should clear pendingUpdate on stop()', async () => {
+        it('should update lastActiveUpdateTime on successful update', async () => {
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -1315,21 +1299,19 @@ describe('PresenceManager Lifecycle', () => {
                 logger:                mockLogger,
             });
 
-            // Start an active phase to schedule debounced update
+            // First update - goes through immediately
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            expect(mockClient.user.setActivity.mock.calls.length).toBe(1);
 
-            // Stop before debounce completes
-            manager.stop();
+            // Advance past throttle cooldown
+            jest.advanceTimersByTime(101);
 
-            // Wait past debounce time
-            jest.advanceTimersByTime(config.updateDebounceMs + 10);
-            await Promise.resolve();
-
-            // setActivity should not have been called (pendingUpdate was cleared)
-            expect(mockClient.user.setActivity).not.toHaveBeenCalled();
+            // Second update should work (proving lastActiveUpdateTime was updated)
+            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
+            expect(mockClient.user.setActivity.mock.calls.length).toBe(2);
         });
 
-        it('should set pendingUpdate to null after debounced update executes', async () => {
+        it('should properly track currentPhase transitions', async () => {
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -1338,25 +1320,29 @@ describe('PresenceManager Lifecycle', () => {
                 logger:                mockLogger,
             });
 
-            // First update
+            // Start active
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            jest.advanceTimersByTime(config.updateDebounceMs); // Debounce fires
-            await Promise.resolve();
+            expect(mockActiveGenerator.generate).toHaveBeenCalled();
+            expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
 
-            // First update complete, pendingUpdate should be null now
-            const firstCount = mockClient.user.setActivity.mock.calls.length;
-            expect(firstCount).toBe(1);
+            // Transition to idle (bypasses throttle)
+            await manager.updatePhase({ type: 'idle', since: new Date() });
+            expect(mockIdleGenerator.generate).toHaveBeenCalled();
 
-            // Wait past rate limit before scheduling second update
-            jest.advanceTimersByTime(config.updateDebounceMs + 1);
+            const idleCount = mockIdleGenerator.generate.mock.calls.length;
 
-            // Second update should work (proving pendingUpdate was nulled)
+            // Advance past throttle cooldown
+            jest.advanceTimersByTime(101);
+
+            // Transition back to active
             await manager.updatePhase({ type: 'responding', startedAt: new Date() });
-            // Advance for debounce to fire
-            jest.advanceTimersByTime(config.updateDebounceMs);
+
+            // Wait for what would be idle refresh
+            jest.advanceTimersByTime(config.idleRefreshIntervalMs + 50);
             await Promise.resolve();
 
-            expect(mockClient.user.setActivity.mock.calls.length).toBe(firstCount + 1);
+            // Idle should not have been called again (proves currentPhase was updated)
+            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCount);
         });
     });
 });

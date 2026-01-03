@@ -1,8 +1,14 @@
 /**
  * Presence Manager
  *
- * Coordinates Discord presence updates with debouncing, rate limiting,
+ * Coordinates Discord presence updates with leading-edge throttling,
  * and idle status refresh loops.
+ *
+ * Throttle behavior:
+ * - Active phases (thinking, responding, using_tool) use leading-edge throttle:
+ *   First update fires immediately, subsequent updates within cooldown are dropped.
+ * - Idle transitions are immediate (bypass cooldown) - they mark end of work.
+ * - Idle refresh loop runs independently on its own schedule.
  */
 
 import type { Client as DiscordClient, ActivitiesOptions } from 'discord.js';
@@ -15,21 +21,31 @@ import type { IdleStatusGenerator } from './status-generator-idle.js';
  */
 export interface PresenceManager {
     /**
-   * Update presence based on current phase.
-   * Debounced to prevent rate limiting.
-   *
-   * @param phase - Current activity phase
-   */
+     * Check if an active phase update would be applied (not throttled).
+     * Use this before generating expensive LLM synopses.
+     *
+     * Note: This only applies to active phases. Idle transitions always apply.
+     *
+     * @returns true if updatePhase would apply the update, false if throttled
+     */
+    shouldUpdate(): boolean
+
+    /**
+     * Update presence based on current phase.
+     * Uses leading-edge throttle for active phases.
+     *
+     * @param phase - Current activity phase
+     */
     updatePhase(phase: PresencePhase): Promise<void>
 
     /**
-   * Start the presence manager (enables idle refresh if idle).
-   */
+     * Start the presence manager (enables idle refresh if idle).
+     */
     start(): void
 
     /**
-   * Stop the presence manager (clears all timers).
-   */
+     * Stop the presence manager (clears all timers).
+     */
     stop(): void
 }
 
@@ -60,7 +76,8 @@ export interface PresenceManagerDeps {
  * Creates a presence manager.
  *
  * The manager coordinates all presence updates with:
- * - Debouncing to prevent Discord rate limits
+ * - Leading-edge throttle for active phases (first fires, rest dropped within cooldown)
+ * - Immediate updates for idle transitions (bypass cooldown)
  * - Automatic idle status refresh on an interval
  * - State transitions between active and idle phases
  * - Graceful error handling
@@ -74,15 +91,18 @@ export interface PresenceManagerDeps {
  *   discordClient: myClient,
  *   activeStatusGenerator: myActiveGen,
  *   idleStatusGenerator: myIdleGen,
- *   config: { updateDebounceMs: 2000, ... },
+ *   config: { updateThrottleMs: 10000, ... },
  *   logger: myLogger
  * });
  *
- * await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
- * // Presence updates to "Thinking..." after debounce
+ * // Check before expensive LLM call
+ * if (manager.shouldUpdate()) {
+ *   const synopsis = await generateExpensiveSynopsis();
+ *   await manager.updatePhase({ type: 'thinking', startedAt: new Date(), generatedStatus: synopsis });
+ * }
  *
  * await manager.updatePhase({ type: 'idle', since: new Date() });
- * // Starts idle refresh loop
+ * // Starts idle refresh loop (always applies immediately)
  *
  * manager.stop();
  * // Cleans up all timers
@@ -100,28 +120,25 @@ export function createPresenceManager(
     } = deps;
 
     let currentPhase: PresencePhase | null = null; // Start uninitialized
-    let lastUpdateTime = 0;
-    let pendingUpdate: NodeJS.Timeout | null = null;
+    let lastActiveUpdateTime = 0; // Track last active phase update time
     let idleRefreshInterval: NodeJS.Timeout | null = null;
 
     /**
-   * Actually update Discord presence (rate-limited).
-   */
-    async function applyPresenceUpdate(activity: ActivitiesOptions): Promise<void> {
+     * Check if enough time has passed since last active phase update.
+     * Used to implement leading-edge throttle.
+     */
+    function isThrottleCooldownExpired(): boolean {
         const now = Date.now();
-        const timeSinceLastUpdate = now - lastUpdateTime;
+        const timeSinceLastUpdate = now - lastActiveUpdateTime;
+        return timeSinceLastUpdate >= config.updateThrottleMs;
+    }
 
-        if(timeSinceLastUpdate < config.updateDebounceMs) {
-            logger.debug(
-                { timeSinceLastUpdate, debounceMs: config.updateDebounceMs },
-                'Skipping presence update due to rate limit'
-            );
-            return;
-        }
-
+    /**
+     * Actually update Discord presence.
+     */
+    function applyPresenceUpdate(activity: ActivitiesOptions): void {
         try {
             discordClient.user?.setActivity(activity);
-            lastUpdateTime = now;
             logger.info({ activity }, 'Updated Discord presence');
         } catch (error) {
             logger.error({ error, activity }, 'Failed to update Discord presence');
@@ -129,16 +146,16 @@ export function createPresenceManager(
     }
 
     /**
-   * Generate and apply idle status.
-   *
-   * Note: The guard `if(currentPhase?.type !== 'idle')` is defensive code that handles
-   * a theoretical race condition where the interval callback fires just as we're
-   * transitioning away from idle. In practice, stopIdleRefresh() clears the interval
-   * before the phase change is complete, making this guard unreachable during normal
-   * execution. Stryker mutations on this guard (if(false), optional chaining removal,
-   * empty block) are effectively equivalent mutants since the guard can only trigger
-   * in edge-case timing scenarios that are difficult to reliably reproduce in tests.
-   */
+     * Generate and apply idle status.
+     *
+     * Note: The guard `if(currentPhase?.type !== 'idle')` is defensive code that handles
+     * a theoretical race condition where the interval callback fires just as we're
+     * transitioning away from idle. In practice, stopIdleRefresh() clears the interval
+     * before the phase change is complete, making this guard unreachable during normal
+     * execution. Stryker mutations on this guard (if(false), optional chaining removal,
+     * empty block) are effectively equivalent mutants since the guard can only trigger
+     * in edge-case timing scenarios that are difficult to reliably reproduce in tests.
+     */
     async function refreshIdleStatus(): Promise<void> {
         // Stryker disable next-line ConditionalExpression,OptionalChaining,BlockStatement: Defensive guard for race condition - unreachable in tests
         if(currentPhase?.type !== 'idle') {
@@ -146,13 +163,13 @@ export function createPresenceManager(
         }
 
         const activity = await idleStatusGenerator.generate();
-        await applyPresenceUpdate(activity);
+        applyPresenceUpdate(activity);
     }
 
     /**
-   * Start periodic idle status refresh.
-   * Returns a promise that resolves after the first refresh completes.
-   */
+     * Start periodic idle status refresh.
+     * Returns a promise that resolves after the first refresh completes.
+     */
     async function startIdleRefresh(): Promise<void> {
         if(idleRefreshInterval) {
             return; // Already running
@@ -170,8 +187,8 @@ export function createPresenceManager(
     }
 
     /**
-   * Stop periodic idle status refresh.
-   */
+     * Stop periodic idle status refresh.
+     */
     function stopIdleRefresh(): void {
         if(idleRefreshInterval) {
             clearInterval(idleRefreshInterval);
@@ -181,6 +198,12 @@ export function createPresenceManager(
     }
 
     return {
+        shouldUpdate(): boolean {
+            // shouldUpdate only applies to active phases
+            // The caller should use this before generating expensive synopses
+            return isThrottleCooldownExpired();
+        },
+
         async updatePhase(phase: PresencePhase): Promise<void> {
             logger.debug({ phase }, 'Updating presence phase');
 
@@ -189,30 +212,32 @@ export function createPresenceManager(
 
             currentPhase = phase;
 
-            // Cancel any pending debounced update
-            if(pendingUpdate) {
-                clearTimeout(pendingUpdate);
-                pendingUpdate = null;
-            }
-
             // Handle idle state transitions
+            // Transition TO idle: always immediate (bypasses cooldown)
             if(nowIdle && !wasIdle) {
                 await startIdleRefresh();
                 return; // refreshIdleStatus() will update presence
             }
+
+            // Transition FROM idle: stop the refresh loop
             if(!nowIdle && wasIdle) {
                 stopIdleRefresh();
             }
 
-            // Generate status for active phases
+            // Handle active phases with leading-edge throttle
             if(!nowIdle) {
-                const activity = activeStatusGenerator.generate(phase);
-
-                // Debounce the update
-                pendingUpdate = setTimeout(() => {
-                    void applyPresenceUpdate(activity);
-                    pendingUpdate = null;
-                }, config.updateDebounceMs);
+                // Check throttle: only update if cooldown has expired
+                if(isThrottleCooldownExpired()) {
+                    const activity = activeStatusGenerator.generate(phase);
+                    applyPresenceUpdate(activity);
+                    lastActiveUpdateTime = Date.now();
+                } else {
+                    const timeSinceLastUpdate = Date.now() - lastActiveUpdateTime;
+                    logger.debug(
+                        { timeSinceLastUpdate, throttleMs: config.updateThrottleMs },
+                        'Skipping presence update due to throttle cooldown'
+                    );
+                }
             }
         },
 
@@ -226,10 +251,6 @@ export function createPresenceManager(
         stop(): void {
             logger.info('Stopping presence manager');
             stopIdleRefresh();
-            if(pendingUpdate) {
-                clearTimeout(pendingUpdate);
-                pendingUpdate = null;
-            }
         },
     };
 }

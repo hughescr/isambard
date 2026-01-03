@@ -133,7 +133,7 @@ export const mockLogger = {
     info:  mock((_obj: Record<string, unknown>) => undefined),
     warn:  mock((_obj: Record<string, unknown>) => undefined),
     error: mock((_obj: Record<string, unknown>) => undefined),
-    child: mock(function() { return mockLogger; }),
+    child: mock(() => { return mockLogger; }),
 };
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await

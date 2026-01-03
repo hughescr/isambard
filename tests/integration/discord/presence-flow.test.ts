@@ -85,7 +85,7 @@ describe('Discord Presence Flow (Integration)', () => {
         const presenceManager = createPresenceManager({
             discordClient: mockDiscordClient,
             config:        {
-                updateDebounceMs:      100,
+                updateThrottleMs:      100,
                 idleTimeoutMs:         1000,
                 idleRefreshIntervalMs: 5000,
             },
@@ -183,7 +183,7 @@ describe('Discord Presence Flow (Integration)', () => {
         const presenceManager = createPresenceManager({
             discordClient: mockDiscordClient,
             config:        {
-                updateDebounceMs:      100,
+                updateThrottleMs:      100,
                 idleTimeoutMs:         1000,
                 idleRefreshIntervalMs: 5000,
             },
@@ -286,7 +286,7 @@ describe('Discord Presence Flow (Integration)', () => {
         const presenceManager = createPresenceManager({
             discordClient: mockDiscordClient,
             config:        {
-                updateDebounceMs:      50,
+                updateThrottleMs:      50,
                 idleTimeoutMs:         200, // Very short for testing
                 idleRefreshIntervalMs: 5000,
             },

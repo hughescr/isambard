@@ -323,7 +323,7 @@ describe('discordConfigSchema', () => {
             botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId: '123456789012345678',
             presence:      {
-                updateDebounceMs:      5000,
+                updateThrottleMs:      5000,
                 idleTimeoutMs:         120000,
                 idleRefreshIntervalMs: 600000,
             },
@@ -333,7 +333,7 @@ describe('discordConfigSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data.presence).toEqual({
-                updateDebounceMs:      5000,
+                updateThrottleMs:      5000,
                 idleTimeoutMs:         120000,
                 idleRefreshIntervalMs: 600000,
             });
@@ -364,7 +364,7 @@ describe('discordConfigSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data.presence).toEqual({
-                updateDebounceMs:      2000,  // default
+                updateThrottleMs:      10000,  // default
                 idleTimeoutMs:         60000, // default
                 idleRefreshIntervalMs: 300000, // default
             });

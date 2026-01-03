@@ -342,7 +342,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -378,7 +378,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -441,7 +441,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -450,9 +450,10 @@ describe.concurrent('createDiscordBot', () => {
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
                 const presenceManagerSpy = spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager);
                 spies.push(presenceManagerSpy);
@@ -495,7 +496,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -504,9 +505,10 @@ describe.concurrent('createDiscordBot', () => {
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
                 spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 
@@ -544,7 +546,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -553,9 +555,10 @@ describe.concurrent('createDiscordBot', () => {
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
                 spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 
@@ -621,7 +624,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -630,9 +633,10 @@ describe.concurrent('createDiscordBot', () => {
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => { callOrder.push('stop'); }),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => { callOrder.push('stop'); }),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
                 spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 
@@ -674,7 +678,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -683,9 +687,10 @@ describe.concurrent('createDiscordBot', () => {
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
                 spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 
@@ -726,7 +731,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -735,9 +740,10 @@ describe.concurrent('createDiscordBot', () => {
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
                 spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 
@@ -781,7 +787,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -790,9 +796,10 @@ describe.concurrent('createDiscordBot', () => {
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
                 const presenceManagerSpy = spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager);
                 spies.push(presenceManagerSpy);
@@ -834,7 +841,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -843,9 +850,10 @@ describe.concurrent('createDiscordBot', () => {
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
                 spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 
@@ -889,7 +897,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -898,9 +906,10 @@ describe.concurrent('createDiscordBot', () => {
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
                 spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 
@@ -944,7 +953,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -953,9 +962,10 @@ describe.concurrent('createDiscordBot', () => {
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
                 spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 
@@ -1011,7 +1021,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -1020,9 +1030,10 @@ describe.concurrent('createDiscordBot', () => {
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
                 spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 
@@ -1082,7 +1093,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -1091,9 +1102,10 @@ describe.concurrent('createDiscordBot', () => {
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
                 spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 
@@ -1151,7 +1163,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -1160,9 +1172,10 @@ describe.concurrent('createDiscordBot', () => {
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
                 spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 
@@ -1205,7 +1218,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -1214,9 +1227,10 @@ describe.concurrent('createDiscordBot', () => {
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
                 spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 
@@ -1324,7 +1338,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },
@@ -1333,9 +1347,10 @@ describe.concurrent('createDiscordBot', () => {
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
                 const mockPresenceManager = {
-                    start:       mock(() => undefined),
-                    stop:        mock(() => undefined),
-                    updatePhase: mock(async () => undefined),
+                    start:        mock(() => undefined),
+                    stop:         mock(() => undefined),
+                    shouldUpdate: mock(() => true),
+                    updatePhase:  mock(async () => undefined),
                 };
                 spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 
@@ -1421,7 +1436,7 @@ describe.concurrent('createDiscordBot', () => {
                 const configWithPresence: DiscordConfig = {
                     ...mockConfig,
                     presence: {
-                        updateDebounceMs:      2000,
+                        updateThrottleMs:      2000,
                         idleTimeoutMs:         60000,
                         idleRefreshIntervalMs: 300000,
                     },

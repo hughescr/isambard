@@ -465,7 +465,7 @@ describe.concurrent('loadConfig', () => {
             const config = loadConfig(resources);
 
             expect(config.discord.presence).toBeDefined();
-            expect(config.discord.presence?.updateDebounceMs).toBe(2000);
+            expect(config.discord.presence?.updateThrottleMs).toBe(10000);
             expect(config.discord.presence?.idleTimeoutMs).toBe(60000);
             expect(config.discord.presence?.idleRefreshIntervalMs).toBe(300000);
         });
@@ -479,7 +479,7 @@ describe.concurrent('loadConfig', () => {
 
             // Verify it's a proper object with exactly the expected structure
             expect(config.discord.presence).toEqual({
-                updateDebounceMs:      2000,
+                updateThrottleMs:      10000,
                 idleTimeoutMs:         60000,
                 idleRefreshIntervalMs: 300000,
             });
@@ -494,7 +494,7 @@ describe.concurrent('loadConfig', () => {
             const presence = config.discord.presence;
             expect(presence).toBeTruthy();
             expect(_.keys(presence!)).toHaveLength(3);
-            expect(_.keys(presence!)).toContain('updateDebounceMs');
+            expect(_.keys(presence!)).toContain('updateThrottleMs');
             expect(_.keys(presence!)).toContain('idleTimeoutMs');
             expect(_.keys(presence!)).toContain('idleRefreshIntervalMs');
         });
@@ -514,10 +514,10 @@ describe.concurrent('loadConfig', () => {
             // - Replace the object with an empty object
             const presence = config.discord.presence!;
 
-            // Check updateDebounceMs is exactly 2000 (not 0, not falsy, not different number)
-            expect(presence.updateDebounceMs).toBeGreaterThan(0);
-            expect(presence.updateDebounceMs).toBeLessThan(10000);
-            expect(presence.updateDebounceMs).toBe(2000);
+            // Check updateThrottleMs is exactly 10000 (not 0, not falsy, not different number)
+            expect(presence.updateThrottleMs).toBeGreaterThan(0);
+            expect(presence.updateThrottleMs).toBeLessThanOrEqual(10000);
+            expect(presence.updateThrottleMs).toBe(10000);
 
             // Check idleTimeoutMs is exactly 60000 (not 0, not falsy, not different number)
             expect(presence.idleTimeoutMs).toBeGreaterThan(0);

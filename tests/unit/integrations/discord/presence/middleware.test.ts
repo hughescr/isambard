@@ -23,9 +23,10 @@ describe('StatusMiddleware', () => {
 
     beforeEach(() => {
         mockPresenceManager = {
-            updatePhase: mock(async () => undefined),
-            start:       mock(() => undefined),
-            stop:        mock(() => undefined),
+            shouldUpdate: mock(_constant(true)),
+            updatePhase:  mock(async () => undefined),
+            start:        mock(() => undefined),
+            stop:         mock(() => undefined),
         };
 
         mockAgent = {
@@ -240,7 +241,8 @@ describe('StatusMiddleware', () => {
 
             // Presence manager that throws
             const errorPresenceManager = {
-                updatePhase: mock(async () => {
+                shouldUpdate: mock(_constant(true)),
+                updatePhase:  mock(async () => {
                     throw new Error('Presence update failed');
                 }),
                 start: mock(() => undefined),
@@ -430,7 +432,8 @@ describe('StatusMiddleware', () => {
             };
 
             const errorPresenceManager = {
-                updatePhase: mock(async () => {
+                shouldUpdate: mock(_constant(true)),
+                updatePhase:  mock(async () => {
                     throw presenceError;
                 }),
                 start: mock(() => undefined),
@@ -464,7 +467,8 @@ describe('StatusMiddleware', () => {
             };
 
             const errorPresenceManager = {
-                updatePhase: mock(async () => {
+                shouldUpdate: mock(_constant(true)),
+                updatePhase:  mock(async () => {
                     throw presenceError;
                 }),
                 start: mock(() => undefined),
@@ -497,7 +501,8 @@ describe('StatusMiddleware', () => {
             };
 
             const errorPresenceManager = {
-                updatePhase: mock(async () => {
+                shouldUpdate: mock(_constant(true)),
+                updatePhase:  mock(async () => {
                     throw presenceError;
                 }),
                 start: mock(() => undefined),
@@ -1816,7 +1821,8 @@ describe('StatusMiddleware', () => {
             };
 
             const errorPresenceManager = {
-                updatePhase: mock(async () => {
+                shouldUpdate: mock(_constant(true)),
+                updatePhase:  mock(async () => {
                     callCount++;
                     throw new Error(`Presence error ${callCount}`);
                 }),
@@ -2091,7 +2097,8 @@ describe('StatusMiddleware', () => {
                 };
 
                 const capturingPresenceManager = {
-                    updatePhase: mock(async (phase: PresencePhase) => {
+                    shouldUpdate: mock(_constant(true)),
+                    updatePhase:  mock(async (phase: PresencePhase) => {
                         phases.push(phase);
                     }),
                     start: mock(() => undefined),
@@ -2131,7 +2138,8 @@ describe('StatusMiddleware', () => {
                 };
 
                 const capturingPresenceManager = {
-                    updatePhase: mock(async (phase: PresencePhase) => {
+                    shouldUpdate: mock(_constant(true)),
+                    updatePhase:  mock(async (phase: PresencePhase) => {
                         phases.push(phase);
                     }),
                     start: mock(() => undefined),
@@ -2171,7 +2179,8 @@ describe('StatusMiddleware', () => {
                 };
 
                 const capturingPresenceManager = {
-                    updatePhase: mock(async (phase: PresencePhase) => {
+                    shouldUpdate: mock(_constant(true)),
+                    updatePhase:  mock(async (phase: PresencePhase) => {
                         phases.push(phase);
                     }),
                     start: mock(() => undefined),
@@ -2213,7 +2222,8 @@ describe('StatusMiddleware', () => {
                 };
 
                 const capturingPresenceManager = {
-                    updatePhase: mock(async (phase: PresencePhase) => {
+                    shouldUpdate: mock(_constant(true)),
+                    updatePhase:  mock(async (phase: PresencePhase) => {
                         phases.push(phase);
                     }),
                     start: mock(() => undefined),
@@ -2254,7 +2264,8 @@ describe('StatusMiddleware', () => {
                 };
 
                 const capturingPresenceManager = {
-                    updatePhase: mock(async (phase: PresencePhase) => {
+                    shouldUpdate: mock(_constant(true)),
+                    updatePhase:  mock(async (phase: PresencePhase) => {
                         phases.push(phase);
                     }),
                     start: mock(() => undefined),
@@ -2296,7 +2307,8 @@ describe('StatusMiddleware', () => {
                 };
 
                 const capturingPresenceManager = {
-                    updatePhase: mock(async (phase: PresencePhase) => {
+                    shouldUpdate: mock(_constant(true)),
+                    updatePhase:  mock(async (phase: PresencePhase) => {
                         phases.push(phase);
                     }),
                     start: mock(() => undefined),
@@ -2528,7 +2540,8 @@ describe('StatusMiddleware', () => {
                 };
 
                 const capturingPresenceManager = {
-                    updatePhase: mock(async (phase: PresencePhase) => {
+                    shouldUpdate: mock(_constant(true)),
+                    updatePhase:  mock(async (phase: PresencePhase) => {
                         phases.push(phase);
                     }),
                     start: mock(() => undefined),

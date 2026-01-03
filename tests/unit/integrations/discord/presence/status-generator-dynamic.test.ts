@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks require unsafe calls */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test mocks */
+
 import { describe, it, expect, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import _ from 'lodash';
 import { constant as _constant, repeat as _repeat } from 'lodash';
@@ -25,7 +24,7 @@ describe('DynamicStatusGenerator', () => {
             mockLogger.info.mockClear();
             mockLogger.warn.mockClear();
             mockLogger.error.mockClear();
-        } catch {
+        } catch{
             // Logger mocks may have been corrupted by another test modifying the logger object
             // This is a known issue with context-builder-loading.test.ts
         }
@@ -907,15 +906,17 @@ describe('DynamicStatusGenerator', () => {
                     (fn as { mockClear: () => void }).mockClear();
                     // Also verify the mock has a .mock.calls array (meaning it's recording)
                     const mockCalls = (fn as { mock: { calls: unknown[] } }).mock?.calls;
-                    return Array.isArray(mockCalls);
-                } catch {
+                    return _.isArray(mockCalls);
+                } catch{
                     return false;
                 }
             };
 
             it('should log debug before generating synopsis', async () => {
                 // Skip if mock is corrupted by another test
-                if (!isMockValid(mockLogger.debug)) return;
+                if(!isMockValid(mockLogger.debug)) {
+                    return;
+                }
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -937,7 +938,9 @@ describe('DynamicStatusGenerator', () => {
 
             it('should log info on successful generation', async () => {
                 // Skip if mock is corrupted by another test
-                if (!isMockValid(mockLogger.info)) return;
+                if(!isMockValid(mockLogger.info)) {
+                    return;
+                }
 
                 mockGenerateText.mockImplementation(_constant(
                     Promise.resolve('Pondering code...')
@@ -963,7 +966,9 @@ describe('DynamicStatusGenerator', () => {
 
             it('should log error on failure', async () => {
                 // Skip if mock is corrupted by another test
-                if (!isMockValid(mockLogger.error)) return;
+                if(!isMockValid(mockLogger.error)) {
+                    return;
+                }
 
                 const testError = new Error('API failure');
                 mockGenerateText.mockImplementation(() =>
@@ -990,7 +995,9 @@ describe('DynamicStatusGenerator', () => {
 
             it('should log debug when call is debounced', async () => {
                 // Skip if mock is corrupted by another test
-                if (!isMockValid(mockLogger.debug)) return;
+                if(!isMockValid(mockLogger.debug)) {
+                    return;
+                }
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -1016,7 +1023,9 @@ describe('DynamicStatusGenerator', () => {
 
             it('should not log info when using cached/debounced status', async () => {
                 // Skip if mock is corrupted by another test
-                if (!isMockValid(mockLogger.info)) return;
+                if(!isMockValid(mockLogger.info)) {
+                    return;
+                }
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',

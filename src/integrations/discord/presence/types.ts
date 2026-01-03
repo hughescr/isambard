@@ -134,8 +134,13 @@ export function getToolDescription(toolName: string | undefined): string | undef
  * Defines rate limiting, refresh intervals, and timing constraints.
  */
 export const PresenceConfigSchema = z.object({
-    /** Minimum milliseconds between Discord presence updates (rate limiting) */
-    updateDebounceMs: z.number().int().positive().default(2000),
+    /**
+     * Minimum milliseconds between active phase Discord presence updates (throttle cooldown).
+     * Uses leading-edge throttle: first update fires immediately, subsequent updates within
+     * the cooldown window are dropped (not queued). This prevents status flickering during
+     * rapid phase transitions while ensuring the first status is always visible.
+     */
+    updateThrottleMs: z.number().int().positive().default(10000), // 10 seconds
 
     /** Milliseconds to wait before showing idle status after last activity */
     idleTimeoutMs: z.number().int().positive().default(60000), // 1 minute
