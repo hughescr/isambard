@@ -37,6 +37,7 @@ const MAX_USER_MESSAGE_LENGTH = 200;
 const MAX_ACCUMULATED_TEXT_LENGTH = 150;
 const MAX_RESPONSE_FRAGMENT_LENGTH = 100;
 const MAX_TOOL_INPUT_LENGTH = 200;
+const MAX_THINKING_CONTENT_LENGTH = 500;
 
 const FALLBACK_STATUSES: Record<SynopsisContext['phase'], string> = {
     thinking:   'Thinking...',
@@ -85,7 +86,7 @@ const USER_PROMPTS = {
     thinking: `Isambard is considering this question from a user:
 "{userMessage}"
 
-What's going through Isambard's mind as they begin to form a response?`,
+{thinkingSection}What's going through Isambard's mind as they begin to form a response?`,
 
     using_tool: `Current activity:
 - Tool: {toolDescription}
@@ -138,7 +139,7 @@ function buildPrompt(
     identityContext: string,
     context: SynopsisContext
 ): string {
-    const { phase, userMessage, toolName, toolInput, toolDescription, accumulatedText, responseFragment } = context;
+    const { phase, userMessage, toolName, toolInput, toolDescription, accumulatedText, responseFragment, thinkingContent } = context;
 
     // Build system prompt with identity
     let systemPart = SYSTEM_PROMPT;
@@ -151,6 +152,14 @@ function buildPrompt(
     userPart = _.replace(userPart, '{userMessage}', userMessage.slice(0, MAX_USER_MESSAGE_LENGTH));
 
     // Replace phase-specific placeholders
+    if(phase === 'thinking') {
+        // Build thinking section: include only if thinkingContent is provided and non-empty
+        const thinkingSection = thinkingContent
+            ? `Isambard's internal thoughts: "${thinkingContent.slice(0, MAX_THINKING_CONTENT_LENGTH)}"\n\n`
+            : '';
+        userPart = _.replace(userPart, '{thinkingSection}', thinkingSection);
+    }
+
     if(phase === 'using_tool') {
         const description = toolDescription ?? getToolDescription(toolName) ?? toolName ?? 'unknown tool';
         userPart = _.replace(userPart, '{toolDescription}', description);

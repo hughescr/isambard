@@ -51,6 +51,10 @@ export interface SynopsisContext {
     toolDescription?:  string
     /** Recent response text Izzy has been composing */
     accumulatedText?:  string
+    /** Content from thinking blocks (truncated to 500 chars) */
+    thinkingContent?:  string
+    /** Recent tool calls (last 3 tools, most recent first) */
+    recentToolCalls?:  string[]
 }
 
 // ============================================================================
@@ -139,8 +143,9 @@ export const PresenceConfigSchema = z.object({
      * Uses leading-edge throttle: first update fires immediately, subsequent updates within
      * the cooldown window are dropped (not queued). This prevents status flickering during
      * rapid phase transitions while ensuring the first status is always visible.
+     * Set to 12 seconds to match Discord's actual presence update rate limit.
      */
-    updateThrottleMs: z.number().int().positive().default(10000), // 10 seconds
+    updateThrottleMs: z.number().int().positive().default(12000), // 12 seconds (Discord rate limit)
 
     /** Milliseconds to wait before showing idle status after last activity */
     idleTimeoutMs: z.number().int().positive().default(60000), // 1 minute

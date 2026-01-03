@@ -465,7 +465,7 @@ describe.concurrent('loadConfig', () => {
             const config = loadConfig(resources);
 
             expect(config.discord.presence).toBeDefined();
-            expect(config.discord.presence?.updateThrottleMs).toBe(10000);
+            expect(config.discord.presence?.updateThrottleMs).toBe(12000);
             expect(config.discord.presence?.idleTimeoutMs).toBe(60000);
             expect(config.discord.presence?.idleRefreshIntervalMs).toBe(300000);
         });
@@ -479,7 +479,7 @@ describe.concurrent('loadConfig', () => {
 
             // Verify it's a proper object with exactly the expected structure
             expect(config.discord.presence).toEqual({
-                updateThrottleMs:      10000,
+                updateThrottleMs:      12000,
                 idleTimeoutMs:         60000,
                 idleRefreshIntervalMs: 300000,
             });
@@ -514,10 +514,10 @@ describe.concurrent('loadConfig', () => {
             // - Replace the object with an empty object
             const presence = config.discord.presence!;
 
-            // Check updateThrottleMs is exactly 10000 (not 0, not falsy, not different number)
+            // Check updateThrottleMs is exactly 12000 (not 0, not falsy, not different number)
             expect(presence.updateThrottleMs).toBeGreaterThan(0);
-            expect(presence.updateThrottleMs).toBeLessThanOrEqual(10000);
-            expect(presence.updateThrottleMs).toBe(10000);
+            expect(presence.updateThrottleMs).toBeLessThanOrEqual(12000);
+            expect(presence.updateThrottleMs).toBe(12000);
 
             // Check idleTimeoutMs is exactly 60000 (not 0, not falsy, not different number)
             expect(presence.idleTimeoutMs).toBeGreaterThan(0);

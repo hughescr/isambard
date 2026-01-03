@@ -2367,7 +2367,9 @@ describe('StatusMiddleware', () => {
                 expect(thinkingCalls.length).toBe(1);
             });
 
-            test('should not call generateSynopsis for duplicate responding events', async () => {
+            test('should call generateSynopsis for each responding event when shouldUpdate returns true', async () => {
+                // With the periodic update feature, when shouldUpdate() returns true (throttle expired),
+                // we should call generateSynopsis even for same-phase events
                 const wrappedAgent = {
                     chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                         if(onEvent) {
@@ -2381,7 +2383,7 @@ describe('StatusMiddleware', () => {
                 };
 
                 const middleware = createStatusMiddleware({
-                    presenceManager:        mockPresenceManager,
+                    presenceManager:        mockPresenceManager, // shouldUpdate always returns true
                     agent:                  wrappedAgent as any,
                     logger:                 mockLogger,
                     dynamicStatusGenerator: mockDynamicStatusGenerator,
@@ -2390,12 +2392,13 @@ describe('StatusMiddleware', () => {
                 await middleware(messageContext);
                 await flushPromises();
 
-                // Should only call generateSynopsis once for responding phase
+                // With periodic updates enabled (shouldUpdate returns true),
+                // generateSynopsis is called for each responding event
                 const respondingCalls = _filter(
                     (mockDynamicStatusGenerator.generateSynopsis as any).mock.calls,
                     (call: any[]) => call[0]?.phase === 'responding'
                 );
-                expect(respondingCalls.length).toBe(1);
+                expect(respondingCalls.length).toBe(3);
             });
 
             test('should call generateSynopsis when tool name changes', async () => {
@@ -3139,6 +3142,520 @@ describe('StatusMiddleware', () => {
             expect(toolContext).toBeDefined();
             // No tool_use block means undefined toolInput
             expect(toolContext!.toolInput).toBeUndefined();
+        });
+    });
+
+    describe('tool_use detection in assistant events', () => {
+        test('should update presence to using_tool when assistant event contains tool_use blocks', async () => {
+            const phases: PresencePhase[] = [];
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Assistant event containing a tool_use block
+                        onEvent({
+                            type:    'assistant',
+                            message: {
+                                content: [
+                                    { type: 'tool_use', id: 'call_123', name: 'mcp__memory__search', input: { query: 'test' } }
+                                ]
+                            }
+                        } as any);
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const capturingPresenceManager = {
+                shouldUpdate: mock(_constant(true)),
+                updatePhase:  mock(async (phase: PresencePhase) => {
+                    phases.push(phase);
+                }),
+                start: mock(() => undefined),
+                stop:  mock(() => undefined),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager: capturingPresenceManager as any,
+                agent:           wrappedAgent as any,
+                logger:          mockLogger,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Should have using_tool phase from the tool_use block
+            const toolPhases = _filter(phases, ['type', 'using_tool']);
+            expect(toolPhases.length).toBeGreaterThanOrEqual(1);
+            expect((toolPhases[0] as any).toolName).toBe('mcp__memory__search');
+        });
+
+        test('should update presence to using_tool for each tool in assistant event with multiple tool_use blocks', async () => {
+            const phases: PresencePhase[] = [];
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Assistant event containing multiple tool_use blocks
+                        onEvent({
+                            type:    'assistant',
+                            message: {
+                                content: [
+                                    { type: 'tool_use', id: 'call_1', name: 'tool_A', input: {} },
+                                    { type: 'tool_use', id: 'call_2', name: 'tool_B', input: {} }
+                                ]
+                            }
+                        } as any);
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const capturingPresenceManager = {
+                shouldUpdate: mock(_constant(true)),
+                updatePhase:  mock(async (phase: PresencePhase) => {
+                    phases.push(phase);
+                }),
+                start: mock(() => undefined),
+                stop:  mock(() => undefined),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager: capturingPresenceManager as any,
+                agent:           wrappedAgent as any,
+                logger:          mockLogger,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Should have using_tool phases for both tools
+            const toolPhases = _filter(phases, ['type', 'using_tool']);
+            expect(toolPhases.length).toBe(2);
+            expect((toolPhases[0] as any).toolName).toBe('tool_A');
+            expect((toolPhases[1] as any).toolName).toBe('tool_B');
+        });
+
+        test('should not duplicate using_tool update when same tool appears in consecutive assistant events', async () => {
+            const phases: PresencePhase[] = [];
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // First assistant event with tool_use
+                        onEvent({
+                            type:    'assistant',
+                            message: {
+                                content: [
+                                    { type: 'tool_use', id: 'call_1', name: 'tool_A', input: {} }
+                                ]
+                            }
+                        } as any);
+                        // Second assistant event with same tool - should NOT trigger another update
+                        onEvent({
+                            type:    'assistant',
+                            message: {
+                                content: [
+                                    { type: 'tool_use', id: 'call_2', name: 'tool_A', input: {} }
+                                ]
+                            }
+                        } as any);
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const capturingPresenceManager = {
+                shouldUpdate: mock(_constant(true)),
+                updatePhase:  mock(async (phase: PresencePhase) => {
+                    phases.push(phase);
+                }),
+                start: mock(() => undefined),
+                stop:  mock(() => undefined),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager: capturingPresenceManager as any,
+                agent:           wrappedAgent as any,
+                logger:          mockLogger,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Should only have one using_tool phase since tool name is the same
+            const toolPhases = _filter(phases, ['type', 'using_tool']);
+            expect(toolPhases.length).toBe(1);
+            expect((toolPhases[0] as any).toolName).toBe('tool_A');
+        });
+    });
+
+    describe('periodic status updates within same phase', () => {
+        test('should update status if shouldUpdate returns true even without phase change', async () => {
+            const phases: PresencePhase[] = [];
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Send multiple assistant events with text (same phase: responding)
+                        onEvent({ type: 'assistant', delta: { text: 'First ' } });
+                        onEvent({ type: 'assistant', delta: { text: 'Second ' } });
+                        onEvent({ type: 'assistant', delta: { text: 'Third ' } });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const capturingPresenceManager = {
+                // Always return true - simulates throttle expired
+                shouldUpdate: mock(_constant(true)),
+                updatePhase:  mock(async (phase: PresencePhase) => {
+                    phases.push(phase);
+                }),
+                start: mock(() => undefined),
+                stop:  mock(() => undefined),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager: capturingPresenceManager as any,
+                agent:           wrappedAgent as any,
+                logger:          mockLogger,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Should have multiple responding phases because shouldUpdate() returns true
+            const respondingPhases = _filter(phases, ['type', 'responding']);
+            expect(respondingPhases.length).toBeGreaterThan(1);
+        });
+
+        test('should not update status when shouldUpdate returns false and phase is same', async () => {
+            const phases: PresencePhase[] = [];
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Send multiple assistant events with text (same phase: responding)
+                        onEvent({ type: 'assistant', delta: { text: 'First ' } });
+                        onEvent({ type: 'assistant', delta: { text: 'Second ' } });
+                        onEvent({ type: 'assistant', delta: { text: 'Third ' } });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const capturingPresenceManager = {
+                // Always return false - simulates throttle not expired
+                shouldUpdate: mock(_constant(false)),
+                updatePhase:  mock(async (phase: PresencePhase) => {
+                    phases.push(phase);
+                }),
+                start: mock(() => undefined),
+                stop:  mock(() => undefined),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager: capturingPresenceManager as any,
+                agent:           wrappedAgent as any,
+                logger:          mockLogger,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // First event triggers phase change (null → responding), so it updates.
+            // Subsequent events: phase is same (responding), shouldUpdate returns false, so no update.
+            // Final idle transition always happens.
+            const respondingPhases = _filter(phases, ['type', 'responding']);
+            expect(respondingPhases.length).toBe(1);
+        });
+    });
+
+    describe('thinkingContent extraction', () => {
+        test('should extract thinking content from assistant events with thinking blocks', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Emit an assistant event with a thinking content block
+                        onEvent({
+                            type:    'assistant',
+                            message: {
+                                content: [
+                                    { type: 'thinking', thinking: 'I need to carefully consider this algorithm...' }
+                                ]
+                            }
+                        } as any);
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Find the thinking context WITH thinkingContent (not the pre-generated one)
+            const thinkingContexts = _filter(capturedContexts, ['phase', 'thinking']);
+            const contextWithThinking = _find(thinkingContexts, (ctx: SynopsisContext) => Boolean(ctx.thinkingContent));
+            expect(contextWithThinking).toBeDefined();
+            expect(contextWithThinking!.thinkingContent).toBe('I need to carefully consider this algorithm...');
+        });
+
+        test('should truncate thinking content to 500 characters', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const longThinking = _repeat('T', 600);
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        onEvent({
+                            type:    'assistant',
+                            message: {
+                                content: [
+                                    { type: 'thinking', thinking: longThinking }
+                                ]
+                            }
+                        } as any);
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Find the thinking context WITH thinkingContent (not the pre-generated one)
+            const thinkingContexts = _filter(capturedContexts, ['phase', 'thinking']);
+            const contextWithThinking = _find(thinkingContexts, (ctx: SynopsisContext) => Boolean(ctx.thinkingContent));
+            expect(contextWithThinking).toBeDefined();
+            expect(contextWithThinking!.thinkingContent).toBe(_repeat('T', 500));
+        });
+
+        test('should accumulate thinking content from multiple thinking blocks', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // First thinking block
+                        onEvent({
+                            type:    'assistant',
+                            message: {
+                                content: [
+                                    { type: 'thinking', thinking: 'First thought. ' }
+                                ]
+                            }
+                        } as any);
+                        // Second thinking block
+                        onEvent({
+                            type:    'assistant',
+                            message: {
+                                content: [
+                                    { type: 'thinking', thinking: 'Second thought.' }
+                                ]
+                            }
+                        } as any);
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // The last thinking context should have accumulated content
+            const thinkingContexts = _filter(capturedContexts, ['phase', 'thinking']);
+            expect(thinkingContexts.length).toBeGreaterThan(0);
+            const lastThinkingContext = thinkingContexts[thinkingContexts.length - 1];
+            expect(lastThinkingContext).toBeDefined();
+            expect(lastThinkingContext?.thinkingContent).toContain('First thought.');
+            expect(lastThinkingContext?.thinkingContent).toContain('Second thought.');
+        });
+
+        test('should NOT pass thinkingContent when no thinking blocks are present', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Regular assistant event without thinking block
+                        onEvent({ type: 'assistant' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            const thinkingContext = _find(capturedContexts, ['phase', 'thinking']);
+            expect(thinkingContext).toBeDefined();
+            expect(thinkingContext!.thinkingContent).toBeUndefined();
+        });
+    });
+
+    describe('recentToolCalls tracking', () => {
+        test('should track recent tool calls (last 3 tools)', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Trigger 5 different tools
+                        onEvent({ type: 'tool_progress', tool_name: 'tool1' });
+                        onEvent({ type: 'tool_progress', tool_name: 'tool2' });
+                        onEvent({ type: 'tool_progress', tool_name: 'tool3' });
+                        onEvent({ type: 'tool_progress', tool_name: 'tool4' });
+                        onEvent({ type: 'tool_progress', tool_name: 'tool5' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Find the last using_tool context (for tool5)
+            const toolContexts = _filter(capturedContexts, ['phase', 'using_tool']);
+            const lastToolContext = toolContexts[toolContexts.length - 1];
+            expect(lastToolContext).toBeDefined();
+            // Should have last 3 PREVIOUS tools (not including current tool5), most recent first
+            expect(lastToolContext?.recentToolCalls).toEqual(['tool4', 'tool3', 'tool2']);
+        });
+
+        test('should have recentToolCalls empty on first tool call', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        onEvent({ type: 'tool_progress', tool_name: 'firstTool' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
+            expect(toolContext).toBeDefined();
+            // First tool call should have empty recentToolCalls (current tool not included in recent)
+            expect(toolContext!.recentToolCalls).toEqual([]);
+        });
+
+        test('should include recentToolCalls in thinking phase context', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // First use some tools
+                        onEvent({ type: 'tool_progress', tool_name: 'ReadTool' });
+                        onEvent({ type: 'tool_progress', tool_name: 'SearchTool' });
+                        // Then transition back to thinking
+                        onEvent({ type: 'assistant' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Find thinking contexts after tool usage
+            const thinkingContexts = _filter(capturedContexts, ['phase', 'thinking']);
+            const lastThinkingContext = thinkingContexts[thinkingContexts.length - 1];
+            expect(lastThinkingContext).toBeDefined();
+            expect(lastThinkingContext?.recentToolCalls).toEqual(['SearchTool', 'ReadTool']);
         });
     });
 });

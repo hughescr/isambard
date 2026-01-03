@@ -331,6 +331,76 @@ describe('DynamicStatusGenerator', () => {
                 expect(prompt).toContain(_repeat('A', 200));
                 expect(prompt).not.toContain(_repeat('A', 201));
             });
+
+            it('should include thinking content when provided', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:           'thinking',
+                    userMessage:     'How do I solve this?',
+                    thinkingContent: 'I need to consider the algorithm complexity first...',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const prompt = mockGenerateText.mock.calls[0][0];
+                expect(prompt).toContain("Isambard's internal thoughts:");
+                expect(prompt).toContain('I need to consider the algorithm complexity first...');
+            });
+
+            it('should NOT include thinking section when thinkingContent is undefined', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'thinking',
+                    userMessage: 'Test question',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const prompt = mockGenerateText.mock.calls[0][0];
+                expect(prompt).not.toContain("Isambard's internal thoughts:");
+            });
+
+            it('should NOT include thinking section when thinkingContent is empty string', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:           'thinking',
+                    userMessage:     'Test question',
+                    thinkingContent: '',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const prompt = mockGenerateText.mock.calls[0][0];
+                expect(prompt).not.toContain("Isambard's internal thoughts:");
+            });
+
+            it('should truncate thinking content to 500 characters', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const longThinking = _repeat('T', 600);
+                const context: SynopsisContext = {
+                    phase:           'thinking',
+                    userMessage:     'Test',
+                    thinkingContent: longThinking,
+                };
+
+                await generator.generateSynopsis(context);
+
+                const prompt = mockGenerateText.mock.calls[0][0];
+                expect(prompt).toContain(_repeat('T', 500));
+                expect(prompt).not.toContain(_repeat('T', 501));
+            });
         });
 
         describe('prompt construction - using_tool phase', () => {

@@ -19,6 +19,20 @@ export type AgentStreamEvent
       | UserEvent;
 
 /**
+ * Content block types that can appear in assistant messages.
+ * - text: Text response content
+ * - thinking: Extended thinking content (when enabled)
+ * - tool_use: Tool invocation request
+ */
+export interface ContentBlock {
+    type:   string
+    text?:  string
+    id?:    string
+    name?:  string
+    input?: unknown
+}
+
+/**
  * Event emitted when the agent generates assistant content.
  * This can include thinking (no delta) or actual response text (with delta).
  */
@@ -28,10 +42,7 @@ export interface AssistantEvent {
         text?: string
     }
     message?: {
-        content?: {
-            type:  string
-            text?: string
-        }[]
+        content?: ContentBlock[]
     }
 }
 

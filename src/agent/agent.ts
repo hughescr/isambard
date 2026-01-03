@@ -347,6 +347,27 @@ function extractAssistantText(message: { type: string, message?: { content?: unk
 }
 
 /**
+ * Extract thinking content from an assistant message.
+ * @param message SDK message with potential content blocks
+ * @returns Extracted thinking text or empty string
+ */
+export function extractThinkingContent(message: { type: string, message?: { content?: unknown } }): string {
+    if(message.type !== 'assistant') {
+        return '';
+    }
+
+    interface ContentBlock {
+        type:  string
+        text?: string
+    }
+    const content = message.message?.content as ContentBlock[] | undefined;
+    // Stryker disable next-line ArrayDeclaration: Equivalent mutant - _.filter on strings returns [] same as on []
+    const thinkingBlocks = _.filter(content ?? [], { type: 'thinking' });
+    const text = _.chain(thinkingBlocks).map('text').compact().join('\n').trim().value();
+    return text;
+}
+
+/**
  * Extract tool_use blocks from an assistant message
  * @param message Stream message to extract from
  * @returns Array of tool use blocks or empty array
@@ -599,26 +620,71 @@ function logToolUsage(message: { type: string, message?: { content?: unknown } }
 // Stryker restore all
 
 /**
+ * Module-level state for tracking the last tool requested by the LLM.
+ * Used to correlate user events (tool responses) with the tool that was invoked.
+ */
+let lastRequestedTool: string | undefined;
+
+/**
+ * Resets the log stream event state for testing purposes.
+ */
+export function resetLogStreamState(): void {
+    lastRequestedTool = undefined;
+}
+
+/**
  * Logs stream events with descriptive messages based on event type.
+ *
+ * Provides enhanced logging for tool request/response flow:
+ * - When assistant event contains tool_use blocks → logs "LLM requesting tool: {toolName}"
+ * - When user event arrives after a tool request → logs "Tool result for LLM: {lastToolName}"
+ * - Keeps existing thinking/responding distinction for non-tool assistant events
+ *
  * @param message Stream event to log
  */
 // Stryker disable all: Observability - debug logging doesn't affect return value
 export function logStreamEvent(message: AgentStreamEvent): void {
     switch(message.type) {
         case 'user':
-            logger.debug({
-                eventType: 'user',
-                msg:       'Sending message to Claude LLM',
-            });
+            // User events after a tool request are tool responses
+            if(lastRequestedTool) {
+                logger.debug({
+                    eventType: 'tool_response',
+                    toolName:  lastRequestedTool,
+                    msg:       `Tool result for LLM: ${lastRequestedTool}`,
+                });
+                lastRequestedTool = undefined;
+            } else {
+                logger.debug({
+                    eventType: 'user',
+                    msg:       'Sending message to Claude LLM',
+                });
+            }
             break;
 
         case 'assistant': {
-            const hasText = Boolean(extractAssistantText(message));
-            logger.debug({
-                eventType: 'assistant',
-                hasText,
-                msg:       hasText ? 'Claude LLM responding' : 'Claude LLM thinking',
-            });
+            // Check for tool_use blocks first
+            const toolUses = extractToolUses(message);
+            if(toolUses.length > 0) {
+                // Log each tool request
+                for(const toolUse of toolUses) {
+                    logger.debug({
+                        eventType: 'tool_request',
+                        toolName:  toolUse.name,
+                        msg:       `LLM requesting tool: ${toolUse.name}`,
+                    });
+                    // Track the last tool for correlating with the response
+                    lastRequestedTool = toolUse.name;
+                }
+            } else {
+                // No tool use - log thinking/responding
+                const hasText = Boolean(extractAssistantText(message));
+                logger.debug({
+                    eventType: 'assistant',
+                    hasText,
+                    msg:       hasText ? 'Claude LLM responding' : 'Claude LLM thinking',
+                });
+            }
             break;
         }
 
@@ -684,15 +750,16 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 const response = query({
                     prompt:  userMessage,
                     options: {
-                        model:          CLAUDE_MODEL,
+                        model:             CLAUDE_MODEL,
                         systemPrompt,
-                        tools:          EXPLICIT_TOOLS,
-                        agents:         EXPLICIT_AGENTS,
-                        mcpServers:     buildMcpServers(memoryMcpServer, discordMcpServer),
-                        permissionMode: 'acceptEdits',
-                        allowedTools:   buildAllowedTools(discordMcpServer),
+                        tools:             EXPLICIT_TOOLS,
+                        agents:            EXPLICIT_AGENTS,
+                        mcpServers:        buildMcpServers(memoryMcpServer, discordMcpServer),
+                        permissionMode:    'acceptEdits',
+                        allowedTools:      buildAllowedTools(discordMcpServer),
+                        maxThinkingTokens: 10000,  // Enable extended thinking for richer status context
                         // Stryker disable all: Observability - stderr logging doesn't affect behavior
-                        stderr:         (data: string) => {
+                        stderr:            (data: string) => {
                             logger.error({ stderr: data, msg: 'Agent SDK stderr' });
                         },
                         // Stryker restore all

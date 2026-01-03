@@ -2,7 +2,7 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import _ from 'lodash';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
-import { createClaudeAgent, extractToolUses, parseToolName, logStreamEvent, redactSensitiveArgs } from '../../../src/agent/agent';
+import { createClaudeAgent, extractToolUses, extractThinkingContent, parseToolName, logStreamEvent, resetLogStreamState, redactSensitiveArgs } from '../../../src/agent/agent';
 import type { ParsedToolName } from '../../../src/agent/agent';
 import type { AgentStreamEvent } from '../../../src/agent/types';
 import { mockLogger } from '../../setup';
@@ -342,12 +342,13 @@ describe.concurrent('redactSensitiveArgs', () => {
     });
 });
 
-describe.concurrent('logStreamEvent', () => {
+describe('logStreamEvent', () => {
     beforeEach(() => {
         mockLogger.debug.mockClear();
+        resetLogStreamState();
     });
 
-    test('should log user events as "Sending message to Claude LLM"', () => {
+    test('should log user events as "Sending message to Claude LLM" when no prior tool request', () => {
         const event: AgentStreamEvent = { type: 'user' };
 
         logStreamEvent(event);
@@ -483,6 +484,162 @@ describe.concurrent('logStreamEvent', () => {
             msg:       'Claude LLM stream complete',
         });
     });
+
+    describe('tool request/response flow', () => {
+        test('should log tool_request when assistant message contains tool_use block', () => {
+            const event: AgentStreamEvent = {
+                type:    'assistant',
+                message: {
+                    content: [
+                        {
+                            type:  'tool_use',
+                            id:    'tool_123',
+                            name:  'WebFetch',
+                            input: { url: 'https://example.com' },
+                        },
+                    ],
+                },
+            };
+
+            logStreamEvent(event);
+
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                eventType: 'tool_request',
+                toolName:  'WebFetch',
+                msg:       'LLM requesting tool: WebFetch',
+            });
+        });
+
+        test('should log multiple tool_requests when assistant message contains multiple tool_use blocks', () => {
+            const event: AgentStreamEvent = {
+                type:    'assistant',
+                message: {
+                    content: [
+                        {
+                            type:  'tool_use',
+                            id:    'tool_1',
+                            name:  'Read',
+                            input: { path: '/file.txt' },
+                        },
+                        {
+                            type:  'tool_use',
+                            id:    'tool_2',
+                            name:  'WebFetch',
+                            input: { url: 'https://example.com' },
+                        },
+                    ],
+                },
+            };
+
+            logStreamEvent(event);
+
+            expect(mockLogger.debug).toHaveBeenCalledTimes(2);
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                eventType: 'tool_request',
+                toolName:  'Read',
+                msg:       'LLM requesting tool: Read',
+            });
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                eventType: 'tool_request',
+                toolName:  'WebFetch',
+                msg:       'LLM requesting tool: WebFetch',
+            });
+        });
+
+        test('should log tool_response when user event follows a tool request', () => {
+            // First, simulate a tool request
+            const toolRequestEvent: AgentStreamEvent = {
+                type:    'assistant',
+                message: {
+                    content: [
+                        {
+                            type:  'tool_use',
+                            id:    'tool_123',
+                            name:  'WebFetch',
+                            input: { url: 'https://example.com' },
+                        },
+                    ],
+                },
+            };
+            logStreamEvent(toolRequestEvent);
+            mockLogger.debug.mockClear();
+
+            // Then, simulate the tool response (user event)
+            const userEvent: AgentStreamEvent = { type: 'user' };
+            logStreamEvent(userEvent);
+
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                eventType: 'tool_response',
+                toolName:  'WebFetch',
+                msg:       'Tool result for LLM: WebFetch',
+            });
+        });
+
+        test('should use the last tool name when multiple tools were requested', () => {
+            // Simulate multiple tool requests
+            const multiToolEvent: AgentStreamEvent = {
+                type:    'assistant',
+                message: {
+                    content: [
+                        {
+                            type:  'tool_use',
+                            id:    'tool_1',
+                            name:  'Read',
+                            input: { path: '/file.txt' },
+                        },
+                        {
+                            type:  'tool_use',
+                            id:    'tool_2',
+                            name:  'Grep',
+                            input: { pattern: 'test' },
+                        },
+                    ],
+                },
+            };
+            logStreamEvent(multiToolEvent);
+            mockLogger.debug.mockClear();
+
+            // The user event should reference the last tool
+            const userEvent: AgentStreamEvent = { type: 'user' };
+            logStreamEvent(userEvent);
+
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                eventType: 'tool_response',
+                toolName:  'Grep',
+                msg:       'Tool result for LLM: Grep',
+            });
+        });
+
+        test('should clear last tool after user event', () => {
+            // Simulate tool request
+            const toolRequestEvent: AgentStreamEvent = {
+                type:    'assistant',
+                message: {
+                    content: [
+                        {
+                            type:  'tool_use',
+                            id:    'tool_123',
+                            name:  'WebFetch',
+                            input: { url: 'https://example.com' },
+                        },
+                    ],
+                },
+            };
+            logStreamEvent(toolRequestEvent);
+
+            // First user event (tool response)
+            logStreamEvent({ type: 'user' });
+            mockLogger.debug.mockClear();
+
+            // Second user event should be a regular user message
+            logStreamEvent({ type: 'user' });
+
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                eventType: 'user',
+                msg:       'Sending message to Claude LLM',
+            });
+        });
+    });
 });
 
 describe.concurrent('extractToolUses', () => {
@@ -578,6 +735,113 @@ describe.concurrent('extractToolUses', () => {
     test('should handle undefined message property gracefully', () => {
         const message = { type: 'assistant', message: undefined };
         expect(extractToolUses(message)).toEqual([]);
+    });
+});
+
+describe.concurrent('extractThinkingContent', () => {
+    test('should return empty string for non-assistant messages', () => {
+        const message = { type: 'user', message: { content: [] } };
+        expect(extractThinkingContent(message)).toBe('');
+    });
+
+    test('should return empty string for assistant messages with no content', () => {
+        const message = { type: 'assistant', message: {} };
+        expect(extractThinkingContent(message)).toBe('');
+    });
+
+    test('should return empty string for assistant messages with no thinking blocks', () => {
+        const message = {
+            type:    'assistant',
+            message: {
+                content: [
+                    { type: 'text', text: 'Hello world' },
+                ],
+            },
+        };
+        expect(extractThinkingContent(message)).toBe('');
+    });
+
+    test('should extract single thinking block correctly', () => {
+        const message = {
+            type:    'assistant',
+            message: {
+                content: [
+                    {
+                        type: 'thinking',
+                        text: 'Let me think about this...',
+                    },
+                ],
+            },
+        };
+        expect(extractThinkingContent(message)).toBe('Let me think about this...');
+    });
+
+    test('should extract and join multiple thinking blocks', () => {
+        const message = {
+            type:    'assistant',
+            message: {
+                content: [
+                    { type: 'thinking', text: 'First thought' },
+                    { type: 'text', text: 'Some response text' },
+                    { type: 'thinking', text: 'Second thought' },
+                ],
+            },
+        };
+        expect(extractThinkingContent(message)).toBe('First thought\nSecond thought');
+    });
+
+    test('should handle undefined content gracefully', () => {
+        const message = { type: 'assistant', message: { content: undefined } };
+        expect(extractThinkingContent(message)).toBe('');
+    });
+
+    test('should handle null content gracefully', () => {
+        const message = { type: 'assistant', message: { content: null } };
+        expect(extractThinkingContent(message)).toBe('');
+    });
+
+    test('should handle missing message property gracefully', () => {
+        const message = { type: 'assistant' };
+        expect(extractThinkingContent(message)).toBe('');
+    });
+
+    test('should handle thinking blocks with empty text', () => {
+        const message = {
+            type:    'assistant',
+            message: {
+                content: [
+                    { type: 'thinking', text: '' },
+                    { type: 'thinking', text: 'Valid thought' },
+                ],
+            },
+        };
+        // Empty strings should be filtered out by compact()
+        expect(extractThinkingContent(message)).toBe('Valid thought');
+    });
+
+    test('should handle thinking blocks with undefined text', () => {
+        const message = {
+            type:    'assistant',
+            message: {
+                content: [
+                    { type: 'thinking' },  // No text property
+                    { type: 'thinking', text: 'Valid thought' },
+                ],
+            },
+        };
+        expect(extractThinkingContent(message)).toBe('Valid thought');
+    });
+
+    test('should trim whitespace from the final result', () => {
+        const message = {
+            type:    'assistant',
+            message: {
+                content: [
+                    { type: 'thinking', text: '  Thought with spaces  ' },
+                ],
+            },
+        };
+        expect(extractThinkingContent(message)).toBe('Thought with spaces');
     });
 });
 

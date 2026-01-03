@@ -364,7 +364,7 @@ describe('discordConfigSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data.presence).toEqual({
-                updateThrottleMs:      10000,  // default
+                updateThrottleMs:      12000,  // default (matches Discord rate limit)
                 idleTimeoutMs:         60000, // default
                 idleRefreshIntervalMs: 300000, // default
             });

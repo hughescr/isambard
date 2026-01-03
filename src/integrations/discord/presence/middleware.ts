@@ -96,6 +96,10 @@ export function createStatusMiddleware(
         // Track accumulated state from stream events for rich context
         const pendingToolInputs = new Map<string, unknown>();
         let accumulatedText = '';
+        let accumulatedThinkingContent = '';
+        const recentToolCalls: string[] = [];
+        const MAX_THINKING_CONTENT_LENGTH = 500;
+        const MAX_RECENT_TOOLS = 3;
 
         // Pre-generate thinking synopsis at start (before agent.chat) if update would apply.
         // This allows immediate status display without waiting for the first stream event.
@@ -143,10 +147,80 @@ export function createStatusMiddleware(
 
                 // Map stream events to presence phases
                 if(event.type === 'assistant') {
+                    // Extract thinking content from message content blocks
+                    interface ContentBlock {
+                        type:      string
+                        thinking?: string
+                    }
+                    const content = event.message?.content as ContentBlock[] | undefined;
+                    if(content) {
+                        for(const block of content) {
+                            if(block.type === 'thinking' && block.thinking) {
+                                accumulatedThinkingContent = (accumulatedThinkingContent + block.thinking).slice(-MAX_THINKING_CONTENT_LENGTH);
+                            }
+                        }
+                    }
+
                     // Extract tool_use blocks and store redacted inputs for later use
                     const toolUses = extractToolUses(event);
+                    let hadToolUseUpdate = false;
                     for(const toolUse of toolUses) {
                         pendingToolInputs.set(toolUse.name, redactSensitiveArgs(toolUse.input));
+
+                        // Trigger 'using_tool' presence update when tool_use blocks are detected
+                        const toolName = toolUse.name;
+                        if(currentPhase !== 'using_tool' || toolName !== lastToolName) {
+                            currentPhase = 'using_tool';
+                            lastToolName = toolName;
+                            hadToolUseUpdate = true;
+
+                            // Capture current state for async closure (BEFORE adding current tool)
+                            // recentToolCalls represents PREVIOUS tools, not including current
+                            const capturedAccumulatedText = accumulatedText;
+                            const capturedRecentToolCalls = [...recentToolCalls];
+
+                            // Add current tool to recent AFTER capturing (current tool goes into history for next call)
+                            recentToolCalls.unshift(toolName);
+                            if(recentToolCalls.length > MAX_RECENT_TOOLS) {
+                                recentToolCalls.pop();
+                            }
+
+                            // Check shouldUpdate() before generating expensive synopsis
+                            // Stryker disable next-line ConditionalExpression: Equivalent - try/catch swallows TypeError when undefined
+                            if(dynamicStatusGenerator && presenceManager.shouldUpdate()) {
+                                void (async () => {
+                                    try {
+                                        const synopsis = await dynamicStatusGenerator.generateSynopsis({
+                                            phase:           'using_tool',
+                                            userMessage,
+                                            toolName,
+                                            toolInput:       pendingToolInputs.get(toolName),
+                                            toolDescription: getToolDescription(toolName),
+                                            accumulatedText: capturedAccumulatedText || undefined,
+                                            recentToolCalls: capturedRecentToolCalls,
+                                        });
+                                        void safeUpdatePhase({
+                                            type:            'using_tool',
+                                            toolName,
+                                            startedAt:       new Date(),
+                                            generatedStatus: synopsis,
+                                        });
+                                    } catch{
+                                        void safeUpdatePhase({
+                                            type:      'using_tool',
+                                            toolName,
+                                            startedAt: new Date(),
+                                        });
+                                    }
+                                })();
+                            } else {
+                                void safeUpdatePhase({
+                                    type:      'using_tool',
+                                    toolName,
+                                    startedAt: new Date(),
+                                });
+                            }
+                        }
                     }
 
                     // Accumulate response text for context (keep last 200 chars)
@@ -154,20 +228,60 @@ export function createStatusMiddleware(
                         accumulatedText = (accumulatedText + event.delta.text).slice(-200);
                     }
 
+                    // Skip thinking/responding phase detection if we just processed tool_use blocks
+                    // The tool_use blocks indicate tool execution, not thinking/responding
+                    if(hadToolUseUpdate) {
+                        return;
+                    }
+
                     // Stryker disable next-line StringLiteral: Equivalent - newPhase used only for state tracking; updatePhase uses hardcoded literals
                     const newPhase = event.delta?.text ? 'responding' : 'thinking';
 
-                    if(newPhase !== currentPhase) {
+                    if(newPhase !== currentPhase || presenceManager.shouldUpdate()) {
                         currentPhase = newPhase;
 
                         if(newPhase === 'thinking') {
-                            // Use pre-generated thinking synopsis (already checked shouldUpdate at start)
-                            void safeUpdatePhase({
-                                type:            'thinking',
-                                startedAt:       new Date(),
-                                userMessage,
-                                generatedStatus: thinkingSynopsis,
-                            });
+                            // Check if we have accumulated context that warrants regeneration
+                            const hasThinkingContent = Boolean(accumulatedThinkingContent);
+                            const hasToolHistory = recentToolCalls.length > 0;
+
+                            if((hasThinkingContent || hasToolHistory) && dynamicStatusGenerator && presenceManager.shouldUpdate()) {
+                                // Capture current state for async closure
+                                const capturedThinkingContent = accumulatedThinkingContent || undefined;
+                                const capturedRecentToolCalls = [...recentToolCalls];
+
+                                void (async () => {
+                                    try {
+                                        const synopsis = await dynamicStatusGenerator.generateSynopsis({
+                                            phase:           'thinking',
+                                            userMessage,
+                                            thinkingContent: capturedThinkingContent,
+                                            recentToolCalls: capturedRecentToolCalls,
+                                        });
+                                        void safeUpdatePhase({
+                                            type:            'thinking',
+                                            startedAt:       new Date(),
+                                            userMessage,
+                                            generatedStatus: synopsis,
+                                        });
+                                    } catch{
+                                        void safeUpdatePhase({
+                                            type:            'thinking',
+                                            startedAt:       new Date(),
+                                            userMessage,
+                                            generatedStatus: thinkingSynopsis,
+                                        });
+                                    }
+                                })();
+                            } else {
+                                // Use pre-generated thinking synopsis when no thinking content yet or dynamicStatusGenerator unavailable
+                                void safeUpdatePhase({
+                                    type:            'thinking',
+                                    startedAt:       new Date(),
+                                    userMessage,
+                                    generatedStatus: thinkingSynopsis,
+                                });
+                            }
                         } else {
                             // Check shouldUpdate() before generating expensive synopsis
                             // Stryker disable next-line ConditionalExpression: Equivalent - try/catch swallows TypeError when undefined
@@ -210,6 +324,16 @@ export function createStatusMiddleware(
                         currentPhase = 'using_tool';
                         lastToolName = toolName;
 
+                        // Capture current state for async closure (BEFORE adding current tool)
+                        // recentToolCalls represents PREVIOUS tools, not including current
+                        const capturedRecentToolCalls = [...recentToolCalls];
+
+                        // Add current tool to recent AFTER capturing (current tool goes into history for next call)
+                        recentToolCalls.unshift(toolName);
+                        if(recentToolCalls.length > MAX_RECENT_TOOLS) {
+                            recentToolCalls.pop();
+                        }
+
                         // Check shouldUpdate() before generating expensive synopsis
                         // Stryker disable next-line ConditionalExpression: Equivalent - try/catch swallows TypeError when undefined
                         if(dynamicStatusGenerator && presenceManager.shouldUpdate()) {
@@ -222,6 +346,7 @@ export function createStatusMiddleware(
                                         toolInput:       pendingToolInputs.get(toolName),
                                         toolDescription: getToolDescription(toolName),
                                         accumulatedText: accumulatedText || undefined,
+                                        recentToolCalls: capturedRecentToolCalls,
                                     });
                                     void safeUpdatePhase({
                                         type:            'using_tool',
