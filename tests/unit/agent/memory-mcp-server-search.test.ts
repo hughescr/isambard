@@ -28,6 +28,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             update:      mock(async () => createMockItem()),
             'delete':    mock(async () => { /* intentionally empty */ }),
             list:        mock(async () => ({ items: [], nextCursor: undefined })),
+            listByLayer: mock(async () => ({ items: [], nextCursor: undefined })),
             searchByTag: mock(async () => ({ items: [], nextCursor: undefined })),
         } as unknown as MemoryToolBackend;
     });
@@ -369,6 +370,37 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             expect(result.content[0].type).toBe('text');
         });
 
+        test('should use contentPreview fallback when content field is undefined', async () => {
+            mockBackend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:           '/memories/gsi2-result.md' as MemoryPath,
+                        content:        undefined as unknown as string, // GSI2 projection may not include content field
+                        contentPreview: 'Preview of GSI2 content',
+                        contentType:    'text/markdown' as ContentType,
+                        metadata:       {},
+                        version:        1,
+                        createdAt:      '2025-01-01T00:00:00.000Z',
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           ['tag1'],
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'search');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ tag: 'tag1' });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('/memories/gsi2-result.md');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('Preview of GSI2 content');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBeUndefined();
+        });
+
         describe('layer enum validation', () => {
             test('should have layer schema that accepts identity', () => {
                 const server = createMemoryMCPServer(mockBackend);
@@ -492,8 +524,8 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             mockBackend.list = mock(async () => ({
                 items: [
                     {
-                        path:        '/identity/values' as MemoryPath,
-                        content:     'Values content',
+                        path:        '/users/alice/preferences' as MemoryPath,
+                        content:     'User preferences',
                         contentType: 'text/plain' as ContentType,
                         metadata:    {},
                         version:     1,
@@ -508,11 +540,11 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const handler = getToolHandler(server, 'list');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            const result = await handler({ path: '/identity' });
+            const result = await handler({ path: '/users/alice' });
 
-            expect(mockBackend.list).toHaveBeenCalledWith('/identity');
+            expect(mockBackend.list).toHaveBeenCalledWith('/users/alice');
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-            expect(result.content[0].text).toContain('/identity/values');
+            expect(result.content[0].text).toContain('/users/alice/preferences');
         });
 
         test('should default to root path when path not provided', async () => {
@@ -573,8 +605,8 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             mockBackend.list = mock(async () => ({
                 items: [
                     {
-                        path:        '/state/goal-1' as MemoryPath,
-                        content:     'Goal 1',
+                        path:        '/users/alice/pref-1' as MemoryPath,
+                        content:     'Preference 1',
                         contentType: 'text/plain' as ContentType,
                         metadata:    {},
                         version:     1,
@@ -582,8 +614,8 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
                         updatedAt:   '2025-01-01T00:00:00.000Z',
                     },
                     {
-                        path:        '/state/goal-2' as MemoryPath,
-                        content:     'Goal 2',
+                        path:        '/users/alice/pref-2' as MemoryPath,
+                        content:     'Preference 2',
                         contentType: 'text/plain' as ContentType,
                         metadata:    {},
                         version:     1,
@@ -598,10 +630,10 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const handler = getToolHandler(server, 'list');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            const result = await handler({ path: '/state' });
+            const result = await handler({ path: '/users/alice' });
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-            expect(result.content[0].text).toBe('/state/goal-1\n/state/goal-2');
+            expect(result.content[0].text).toBe('/users/alice/pref-1\n/users/alice/pref-2');
         });
 
         test('should return content as text type with const assertion', async () => {
@@ -640,6 +672,102 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             expect(listTool.inputSchema.shape).toBeDefined();
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema path
             expect(listTool.inputSchema.shape.path).toBeDefined();
+        });
+
+        describe('layer path routing', () => {
+            test('should use listByLayer for /events path', async () => {
+                mockBackend.listByLayer = mock(async () => ({
+                    items: [
+                        {
+                            path:        '/events/conversation/2025-01-01T00-00-00Z' as MemoryPath,
+                            content:     'Event content',
+                            contentType: 'text/plain' as ContentType,
+                            metadata:    {},
+                            version:     1,
+                            createdAt:   '2025-01-01T00:00:00.000Z',
+                            updatedAt:   '2025-01-01T00:00:00.000Z',
+                        },
+                    ],
+                    nextCursor: undefined,
+                }));
+
+                const server = createMemoryMCPServer(mockBackend);
+                const handler = getToolHandler(server, 'list');
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+                const result = await handler({ path: '/events' });
+
+                expect(mockBackend.listByLayer).toHaveBeenCalledWith('events');
+                expect(mockBackend.list).not.toHaveBeenCalled();
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+                expect(result.content[0].text).toContain('/events/conversation/2025-01-01T00-00-00Z');
+            });
+
+            test('should use listByLayer for /identity path', async () => {
+                mockBackend.listByLayer = mock(async () => ({
+                    items:      [],
+                    nextCursor: undefined,
+                }));
+
+                const server = createMemoryMCPServer(mockBackend);
+                const handler = getToolHandler(server, 'list');
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+                await handler({ path: '/identity' });
+
+                expect(mockBackend.listByLayer).toHaveBeenCalledWith('identity');
+                expect(mockBackend.list).not.toHaveBeenCalled();
+            });
+
+            test('should use listByLayer for /state path', async () => {
+                mockBackend.listByLayer = mock(async () => ({
+                    items:      [],
+                    nextCursor: undefined,
+                }));
+
+                const server = createMemoryMCPServer(mockBackend);
+                const handler = getToolHandler(server, 'list');
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+                await handler({ path: '/state' });
+
+                expect(mockBackend.listByLayer).toHaveBeenCalledWith('state');
+                expect(mockBackend.list).not.toHaveBeenCalled();
+            });
+
+            test('should use regular list for non-layer paths', async () => {
+                const server = createMemoryMCPServer(mockBackend);
+                const handler = getToolHandler(server, 'list');
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+                await handler({ path: '/users/alice' });
+
+                expect(mockBackend.list).toHaveBeenCalledWith('/users/alice');
+                expect(mockBackend.listByLayer).not.toHaveBeenCalled();
+            });
+
+            test('should use regular list for root path', async () => {
+                const server = createMemoryMCPServer(mockBackend);
+                const handler = getToolHandler(server, 'list');
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+                await handler({ path: '/' });
+
+                expect(mockBackend.list).toHaveBeenCalledWith('/');
+                expect(mockBackend.listByLayer).not.toHaveBeenCalled();
+            });
+
+            test('should use regular list for nested layer paths', async () => {
+                // Nested paths like /events/conversation should use regular list for directory browsing
+                const server = createMemoryMCPServer(mockBackend);
+                const handler = getToolHandler(server, 'list');
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+                await handler({ path: '/events/conversation' });
+
+                expect(mockBackend.list).toHaveBeenCalledWith('/events/conversation');
+                expect(mockBackend.listByLayer).not.toHaveBeenCalled();
+            });
         });
     });
 });

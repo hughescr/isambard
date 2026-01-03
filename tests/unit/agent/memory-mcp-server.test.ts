@@ -27,6 +27,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             update:      mock(async () => createMockItem()),
             'delete':    mock(async () => { /* intentionally empty */ }),
             list:        mock(async () => ({ items: [], nextCursor: undefined })),
+            listByLayer: mock(async () => ({ items: [], nextCursor: undefined })),
             searchByTag: mock(async () => ({ items: [], nextCursor: undefined })),
         } as unknown as MemoryToolBackend;
     });

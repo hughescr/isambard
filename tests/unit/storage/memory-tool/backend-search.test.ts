@@ -200,7 +200,7 @@ describe.concurrent('MemoryToolBackend - Search Operations', () => {
     });
 
     describe('listByLayer', () => {
-        test('should list all identity items', async () => {
+        test('should list all identity items via GSI1', async () => {
             const items: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/identity',
@@ -224,7 +224,7 @@ describe.concurrent('MemoryToolBackend - Search Operations', () => {
             expect(result.items[0].path).toBe('/identity/core-values.md' as MemoryPath);
         });
 
-        test('should list all state items', async () => {
+        test('should list all state items via GSI1', async () => {
             const items: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/state',
@@ -248,28 +248,43 @@ describe.concurrent('MemoryToolBackend - Search Operations', () => {
             expect(result.items[0].path).toBe('/state/context.md' as MemoryPath);
         });
 
-        test('should list all events items', async () => {
+        test('should list all events items including nested paths via GSI1', async () => {
+            // Events are stored at nested paths like /events/conversation-start/timestamp
             const items: MemoryToolItem[] = [
                 {
-                    PK:          'DIR#/events',
-                    SK:          'FILE#meeting.md',
+                    PK:          'DIR#/events/conversation-start',
+                    SK:          'FILE#2024-01-01T00-00-00-000Z',
                     GSI1PK:      'LAYER#events',
                     GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
-                    path:        '/events/meeting.md' as MemoryPath,
-                    content:     'Meeting notes',
+                    path:        '/events/conversation-start/2024-01-01T00-00-00-000Z' as MemoryPath,
+                    content:     'Conversation started',
                     contentType: 'text/markdown',
                     metadata:    {},
                     version:     1,
                     createdAt:   '2024-01-01T00:00:00.000Z',
                     updatedAt:   '2024-01-01T00:00:00.000Z',
                 },
+                {
+                    PK:          'DIR#/events/decision',
+                    SK:          'FILE#2024-01-02T00-00-00-000Z',
+                    GSI1PK:      'LAYER#events',
+                    GSI1SK:      'UPDATED#2024-01-02T00:00:00.000Z',
+                    path:        '/events/decision/2024-01-02T00-00-00-000Z' as MemoryPath,
+                    content:     'Decision made',
+                    contentType: 'text/markdown',
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2024-01-02T00:00:00.000Z',
+                    updatedAt:   '2024-01-02T00:00:00.000Z',
+                },
             ];
             ddbMock.on(QueryCommand).resolves({ Items: items });
 
             const result = await backend.listByLayer('events' as LayerName);
 
-            expect(result.items).toHaveLength(1);
-            expect(result.items[0].path).toBe('/events/meeting.md' as MemoryPath);
+            expect(result.items).toHaveLength(2);
+            expect(result.items[0].path).toBe('/events/conversation-start/2024-01-01T00-00-00-000Z' as MemoryPath);
+            expect(result.items[1].path).toBe('/events/decision/2024-01-02T00-00-00-000Z' as MemoryPath);
         });
 
         test('should return empty list for empty layer', async () => {
@@ -280,8 +295,8 @@ describe.concurrent('MemoryToolBackend - Search Operations', () => {
             expect(result.items).toEqual([]);
         });
 
-        test('should support pagination', async () => {
-            const exclusiveStartKey = { PK: 'DIR#/identity', SK: 'FILE#file.md' };
+        test('should support pagination with GSI1 keys', async () => {
+            const exclusiveStartKey = { GSI1PK: 'LAYER#identity', GSI1SK: 'UPDATED#2024-01-01T00:00:00.000Z', PK: 'DIR#/identity', SK: 'FILE#file.md' };
             const cursor = Buffer.from(JSON.stringify(exclusiveStartKey)).toString('base64');
 
             ddbMock.on(QueryCommand).resolves({ Items: [] });
@@ -289,7 +304,7 @@ describe.concurrent('MemoryToolBackend - Search Operations', () => {
             await backend.listByLayer('identity' as LayerName, { cursor });
 
             const calls = ddbMock.commandCalls(QueryCommand);
-            expect(calls[calls.length - 1].args[0].input.ExclusiveStartKey).toEqual(exclusiveStartKey);
+            expect(calls[0].args[0].input.ExclusiveStartKey).toEqual(exclusiveStartKey);
         });
 
         test('should support limit option', async () => {
@@ -298,13 +313,13 @@ describe.concurrent('MemoryToolBackend - Search Operations', () => {
             await backend.listByLayer('state' as LayerName, { limit: 10 });
 
             const calls = ddbMock.commandCalls(QueryCommand);
-            expect(calls[calls.length - 1].args[0].input.Limit).toBe(10);
+            expect(calls[0].args[0].input.Limit).toBe(10);
         });
 
         test('should return nextCursor when more results available', async () => {
             ddbMock.on(QueryCommand).resolves({
                 Items:            [],
-                LastEvaluatedKey: { PK: 'DIR#/identity', SK: 'FILE#file.md' },
+                LastEvaluatedKey: { GSI1PK: 'LAYER#identity', GSI1SK: 'UPDATED#2024-01-01T00:00:00.000Z', PK: 'DIR#/identity', SK: 'FILE#file.md' },
             });
 
             const result = await backend.listByLayer('identity' as LayerName);
@@ -312,14 +327,61 @@ describe.concurrent('MemoryToolBackend - Search Operations', () => {
             expect(result.nextCursor).toBeDefined();
         });
 
-        test('should query with correct directory path', async () => {
+        test('should query GSI1 with correct layer partition key', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.listByLayer('identity' as LayerName);
 
             const calls = ddbMock.commandCalls(QueryCommand);
-            const queryInput = calls[calls.length - 1].args[0].input;
-            expect(queryInput.ExpressionAttributeValues?.[':pk']).toBe('DIR#/identity');
+            const queryInput = calls[0].args[0].input;
+            expect(queryInput.IndexName).toBe('GSI1');
+            expect(queryInput.KeyConditionExpression).toBe('GSI1PK = :pk');
+            expect(queryInput.ExpressionAttributeValues?.[':pk']).toBe('LAYER#identity');
+        });
+
+        test('should query GSI1 for events layer', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await backend.listByLayer('events' as LayerName);
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            const queryInput = calls[0].args[0].input;
+            expect(queryInput.IndexName).toBe('GSI1');
+            expect(queryInput.ExpressionAttributeValues?.[':pk']).toBe('LAYER#events');
+        });
+
+        test('should return newest first with ScanIndexForward false', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await backend.listByLayer('state' as LayerName);
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            const queryInput = calls[0].args[0].input;
+            expect(queryInput.ScanIndexForward).toBe(false);
+        });
+
+        test('should strip DynamoDB keys from results', async () => {
+            const items: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/identity',
+                    SK:          'FILE#file.md',
+                    GSI1PK:      'LAYER#identity',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/identity/file.md' as MemoryPath,
+                    content:     'Test',
+                    contentType: 'text/plain',
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                },
+            ];
+            ddbMock.on(QueryCommand).resolves({ Items: items });
+
+            const result = await backend.listByLayer('identity' as LayerName);
+
+            expect(result.items[0]).not.toHaveProperty('PK');
+            expect(result.items[0]).not.toHaveProperty('GSI1PK');
         });
     });
 

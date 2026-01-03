@@ -117,8 +117,42 @@ export class MemoryToolBackendQuery {
         layer: LayerName,
         options?: ListOptions
     ): Promise<ListResult<MemoryToolItemData>> {
-        // Layer paths are the layer name itself: /identity, /state, /events
-        return this.list(`/${layer}`, options);
+        // Query GSI1 to get all items in the layer, including nested paths
+        // GSI1PK = LAYER#{layer}, GSI1SK = UPDATED#{timestamp}
+        const queryParams: Record<string, unknown> = {
+            IndexName:                 'GSI1',
+            KeyConditionExpression:    'GSI1PK = :pk',
+            ExpressionAttributeValues: {
+                ':pk': `LAYER#${layer}`,
+            },
+            ScanIndexForward: false, // Newest first (descending by GSI1SK)
+        };
+
+        if(options?.limit) {
+            queryParams.Limit = options.limit;
+        }
+
+        if(options?.cursor) {
+            queryParams.ExclusiveStartKey = JSON.parse(
+                Buffer.from(options.cursor, 'base64').toString('utf-8')
+            );
+        }
+
+        const result = await this.docClient.send(
+            new QueryCommand({
+                TableName: this.tableName,
+                ...queryParams,
+            })
+        );
+
+        const items = _map((result.Items ?? []) as MemoryToolItem[], item => this.stripKeys(item));
+
+        let nextCursor: string | undefined;
+        if(result.LastEvaluatedKey) {
+            nextCursor = Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString('base64');
+        }
+
+        return { items, nextCursor };
     }
 
     async searchByTimeRange(

@@ -1,6 +1,7 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import _ from 'lodash';
+import { logger } from '@hughescr/logger';
 import type { MemoryToolBackend } from '../storage/memory-tool';
 import { ContentType, createMemoryPath, LayerName } from '../storage/memory-tool/types';
 
@@ -182,9 +183,10 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                                 content: [{ type: 'text' as const, text: 'No memories found matching tag' }],
                             };
                         }
-                        const formatted = _.map(results.items,
-                            r => `${r.path}: ${r.content.substring(0, 200)}${r.content.length > 200 ? '...' : ''}`
-                        ).join('\n\n');
+                        const formatted = _.map(results.items, (r) => {
+                            const preview = r.content ?? r.contentPreview ?? 'No content';
+                            return `${r.path}: ${preview.substring(0, 200)}${preview.length > 200 ? '...' : ''}`;
+                        }).join('\n\n');
                         return {
                             content: [{ type: 'text' as const, text: formatted }],
                         };
@@ -207,8 +209,22 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                 },
                 async (args) => {
                     try {
-                        const dirPath = args.path ?? '/';
-                        const results = await backend.list(dirPath);
+                        const rawPath = args.path ?? '/';
+                        // Normalize: strip trailing slash (except for root)
+                        const dirPath = rawPath === '/' ? '/' : _.trimEnd(rawPath, '/');
+
+                        // Check if path is a layer root - use listByLayer for efficient GSI1 query
+                        const layerPaths: Record<string, LayerName> = {
+                            '/events':   'events' as LayerName,
+                            '/identity': 'identity' as LayerName,
+                            '/state':    'state' as LayerName,
+                        };
+                        const layer = layerPaths[dirPath];
+
+                        const results = layer
+                            ? (logger.debug({ layer, dirPath, msg: 'Using GSI1 listByLayer for layer path' }), await backend.listByLayer(layer))
+                            : (logger.debug({ dirPath, msg: 'Using directory list for non-layer path' }), await backend.list(dirPath));
+
                         if(results.items.length === 0) {
                             return {
                                 content: [{ type: 'text' as const, text: 'Directory is empty' }],
