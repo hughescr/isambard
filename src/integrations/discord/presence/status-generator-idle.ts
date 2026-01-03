@@ -122,7 +122,7 @@ export function createIdleStatusGenerator(
                     ? _.replace(USER_PROMPT_WITH_CONTEXT, '{recentContext}', recentContext)
                     : USER_PROMPT_WITHOUT_CONTEXT;
 
-                const text = await generateTextWithSystemPrompt(systemPrompt, userPrompt);
+                const text = await generateTextWithSystemPrompt(systemPrompt, userPrompt, { stripMarkdown: true });
                 const statusText = text.slice(0, 128);
 
                 logger.info({ statusText }, 'Generated idle status');

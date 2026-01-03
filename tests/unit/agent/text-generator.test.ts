@@ -286,6 +286,212 @@ describe.concurrent('generateText', () => {
     });
 });
 
+describe.concurrent('generateText with stripMarkdown option', () => {
+    beforeEach(() => {
+        // Reset text-generator mocks to call through to real implementations
+        mockGenerateText.mockReset();
+        mockGenerateText.mockImplementation(originalGenerateText);
+        mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
+
+        // Set up SDK mock
+        mockUnstableV2Prompt.mockReset();
+    });
+
+    describe('stripMarkdown: false (default)', () => {
+        test('should leave markdown intact when stripMarkdown is not specified', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '```status```',
+            } as any);
+
+            const result = await generateText('Test prompt');
+
+            expect(result).toBe('```status```');
+        });
+
+        test('should leave markdown intact when stripMarkdown is false', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '```code block```',
+            } as any);
+
+            const result = await generateText('Test prompt', { stripMarkdown: false });
+
+            expect(result).toBe('```code block```');
+        });
+
+        test('should leave inline code intact when stripMarkdown is false', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '`inline code`',
+            } as any);
+
+            const result = await generateText('Test prompt', { stripMarkdown: false });
+
+            expect(result).toBe('`inline code`');
+        });
+
+        test('should leave bold intact when stripMarkdown is false', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '**bold text**',
+            } as any);
+
+            const result = await generateText('Test prompt', { stripMarkdown: false });
+
+            expect(result).toBe('**bold text**');
+        });
+
+        test('should leave italic intact when stripMarkdown is false', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '_italic text_',
+            } as any);
+
+            const result = await generateText('Test prompt', { stripMarkdown: false });
+
+            expect(result).toBe('_italic text_');
+        });
+    });
+
+    describe('stripMarkdown: true', () => {
+        test('should strip code block markers', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '```status```',
+            } as any);
+
+            const result = await generateText('Test prompt', { stripMarkdown: true });
+
+            expect(result).toBe('status');
+        });
+
+        test('should strip fenced code blocks with language', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '```javascript\nconsole.log("hello")\n```',
+            } as any);
+
+            const result = await generateText('Test prompt', { stripMarkdown: true });
+
+            expect(result).toContain('console.log');
+            expect(result).not.toContain('```');
+            expect(result).not.toContain('javascript');
+        });
+
+        test('should strip inline code backticks', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '`inline code`',
+            } as any);
+
+            const result = await generateText('Test prompt', { stripMarkdown: true });
+
+            expect(result).toBe('inline code');
+        });
+
+        test('should strip bold markers', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '**bold text**',
+            } as any);
+
+            const result = await generateText('Test prompt', { stripMarkdown: true });
+
+            expect(result).toBe('bold text');
+        });
+
+        test('should strip italic markers (underscore)', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '_italic text_',
+            } as any);
+
+            const result = await generateText('Test prompt', { stripMarkdown: true });
+
+            expect(result).toBe('italic text');
+        });
+
+        test('should strip italic markers (asterisk)', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '*italic text*',
+            } as any);
+
+            const result = await generateText('Test prompt', { stripMarkdown: true });
+
+            expect(result).toBe('italic text');
+        });
+
+        test('should strip strikethrough markers', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '~~strikethrough~~',
+            } as any);
+
+            const result = await generateText('Test prompt', { stripMarkdown: true });
+
+            expect(result).toBe('strikethrough');
+        });
+
+        test('should strip heading markers', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '## Heading',
+            } as any);
+
+            const result = await generateText('Test prompt', { stripMarkdown: true });
+
+            expect(result).toBe('Heading');
+        });
+
+        test('should strip link formatting but keep text', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '[link text](http://example.com)',
+            } as any);
+
+            const result = await generateText('Test prompt', { stripMarkdown: true });
+
+            expect(result).toBe('link text');
+        });
+
+        test('should handle mixed markdown and strip all', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '**Bold** and _italic_ with `code`',
+            } as any);
+
+            const result = await generateText('Test prompt', { stripMarkdown: true });
+
+            expect(result).toBe('Bold and italic with code');
+        });
+
+        test('should trim result after stripping markdown', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '  ```status```  ',
+            } as any);
+
+            const result = await generateText('Test prompt', { stripMarkdown: true });
+
+            expect(result).toBe('status');
+        });
+
+        test('should return empty string on error with stripMarkdown true', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'error_during_execution',
+                errors:  ['Something went wrong'],
+            } as any);
+
+            const result = await generateText('Test prompt', { stripMarkdown: true });
+
+            expect(result).toBe('');
+        });
+    });
+});
+
 describe.concurrent('generateTextWithSystemPrompt', () => {
     beforeEach(() => {
         // Reset text-generator mocks to call through to real implementations
@@ -572,6 +778,122 @@ describe.concurrent('generateTextWithSystemPrompt', () => {
 
             const result = await promise;
             expect(typeof result).toBe('string');
+        });
+    });
+});
+
+describe.concurrent('generateTextWithSystemPrompt with stripMarkdown option', () => {
+    beforeEach(() => {
+        // Reset text-generator mocks to call through to real implementations
+        mockGenerateText.mockReset();
+        mockGenerateText.mockImplementation(originalGenerateText);
+        mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
+
+        // Set up SDK mock
+        mockUnstableV2Prompt.mockReset();
+    });
+
+    describe('stripMarkdown: false (default)', () => {
+        test('should leave markdown intact when stripMarkdown is not specified', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '```status```',
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User');
+
+            expect(result).toBe('```status```');
+        });
+
+        test('should leave markdown intact when stripMarkdown is false', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '**bold** and `code`',
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User', { stripMarkdown: false });
+
+            expect(result).toBe('**bold** and `code`');
+        });
+    });
+
+    describe('stripMarkdown: true', () => {
+        test('should strip code block markers', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '```status```',
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User', { stripMarkdown: true });
+
+            expect(result).toBe('status');
+        });
+
+        test('should strip inline code backticks', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '`inline code`',
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User', { stripMarkdown: true });
+
+            expect(result).toBe('inline code');
+        });
+
+        test('should strip bold markers', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '**bold text**',
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User', { stripMarkdown: true });
+
+            expect(result).toBe('bold text');
+        });
+
+        test('should strip italic markers', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '_italic text_',
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User', { stripMarkdown: true });
+
+            expect(result).toBe('italic text');
+        });
+
+        test('should handle mixed markdown and strip all', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '**Bold** and _italic_ with `code`',
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User', { stripMarkdown: true });
+
+            expect(result).toBe('Bold and italic with code');
+        });
+
+        test('should trim result after stripping markdown', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'success',
+                result:  '  ```status```  ',
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User', { stripMarkdown: true });
+
+            expect(result).toBe('status');
+        });
+
+        test('should return empty string on error with stripMarkdown true', async () => {
+            mockUnstableV2Prompt.mockResolvedValue({
+                subtype: 'error_during_execution',
+                errors:  ['Something went wrong'],
+            } as any);
+
+            const result = await generateTextWithSystemPrompt('System', 'User', { stripMarkdown: true });
+
+            expect(result).toBe('');
         });
     });
 });

@@ -229,7 +229,7 @@ export function createDynamicStatusGenerator(
                     msg:               'Generating synopsis with Haiku',
                 });
 
-                const text = await generateText(prompt);
+                const text = await generateText(prompt, { stripMarkdown: true });
                 const statusText = _.trim(text.slice(0, MAX_STATUS_LENGTH));
 
                 if(!statusText) {
