@@ -354,10 +354,11 @@ export async function search(
     }
 
     // Format results with 100-char previews and compact timestamps
+    // Use contentPreview with fallback for migration period
     const formatted = _map(items, (item) => {
-        const preview = item.content.length > 100
-            ? `${item.content.slice(0, 100)}...`
-            : item.content;
+        const getPreviewFromContent = () => (item.content.length > 100 ? `${item.content.slice(0, 100)}...` : item.content);
+        const getPreviewFromField = () => (item.contentPreview && item.contentPreview.length >= 100 ? `${item.contentPreview}...` : item.contentPreview);
+        const preview = item.contentPreview ? getPreviewFromField() : getPreviewFromContent();
         const timestamp = formatShortRelativeTime(new Date(item.updatedAt));
         return `${item.path} (${timestamp})\n  ${preview}`;
     });

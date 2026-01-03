@@ -8,7 +8,7 @@ import {
     type MemoryToolItemData,
     type MemoryToolItem
 } from './types';
-import { MemoryToolKeyGenerator } from './key-generator';
+import { MemoryToolKeyGenerator, generateContentPreview } from './key-generator';
 import { ItemNotFoundError, ValidationError, ConflictError } from '../errors';
 
 export interface CreateMemoryToolItemInput {
@@ -39,18 +39,48 @@ export class MemoryToolBackendCore {
         private readonly stripKeys: (item: MemoryToolItem) => MemoryToolItemData
     ) {}
 
+    private createVersionSnapshot(existing: MemoryToolItemData): MemoryToolItem {
+        const versionKeys = MemoryToolKeyGenerator.createVersionKeys(existing.path, existing.version, existing.updatedAt);
+        const existingKeys = MemoryToolKeyGenerator.createKeys(existing.path, existing.createdAt);
+        const existingTagKeys = MemoryToolKeyGenerator.createTagKeys(existing.path, existing.tags, existing.updatedAt);
+
+        return {
+            ...existing,
+            ...versionKeys,
+            GSI1PK: existingKeys.GSI1PK,
+            GSI1SK: existingKeys.GSI1SK,
+            ...(existingTagKeys && { GSI2PK: existingTagKeys.GSI2PK, GSI2SK: existingTagKeys.GSI2SK }),
+        };
+    }
+
+    private buildUpdatedItem(updated: MemoryToolItemData): MemoryToolItem {
+        const keys = MemoryToolKeyGenerator.createKeys(updated.path, updated.updatedAt);
+        const tagKeys = MemoryToolKeyGenerator.createTagKeys(updated.path, updated.tags, updated.updatedAt);
+
+        return {
+            ...updated,
+            ...keys,
+            ...(tagKeys && { GSI2PK: tagKeys.GSI2PK, GSI2SK: tagKeys.GSI2SK }),
+        };
+    }
+
+    private isConditionalCheckFailed(error: unknown): boolean {
+        return Boolean(error && _isObject(error) && 'name' in error && error.name === 'ConditionalCheckFailedException');
+    }
+
     async create(input: CreateMemoryToolItemInput): Promise<MemoryToolItemData> {
         const now = new Date().toISOString();
 
         const itemData = {
-            path:        input.path,
-            content:     input.content,
-            contentType: input.contentType,
-            metadata:    input.metadata ?? {},
-            tags:        input.tags,
-            version:     1,
-            createdAt:   now,
-            updatedAt:   now,
+            path:           input.path,
+            content:        input.content,
+            contentType:    input.contentType,
+            metadata:       input.metadata ?? {},
+            tags:           input.tags,
+            version:        1,
+            createdAt:      now,
+            updatedAt:      now,
+            contentPreview: generateContentPreview(input.content),
         };
 
         const result = memoryToolItemSchema.safeParse(itemData);
@@ -59,7 +89,7 @@ export class MemoryToolBackendCore {
         }
 
         const data = result.data;
-        const keys = MemoryToolKeyGenerator.createKeys(data.path, data.createdAt);
+        const keys = MemoryToolKeyGenerator.createKeys(data.path, data.updatedAt);
 
         // Create GSI2 keys if tags are present
         const tagKeys = MemoryToolKeyGenerator.createTagKeys(data.path, data.tags, data.updatedAt);
@@ -97,26 +127,20 @@ export class MemoryToolBackendCore {
         }
 
         // Save version snapshot before updating
-        const versionKeys = MemoryToolKeyGenerator.createVersionKeys(path, existing.version, existing.updatedAt);
-        const existingKeys = MemoryToolKeyGenerator.createKeys(existing.path, existing.createdAt);
-        const existingTagKeys = MemoryToolKeyGenerator.createTagKeys(existing.path, existing.tags, existing.updatedAt);
-
-        const versionSnapshot: MemoryToolItem = {
-            ...existing,
-            ...versionKeys,
-            GSI1PK: existingKeys.GSI1PK,
-            GSI1SK: existingKeys.GSI1SK,
-            ...(existingTagKeys && { GSI2PK: existingTagKeys.GSI2PK, GSI2SK: existingTagKeys.GSI2SK }),
-        };
-
-        // Save version snapshot
+        const versionSnapshot = this.createVersionSnapshot(existing);
         await this.putItem(versionSnapshot as unknown as Record<string, unknown>);
+
+        // Build updated data with new content preview if content changed
+        const newContentPreview = input.content !== undefined
+            ? generateContentPreview(input.content)
+            : existing.contentPreview;
 
         const updatedData = {
             ...existing,
             ...(input.content !== undefined && { content: input.content }),
             ...(input.metadata !== undefined && { metadata: input.metadata }),
             ...(input.tags !== undefined && { tags: input.tags }),
+            ...(newContentPreview !== undefined && { contentPreview: newContentPreview }),
             version:   existing.version + 1,
             updatedAt: new Date().toISOString(),
         };
@@ -127,16 +151,7 @@ export class MemoryToolBackendCore {
         }
 
         const updated = result.data;
-        const keys = MemoryToolKeyGenerator.createKeys(updated.path, existing.createdAt);
-
-        // Regenerate GSI2 keys with new updatedAt timestamp if tags are present
-        const tagKeys = MemoryToolKeyGenerator.createTagKeys(updated.path, updated.tags, updated.updatedAt);
-
-        const item: MemoryToolItem = {
-            ...updated,
-            ...keys,
-            ...(tagKeys && { GSI2PK: tagKeys.GSI2PK, GSI2SK: tagKeys.GSI2SK }),
-        };
+        const item = this.buildUpdatedItem(updated);
 
         try {
             await this.docClient.send(new PutCommand({
@@ -151,13 +166,9 @@ export class MemoryToolBackendCore {
                 },
             }));
         } catch (error: unknown) {
-            if(error && _isObject(error) && 'name' in error && error.name === 'ConditionalCheckFailedException') {
+            if(this.isConditionalCheckFailed(error)) {
                 const current = await this.get(path);
-                throw new ConflictError(
-                    path,
-                    existing.version,
-                    current?.version ?? -1
-                );
+                throw new ConflictError(path, existing.version, current?.version ?? -1);
             }
             throw error;
         }

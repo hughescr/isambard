@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { MemoryToolKeyGenerator } from '@/storage/memory-tool/key-generator';
+import { repeat as _repeat } from 'lodash';
+import { MemoryToolKeyGenerator, generateContentPreview } from '@/storage/memory-tool/key-generator';
 import type { MemoryPath } from '@/storage/memory-tool/types';
 
 describe.concurrent('MemoryToolKeyGenerator', () => {
@@ -10,11 +11,12 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
 
             const keys = MemoryToolKeyGenerator.createKeys(path, timestamp);
 
+            // Root-level files use the filename as the layer segment since there's no parent directory
             expect(keys).toEqual({
                 PK:     'DIR#/',
                 SK:     'FILE#file.xml',
-                GSI1PK: 'PATH#/file.xml',
-                GSI1SK: 'CREATED#2024-01-15T10:30:00.000Z',
+                GSI1PK: 'LAYER#file.xml',
+                GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
             });
         });
 
@@ -27,8 +29,8 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
             expect(keys).toEqual({
                 PK:     'DIR#/memories/events',
                 SK:     'FILE#party.xml',
-                GSI1PK: 'PATH#/memories/events/party.xml',
-                GSI1SK: 'CREATED#2024-01-15T10:30:00.000Z',
+                GSI1PK: 'LAYER#memories',
+                GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
             });
         });
 
@@ -41,26 +43,68 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
             expect(keys).toEqual({
                 PK:     'DIR#/configs',
                 SK:     'FILE#settings.xml',
-                GSI1PK: 'PATH#/configs/settings.xml',
-                GSI1SK: 'CREATED#2024-01-15T10:30:00.000Z',
+                GSI1PK: 'LAYER#configs',
+                GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
+            });
+        });
+
+        test('should create keys for identity layer path', () => {
+            const path = '/identity/core-values.md' as MemoryPath;
+            const timestamp = '2024-01-15T10:30:00.000Z';
+
+            const keys = MemoryToolKeyGenerator.createKeys(path, timestamp);
+
+            expect(keys).toEqual({
+                PK:     'DIR#/identity',
+                SK:     'FILE#core-values.md',
+                GSI1PK: 'LAYER#identity',
+                GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
+            });
+        });
+
+        test('should create keys for state layer path', () => {
+            const path = '/state/current.md' as MemoryPath;
+            const timestamp = '2024-01-15T10:30:00.000Z';
+
+            const keys = MemoryToolKeyGenerator.createKeys(path, timestamp);
+
+            expect(keys).toEqual({
+                PK:     'DIR#/state',
+                SK:     'FILE#current.md',
+                GSI1PK: 'LAYER#state',
+                GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
+            });
+        });
+
+        test('should create keys for events layer path', () => {
+            const path = '/events/meeting.md' as MemoryPath;
+            const timestamp = '2024-01-15T10:30:00.000Z';
+
+            const keys = MemoryToolKeyGenerator.createKeys(path, timestamp);
+
+            expect(keys).toEqual({
+                PK:     'DIR#/events',
+                SK:     'FILE#meeting.md',
+                GSI1PK: 'LAYER#events',
+                GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
             });
         });
 
         test('should auto-generate timestamp if not provided', () => {
-            const path = '/file.xml' as MemoryPath;
+            const path = '/identity/file.xml' as MemoryPath;
             const beforeCall = new Date().toISOString();
 
             const keys = MemoryToolKeyGenerator.createKeys(path);
 
             const afterCall = new Date().toISOString();
-            expect(keys.PK).toBe('DIR#/');
+            expect(keys.PK).toBe('DIR#/identity');
             expect(keys.SK).toBe('FILE#file.xml');
-            expect(keys.GSI1PK).toBe('PATH#/file.xml');
-            expect(keys.GSI1SK).toMatch(/^CREATED#\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+            expect(keys.GSI1PK).toBe('LAYER#identity');
+            expect(keys.GSI1SK).toMatch(/^UPDATED#\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 
             // Extract timestamp from GSI1SK
             // eslint-disable-next-line lodash/prefer-lodash-method -- String.replace is simpler for single replacement
-            const timestamp = keys.GSI1SK.replace('CREATED#', '');
+            const timestamp = keys.GSI1SK.replace('UPDATED#', '');
             expect(timestamp >= beforeCall).toBe(true);
             expect(timestamp <= afterCall).toBe(true);
         });
@@ -74,8 +118,8 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
             expect(keys).toEqual({
                 PK:     'DIR#/docs',
                 SK:     'FILE#my-file_v2.0.xml',
-                GSI1PK: 'PATH#/docs/my-file_v2.0.xml',
-                GSI1SK: 'CREATED#2024-01-15T10:30:00.000Z',
+                GSI1PK: 'LAYER#docs',
+                GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
             });
         });
 
@@ -88,8 +132,8 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
             expect(keys).toEqual({
                 PK:     'DIR#/a/b/c/d/e',
                 SK:     'FILE#file.xml',
-                GSI1PK: 'PATH#/a/b/c/d/e/file.xml',
-                GSI1SK: 'CREATED#2024-01-15T10:30:00.000Z',
+                GSI1PK: 'LAYER#a',
+                GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
             });
         });
     });
@@ -350,6 +394,40 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
 
             expect(keys.PK).toBe('DIR#/test');
             expect(keys.SK).toBe('VERSION#999#2024-01-15T10:30:00.000Z');
+        });
+    });
+
+    describe('generateContentPreview', () => {
+        test('should return full content when under 100 characters', () => {
+            const content = 'Short content';
+            const preview = generateContentPreview(content);
+            expect(preview).toBe('Short content');
+        });
+
+        test('should return full content when exactly 100 characters', () => {
+            const content = _repeat('a', 100);
+            const preview = generateContentPreview(content);
+            expect(preview).toBe(content);
+            expect(preview).toHaveLength(100);
+        });
+
+        test('should truncate content when over 100 characters', () => {
+            const content = _repeat('a', 150);
+            const preview = generateContentPreview(content);
+            expect(preview).toBe(_repeat('a', 100));
+            expect(preview).toHaveLength(100);
+        });
+
+        test('should handle empty string', () => {
+            const content = '';
+            const preview = generateContentPreview(content);
+            expect(preview).toBe('');
+        });
+
+        test('should truncate at character boundary, not word boundary', () => {
+            const content = _repeat('The quick brown fox jumps over the lazy dog. ', 3); // ~135 chars
+            const preview = generateContentPreview(content);
+            expect(preview).toHaveLength(100);
         });
     });
 });

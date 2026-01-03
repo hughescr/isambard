@@ -10,14 +10,24 @@ export interface MemoryToolKeys {
     PK:      string
     /** Sort Key: FILE#{filename} - identifies file within directory */
     SK:      string
-    /** GSI1 Primary Key: PATH#{fullPath} - allows lookup by full path */
+    /** GSI1 Primary Key: LAYER#{layer} - allows lookup by layer */
     GSI1PK:  string
-    /** GSI1 Sort Key: CREATED#{timestamp} - time-based sorting */
+    /** GSI1 Sort Key: UPDATED#{timestamp} - time-based sorting within layer */
     GSI1SK:  string
     /** GSI2 Primary Key: TAG#{tag} - allows lookup by tag (optional) */
     GSI2PK?: string
     /** GSI2 Sort Key: LAYER#{layer}#UPDATED#{timestamp} - tag queries with layer and time filtering (optional) */
     GSI2SK?: string
+}
+
+/**
+ * Generates a content preview for DynamoDB storage.
+ * Truncates content to 100 characters for efficient GSI2 projection.
+ * @param content - The full content string
+ * @returns Content truncated to 100 characters
+ */
+export function generateContentPreview(content: string): string {
+    return content.length > 100 ? content.slice(0, 100) : content;
 }
 
 /**
@@ -33,12 +43,12 @@ export class MemoryToolKeyGenerator {
    *
    * @example
    * ```ts
-   * const keys = MemoryToolKeyGenerator.createKeys('/memories/events/party.xml' as MemoryPath);
+   * const keys = MemoryToolKeyGenerator.createKeys('/identity/core-values.md' as MemoryPath);
    * // {
-   * //   PK: 'DIR#/memories/events',
-   * //   SK: 'FILE#party.xml',
-   * //   GSI1PK: 'PATH#/memories/events/party.xml',
-   * //   GSI1SK: 'CREATED#2024-01-15T10:30:00.000Z'
+   * //   PK: 'DIR#/identity',
+   * //   SK: 'FILE#core-values.md',
+   * //   GSI1PK: 'LAYER#identity',
+   * //   GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z'
    * // }
    * ```
    */
@@ -49,11 +59,16 @@ export class MemoryToolKeyGenerator {
 
         const ts = timestamp ?? new Date().toISOString();
 
+        // Extract layer from path (identity, state, events) or use first path segment as fallback
+        const layer = extractLayerFromPath(path);
+        // Stryker disable next-line StringLiteral: Empty string and 'unknown' are functionally equivalent here for edge case of root path
+        const layerStr = layer ?? _split(path, '/')[1] ?? 'unknown';
+
         return {
             PK:     `DIR#${parentPath}`,
             SK:     `FILE#${filename}`,
-            GSI1PK: `PATH#${path}`,
-            GSI1SK: `CREATED#${ts}`,
+            GSI1PK: `LAYER#${layerStr}`,
+            GSI1SK: `UPDATED#${ts}`,
         };
     }
 

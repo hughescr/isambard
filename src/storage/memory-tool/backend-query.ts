@@ -1,4 +1,4 @@
-import { DynamoDBDocumentClient, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { map as _map, sortBy as _sortBy, takeRight as _takeRight } from 'lodash';
 import {
     type MemoryToolItemData,
@@ -127,34 +127,29 @@ export class MemoryToolBackendQuery {
         layer?: LayerName,
         options?: { limit?: number }
     ): Promise<MemoryToolItemData[]> {
-        const baseFilter = '(createdAt BETWEEN :start AND :end) OR (updatedAt BETWEEN :start AND :end)';
-        const scanParams: Record<string, unknown> = {
-            FilterExpression:          layer ? `${baseFilter} AND begins_with(#path, :layerPath)` : baseFilter,
-            ExpressionAttributeValues: {
-                ':start': startTime,
-                ':end':   endTime,
-            },
-        };
+        // Query GSI1 by layer with time range
+        // GSI1PK = LAYER#{layer} AND GSI1SK BETWEEN UPDATED#{start} AND UPDATED#{end}
+        const layers = layer ? [layer] : ['identity', 'state', 'events'] as const;
+        const allItems: MemoryToolItemData[] = [];
 
-        // Add layer filter parameters if provided
-        if(layer) {
-            scanParams.ExpressionAttributeNames = { '#path': 'path' };
-            (scanParams.ExpressionAttributeValues as Record<string, string>)[':layerPath'] = `/${layer}/`;
+        for(const l of layers) {
+            const result = await this.docClient.send(new QueryCommand({
+                TableName:                 this.tableName,
+                IndexName:                 'GSI1',
+                KeyConditionExpression:    'GSI1PK = :pk AND GSI1SK BETWEEN :start AND :end',
+                ExpressionAttributeValues: {
+                    ':pk':    `LAYER#${l}`,
+                    ':start': `UPDATED#${startTime}`,
+                    ':end':   `UPDATED#${endTime}`,
+                },
+            }));
+            allItems.push(..._map((result.Items ?? []) as MemoryToolItem[], item => this.stripKeys(item)));
         }
 
-        const result = await this.docClient.send(
-            new ScanCommand({
-                TableName: this.tableName,
-                ...scanParams,
-            })
-        );
-
-        let items = _map((result.Items ?? []) as MemoryToolItem[], item => this.stripKeys(item));
-
         // Sort by updatedAt ascending (oldest first, newest last)
-        items = _sortBy(items, ['updatedAt']);
+        let items = _sortBy(allItems, ['updatedAt']);
 
-        // Apply limit after sorting - keep newest N items (Scan's Limit applies before FilterExpression)
+        // Apply limit after sorting - keep newest N items
         // Stryker disable next-line all: Need exact > comparison and both conditions checked
         if(options?.limit && items.length > options.limit) {
             items = _takeRight(items, options.limit);

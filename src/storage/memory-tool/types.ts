@@ -36,14 +36,15 @@ export type ContentType = z.infer<typeof contentTypeSchema>;
  * Represents a stored piece of content in the agent's memory system.
  */
 export const memoryToolItemSchema = z.object({
-    path:        memoryPathSchema,
-    content:     z.string().min(1).max(300000), // 300KB limit for DynamoDB
-    contentType: contentTypeSchema,
-    metadata:    z.record(z.string(), z.unknown()).default({}),
-    version:     z.number().int().positive(),
-    createdAt:   z.string().datetime(),
-    updatedAt:   z.string().datetime(),
-    tags:        z.array(z.string()).optional(),
+    path:           memoryPathSchema,
+    content:        z.string().min(1).max(300000), // 300KB limit for DynamoDB
+    contentType:    contentTypeSchema,
+    metadata:       z.record(z.string(), z.unknown()).default({}),
+    version:        z.number().int().positive(),
+    createdAt:      z.string().datetime(),
+    updatedAt:      z.string().datetime(),
+    tags:           z.array(z.string()).optional(),
+    contentPreview: z.string().max(100).optional(), // First 100 chars of content for GSI2 projection
 });
 
 export type MemoryToolItemData = z.infer<typeof memoryToolItemSchema>;
@@ -54,8 +55,8 @@ export type MemoryToolItemData = z.infer<typeof memoryToolItemSchema>;
 export interface MemoryToolItem extends MemoryToolItemData {
     PK:      string   // DIR#{parentPath} - groups files by directory
     SK:      string   // FILE#{filename} - identifies file within directory
-    GSI1PK:  string   // PATH#{fullPath} - allows lookup by full path
-    GSI1SK:  string   // CREATED#{timestamp} - time-based sorting
+    GSI1PK:  string   // LAYER#{layer} - allows lookup by layer
+    GSI1SK:  string   // UPDATED#{timestamp} - time-based sorting within layer
     GSI2PK?: string   // TAG#{tag} - allows lookup by tag (optional)
     GSI2SK?: string   // LAYER#{layer}#UPDATED#{timestamp} - tag queries with layer and time filtering (optional)
 }

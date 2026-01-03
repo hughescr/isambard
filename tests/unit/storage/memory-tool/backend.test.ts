@@ -152,8 +152,8 @@ describe('MemoryToolBackend', () => {
             const item = calls[0].args[0].input.Item as MemoryToolItem;
             expect(item.PK).toBe('DIR#/test');
             expect(item.SK).toBe('FILE#file.md');
-            expect(item.GSI1PK).toBe('PATH#/test/file.md');
-            expect(item.GSI1SK).toContain('CREATED#');
+            expect(item.GSI1PK).toBe('LAYER#test');
+            expect(item.GSI1SK).toContain('UPDATED#');
         });
 
         test('should create GSI2 keys when tags are provided', async () => {
@@ -197,8 +197,8 @@ describe('MemoryToolBackend', () => {
             const mockItem: MemoryToolItem = {
                 PK:          'DIR#/test',
                 SK:          'FILE#file.md',
-                GSI1PK:      'PATH#/test/file.md',
-                GSI1SK:      'CREATED#2024-01-01T00:00:00.000Z',
+                GSI1PK:      'LAYER#test',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
                 path:        testPath,
                 content:     'Test content',
                 contentType: 'text/markdown',
@@ -241,8 +241,8 @@ describe('MemoryToolBackend', () => {
             const mockItem: MemoryToolItem = {
                 PK:          'DIR#/test',
                 SK:          'FILE#file.md',
-                GSI1PK:      'PATH#/test/file.md',
-                GSI1SK:      'CREATED#2024-01-01T00:00:00.000Z',
+                GSI1PK:      'LAYER#test',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
                 path:        testPath,
                 content:     'Test',
                 contentType: 'text/plain',
@@ -267,8 +267,8 @@ describe('MemoryToolBackend', () => {
         const existingItem: MemoryToolItem = {
             PK:          'DIR#/test',
             SK:          'FILE#file.md',
-            GSI1PK:      'PATH#/test/file.md',
-            GSI1SK:      'CREATED#2024-01-01T00:00:00.000Z',
+            GSI1PK:      'LAYER#test',
+            GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
             path:        testPath,
             content:     'Original content',
             contentType: 'text/markdown',
