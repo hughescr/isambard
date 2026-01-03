@@ -1,3 +1,12 @@
+import {
+    differenceInDays,
+    differenceInHours,
+    differenceInMinutes,
+    differenceInMonths,
+    differenceInSeconds,
+    differenceInWeeks,
+    differenceInYears
+} from 'date-fns';
 import _ from 'lodash';
 import { z } from 'zod';
 
@@ -33,54 +42,45 @@ export const timeContextSchema = z.object({
 });
 export type TimeContext = z.infer<typeof timeContextSchema>;
 
-// Time constants in milliseconds
-const MS_PER_SECOND = 1000;
-const MS_PER_MINUTE = 60 * MS_PER_SECOND;
-const MS_PER_HOUR = 60 * MS_PER_MINUTE;
-const MS_PER_DAY = 24 * MS_PER_HOUR;
-const MS_PER_WEEK = 7 * MS_PER_DAY;
-const MS_PER_MONTH = 30 * MS_PER_DAY;
-const MS_PER_YEAR = 365 * MS_PER_DAY;
-
 /**
- * Formats a date as human-readable relative time.
+ * Formats a date as human-readable relative time using date-fns.
  * @param date - The date to format
  * @param now - Optional reference time (defaults to current time)
  * @returns Human-readable string like "just now", "2 hours ago", "3 days ago"
  */
 export function formatRelativeTime(date: Date, now: Date = new Date()): string {
-    const diffMs = now.getTime() - date.getTime();
+    const seconds = differenceInSeconds(now, date);
 
-    if(diffMs < MS_PER_MINUTE) {
+    if(seconds < 60) {
         return 'just now';
     }
 
-    if(diffMs < MS_PER_HOUR) {
-        const minutes = Math.floor(diffMs / MS_PER_MINUTE);
+    const minutes = differenceInMinutes(now, date);
+    if(minutes < 60) {
         return minutes === 1 ? '1 minute ago' : `${minutes} minutes ago`;
     }
 
-    if(diffMs < MS_PER_DAY) {
-        const hours = Math.floor(diffMs / MS_PER_HOUR);
+    const hours = differenceInHours(now, date);
+    if(hours < 24) {
         return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
     }
 
-    if(diffMs < MS_PER_WEEK) {
-        const days = Math.floor(diffMs / MS_PER_DAY);
+    const days = differenceInDays(now, date);
+    if(days < 7) {
         return days === 1 ? '1 day ago' : `${days} days ago`;
     }
 
-    if(diffMs < MS_PER_MONTH) {
-        const weeks = Math.floor(diffMs / MS_PER_WEEK);
+    const weeks = differenceInWeeks(now, date);
+    if(days < 30) {
         return weeks === 1 ? '1 week ago' : `${weeks} weeks ago`;
     }
 
-    if(diffMs < MS_PER_YEAR) {
-        const months = Math.floor(diffMs / MS_PER_MONTH);
+    const months = differenceInMonths(now, date);
+    if(days < 365) {
         return months === 1 ? '1 month ago' : `${months} months ago`;
     }
 
-    const years = Math.floor(diffMs / MS_PER_YEAR);
+    const years = differenceInYears(now, date);
     return years === 1 ? '1 year ago' : `${years} years ago`;
 }
 
@@ -187,43 +187,43 @@ export function formatMemoryTimestamp(updatedAt: string, now: Date = new Date())
 }
 
 /**
- * Formats a date as short relative time for search results.
+ * Formats a date as short relative time for search results using date-fns.
  * @param date - The date to format
  * @param now - Optional reference time (defaults to current time)
  * @returns Compact form like "2h ago", "3d ago", "2w ago"
  */
 export function formatShortRelativeTime(date: Date, now: Date = new Date()): string {
-    const diffMs = now.getTime() - date.getTime();
+    const seconds = differenceInSeconds(now, date);
 
-    if(diffMs < MS_PER_MINUTE) {
+    if(seconds < 60) {
         return 'now';
     }
 
-    if(diffMs < MS_PER_HOUR) {
-        const minutes = Math.floor(diffMs / MS_PER_MINUTE);
+    const minutes = differenceInMinutes(now, date);
+    if(minutes < 60) {
         return `${minutes}m ago`;
     }
 
-    if(diffMs < MS_PER_DAY) {
-        const hours = Math.floor(diffMs / MS_PER_HOUR);
+    const hours = differenceInHours(now, date);
+    if(hours < 24) {
         return `${hours}h ago`;
     }
 
-    if(diffMs < MS_PER_WEEK) {
-        const days = Math.floor(diffMs / MS_PER_DAY);
+    const days = differenceInDays(now, date);
+    if(days < 7) {
         return `${days}d ago`;
     }
 
-    if(diffMs < MS_PER_MONTH) {
-        const weeks = Math.floor(diffMs / MS_PER_WEEK);
+    const weeks = differenceInWeeks(now, date);
+    if(days < 30) {
         return `${weeks}w ago`;
     }
 
-    if(diffMs < MS_PER_YEAR) {
-        const months = Math.floor(diffMs / MS_PER_MONTH);
+    const months = differenceInMonths(now, date);
+    if(days < 365) {
         return `${months}mo ago`;
     }
 
-    const years = Math.floor(diffMs / MS_PER_YEAR);
+    const years = differenceInYears(now, date);
     return `${years}y ago`;
 }

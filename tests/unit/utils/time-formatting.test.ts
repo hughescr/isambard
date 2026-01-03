@@ -92,13 +92,10 @@ describe.concurrent('formatRelativeTime', () => {
             expect(formatRelativeTime(date, baseDate)).toBe('3 weeks ago');
         });
 
-        test('should return "4 weeks ago" at exactly 30 days (MS_PER_MONTH boundary)', () => {
-            // At exactly MS_PER_MONTH, the condition `diffMs < MS_PER_MONTH` is false
-            // so it falls through to the months calculation, but 30 days / 7 days = 4 weeks
-            const MS_PER_DAY = 24 * 60 * 60 * 1000;
-            const MS_PER_MONTH = 30 * MS_PER_DAY;
-            const date = new Date(baseDate.getTime() - MS_PER_MONTH);
-            expect(formatRelativeTime(date, baseDate)).toBe('1 month ago');
+        test('should return "4 weeks ago" for 28 days (just before month boundary)', () => {
+            // 28 days = 4 weeks, just before the 30-day month boundary
+            const date = new Date('2024-12-18T12:00:00.000Z'); // 28 days before Jan 15
+            expect(formatRelativeTime(date, baseDate)).toBe('4 weeks ago');
         });
     });
 
@@ -113,29 +110,22 @@ describe.concurrent('formatRelativeTime', () => {
             expect(formatRelativeTime(date, baseDate)).toBe('2 months ago');
         });
 
-        test('should return "11 months ago" for ~330 days', () => {
+        test('should return "11 months ago" for 11 calendar months', () => {
+            // 11 calendar months before Jan 15, 2025 = Feb 15, 2024
             const date = new Date('2024-02-15T12:00:00.000Z');
             expect(formatRelativeTime(date, baseDate)).toBe('11 months ago');
-        });
-
-        test('should return "12 months ago" at exactly 360 days (boundary before 1 year)', () => {
-            // 360 days = 12 months (30 days each), just before 365 days
-            const date = new Date(baseDate.getTime() - 360 * 24 * 60 * 60 * 1000);
-            expect(formatRelativeTime(date, baseDate)).toBe('12 months ago');
         });
     });
 
     describe('years (1+ years)', () => {
-        test('should return "1 year ago" at exactly 365 days (MS_PER_YEAR boundary)', () => {
-            // At exactly MS_PER_YEAR, the condition `diffMs < MS_PER_YEAR` is false
-            // so it falls through to the years calculation: 365 / 365 = 1 year
-            const MS_PER_DAY = 24 * 60 * 60 * 1000;
-            const MS_PER_YEAR = 365 * MS_PER_DAY;
-            const date = new Date(baseDate.getTime() - MS_PER_YEAR);
+        test('should return "1 year ago" for 1 calendar year', () => {
+            // 1 calendar year before Jan 15, 2025 = Jan 15, 2024
+            const date = new Date('2024-01-15T12:00:00.000Z');
             expect(formatRelativeTime(date, baseDate)).toBe('1 year ago');
         });
 
-        test('should return "2 years ago" for 2 years', () => {
+        test('should return "2 years ago" for 2 calendar years', () => {
+            // 2 calendar years before Jan 15, 2025 = Jan 15, 2023
             const date = new Date('2023-01-15T12:00:00.000Z');
             expect(formatRelativeTime(date, baseDate)).toBe('2 years ago');
         });
@@ -244,13 +234,10 @@ describe('formatShortRelativeTime', () => {
             expect(formatShortRelativeTime(date, baseDate)).toBe('3w ago');
         });
 
-        test('should return "4w ago" at exactly 30 days (MS_PER_MONTH boundary)', () => {
-            // At exactly MS_PER_MONTH, the condition `diffMs < MS_PER_MONTH` is false
-            // so it falls through to the months calculation: 30 / 30 = 1 month
-            const MS_PER_DAY = 24 * 60 * 60 * 1000;
-            const MS_PER_MONTH = 30 * MS_PER_DAY;
-            const date = new Date(baseDate.getTime() - MS_PER_MONTH);
-            expect(formatShortRelativeTime(date, baseDate)).toBe('1mo ago');
+        test('should return "4w ago" for 28 days (just before month boundary)', () => {
+            // 28 days = 4 weeks, just before the 30-day month boundary
+            const date = new Date('2024-12-18T12:00:00.000Z'); // 28 days before Jan 15
+            expect(formatShortRelativeTime(date, baseDate)).toBe('4w ago');
         });
     });
 
@@ -265,24 +252,22 @@ describe('formatShortRelativeTime', () => {
             expect(formatShortRelativeTime(date, baseDate)).toBe('6mo ago');
         });
 
-        test('should return "12mo ago" at exactly 360 days (boundary before 1 year)', () => {
-            // 360 days = 12 months (30 days each), just before 365 days
-            const date = new Date(baseDate.getTime() - 360 * 24 * 60 * 60 * 1000);
-            expect(formatShortRelativeTime(date, baseDate)).toBe('12mo ago');
+        test('should return "11mo ago" for 11 calendar months', () => {
+            // 11 calendar months before Jan 15, 2025 = Feb 15, 2024
+            const date = new Date('2024-02-15T12:00:00.000Z');
+            expect(formatShortRelativeTime(date, baseDate)).toBe('11mo ago');
         });
     });
 
     describe('years', () => {
-        test('should return "1y ago" at exactly 365 days (MS_PER_YEAR boundary)', () => {
-            // At exactly MS_PER_YEAR, the condition `diffMs < MS_PER_YEAR` is false
-            // so it falls through to the years calculation: 365 / 365 = 1 year
-            const MS_PER_DAY = 24 * 60 * 60 * 1000;
-            const MS_PER_YEAR = 365 * MS_PER_DAY;
-            const date = new Date(baseDate.getTime() - MS_PER_YEAR);
+        test('should return "1y ago" for 1 calendar year', () => {
+            // 1 calendar year before Jan 15, 2025 = Jan 15, 2024
+            const date = new Date('2024-01-15T12:00:00.000Z');
             expect(formatShortRelativeTime(date, baseDate)).toBe('1y ago');
         });
 
-        test('should return "2y ago" for 2 years', () => {
+        test('should return "2y ago" for 2 calendar years', () => {
+            // 2 calendar years before Jan 15, 2025 = Jan 15, 2023
             const date = new Date('2023-01-15T12:00:00.000Z');
             expect(formatShortRelativeTime(date, baseDate)).toBe('2y ago');
         });

@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
 import _ from 'lodash';
-import { createMessageSummarizer, createSemaphore } from '@/integrations/discord/message-history/summarizer';
+import { createMessageSummarizer } from '@/integrations/discord/message-history/summarizer';
 import type { DiscordSearchResult } from '@/integrations/discord/message-history/types';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
 import { mockGenerateText } from '../../../../setup';
@@ -422,9 +422,9 @@ describe.concurrent('createMessageSummarizer', () => {
             expect(Math.max(...concurrencySnapshots)).toBeLessThanOrEqual(3);
         });
 
-        test('should increment semaphore count when acquiring for queued task', async () => {
-            // This test verifies that current++ in release() works correctly
-            // when processing the next queued task
+        test('should process all queued tasks even with low concurrency limit', async () => {
+            // This test verifies that all queued tasks eventually complete
+            // when concurrency limit is lower than number of messages
             const messages = _.times(6, i =>
                 createMockSearchResult({ id: `10000000000000000${i}` })
             );
@@ -432,11 +432,9 @@ describe.concurrent('createMessageSummarizer', () => {
             const deferreds: ((value: string) => void)[] = [];
             let peakConcurrency = 0;
             let currentConcurrent = 0;
-            let tasksStarted = 0;
 
             mockGenerateText.mockImplementation(() => {
                 currentConcurrent++;
-                tasksStarted++;
                 peakConcurrency = Math.max(peakConcurrency, currentConcurrent);
                 return new Promise<string>((resolve) => {
                     deferreds.push((value: string) => {
@@ -452,101 +450,89 @@ describe.concurrent('createMessageSummarizer', () => {
 
             const resultPromise = summarizer.summarizeMessages(messages);
 
-            // Wait for tasks to be queued
+            // Wait for initial tasks to be queued
             await new Promise(resolve => queueMicrotask(resolve));
             await new Promise(resolve => queueMicrotask(resolve));
 
-            // Resolve all pending promises
-            while(deferreds.length > 0) {
-                const resolver = deferreds.shift();
-                resolver?.('Summary');
+            // Resolve all pending promises (this drains the queue)
+            // p-limit uses Promise.resolve().then() for scheduling, so we need multiple microtask cycles
+            let iterations = 0;
+            const maxIterations = 100; // Safety limit
+            while(iterations < maxIterations) {
+                iterations++;
+                if(deferreds.length > 0) {
+                    const resolver = deferreds.shift();
+                    resolver?.('Summary');
+                }
                 await new Promise(resolve => queueMicrotask(resolve));
+                // Check if all 6 messages have been processed
+                if(mockGenerateText.mock.calls.length >= 6 && deferreds.length === 0) {
+                    break;
+                }
             }
 
-            await resultPromise;
+            const result = await resultPromise;
 
-            // All 6 tasks should have started (meaning queued tasks were properly acquired)
-            expect(tasksStarted).toBe(6);
-            // Peak should be exactly 2 (the limit)
+            // All 6 tasks should have completed
+            expect(result).toHaveLength(6);
+            // Peak should be at most 2 (the limit)
             expect(peakConcurrency).toBeLessThanOrEqual(2);
         });
 
-        test('should respect maxConcurrent limit throughout entire batch (verifies current-- works)', async () => {
-            // This test catches the current-- -> current++ mutation
-            //
-            // The semaphore internal counter is not directly observable. However, we can
-            // detect the mutant by checking that after ALL tasks complete, the concurrency
-            // counter returns to 0, which would only happen if current-- worked correctly.
-            //
-            // With correct current--: After last task, release() decrements to 0
-            // With mutant current++: After last task, release() increments to higher value
-            //
-            // We observe this indirectly: if concurrency doesn't return to 0, something is wrong
-            // Additionally, we verify no more than maxConcurrent snapshots show high values
+        test('should respect maxConcurrent limit throughout entire batch', async () => {
+            // This test verifies that concurrency never exceeds the limit
+            // by tracking concurrent calls during the entire batch
 
-            const messages = _.times(6, i =>
+            const messages = _.times(10, i =>
                 createMockSearchResult({ id: `10000000000000000${i}` })
             );
 
-            // Track actual concurrent executions with controlled resolution
-            const resolvers: ((value: string) => void)[] = [];
+            const deferreds: ((value: string) => void)[] = [];
             let activeCalls = 0;
             let maxActiveCalls = 0;
+            const concurrencySnapshots: number[] = [];
 
             mockGenerateText.mockImplementation(() => {
                 activeCalls++;
+                concurrencySnapshots.push(activeCalls);
                 maxActiveCalls = Math.max(maxActiveCalls, activeCalls);
                 return new Promise<string>((resolve) => {
-                    resolvers.push((value: string) => {
+                    deferreds.push((value: string) => {
                         activeCalls--;
                         resolve(value);
                     });
                 });
             });
 
-            const summarizer = createMessageSummarizer({ maxConcurrent: 2 });
+            const summarizer = createMessageSummarizer({ maxConcurrent: 3 });
             const resultPromise = summarizer.summarizeMessages(messages);
 
-            // Wait for initial tasks to start (use microtasks, not setTimeout for speed)
+            // Wait for initial tasks to be queued
             await new Promise(resolve => queueMicrotask(resolve));
             await new Promise(resolve => queueMicrotask(resolve));
 
-            // Initially, exactly maxConcurrent (2) should be running
-            expect(activeCalls).toBe(2);
-            expect(resolvers.length).toBe(2);
-
-            // Complete first two tasks - this should allow next two to start
-            const resolver1 = resolvers.shift()!;
-            const resolver2 = resolvers.shift()!;
-            resolver1('Summary 1');
-            resolver2('Summary 2');
-
-            // Wait for queued tasks to start
-            await new Promise(resolve => queueMicrotask(resolve));
-            await new Promise(resolve => queueMicrotask(resolve));
-
-            // Should still have exactly 2 active (next batch started)
-            expect(activeCalls).toBe(2);
-            expect(resolvers.length).toBe(2);
-
-            // Complete remaining tasks
-            while(resolvers.length > 0) {
-                const resolver = resolvers.shift()!;
-                resolver('Summary');
-                await new Promise(resolve => queueMicrotask(resolve));
+            // Resolve all pending promises (this drains the queue)
+            while(deferreds.length > 0) {
+                const resolver = deferreds.shift();
+                resolver?.('Summary');
                 await new Promise(resolve => queueMicrotask(resolve));
             }
 
-            await resultPromise;
+            const result = await resultPromise;
 
             // After all tasks complete, active should be 0
             expect(activeCalls).toBe(0);
 
             // Max concurrent should never exceed the limit
-            expect(maxActiveCalls).toBeLessThanOrEqual(2);
+            expect(maxActiveCalls).toBeLessThanOrEqual(3);
+
+            // All snapshots should be within limit
+            for(const snapshot of concurrencySnapshots) {
+                expect(snapshot).toBeLessThanOrEqual(3);
+            }
 
             // All messages processed
-            expect(mockGenerateText).toHaveBeenCalledTimes(6);
+            expect(result).toHaveLength(10);
         });
 
         test('should release semaphore slot on error', async () => {
@@ -632,59 +618,5 @@ describe.concurrent('createMessageSummarizer', () => {
             expect(result[0].author).toBe('actual_username');
             expect(result[0].author).not.toBe('Display Name');
         });
-    });
-});
-
-describe.concurrent('createSemaphore', () => {
-    test('should allow acquire after release frees a slot (verifies current-- works)', async () => {
-        // This test directly verifies the semaphore's current-- behavior
-        // If current-- is mutated to current++, the second acquire will never complete
-        // because the internal counter will be 2 instead of 0 after release
-        //
-        // Scenario:
-        // 1. maxConcurrent = 1
-        // 2. First acquire: current goes 0→1, succeeds
-        // 3. Release: current goes 1→0 (or 1→2 with mutant)
-        // 4. Second acquire: checks if current < maxConcurrent
-        //    - With correct code: 0 < 1 is true → succeeds immediately
-        //    - With mutant: 2 < 1 is false → queues forever, test times out
-
-        const semaphore = createSemaphore(1);
-
-        // First acquire succeeds immediately
-        await semaphore.acquire();
-
-        // Release the slot - this is where current-- happens
-        semaphore.release();
-
-        // Second acquire should succeed immediately if current-- worked correctly
-        // If current-- was mutated to current++, this promise will never resolve
-        // and the test will timeout (Stryker uses a 5ms timeout)
-        await semaphore.acquire();
-
-        // If we get here, current-- worked correctly
-        expect(true).toBe(true);
-    });
-
-    test('should allow new tasks after batch completes (verifies current-- works)', async () => {
-        // More comprehensive test: run a batch of tasks, then verify new tasks can acquire
-        const semaphore = createSemaphore(2);
-
-        // Acquire both slots
-        await semaphore.acquire();
-        await semaphore.acquire();
-
-        // Release both slots - each release calls current--
-        semaphore.release();
-        semaphore.release();
-
-        // Now try to acquire again - should work if current-- worked
-        // With mutant (current++ instead of current--), internal counter would be 4
-        // and these acquires would queue forever
-        await semaphore.acquire();
-        await semaphore.acquire();
-
-        // If we get here, current-- worked correctly
-        expect(true).toBe(true);
     });
 });

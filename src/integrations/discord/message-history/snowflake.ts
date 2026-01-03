@@ -1,11 +1,13 @@
 import { z } from 'zod';
+import { DiscordSnowflake } from '@sapphire/snowflake';
 import { DiscordIntegrationError } from '@/integrations/discord/errors';
 
 /**
  * Discord epoch: January 1, 2015 00:00:00 UTC in milliseconds.
  * This is the base timestamp used for Discord snowflake ID generation.
+ * Re-exported from @sapphire/snowflake for backward compatibility.
  */
-export const DISCORD_EPOCH = 1420070400000n;
+export const DISCORD_EPOCH = DiscordSnowflake.epoch;
 
 /**
  * Zod schema for validating Discord snowflake strings.
@@ -53,16 +55,10 @@ export function snowflakeToTimestamp(snowflake: string): Date {
         throw new InvalidSnowflakeError(snowflake);
     }
 
-    const snowflakeBigInt = BigInt(snowflake);
+    // DiscordSnowflake.timestampFrom returns Unix timestamp in milliseconds as a number
+    const unixTimestamp = DiscordSnowflake.timestampFrom(snowflake);
 
-    // Extract timestamp bits by right-shifting 22 bits
-    // eslint-disable-next-line no-bitwise -- Bitwise operations are required for Discord snowflake decoding
-    const timestampOffset = snowflakeBigInt >> 22n;
-
-    // Add Discord epoch to get actual Unix timestamp
-    const unixTimestamp = DISCORD_EPOCH + timestampOffset;
-
-    return new Date(Number(unixTimestamp));
+    return new Date(unixTimestamp);
 }
 
 /**
@@ -92,9 +88,13 @@ export function timestampToSnowflake(date: Date): string {
         throw new Error('Date is before Discord epoch (January 1, 2015)');
     }
 
-    // Shift left 22 bits to create snowflake (with 0s for worker, process, sequence bits)
-    // eslint-disable-next-line no-bitwise -- Bitwise operations are required for Discord snowflake encoding
-    const snowflake = timestampOffset << 22n;
+    // Generate snowflake with all lower bits set to 0 for backward compatibility
+    const snowflake = DiscordSnowflake.generate({
+        timestamp: date,
+        increment: 0n,
+        workerId:  0n,
+        processId: 0n,
+    });
 
     return snowflake.toString();
 }

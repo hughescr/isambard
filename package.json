@@ -26,7 +26,10 @@
     "@aws-sdk/client-dynamodb": "^3.700.0",
     "@aws-sdk/lib-dynamodb": "^3.700.0",
     "@hughescr/logger": "2.7.2",
+    "@sapphire/snowflake": "3.5.5",
+    "date-fns": "4.1.0",
     "discord.js": "^14.16.0",
+    "p-limit": "7.2.0",
     "remove-markdown": "0.6.2",
     "sst": "latest",
     "zod": "4.2.1"

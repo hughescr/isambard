@@ -9,6 +9,7 @@
  */
 
 import _ from 'lodash';
+import pLimit from 'p-limit';
 import { generateText } from '@/agent/text-generator';
 import type { DiscordSearchResult, OverflowSummary } from './types';
 
@@ -40,39 +41,6 @@ Focus on: key topics, questions asked, decisions made, action items.
 
 Message:
 {content}`;
-
-/**
- * Simple semaphore for limiting concurrent operations.
- * @internal Exported for testing purposes only
- */
-export function createSemaphore(maxConcurrent: number): {
-    acquire: () => Promise<void>
-    release: () => void
-} {
-    let current = 0;
-    const queue: (() => void)[] = [];
-
-    return {
-        acquire: () => new Promise<void>((resolve) => {
-            if(current < maxConcurrent) {
-                current++;
-                resolve();
-            } else {
-                queue.push(resolve);
-            }
-        }),
-        release: () => {
-            current--;
-            const next = queue.shift();
-            if(next) {
-                // Stryker disable next-line UpdateOperator: Semaphore counter increment is essential for concurrency control
-                current++;
-                return next();
-            }
-            return undefined;
-        },
-    };
-}
 
 /**
  * Creates a message summarizer that uses Claude Haiku to generate synopses.
@@ -115,12 +83,11 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
                 return [];
             }
 
-            const semaphore = createSemaphore(maxConcurrent);
+            const limit = pLimit(maxConcurrent);
 
             // Process all messages in parallel with concurrency limiting
-            const summaryPromises = _.map(messages, async (message): Promise<OverflowSummary> => {
-                await semaphore.acquire();
-                try {
+            const summaryPromises = _.map(messages, message =>
+                limit(async (): Promise<OverflowSummary> => {
                     const synopsis = await summarizeContent(message.content);
                     return {
                         id:        message.id,
@@ -128,10 +95,8 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
                         author:    message.author.username,
                         synopsis,
                     };
-                } finally {
-                    semaphore.release();
-                }
-            });
+                })
+            );
 
             return Promise.all(summaryPromises);
         },
