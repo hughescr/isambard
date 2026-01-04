@@ -32,12 +32,42 @@ export interface DynamicStatusGeneratorDeps {
     identityContext: string
 }
 
-const MAX_STATUS_LENGTH = 40;
+export const HARD_MAX_STATUS_LENGTH = 80;
 const MAX_USER_MESSAGE_LENGTH = 200;
 const MAX_ACCUMULATED_TEXT_LENGTH = 150;
 const MAX_RESPONSE_FRAGMENT_LENGTH = 100;
 const MAX_TOOL_INPUT_LENGTH = 200;
 const MAX_THINKING_CONTENT_LENGTH = 500;
+
+/**
+ * Truncates text to a maximum length, respecting word boundaries.
+ *
+ * If the text fits within maxLength, returns it unchanged.
+ * Otherwise, finds the last space before maxLength and truncates there,
+ * appending a unicode ellipsis (…).
+ * If no space is found (single long word), hard truncates at maxLength-1
+ * and appends the ellipsis.
+ *
+ * @param text - The text to truncate
+ * @param maxLength - Maximum allowed length for the result
+ * @returns Truncated text with ellipsis if needed
+ */
+export function truncateToWordBoundary(text: string, maxLength: number): string {
+    if(text.length <= maxLength) {
+        return text;
+    }
+
+    // Find the last space before maxLength
+    const lastSpaceIndex = text.lastIndexOf(' ', maxLength - 1);
+
+    if(lastSpaceIndex > 0) {
+        // Truncate at word boundary and add ellipsis
+        return `${text.slice(0, lastSpaceIndex)}\u2026`;
+    }
+
+    // No space found - hard truncate at maxLength-1 + ellipsis
+    return `${text.slice(0, maxLength - 1)}\u2026`;
+}
 
 const FALLBACK_STATUSES: Record<SynopsisContext['phase'], string> = {
     thinking:   'Thinking...',
@@ -231,7 +261,7 @@ export function createDynamicStatusGenerator(
 
                 // Stryker disable next-line ObjectLiteral: stripMarkdown option tested in text-generator.ts unit tests
                 const text = await generateText(prompt, { stripMarkdown: true });
-                const statusText = _.trim(text.slice(0, MAX_STATUS_LENGTH));
+                const statusText = truncateToWordBoundary(_.trim(text), HARD_MAX_STATUS_LENGTH);
 
                 if(!statusText) {
                     return FALLBACK_STATUSES[phase];

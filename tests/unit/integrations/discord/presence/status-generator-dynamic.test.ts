@@ -10,9 +10,108 @@ import { mockGenerateText, mockLogger } from '../../../../setup';
 // Import after mocking
 import {
     createDynamicStatusGenerator,
-    resetDebounceState
+    resetDebounceState,
+    truncateToWordBoundary,
+    HARD_MAX_STATUS_LENGTH
 } from '@/integrations/discord/presence/status-generator-dynamic';
 import type { SynopsisContext } from '@/integrations/discord/presence/types';
+
+describe('truncateToWordBoundary', () => {
+    describe('text within maxLength', () => {
+        it('should return text unchanged if under maxLength', () => {
+            const result = truncateToWordBoundary('Short text', 20);
+            expect(result).toBe('Short text');
+        });
+
+        it('should return text unchanged if exactly at maxLength', () => {
+            const text = 'Exactly ten';
+            expect(text.length).toBe(11);
+            const result = truncateToWordBoundary(text, 11);
+            expect(result).toBe('Exactly ten');
+        });
+    });
+
+    describe('text exceeding maxLength', () => {
+        it('should truncate at word boundary with ellipsis when over maxLength', () => {
+            const result = truncateToWordBoundary('Hello world how are you', 15);
+            // Should cut at 'world' (11 chars) + ellipsis = 12 chars total
+            expect(result).toBe('Hello world\u2026');
+            expect(result.length).toBeLessThanOrEqual(15);
+        });
+
+        it('should handle multiple spaces correctly', () => {
+            const result = truncateToWordBoundary('Word one  two three four', 15);
+            // Should find the last space before position 15
+            expect(result).toBe('Word one  two\u2026');
+            expect(result.length).toBeLessThanOrEqual(15);
+        });
+
+        it('should handle text ending with space', () => {
+            const result = truncateToWordBoundary('Hello world ', 10);
+            // Last space before position 10 is at position 5
+            expect(result).toBe('Hello\u2026');
+        });
+    });
+
+    describe('single long word (no space found)', () => {
+        it('should hard truncate single long word at maxLength-1 plus ellipsis', () => {
+            const result = truncateToWordBoundary('Supercalifragilisticexpialidocious', 10);
+            // No space found, so hard truncate at 9 chars + ellipsis
+            expect(result).toBe('Supercali\u2026');
+            expect(result.length).toBe(10);
+        });
+
+        it('should hard truncate when first word is too long', () => {
+            const result = truncateToWordBoundary('Pneumonoultramicroscopicsilicovolcanoconiosis is a word', 20);
+            // The first space is at position 45, which is > 20, so no valid space
+            expect(result).toBe('Pneumonoultramicros\u2026');
+            expect(result.length).toBe(20);
+        });
+    });
+
+    describe('edge cases', () => {
+        it('should handle empty string', () => {
+            const result = truncateToWordBoundary('', 10);
+            expect(result).toBe('');
+        });
+
+        it('should handle maxLength of 1 with multi-char text', () => {
+            const result = truncateToWordBoundary('Hello', 1);
+            // Hard truncate: 0 chars + ellipsis = ellipsis only
+            expect(result).toBe('\u2026');
+        });
+
+        it('should handle maxLength of 2', () => {
+            const result = truncateToWordBoundary('Hello world', 2);
+            // Hard truncate: 1 char + ellipsis
+            expect(result).toBe('H\u2026');
+        });
+
+        it('should handle space at exact maxLength position', () => {
+            // 'Hello world' - space is at position 5
+            const result = truncateToWordBoundary('Hello world', 6);
+            // Last space before position 6 is at position 5
+            expect(result).toBe('Hello\u2026');
+        });
+
+        it('should hard truncate when only space is at position 0', () => {
+            // When the only space is at position 0, lastSpaceIndex === 0
+            // Original code (> 0) should fall through to hard truncate
+            // Mutant (>= 0) would truncate at position 0, giving just ellipsis
+            const result = truncateToWordBoundary(' Nospace', 5);
+            // Last space within range is at position 0, but we don't want to truncate there
+            // (would result in empty string + ellipsis). Instead hard truncate at position 4.
+            expect(result).toBe(' Nos\u2026');
+            expect(result.length).toBe(5);
+        });
+    });
+
+    describe('HARD_MAX_STATUS_LENGTH constant', () => {
+        it('should be 80', () => {
+            expect(HARD_MAX_STATUS_LENGTH).toBe(80);
+        });
+    });
+});
 
 describe('DynamicStatusGenerator', () => {
     beforeEach(() => {
@@ -738,9 +837,9 @@ describe('DynamicStatusGenerator', () => {
         });
 
         describe('output handling', () => {
-            it('should truncate output to 40 characters', async () => {
+            it('should truncate output to HARD_MAX_STATUS_LENGTH (80 characters)', async () => {
                 mockGenerateText.mockImplementation(_constant(
-                    Promise.resolve('This is a very long status message that exceeds forty characters')
+                    Promise.resolve('This is a very long status message that exceeds eighty characters and keeps going on and on and on')
                 ));
 
                 const generator = createDynamicStatusGenerator({
@@ -754,7 +853,7 @@ describe('DynamicStatusGenerator', () => {
 
                 const result = await generator.generateSynopsis(context);
 
-                expect(result.length).toBeLessThanOrEqual(40);
+                expect(result.length).toBeLessThanOrEqual(HARD_MAX_STATUS_LENGTH);
             });
 
             it('should trim whitespace from output', async () => {
