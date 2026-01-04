@@ -145,6 +145,29 @@ describe('DynamicStatusGenerator', () => {
                 expect(prompt).toContain('My unique question here');
             });
 
+            it('should replace {thinkingSection} placeholder when thinkingContent is provided', async () => {
+                // This test kills the mutant that replaces '{thinkingSection}' with ""
+                // With the mutation, _.replace("", thinkingSection) won't find anything,
+                // leaving the literal {thinkingSection} in the prompt
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:           'thinking',
+                    userMessage:     'Test question',
+                    thinkingContent: 'Some deep thoughts about the problem',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const prompt = mockGenerateText.mock.calls[0][0];
+                // The placeholder should NOT be present - it should be replaced with content
+                expect(prompt).not.toContain('{thinkingSection}');
+                // And the actual thinking content should be present
+                expect(prompt).toContain('Some deep thoughts about the problem');
+            });
+
             it('should NOT contain tool-specific placeholders in thinking phase prompt', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -294,6 +317,30 @@ describe('DynamicStatusGenerator', () => {
                     ((_ as any).replace) = originalReplace;
                 }
             });
+
+            it('should replace {toolInputSummary} placeholder completely in using_tool phase', async () => {
+                // This test kills the mutant that replaces '{toolInputSummary}' with ""
+                // With the mutation, _.replace(str, "", value) replaces at position 0,
+                // leaving the literal {toolInputSummary} in the prompt
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'using_tool',
+                    userMessage: 'Test question',
+                    toolName:    'Read',
+                    toolInput:   { path: '/test/file.txt' },
+                };
+
+                await generator.generateSynopsis(context);
+
+                const prompt = mockGenerateText.mock.calls[0][0];
+                // The placeholder should NOT be present - it should be replaced
+                expect(prompt).not.toContain('{toolInputSummary}');
+                // And the actual tool input should be present in the prompt
+                expect(prompt).toContain('/test/file.txt');
+            });
         });
 
         describe('prompt construction - thinking phase', () => {
@@ -381,6 +428,30 @@ describe('DynamicStatusGenerator', () => {
 
                 const prompt = mockGenerateText.mock.calls[0][0];
                 expect(prompt).not.toContain("Isambard's internal thoughts:");
+            });
+
+            it('should produce clean prompt when thinkingContent is absent (no garbage text)', async () => {
+                // This test kills the mutant that replaces the empty string fallback
+                // `? ... : ''` with `? ... : "Stryker was here!"`
+                // The prompt must not contain any garbage placeholder text
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'thinking',
+                    userMessage: 'Test question',
+                    // thinkingContent is undefined
+                };
+
+                await generator.generateSynopsis(context);
+
+                const prompt = mockGenerateText.mock.calls[0][0];
+                // Verify no garbage from mutation survives in the prompt
+                expect(prompt).not.toContain('Stryker');
+                expect(prompt).not.toContain("Isambard's internal thoughts:");
+                // The {thinkingSection} placeholder should be replaced with empty string
+                expect(prompt).not.toContain('{thinkingSection}');
             });
 
             it('should truncate thinking content to 500 characters', async () => {

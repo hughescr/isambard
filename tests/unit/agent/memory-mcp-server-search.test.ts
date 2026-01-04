@@ -562,6 +562,36 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             expect(mockBackend.list).toHaveBeenCalledWith('/', undefined);
         });
 
+        test('should normalize path by stripping trailing slash', async () => {
+            mockBackend.list = mock(async () => ({
+                items:      [],
+                nextCursor: undefined,
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'list');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({ path: '/users/alice/' });
+
+            expect(mockBackend.list).toHaveBeenCalledWith('/users/alice', undefined);
+        });
+
+        test('should normalize identity layer path by stripping trailing slash', async () => {
+            mockBackend.listByLayer = mock(async () => ({
+                items:      [],
+                nextCursor: undefined,
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'list');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({ path: '/identity/' });
+
+            expect(mockBackend.listByLayer).toHaveBeenCalledWith('identity', undefined);
+        });
+
         test('should return error when backend.list throws Error', async () => {
             mockBackend.list = mock(async () => {
                 throw new Error('Database connection failed');

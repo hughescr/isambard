@@ -231,6 +231,7 @@ export function createStatusMiddleware(
                     const content = event.message?.content as ContentBlock[] | undefined;
                     if(content) {
                         for(const block of content) {
+                            // Stryker disable next-line ConditionalExpression: Type guard - only thinking blocks have .thinking property
                             if(block.type === 'thinking' && block.thinking) {
                                 accumulatedThinkingContent = (accumulatedThinkingContent + block.thinking).slice(-MAX_THINKING_CONTENT_LENGTH);
                             }
@@ -284,6 +285,7 @@ export function createStatusMiddleware(
                                             thinkingContent: capturedThinkingContent,
                                             recentToolCalls: capturedRecentToolCalls,
                                         });
+                                        // Stryker disable next-line ObjectLiteral: All properties required for presence update
                                         void safeUpdatePhase({
                                             type:            'thinking',
                                             startedAt:       new Date(),

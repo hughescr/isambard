@@ -259,7 +259,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
 
                 const batch = await channel.messages.fetch(fetchOptions);
 
-                // Stryker disable next-line ConditionalExpression: Empty batch check terminates pagination loop
+                // Stryker disable next-line ConditionalExpression,BlockStatement: Empty batch check terminates pagination loop early; break is redundant with line 277 but clearer
                 if(batch.size === 0) {
                     break;
                 }

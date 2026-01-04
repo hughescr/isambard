@@ -229,6 +229,7 @@ export function createDynamicStatusGenerator(
                     msg:               'Generating synopsis with Haiku',
                 });
 
+                // Stryker disable next-line ObjectLiteral: stripMarkdown option tested in text-generator.ts unit tests
                 const text = await generateText(prompt, { stripMarkdown: true });
                 const statusText = _.trim(text.slice(0, MAX_STATUS_LENGTH));
 

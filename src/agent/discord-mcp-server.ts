@@ -89,9 +89,8 @@ export function createDiscordMCPServer(searchService: MessageSearchService) {
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId: z.string().describe('Discord channel ID'),
-                    messageId: z.union([z.string(), z.array(z.string())])
-                        // Stryker disable next-line StringLiteral: describe() is documentation only
-                        .describe('Discord message ID or array of message IDs'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    messageId: z.union([z.string(), z.array(z.string())]).describe('Discord message ID or array of message IDs'),
                 },
                 async (args) => {
                     try {

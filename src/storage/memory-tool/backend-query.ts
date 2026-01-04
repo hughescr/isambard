@@ -38,7 +38,9 @@ export class MemoryToolBackendQuery {
      */
     private getDateBounds(options: ListOptions | undefined): { startDate: string, endDate: string } {
         return {
+            // Stryker disable next-line OptionalChaining: Defensive coding for undefined options
             startDate: options?.startDate ?? MIN_DATE,
+            // Stryker disable next-line OptionalChaining: Defensive coding for undefined options
             endDate:   options?.endDate ?? MAX_DATE,
         };
     }

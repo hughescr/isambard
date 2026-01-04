@@ -5,7 +5,7 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
 
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import { constant as _constant, endsWith as _endsWith, filter as _filter, find as _find, repeat as _repeat, some as _some, startsWith as _startsWith } from 'lodash';
+import { constant as _constant, endsWith as _endsWith, filter as _filter, find as _find, keys as _keys, repeat as _repeat, some as _some, startsWith as _startsWith } from 'lodash';
 import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
 import type { PresencePhase, SynopsisContext } from '@/integrations/discord/presence/types';
 import type { AgentStreamEvent } from '@/agent/types';
@@ -3656,6 +3656,486 @@ describe('StatusMiddleware', () => {
             const lastThinkingContext = thinkingContexts[thinkingContexts.length - 1];
             expect(lastThinkingContext).toBeDefined();
             expect(lastThinkingContext?.recentToolCalls).toEqual(['SearchTool', 'ReadTool']);
+        });
+
+        test('should preserve previous tool calls in recentToolCalls when transitioning to new tool (kills ArrayDeclaration mutant)', async () => {
+            // This test kills the mutation: [...recentToolCalls] → []
+            // When the spread is mutated to empty array, the captured context loses previous tool history
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // First tool - establishes recentToolCalls history
+                        onEvent({ type: 'tool_progress', tool_name: 'tool_A' });
+                        // Second tool - should have tool_A in captured recentToolCalls
+                        onEvent({ type: 'tool_progress', tool_name: 'tool_B' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Find the context for tool_B
+            const toolContexts = _filter(capturedContexts, { phase: 'using_tool' });
+            const toolBContext = _find(toolContexts, { toolName: 'tool_B' });
+            expect(toolBContext).toBeDefined();
+            // Critical: recentToolCalls should contain tool_A (not be empty)
+            // If mutant [...recentToolCalls] → [] survives, this would be empty
+            expect(toolBContext!.recentToolCalls).toContain('tool_A');
+            expect(toolBContext!.recentToolCalls!.length).toBeGreaterThan(0);
+        });
+    });
+
+    describe('accumulatedText handling in tool phase (kills ConditionalExpression mutant)', () => {
+        test('should pass accumulated text string to tool phase update (not false)', async () => {
+            // This test kills the mutation: capturedAccumulatedText || undefined → false
+            // When mutated to false, the accumulatedText would be false instead of the actual string
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Accumulate some text first
+                        onEvent({ type: 'assistant', delta: { text: 'Hello world' } });
+                        // Then trigger tool phase
+                        onEvent({ type: 'tool_progress', tool_name: 'TestTool' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
+            expect(toolContext).toBeDefined();
+            // accumulatedText should be a string, not false
+            expect(toolContext!.accumulatedText).toBe('Hello world');
+            expect(toolContext!.accumulatedText).not.toBe(false);
+            expect(typeof toolContext!.accumulatedText).toBe('string');
+        });
+
+        test('should pass undefined when no text accumulated (not false)', async () => {
+            // This test also kills the mutation: capturedAccumulatedText || undefined → false
+            // When empty string, original returns undefined; mutant returns false
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Trigger tool phase directly without any accumulated text
+                        onEvent({ type: 'tool_progress', tool_name: 'TestTool' });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
+            expect(toolContext).toBeDefined();
+            // accumulatedText should be undefined, not false
+            expect(toolContext!.accumulatedText).toBeUndefined();
+            expect(toolContext!.accumulatedText).not.toBe(false);
+        });
+    });
+
+    describe('thinking block detection (kills ConditionalExpression mutant)', () => {
+        test('should accumulate thinking content from thinking blocks with content', async () => {
+            // This test kills the mutation: block.type === 'thinking' && block.thinking → true
+            // With the mutation, ANY block would add to accumulatedThinkingContent
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Send thinking block with content
+                        onEvent({
+                            type:    'assistant',
+                            message: {
+                                content: [{ type: 'thinking', thinking: 'I am processing...' }]
+                            }
+                        } as any);
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Should have thinking context with the thinking content
+            const thinkingContexts = _filter(capturedContexts, ['phase', 'thinking']);
+            const contextWithThinking = _find(thinkingContexts, (ctx: SynopsisContext) => Boolean(ctx.thinkingContent));
+            expect(contextWithThinking).toBeDefined();
+            expect(contextWithThinking!.thinkingContent).toBe('I am processing...');
+        });
+
+        test('should only accumulate thinking blocks from mixed content types', async () => {
+            // This test kills the mutation: block.type === 'thinking' → true
+            // With the mutant (true), ALL content blocks would be accumulated (text, tool_use, etc.)
+            // With correct condition, only thinking blocks are accumulated
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Send MIXED content blocks: text and thinking (no tool_use to avoid early return)
+                        // The mutant would treat ALL blocks as thinking blocks
+                        onEvent({
+                            type:    'assistant',
+                            message: {
+                                content: [
+                                    { type: 'text', text: 'Some response text' },  // Should NOT accumulate
+                                    { type: 'thinking', thinking: 'Deep thoughts here' },  // SHOULD accumulate
+                                    { type: 'image', source: { type: 'url', url: 'http://example.com/img.png' } },  // Should NOT accumulate
+                                ]
+                            }
+                        } as any);
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Should ONLY have thinking content from thinking blocks
+            const thinkingContexts = _filter(capturedContexts, ['phase', 'thinking']);
+            const contextWithThinking = _find(thinkingContexts, (ctx: SynopsisContext) => Boolean(ctx.thinkingContent));
+            expect(contextWithThinking).toBeDefined();
+            expect(contextWithThinking!.thinkingContent).toBe('Deep thoughts here');
+            // Verify it does NOT contain content from other block types
+            expect(contextWithThinking!.thinkingContent).not.toContain('Some response text');
+        });
+
+        test('should NOT accumulate from non-thinking block types', async () => {
+            // This test kills the mutation: block.type === 'thinking' && block.thinking → true
+            // With the mutation, text blocks would incorrectly be treated as thinking blocks
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Send text block (NOT thinking) with some text content
+                        onEvent({
+                            type:    'assistant',
+                            message: {
+                                content: [{ type: 'text', text: 'Hello world' }]
+                            }
+                        } as any);
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Should NOT have thinking content from text blocks
+            const thinkingContexts = _filter(capturedContexts, ['phase', 'thinking']);
+            for(const ctx of thinkingContexts) {
+                // No context should have thinkingContent because we only sent text blocks
+                expect(ctx.thinkingContent).toBeUndefined();
+            }
+        });
+
+        test('should NOT accumulate from thinking blocks with empty thinking content', async () => {
+            // This test kills: block.type === 'thinking' && block.thinking
+            // Empty string is falsy, so should not accumulate
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Send thinking block with EMPTY thinking content
+                        onEvent({
+                            type:    'assistant',
+                            message: {
+                                content: [{ type: 'thinking', thinking: '' }]
+                            }
+                        } as any);
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Empty thinking content should NOT be accumulated
+            const thinkingContexts = _filter(capturedContexts, ['phase', 'thinking']);
+            for(const ctx of thinkingContexts) {
+                expect(ctx.thinkingContent).toBeUndefined();
+            }
+        });
+
+        test('should NOT accumulate from thinking blocks with undefined thinking property', async () => {
+            // Tests the && block.thinking part of the condition
+            const capturedContexts: SynopsisContext[] = [];
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (ctx: SynopsisContext) => {
+                    capturedContexts.push(ctx);
+                    return 'Test status';
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Send thinking block without thinking property
+                        onEvent({
+                            type:    'assistant',
+                            message: {
+                                content: [{ type: 'thinking' }]
+                            }
+                        } as any);
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        mockPresenceManager,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Missing thinking property should NOT be accumulated
+            const thinkingContexts = _filter(capturedContexts, ['phase', 'thinking']);
+            for(const ctx of thinkingContexts) {
+                expect(ctx.thinkingContent).toBeUndefined();
+            }
+        });
+    });
+
+    describe('error handling in thinking synopsis generation (kills ObjectLiteral mutant)', () => {
+        test('should fallback to pre-generated synopsis with correct object structure on error', async () => {
+            // This test kills the ObjectLiteral mutation at lines 294-299
+            // which mutates the fallback object to {}
+            const phases: PresencePhase[] = [];
+            let generateCallCount = 0;
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async (_ctx: SynopsisContext) => {
+                    generateCallCount++;
+                    // First call: pre-generation succeeds with a known synopsis
+                    if(generateCallCount === 1) {
+                        return 'Pre-generated fallback synopsis';
+                    }
+                    // Second call (during thinking phase with thinkingContent/toolHistory): throws
+                    throw new Error('Synopsis generation failed');
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Use a tool first to establish tool history
+                        onEvent({ type: 'tool_progress', tool_name: 'SomeTool' });
+                        // Then emit thinking block to trigger regeneration path with error
+                        onEvent({
+                            type:    'assistant',
+                            message: {
+                                content: [{ type: 'thinking', thinking: 'Deep thought...' }]
+                            }
+                        } as any);
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const capturingPresenceManager = {
+                shouldUpdate: mock(_constant(true)),
+                updatePhase:  mock(async (phase: PresencePhase) => {
+                    phases.push(phase);
+                }),
+                start: mock(() => undefined),
+                stop:  mock(() => undefined),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        capturingPresenceManager as any,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Find thinking phases
+            const thinkingPhases = _filter(phases, ['type', 'thinking']);
+            expect(thinkingPhases.length).toBeGreaterThan(0);
+
+            // Find the thinking phase with fallback synopsis
+            const fallbackPhase = _find(thinkingPhases, { type: 'thinking', generatedStatus: 'Pre-generated fallback synopsis' });
+            expect(fallbackPhase).toBeDefined();
+
+            // Verify the fallback object has correct structure (not empty {})
+            if(fallbackPhase?.type === 'thinking') {
+                expect(fallbackPhase.type).toBe('thinking');
+                expect(fallbackPhase.startedAt).toBeInstanceOf(Date);
+                expect(fallbackPhase.userMessage).toBe('Test message');
+                expect(fallbackPhase.generatedStatus).toBe('Pre-generated fallback synopsis');
+            }
+        });
+
+        test('should include all required properties in fallback thinking phase object', async () => {
+            // Additional test to verify all properties exist (not mutated to {})
+            const phases: PresencePhase[] = [];
+            let callCount = 0;
+            const mockDynamicStatusGenerator = {
+                generateSynopsis: mock(async () => {
+                    callCount++;
+                    if(callCount === 1) {
+                        return 'Fallback synopsis';
+                    }
+                    throw new Error('Failed');
+                }),
+            };
+
+            const wrappedAgent = {
+                chat: mock(async (ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // First tool then thinking to trigger the error path
+                        onEvent({ type: 'tool_progress', tool_name: 'Tool1' });
+                        onEvent({ type: 'assistant' }); // triggers thinking with tool history
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const capturingPresenceManager = {
+                shouldUpdate: mock(_constant(true)),
+                updatePhase:  mock(async (phase: PresencePhase) => {
+                    phases.push(phase);
+                }),
+                start: mock(() => undefined),
+                stop:  mock(() => undefined),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager:        capturingPresenceManager as any,
+                agent:                  wrappedAgent as any,
+                logger:                 mockLogger,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Find thinking phase with fallback
+            const thinkingPhases = _filter(phases, { type: 'thinking' });
+            const fallbackPhase = _find(thinkingPhases, { type: 'thinking', generatedStatus: 'Fallback synopsis' });
+            expect(fallbackPhase).toBeDefined();
+
+            // Verify all 4 properties exist (kills mutant that changes object to {})
+            if(fallbackPhase?.type === 'thinking') {
+                expect(_keys(fallbackPhase)).toContain('type');
+                expect(_keys(fallbackPhase)).toContain('startedAt');
+                expect(_keys(fallbackPhase)).toContain('userMessage');
+                expect(_keys(fallbackPhase)).toContain('generatedStatus');
+                expect(_keys(fallbackPhase).length).toBeGreaterThanOrEqual(4);
+            }
         });
     });
 });

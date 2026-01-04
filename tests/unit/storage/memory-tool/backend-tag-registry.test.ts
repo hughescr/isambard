@@ -197,6 +197,7 @@ describe('backend-tag-registry', () => {
 
             expect(getMock).toHaveBeenCalledWith(TAG_REGISTRY_PATH);
             expect(updateMock).not.toHaveBeenCalled();
+            expect(createMock).not.toHaveBeenCalled();
         });
 
         test('should decrement existing tag counts', async () => {

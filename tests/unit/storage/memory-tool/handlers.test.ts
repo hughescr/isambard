@@ -2,7 +2,7 @@
 
 import { describe, it, expect, beforeEach, spyOn } from 'bun:test';
 import { mock } from 'bun:test';
-import { split as _split, some as _some, includes as _includes } from 'lodash';
+import { split as _split, some as _some, includes as _includes, repeat as _repeat } from 'lodash';
 import { mockLogger } from '../../../setup';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';
@@ -21,7 +21,8 @@ import {
     delete_memory as deleteMemory,
     insert,
     str_replace as strReplace,
-    rename
+    rename,
+    search
 } from '@/storage/memory-tool/handlers';
 
 describe('Memory Tool Handlers', () => {
@@ -34,11 +35,14 @@ describe('Memory Tool Handlers', () => {
         mockLogger.warn.mockClear();
 
         mockBackend = {
-            create:   mock(async () => ({})),
-            get:      mock(async () => undefined),
-            update:   mock(async () => ({})),
-            'delete': mock(async () => { /* intentionally empty */ }),
-            list:     mock(async () => ({ items: [], nextCursor: undefined })),
+            create:            mock(async () => ({})),
+            get:               mock(async () => undefined),
+            update:            mock(async () => ({})),
+            'delete':          mock(async () => { /* intentionally empty */ }),
+            list:              mock(async () => ({ items: [], nextCursor: undefined })),
+            searchByTag:       mock(async () => ({ items: [], nextCursor: undefined })),
+            listByLayer:       mock(async () => ({ items: [], nextCursor: undefined })),
+            searchByTimeRange: mock(async () => []),
         } as unknown as MemoryToolBackend;
     });
 
@@ -1052,6 +1056,134 @@ describe('Memory Tool Handlers', () => {
                 path:     '/test/old.md',
                 new_path: 'bad-path',
             })).rejects.toThrow(InvalidPathError);
+        });
+    });
+
+    describe('search', () => {
+        describe('contentPreview formatting', () => {
+            it('should append ... when contentPreview exists AND is exactly 100 chars', async () => {
+                const preview100chars = _repeat('a', 100);
+                mockBackend.searchByTag = mock(async () => ({
+                    items: [{
+                        path:           '/test/file.md' as MemoryPath,
+                        content:        'full content here',
+                        contentPreview: preview100chars,
+                        contentType:    'text/markdown' as ContentType,
+                        metadata:       {},
+                        version:        1,
+                        createdAt:      '2025-01-01T00:00:00.000Z',
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           ['test-tag'],
+                    }],
+                    nextCursor: undefined,
+                }));
+
+                const result = await search(mockBackend, { tags: ['test-tag'] });
+
+                // Verify contentPreview content appears in output (kills template literal → empty string mutant)
+                expect(result).toContain(preview100chars);
+                // Verify ... is appended (kills && → || mutant for length check)
+                expect(result).toContain(`${preview100chars}...`);
+            });
+
+            it('should NOT append ... when contentPreview exists but is less than 100 chars', async () => {
+                const preview99chars = _repeat('b', 99);
+                mockBackend.searchByTag = mock(async () => ({
+                    items: [{
+                        path:           '/test/file.md' as MemoryPath,
+                        content:        'full content here',
+                        contentPreview: preview99chars,
+                        contentType:    'text/markdown' as ContentType,
+                        metadata:       {},
+                        version:        1,
+                        createdAt:      '2025-01-01T00:00:00.000Z',
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           ['test-tag'],
+                    }],
+                    nextCursor: undefined,
+                }));
+
+                const result = await search(mockBackend, { tags: ['test-tag'] });
+
+                // Verify contentPreview content appears in output
+                expect(result).toContain(preview99chars);
+                // Verify ... is NOT appended (< 100 chars)
+                expect(result).not.toContain(`${preview99chars}...`);
+            });
+
+            it('should NOT append ... when contentPreview is undefined (falls back to content)', async () => {
+                mockBackend.searchByTag = mock(async () => ({
+                    items: [{
+                        path:           '/test/file.md' as MemoryPath,
+                        content:        'short content',
+                        contentPreview: undefined,
+                        contentType:    'text/markdown' as ContentType,
+                        metadata:       {},
+                        version:        1,
+                        createdAt:      '2025-01-01T00:00:00.000Z',
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           ['test-tag'],
+                    }],
+                    nextCursor: undefined,
+                }));
+
+                const result = await search(mockBackend, { tags: ['test-tag'] });
+
+                // Verify falls back to content (kills && → || mutant when contentPreview is undefined)
+                expect(result).toContain('short content');
+                // Verify no ... since content is < 100 chars
+                expect(result).not.toContain('...');
+            });
+
+            it('should fallback to content and append ... when content is > 100 chars and contentPreview is undefined', async () => {
+                const longContent = _repeat('c', 150);
+                mockBackend.searchByTag = mock(async () => ({
+                    items: [{
+                        path:           '/test/file.md' as MemoryPath,
+                        content:        longContent,
+                        contentPreview: undefined,
+                        contentType:    'text/markdown' as ContentType,
+                        metadata:       {},
+                        version:        1,
+                        createdAt:      '2025-01-01T00:00:00.000Z',
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           ['test-tag'],
+                    }],
+                    nextCursor: undefined,
+                }));
+
+                const result = await search(mockBackend, { tags: ['test-tag'] });
+
+                // Verify truncated content appears with ...
+                expect(result).toContain(_repeat('c', 100));
+                expect(result).toContain('...');
+                // Verify full content does NOT appear
+                expect(result).not.toContain(longContent);
+            });
+
+            it('should NOT append ... when contentPreview is empty string', async () => {
+                mockBackend.searchByTag = mock(async () => ({
+                    items: [{
+                        path:           '/test/file.md' as MemoryPath,
+                        content:        'actual content',
+                        contentPreview: '',
+                        contentType:    'text/markdown' as ContentType,
+                        metadata:       {},
+                        version:        1,
+                        createdAt:      '2025-01-01T00:00:00.000Z',
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           ['test-tag'],
+                    }],
+                    nextCursor: undefined,
+                }));
+
+                const result = await search(mockBackend, { tags: ['test-tag'] });
+
+                // Empty contentPreview is falsy, so should fallback to content
+                expect(result).toContain('actual content');
+                // No ... because content is < 100 chars
+                expect(result).not.toContain('...');
+            });
         });
     });
 });

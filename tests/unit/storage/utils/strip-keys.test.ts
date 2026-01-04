@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { stripDynamoKeys } from './strip-keys.js';
+import { stripDynamoKeys } from '@/storage/utils/strip-keys';
 
 describe('stripDynamoKeys', () => {
     it('strips all 6 DynamoDB key fields when present', () => {

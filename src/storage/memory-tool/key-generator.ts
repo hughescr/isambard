@@ -27,6 +27,7 @@ export interface MemoryToolKeys {
  * @returns Content truncated to 100 characters
  */
 export function generateContentPreview(content: string): string {
+    // Stryker disable next-line ConditionalExpression: Equivalent mutant - slice(0,100) on short strings returns original
     return content.length > 100 ? content.slice(0, 100) : content;
 }
 

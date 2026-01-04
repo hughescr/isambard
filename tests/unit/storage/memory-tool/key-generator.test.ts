@@ -411,10 +411,24 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
             expect(preview).toHaveLength(100);
         });
 
+        test('should truncate content of 101 characters to exactly 100', () => {
+            const content = _repeat('a', 101);
+            const preview = generateContentPreview(content);
+            expect(preview).toBe(_repeat('a', 100));
+            expect(preview).toHaveLength(100);
+        });
+
         test('should truncate content when over 100 characters', () => {
             const content = _repeat('a', 150);
             const preview = generateContentPreview(content);
             expect(preview).toBe(_repeat('a', 100));
+            expect(preview).toHaveLength(100);
+        });
+
+        test('should truncate very long content to exactly 100 characters', () => {
+            const content = _repeat('x', 500);
+            const preview = generateContentPreview(content);
+            expect(preview).toBe(_repeat('x', 100));
             expect(preview).toHaveLength(100);
         });
 

@@ -5,7 +5,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return -- Test mocks */
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { ActivityType } from 'discord.js';
-import { constant as _constant, repeat as _repeat, size as _size } from 'lodash';
+import { constant as _constant, keys as _keys, repeat as _repeat, size as _size } from 'lodash';
 import { createIdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
 import { mockGenerateTextWithSystemPrompt } from '../../../../setup';
 
@@ -60,6 +60,22 @@ describe.concurrent('IdleStatusGenerator', () => {
             expect(systemPromptArg).toContain('I am a helpful assistant');
         });
 
+        test('should pass stripMarkdown: true option to generateTextWithSystemPrompt', async () => {
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: 'Test identity',
+            });
+
+            await generator.generate();
+
+            expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledWith(
+                expect.any(String),  // system prompt
+                expect.any(String),  // user prompt
+                { stripMarkdown: true }  // options - this kills the mutant
+            );
+        });
+
         test('should return generated status text', async () => {
             mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve('Contemplating existence')));
 
@@ -73,6 +89,50 @@ describe.concurrent('IdleStatusGenerator', () => {
 
             expect(result.name).toBe('Contemplating existence');
             expect(result.type).toBe(ActivityType.Custom);
+        });
+
+        test('should return object with name property (kills ObjectLiteral mutant)', async () => {
+            // This test kills the mutant that replaces { name: statusText, type: activityType } with {}
+            mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve('Deep in thought')));
+
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: 'Test identity',
+            });
+
+            const result = await generator.generate();
+
+            expect(result).toHaveProperty('name');
+            expect(typeof result.name).toBe('string');
+            expect(result.name.length).toBeGreaterThan(0);
+        });
+
+        test('should return object with type property (kills ObjectLiteral mutant)', async () => {
+            // This test kills the mutant that replaces { name: statusText, type: activityType } with {}
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: 'Test identity',
+            });
+
+            const result = await generator.generate();
+
+            expect(result).toHaveProperty('type');
+            expect(result.type).toBeDefined();
+        });
+
+        test('should not return empty object (kills ObjectLiteral mutant)', async () => {
+            // This test kills the mutant that replaces { name: statusText, type: activityType } with {}
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: 'Test identity',
+            });
+
+            const result = await generator.generate();
+
+            expect(_keys(result).length).toBeGreaterThan(0);
         });
 
         test('should truncate status text to 128 characters', async () => {
