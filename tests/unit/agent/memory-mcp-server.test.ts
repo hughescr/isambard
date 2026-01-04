@@ -81,7 +81,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             const storeSelfTool = (server.instance as any)._registeredTools.storeSelf;
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking tool description
-            expect(storeSelfTool.description).toBe('Store self-knowledge in identity or state layer');
+            expect(storeSelfTool.description).toBe('Store self-knowledge in identity or state layer. Saving with the same name will replace existing content.');
         });
 
         test('should have storeUserMemory tool with description', () => {
@@ -90,7 +90,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             const storeUserMemoryTool = (server.instance as any)._registeredTools.storeUserMemory;
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking tool description
-            expect(storeUserMemoryTool.description).toBe('Store user-specific memory');
+            expect(storeUserMemoryTool.description).toBe('Store user-specific memory. Saving with the same userId and name will replace existing content.');
         });
 
         test('should have logEvent tool with description', () => {
@@ -808,6 +808,97 @@ describe.concurrent('createMemoryMCPServer', () => {
                     contentType: 'text/plain',
                 })
             );
+        });
+    });
+
+    describe('listTags tool', () => {
+        test('should have listTags tool with description', () => {
+            const server = createMemoryMCPServer(mockBackend);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
+            const listTagsTool = (server.instance as any)._registeredTools.listTags;
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking tool description
+            expect(listTagsTool.description).toBe('List all tags with their usage counts');
+        });
+
+        test('should return "No tags found" when registry does not exist', async () => {
+            mockBackend.get = mock(async () => undefined);
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'listTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({});
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('No tags found');
+        });
+
+        test('should return "No tags found" when registry is empty', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                content: JSON.stringify({}),
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'listTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({});
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('No tags found');
+        });
+
+        test('should return formatted tag list sorted by count descending', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                content: JSON.stringify({ important: 5, work: 3, personal: 8 }),
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'listTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({});
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('personal: 8\nimportant: 5\nwork: 3');
+        });
+
+        test('should handle errors gracefully', async () => {
+            mockBackend.get = mock(async () => {
+                throw new Error('Database error');
+            });
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'listTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({});
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('Error listing tags:');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('Database error');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBe(true);
+        });
+
+        test('should handle non-Error throws gracefully', async () => {
+            mockBackend.get = mock(async () => {
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
+                throw { statusCode: 500 };
+            });
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'listTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({});
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('Error listing tags:');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBe(true);
         });
     });
 });

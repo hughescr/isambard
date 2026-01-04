@@ -4,6 +4,7 @@ import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { MemoryToolBackend } from '../storage/memory-tool';
 import { ContentType, createMemoryPath, LayerName } from '../storage/memory-tool/types';
+import { TAG_REGISTRY_PATH } from '../storage/memory-tool/backend-tag-registry';
 
 /**
  * Creates an MCP server for memory operations.
@@ -53,7 +54,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
 
             tool(
                 'storeSelf',
-                'Store self-knowledge in identity or state layer',
+                'Store self-knowledge in identity or state layer. Saving with the same name will replace existing content.',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     layer:   z.enum(['identity', 'state']).describe('Layer: identity (core beliefs/values) or state (current context)'),
@@ -88,7 +89,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
 
             tool(
                 'storeUserMemory',
-                'Store user-specific memory',
+                'Store user-specific memory. Saving with the same userId and name will replace existing content.',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     userId:  z.string().describe('User identifier'),
@@ -165,28 +166,41 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                 'Search memories by tag with optional filters',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    tag:   z.string().describe('Tag to search for'),
+                    tag:       z.string().describe('Tag to search for'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    layer: z.enum(['identity', 'state', 'events']).optional().describe('Optional layer filter'),
+                    layer:     z.enum(['identity', 'state', 'events']).optional().describe('Optional layer filter'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    limit: z.number().int().positive().optional().describe('Optional result limit'),
+                    limit:     z.number().int().positive().optional().describe('Optional result limit'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    cursor:    z.string().optional().describe('Pagination cursor from previous response'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    startDate: z.string().datetime().optional().describe('Filter: items updated on or after this ISO8601 datetime'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    endDate:   z.string().datetime().optional().describe('Filter: items updated on or before this ISO8601 datetime'),
                 },
                 async (args) => {
                     try {
+                        // Build options object only if filter params provided
+                        const options = (args.limit ?? args.cursor ?? args.startDate ?? args.endDate)
+                            ? { limit: args.limit, cursor: args.cursor, startDate: args.startDate, endDate: args.endDate }
+                            : undefined;
                         const results = await backend.searchByTag(
                             args.tag,
                             args.layer as LayerName | undefined,
-                            args.limit ? { limit: args.limit } : undefined
+                            options
                         );
                         if(results.items.length === 0) {
                             return {
                                 content: [{ type: 'text' as const, text: 'No memories found matching tag' }],
                             };
                         }
-                        const formatted = _.map(results.items, (r) => {
+                        let formatted = _.map(results.items, (r) => {
                             const preview = r.content ?? r.contentPreview ?? 'No content';
                             return `${r.path}: ${preview.substring(0, 200)}${preview.length > 200 ? '...' : ''}`;
                         }).join('\n\n');
+                        if(results.nextCursor) {
+                            formatted += `\n\n---\nMore results available. Use cursor: ${results.nextCursor}`;
+                        }
                         return {
                             content: [{ type: 'text' as const, text: formatted }],
                         };
@@ -205,13 +219,26 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                 'List memories in a directory',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    path: z.string().optional().describe('Directory path (e.g., /, /identity, /users). Defaults to root /'),
+                    path:      z.string().optional().describe('Directory path (e.g., /, /identity, /users). Defaults to root /'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    limit:     z.number().int().positive().optional().describe('Maximum number of results to return'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    cursor:    z.string().optional().describe('Pagination cursor from previous response'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    startDate: z.string().datetime().optional().describe('Filter: items updated on or after this ISO8601 datetime'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    endDate:   z.string().datetime().optional().describe('Filter: items updated on or before this ISO8601 datetime'),
                 },
                 async (args) => {
                     try {
                         const rawPath = args.path ?? '/';
                         // Normalize: strip trailing slash (except for root)
                         const dirPath = rawPath === '/' ? '/' : _.trimEnd(rawPath, '/');
+
+                        // Build options object only if filter params provided
+                        const options = (args.limit ?? args.cursor ?? args.startDate ?? args.endDate)
+                            ? { limit: args.limit, cursor: args.cursor, startDate: args.startDate, endDate: args.endDate }
+                            : undefined;
 
                         // Check if path is a layer root - use listByLayer for efficient GSI1 query
                         const layerPaths: Record<string, LayerName> = {
@@ -222,15 +249,18 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                         const layer = layerPaths[dirPath];
 
                         const results = layer
-                            ? (logger.debug({ layer, dirPath, msg: 'Using GSI1 listByLayer for layer path' }), await backend.listByLayer(layer))
-                            : (logger.debug({ dirPath, msg: 'Using directory list for non-layer path' }), await backend.list(dirPath));
+                            ? (logger.debug({ layer, dirPath, msg: 'Using GSI1 listByLayer for layer path' }), await backend.listByLayer(layer, options))
+                            : (logger.debug({ dirPath, msg: 'Using directory list for non-layer path' }), await backend.list(dirPath, options));
 
                         if(results.items.length === 0) {
                             return {
                                 content: [{ type: 'text' as const, text: 'Directory is empty' }],
                             };
                         }
-                        const formatted = _.map(results.items, 'path').join('\n');
+                        let formatted = _.map(results.items, 'path').join('\n');
+                        if(results.nextCursor) {
+                            formatted += `\n\n---\nMore results available. Use cursor: ${results.nextCursor}`;
+                        }
                         return {
                             content: [{ type: 'text' as const, text: formatted }],
                         };
@@ -238,6 +268,40 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                         const message = _.isError(error) ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error listing directory: ${message}` }],
+                            isError: true,
+                        };
+                    }
+                }
+            ),
+
+            tool(
+                'listTags',
+                'List all tags with their usage counts',
+                {},
+                async () => {
+                    try {
+                        const result = await backend.get(TAG_REGISTRY_PATH);
+                        if(!result) {
+                            return {
+                                content: [{ type: 'text' as const, text: 'No tags found' }],
+                            };
+                        }
+                        const registry = JSON.parse(result.content) as Record<string, number>;
+                        const entries = Object.entries(registry);
+                        if(entries.length === 0) {
+                            return {
+                                content: [{ type: 'text' as const, text: 'No tags found' }],
+                            };
+                        }
+                        const sortedEntries = _.orderBy(entries, ([, count]) => count, 'desc');
+                        const formatted = _.map(sortedEntries, ([tag, count]) => `${tag}: ${count}`).join('\n');
+                        return {
+                            content: [{ type: 'text' as const, text: formatted }],
+                        };
+                    } catch (error) {
+                        const message = _.isError(error) ? error.message : String(error);
+                        return {
+                            content: [{ type: 'text' as const, text: `Error listing tags: ${message}` }],
                             isError: true,
                         };
                     }

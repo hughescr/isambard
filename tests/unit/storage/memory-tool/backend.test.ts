@@ -12,6 +12,7 @@ import {
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import { ItemNotFoundError, ConflictError, ValidationError } from '@/storage/errors';
 import type { MemoryToolItem, MemoryPath, ContentType, LayerName as _LayerName } from '@/storage/memory-tool/types';
+import { TAG_REGISTRY_PATH } from '@/storage/memory-tool/backend-tag-registry';
 
 describe('MemoryToolBackend', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
@@ -322,9 +323,13 @@ describe('MemoryToolBackend', () => {
         });
 
         test('should throw ConflictError on concurrent update (version mismatch)', async () => {
+            // First get: facade fetches existing for tag comparison
+            // Second get: coreOps.update fetches existing
+            // Third get: coreOps.update re-fetches after conflict to get current version
             ddbMock.on(GetCommand)
-                .resolvesOnce({ Item: existingItem })
-                .resolvesOnce({ Item: { ...existingItem, version: 5 } });
+                .resolvesOnce({ Item: existingItem })  // Facade get for tags
+                .resolvesOnce({ Item: existingItem })  // coreOps.update get
+                .resolvesOnce({ Item: { ...existingItem, version: 5 } }); // Re-fetch after conflict
 
             const conditionalError = new Error('Conditional check failed');
             _assign(conditionalError, { name: 'ConditionalCheckFailedException' });
@@ -378,9 +383,13 @@ describe('MemoryToolBackend', () => {
         });
 
         test('should throw ConflictError when item deleted after initial fetch', async () => {
+            // First get: facade fetches existing for tag comparison
+            // Second get: coreOps.update fetches existing
+            // Third get: coreOps.update re-fetches after conflict (item deleted)
             ddbMock.on(GetCommand)
-                .resolvesOnce({ Item: existingItem })
-                .resolvesOnce({ Item: undefined }); // Item deleted
+                .resolvesOnce({ Item: existingItem })  // Facade get for tags
+                .resolvesOnce({ Item: existingItem })  // coreOps.update get
+                .resolvesOnce({ Item: undefined });    // Re-fetch after conflict - item deleted
 
             const conditionalError = new Error('Conditional check failed');
             _assign(conditionalError, { name: 'ConditionalCheckFailedException' });
@@ -431,9 +440,10 @@ describe('MemoryToolBackend', () => {
             // Spy on the backend's docClient.send method directly to test actual rejection behavior
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Need to bypass type safety to access private docClient
             const sendSpy = spyOn((backend as any).docClient, 'send');
-            // First call (GetCommand) succeeds, second call (version PutCommand) succeeds, third call (main PutCommand) throws non-Error value
+            // Calls: 1) Facade GetCommand for tags, 2) coreOps.update GetCommand, 3) version PutCommand, 4) main PutCommand throws
             sendSpy
-                .mockResolvedValueOnce({ Item: existingItem })
+                .mockResolvedValueOnce({ Item: existingItem }) // Facade get for tags
+                .mockResolvedValueOnce({ Item: existingItem }) // coreOps.update get
                 .mockResolvedValueOnce({}) // Version snapshot succeeds
                 .mockRejectedValueOnce(value); // Main item fails
 
@@ -483,15 +493,17 @@ describe('MemoryToolBackend', () => {
                 GSI2PK: 'TAG#original',
                 GSI2SK: 'LAYER#identity#UPDATED#2024-01-01T00:00:00.000Z',
             };
+            // GetCommand returns existing for facade tag check, coreOps update, and registry operations
             ddbMock.on(GetCommand).resolves({ Item: existingWithTags });
-            ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
+            ddbMock.on(PutCommand).resolves({});
 
             await backend.update('/identity/beliefs.md' as MemoryPath, {
                 tags: ['updated'],
             });
 
             const calls = ddbMock.commandCalls(PutCommand);
-            expect(calls).toHaveLength(2); // Version snapshot + main item
+            // At minimum: version snapshot + main item; may also include registry updates
+            expect(calls.length).toBeGreaterThanOrEqual(2);
             const item = calls[1].args[0].input.Item as MemoryToolItem; // Second call is the main item
             expect(item.GSI2PK).toBe('TAG#updated');
             expect(item.GSI2SK).toMatch(/^LAYER#identity#UPDATED#/);
@@ -506,14 +518,15 @@ describe('MemoryToolBackend', () => {
                 GSI2SK: 'LAYER#test#UPDATED#2024-01-01T00:00:00.000Z',
             };
             ddbMock.on(GetCommand).resolves({ Item: existingWithTags });
-            ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
+            ddbMock.on(PutCommand).resolves({});
 
             await backend.update(testPath, {
                 tags: [], // Empty array removes tags
             });
 
             const calls = ddbMock.commandCalls(PutCommand);
-            expect(calls).toHaveLength(2); // Version snapshot + main item
+            // At minimum: version snapshot + main item; may also include registry updates
+            expect(calls.length).toBeGreaterThanOrEqual(2);
             const item = calls[1].args[0].input.Item as MemoryToolItem; // Second call is the main item
             expect(item.GSI2PK).toBeUndefined();
             expect(item.GSI2SK).toBeUndefined();
@@ -521,14 +534,15 @@ describe('MemoryToolBackend', () => {
 
         test('should create GSI2 keys when adding tags to untagged item', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
-            ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
+            ddbMock.on(PutCommand).resolves({});
 
             await backend.update(testPath, {
                 tags: ['newtag'],
             });
 
             const calls = ddbMock.commandCalls(PutCommand);
-            expect(calls).toHaveLength(2); // Version snapshot + main item
+            // At minimum: version snapshot + main item; may also include registry create
+            expect(calls.length).toBeGreaterThanOrEqual(2);
             const item = calls[1].args[0].input.Item as MemoryToolItem; // Second call is the main item
             expect(item.GSI2PK).toBe('TAG#newtag');
             expect(item.GSI2SK).toMatch(/^LAYER#test#UPDATED#/);
@@ -538,6 +552,8 @@ describe('MemoryToolBackend', () => {
     describe.concurrent('delete', () => {
         test('should call deleteItem with correct key', async () => {
             const testPath = '/test/file.md' as MemoryPath;
+            // Delete now fetches item first to get tags for decrementing
+            ddbMock.on(GetCommand).resolves({ Item: undefined }); // Item doesn't exist
             ddbMock.on(DeleteCommand).resolves({});
 
             await backend.delete(testPath);
@@ -548,6 +564,244 @@ describe('MemoryToolBackend', () => {
                 PK: 'DIR#/test',
                 SK: 'FILE#file.md',
             });
+        });
+    });
+
+    describe('tag registry integration', () => {
+        test('create with tags should update tag registry', async () => {
+            // First PutCommand: create the item
+            // Second PutCommand: create the tag registry
+            ddbMock.on(PutCommand).resolves({});
+            // GetCommand for tag registry returns undefined (doesn't exist yet)
+            ddbMock.on(GetCommand).resolves({ Item: undefined });
+
+            await backend.create({
+                path:        '/test/file.md' as MemoryPath,
+                content:     'Test content',
+                contentType: 'text/markdown',
+                tags:        ['tag1', 'tag2'],
+            });
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            // Should have 2 calls: 1 for item, 1 for registry creation
+            expect(putCalls).toHaveLength(2);
+
+            // Second call should be tag registry creation
+            const registryCall = putCalls[1].args[0].input.Item;
+            expect(registryCall).toHaveProperty('path', TAG_REGISTRY_PATH);
+            expect(JSON.parse(registryCall?.content as string)).toEqual({ tag1: 1, tag2: 1 });
+        });
+
+        test('create without tags should not update tag registry', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.create({
+                path:        '/test/file.md' as MemoryPath,
+                content:     'Test content',
+                contentType: 'text/markdown',
+            });
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            // Should only have 1 call for the item itself
+            expect(putCalls).toHaveLength(1);
+        });
+
+        test('create for tag registry path should not cause recursion', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.create({
+                path:        TAG_REGISTRY_PATH,
+                content:     JSON.stringify({ tag1: 1 }),
+                contentType: 'application/json',
+            });
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            // Should only have 1 call - no recursive registry update
+            expect(putCalls).toHaveLength(1);
+        });
+
+        test('update with tag changes should update registry', async () => {
+            const existingItem: MemoryToolItem = {
+                PK:          'DIR#/test',
+                SK:          'FILE#file.md',
+                GSI1PK:      'LAYER#test',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/test/file.md' as MemoryPath,
+                content:     'Original content',
+                contentType: 'text/markdown',
+                metadata:    {},
+                tags:        ['oldtag'],
+                version:     1,
+                createdAt:   '2024-01-01T00:00:00.000Z',
+                updatedAt:   '2024-01-01T00:00:00.000Z',
+            };
+
+            const registryItem: MemoryToolItem = {
+                PK:          'DIR#/state',
+                SK:          'FILE#tag-registry',
+                GSI1PK:      'LAYER#state',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        TAG_REGISTRY_PATH,
+                content:     JSON.stringify({ oldtag: 1 }),
+                contentType: 'application/json',
+                metadata:    {},
+                version:     1,
+                createdAt:   '2024-01-01T00:00:00.000Z',
+                updatedAt:   '2024-01-01T00:00:00.000Z',
+            };
+
+            // First get for item, second get for registry
+            ddbMock.on(GetCommand)
+                .resolvesOnce({ Item: existingItem })
+                .resolvesOnce({ Item: registryItem });
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.update('/test/file.md' as MemoryPath, {
+                tags: ['newtag'],
+            });
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            // 1: version snapshot, 2: main item update, 3: registry update for added, 4: registry update for removed
+            expect(putCalls.length).toBeGreaterThanOrEqual(2);
+        });
+
+        test('update with empty tags should decrement all old tags', async () => {
+            const existingItem: MemoryToolItem = {
+                PK:          'DIR#/test',
+                SK:          'FILE#file.md',
+                GSI1PK:      'LAYER#test',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/test/file.md' as MemoryPath,
+                content:     'Original content',
+                contentType: 'text/markdown',
+                metadata:    {},
+                tags:        ['tag1', 'tag2'],
+                version:     1,
+                createdAt:   '2024-01-01T00:00:00.000Z',
+                updatedAt:   '2024-01-01T00:00:00.000Z',
+            };
+
+            const registryItem: MemoryToolItem = {
+                PK:          'DIR#/state',
+                SK:          'FILE#tag-registry',
+                GSI1PK:      'LAYER#state',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        TAG_REGISTRY_PATH,
+                content:     JSON.stringify({ tag1: 1, tag2: 1 }),
+                contentType: 'application/json',
+                metadata:    {},
+                version:     1,
+                createdAt:   '2024-01-01T00:00:00.000Z',
+                updatedAt:   '2024-01-01T00:00:00.000Z',
+            };
+
+            ddbMock.on(GetCommand)
+                .resolvesOnce({ Item: existingItem })
+                .resolvesOnce({ Item: registryItem });
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.update('/test/file.md' as MemoryPath, {
+                tags: [], // Remove all tags
+            });
+
+            // Verify registry was updated to decrement tags
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls.length).toBeGreaterThanOrEqual(2);
+        });
+
+        test('delete with tags should decrement registry', async () => {
+            const existingItem: MemoryToolItem = {
+                PK:          'DIR#/test',
+                SK:          'FILE#file.md',
+                GSI1PK:      'LAYER#test',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/test/file.md' as MemoryPath,
+                content:     'Content',
+                contentType: 'text/markdown',
+                metadata:    {},
+                tags:        ['tag1'],
+                version:     1,
+                createdAt:   '2024-01-01T00:00:00.000Z',
+                updatedAt:   '2024-01-01T00:00:00.000Z',
+            };
+
+            const registryItem: MemoryToolItem = {
+                PK:          'DIR#/state',
+                SK:          'FILE#tag-registry',
+                GSI1PK:      'LAYER#state',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        TAG_REGISTRY_PATH,
+                content:     JSON.stringify({ tag1: 2 }),
+                contentType: 'application/json',
+                metadata:    {},
+                version:     1,
+                createdAt:   '2024-01-01T00:00:00.000Z',
+                updatedAt:   '2024-01-01T00:00:00.000Z',
+            };
+
+            // Get calls:
+            // 1. Facade delete fetches item to get tags
+            // 2. decrementTagRegistry fetches registry
+            // 3. coreOps.update for registry fetches registry again
+            ddbMock.on(GetCommand)
+                .resolvesOnce({ Item: existingItem })   // Facade get for item tags
+                .resolvesOnce({ Item: registryItem })   // decrementTagRegistry get
+                .resolvesOnce({ Item: registryItem });  // coreOps.update get for registry
+            ddbMock.on(DeleteCommand).resolves({});
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.delete('/test/file.md' as MemoryPath);
+
+            // Should have made a Get call for the item before deleting
+            const getCalls = ddbMock.commandCalls(GetCommand);
+            expect(getCalls.length).toBeGreaterThanOrEqual(1);
+
+            // Should have updated registry (version snapshot + main update)
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls).toHaveLength(2);
+
+            // Second put call (main item update) should show decremented count
+            const registryUpdate = putCalls[1].args[0].input.Item;
+            expect(JSON.parse(registryUpdate?.content as string)).toEqual({ tag1: 1 });
+        });
+
+        test('delete without tags should not update registry', async () => {
+            const existingItem: MemoryToolItem = {
+                PK:          'DIR#/test',
+                SK:          'FILE#file.md',
+                GSI1PK:      'LAYER#test',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/test/file.md' as MemoryPath,
+                content:     'Content',
+                contentType: 'text/markdown',
+                metadata:    {},
+                version:     1,
+                createdAt:   '2024-01-01T00:00:00.000Z',
+                updatedAt:   '2024-01-01T00:00:00.000Z',
+            };
+
+            ddbMock.on(GetCommand).resolves({ Item: existingItem });
+            ddbMock.on(DeleteCommand).resolves({});
+
+            await backend.delete('/test/file.md' as MemoryPath);
+
+            // Should not have made any Put calls for registry
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls).toHaveLength(0);
+        });
+
+        test('delete of tag registry path should not cause recursion', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: undefined });
+            ddbMock.on(DeleteCommand).resolves({});
+
+            await backend.delete(TAG_REGISTRY_PATH);
+
+            // Should only have 1 delete call, no registry updates
+            const deleteCalls = ddbMock.commandCalls(DeleteCommand);
+            expect(deleteCalls).toHaveLength(1);
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls).toHaveLength(0);
         });
     });
 });

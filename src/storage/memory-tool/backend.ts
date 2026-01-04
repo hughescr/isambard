@@ -4,11 +4,19 @@ import { stripDynamoKeys } from '../utils/index.js';
 import {
     type MemoryPath,
     type MemoryToolItemData,
+    type ContentType,
     type LayerName
 } from './types';
 import { MemoryToolBackendCore, type CreateMemoryToolItemInput, type UpdateMemoryToolItemInput } from './backend-core';
 import { MemoryToolBackendQuery, type ListOptions, type ListResult } from './backend-query';
 import { MemoryToolBackendVersions, type VersionInfo } from './backend-versions';
+import {
+    TAG_REGISTRY_PATH,
+    updateTagRegistry,
+    decrementTagRegistry,
+    computeTagChanges,
+    type TagRegistryCallbacks
+} from './backend-tag-registry';
 
 // Re-export types for public API
 export type { CreateMemoryToolItemInput, UpdateMemoryToolItemInput } from './backend-core';
@@ -50,9 +58,30 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         );
     }
 
+    /**
+     * Creates tag registry callbacks that use core operations directly.
+     * This avoids infinite recursion when updating the registry itself.
+     */
+    private createTagRegistryCallbacks(): TagRegistryCallbacks {
+        return {
+            get:    (p: MemoryPath) => this.coreOps.get(p),
+            create: (input: { path: MemoryPath, content: string, contentType: ContentType, metadata?: Record<string, unknown> }) =>
+                this.coreOps.create(input),
+            update: (p: MemoryPath, input: { content: string }) =>
+                this.coreOps.update(p, input),
+        };
+    }
+
     // Core CRUD operations
     async create(input: CreateMemoryToolItemInput): Promise<MemoryToolItemData> {
-        return this.coreOps.create(input);
+        const result = await this.coreOps.create(input);
+
+        // Skip registry update for the registry itself to prevent recursion
+        if(input.path !== TAG_REGISTRY_PATH && input.tags && input.tags.length > 0) {
+            await updateTagRegistry(input.tags, this.createTagRegistryCallbacks());
+        }
+
+        return result;
     }
 
     async get(path: MemoryPath): Promise<MemoryToolItemData | undefined> {
@@ -60,11 +89,48 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
     }
 
     async update(path: MemoryPath, input: UpdateMemoryToolItemInput): Promise<MemoryToolItemData> {
-        return this.coreOps.update(path, input);
+        // Skip registry update for the registry itself to prevent recursion
+        if(path === TAG_REGISTRY_PATH) {
+            return this.coreOps.update(path, input);
+        }
+
+        // Fetch existing item to compare tags
+        const existing = await this.coreOps.get(path);
+        const oldTags = existing?.tags;
+
+        const result = await this.coreOps.update(path, input);
+
+        // Only update registry if tags were explicitly changed
+        if(input.tags !== undefined) {
+            const { added, removed } = computeTagChanges(oldTags, input.tags);
+            const callbacks = this.createTagRegistryCallbacks();
+
+            if(added.length > 0) {
+                await updateTagRegistry(added, callbacks);
+            }
+            if(removed.length > 0) {
+                await decrementTagRegistry(removed, callbacks);
+            }
+        }
+
+        return result;
     }
 
     async delete(path: MemoryPath): Promise<void> {
-        return this.coreOps.delete(path);
+        // Skip registry update for the registry itself to prevent recursion
+        if(path === TAG_REGISTRY_PATH) {
+            return this.coreOps.delete(path);
+        }
+
+        // Fetch item first to get its tags for decrementing
+        const existing = await this.coreOps.get(path);
+
+        await this.coreOps.delete(path);
+
+        // Decrement tag counts if item had tags
+        if(existing?.tags && existing.tags.length > 0) {
+            await decrementTagRegistry(existing.tags, this.createTagRegistryCallbacks());
+        }
     }
 
     // Query operations

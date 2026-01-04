@@ -65,3 +65,14 @@ export {
     getLayerConfig,
     type LayerConfig
 } from './layer-config';
+
+// Tag Registry
+export {
+    TAG_REGISTRY_PATH,
+    parseTagRegistry,
+    computeTagChanges,
+    updateTagRegistry,
+    decrementTagRegistry,
+    type TagRegistry,
+    type TagRegistryCallbacks
+} from './backend-tag-registry';

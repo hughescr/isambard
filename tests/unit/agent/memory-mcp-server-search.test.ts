@@ -542,7 +542,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             const result = await handler({ path: '/users/alice' });
 
-            expect(mockBackend.list).toHaveBeenCalledWith('/users/alice');
+            expect(mockBackend.list).toHaveBeenCalledWith('/users/alice', undefined);
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toContain('/users/alice/preferences');
         });
@@ -559,7 +559,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             await handler({});
 
-            expect(mockBackend.list).toHaveBeenCalledWith('/');
+            expect(mockBackend.list).toHaveBeenCalledWith('/', undefined);
         });
 
         test('should return error when backend.list throws Error', async () => {
@@ -697,7 +697,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 const result = await handler({ path: '/events' });
 
-                expect(mockBackend.listByLayer).toHaveBeenCalledWith('events');
+                expect(mockBackend.listByLayer).toHaveBeenCalledWith('events', undefined);
                 expect(mockBackend.list).not.toHaveBeenCalled();
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain('/events/conversation/2025-01-01T00-00-00Z');
@@ -715,7 +715,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ path: '/identity' });
 
-                expect(mockBackend.listByLayer).toHaveBeenCalledWith('identity');
+                expect(mockBackend.listByLayer).toHaveBeenCalledWith('identity', undefined);
                 expect(mockBackend.list).not.toHaveBeenCalled();
             });
 
@@ -731,7 +731,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ path: '/state' });
 
-                expect(mockBackend.listByLayer).toHaveBeenCalledWith('state');
+                expect(mockBackend.listByLayer).toHaveBeenCalledWith('state', undefined);
                 expect(mockBackend.list).not.toHaveBeenCalled();
             });
 
@@ -742,7 +742,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ path: '/users/alice' });
 
-                expect(mockBackend.list).toHaveBeenCalledWith('/users/alice');
+                expect(mockBackend.list).toHaveBeenCalledWith('/users/alice', undefined);
                 expect(mockBackend.listByLayer).not.toHaveBeenCalled();
             });
 
@@ -753,7 +753,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ path: '/' });
 
-                expect(mockBackend.list).toHaveBeenCalledWith('/');
+                expect(mockBackend.list).toHaveBeenCalledWith('/', undefined);
                 expect(mockBackend.listByLayer).not.toHaveBeenCalled();
             });
 
@@ -765,7 +765,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ path: '/events/conversation' });
 
-                expect(mockBackend.list).toHaveBeenCalledWith('/events/conversation');
+                expect(mockBackend.list).toHaveBeenCalledWith('/events/conversation', undefined);
                 expect(mockBackend.listByLayer).not.toHaveBeenCalled();
             });
         });
