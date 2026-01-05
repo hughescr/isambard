@@ -164,10 +164,12 @@ describe('Bot Lifecycle Integration', () => {
             await createApp();
 
             expect(createClaudeAgentSpy).toHaveBeenCalled();
-            // Should be called with empty options (no contextBuilder or memoryMcpServer)
+            // Should be called with empty options (no contextBuilder or memoryMcpServer) but with plugins
             expect(createClaudeAgentSpy).toHaveBeenCalledWith({
-                contextBuilder:  undefined,
-                memoryMcpServer: undefined,
+                contextBuilder:   undefined,
+                memoryMcpServer:  undefined,
+                discordMcpServer: undefined,
+                plugins:          expect.any(Array),
             });
         });
 
@@ -235,6 +237,7 @@ describe('Bot Lifecycle Integration', () => {
                 contextBuilder:   mockContextBuilder,
                 memoryMcpServer:  mockMemoryMcp,
                 discordMcpServer: expect.any(Object),
+                plugins:          expect.any(Array),
             });
         }, { timeout: process.env.CI ? 150 : 15 });
 
@@ -254,11 +257,12 @@ describe('Bot Lifecycle Integration', () => {
 
             await createApp();
 
-            // Should create agent without memory or discord MCP (both require DynamoDB)
+            // Should create agent without memory or discord MCP (both require DynamoDB) but with plugins
             expect(createClaudeAgentSpy).toHaveBeenCalledWith({
                 contextBuilder:   undefined,
                 memoryMcpServer:  undefined,
                 discordMcpServer: undefined,
+                plugins:          expect.any(Array),
             });
         });
     });

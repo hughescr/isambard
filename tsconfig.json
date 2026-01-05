@@ -19,5 +19,5 @@
     }
   },
   "include": ["src/**/*", "tests/**/*", "scripts/**/*", "tools/**/*"],
-  "exclude": ["node_modules", "dist", "sst.config.ts", "sst/**/*"]
+  "exclude": ["node_modules", "dist", "sst.config.ts", "sst/**/*", "plugins"]
 }

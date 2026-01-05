@@ -16,7 +16,8 @@ export type AgentStreamEvent
       | ToolProgressEvent
       | ToolResultEvent
       | ResultEvent
-      | UserEvent;
+      | UserEvent
+      | SystemEvent;
 
 /**
  * Content block types that can appear in assistant messages.
@@ -85,4 +86,14 @@ export interface UserEvent {
     type:     'user'
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Agent SDK message type is not exported
     message?: any
+}
+
+/**
+ * Event emitted by the system at various lifecycle points.
+ * The 'init' subtype is emitted at query start and contains the session_id.
+ */
+export interface SystemEvent {
+    type:        'system'
+    subtype?:    'init' | 'status' | 'compact_boundary' | 'hook_response'
+    session_id?: string
 }

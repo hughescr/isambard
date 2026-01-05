@@ -1,6 +1,7 @@
 import _ from 'lodash';
 import removeMarkdown from 'remove-markdown';
 import { unstable_v2_prompt } from '@anthropic-ai/claude-agent-sdk';
+import { cleanupSession } from './session-cleanup';
 
 /**
  * Options for text generation functions.
@@ -36,6 +37,13 @@ export async function generateText(
         model: 'haiku',
     });
 
+    // Clean up session file (fire-and-forget)
+    // Stryker disable next-line all: Cleanup is fire-and-forget, not observable in tests
+    if(result.session_id) {
+        // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Fire-and-forget cleanup
+        cleanupSession(result.session_id);
+    }
+
     if(result.subtype === 'success') {
         let text = _.trim(result.result);
         if(options?.stripMarkdown) {
@@ -68,6 +76,13 @@ export async function generateTextWithSystemPrompt(
     const result = await unstable_v2_prompt(combinedPrompt, {
         model: 'haiku',
     });
+
+    // Clean up session file (fire-and-forget)
+    // Stryker disable next-line all: Cleanup is fire-and-forget, not observable in tests
+    if(result.session_id) {
+        // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Fire-and-forget cleanup
+        cleanupSession(result.session_id);
+    }
 
     if(result.subtype === 'success') {
         let text = _.trim(result.result);

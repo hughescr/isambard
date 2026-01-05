@@ -10,6 +10,7 @@ import { createContextBuilder } from './agent/context-builder';
 import { createMemoryMCPServer } from './agent/memory-mcp-server';
 import { createDiscordMCPServer } from './agent/discord-mcp-server';
 import { createClaudeAgent } from './agent/agent';
+import { loadPlugins } from './agent/plugin-loader';
 import { createDiscordBot } from './integrations/discord/bot';
 import type { DiscordBot } from './integrations/discord/bot';
 import { createDiscordClient } from './integrations/discord/client';
@@ -102,11 +103,15 @@ export async function createApp(): Promise<App> {
         // Continue without memory system
     }
 
+    // Load plugins from plugins directory
+    const plugins = await loadPlugins('plugins');
+
     // Create Claude agent with hybrid memory support
     const agent = createClaudeAgent({
         contextBuilder,
         memoryMcpServer,
         discordMcpServer,
+        plugins,
     });
 
     // Load identity context for presence idle status generation (if API key available)

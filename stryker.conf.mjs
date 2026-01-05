@@ -8,7 +8,7 @@ export default {
     testRunner:       'command',
     commandRunner:    { command: 'bun run test' },
     coverageAnalysis: 'perTest',
-    mutate:           ['src/**/*.ts', '!src/index.ts'],
+    mutate:           ['src/**/*.ts', '!src/index.ts', '!plugins/**'],
     thresholds:       { high: 100, low: 95, 'break': 90 },
     concurrency:      12,
     tempDirName:      '.stryker-tmp',

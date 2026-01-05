@@ -1366,5 +1366,41 @@ describe('createClaudeAgent', () => {
             const callArgs = querySpy.mock.calls[0][0];
             expect(callArgs.options.allowedTools).toContain('mcp__discord__*');
         });
+
+        test('should include plugins when provided', async () => {
+            const mockPlugins = [
+                { type: 'local' as const, path: '/path/to/plugin-1' },
+                { type: 'local' as const, path: '/path/to/plugin-2' },
+            ];
+
+            const agent = createClaudeAgent({
+                plugins: mockPlugins,
+            });
+
+            await agent.chat(mockMessageContext);
+
+            const callArgs = querySpy.mock.calls[0][0];
+            expect(callArgs.options.plugins).toEqual(mockPlugins);
+        });
+
+        test('should not include plugins option when empty array provided', async () => {
+            const agent = createClaudeAgent({
+                plugins: [],
+            });
+
+            await agent.chat(mockMessageContext);
+
+            const callArgs = querySpy.mock.calls[0][0];
+            expect(callArgs.options.plugins).toBeUndefined();
+        });
+
+        test('should not include plugins option when not provided', async () => {
+            const agent = createClaudeAgent({});
+
+            await agent.chat(mockMessageContext);
+
+            const callArgs = querySpy.mock.calls[0][0];
+            expect(callArgs.options.plugins).toBeUndefined();
+        });
     });
 });

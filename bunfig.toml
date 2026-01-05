@@ -10,7 +10,9 @@ coverageSkipTestFiles = true
 coveragePathIgnorePatterns = [
     # Exclude all test files and test helpers - these don't need coverage as they are the tests themselves
     "tests/**",
-    "src/index.ts"
+    "src/index.ts",
+    # Exclude plugins directories - these are external/user-managed
+    "plugins/**"
 ]
 onlyFailures = true
 timeout = 5

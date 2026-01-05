@@ -1,11 +1,13 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import type { PluginEntry } from './plugin-loader';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
 import type { DiscordMessageContext } from '../integrations/discord/types';
 import { getCurrentTimeContext } from '../utils/time';
 import type { ContextBuilder } from './context-builder';
 import { buildSystemPrompt } from './prompts/index.js';
+import { cleanupSession, extractSessionId } from './session-cleanup';
 import type { AgentStreamEvent } from './types';
 
 const CLAUDE_MODEL = 'sonnet';
@@ -280,6 +282,8 @@ export interface ClaudeAgentOptions {
     memoryMcpServer?:  McpServerConfig
     /** Discord MCP server instance for message history access */
     discordMcpServer?: McpServerConfig
+    /** Plugins to load (from plugin-loader.ts) */
+    plugins?:          PluginEntry[]
 }
 
 export interface ClaudeAgent {
@@ -506,7 +510,7 @@ export function logStreamEvent(message: AgentStreamEvent): void {
 // Stryker restore all
 
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
-    const { contextBuilder, memoryMcpServer, discordMcpServer } = options;
+    const { contextBuilder, memoryMcpServer, discordMcpServer, plugins } = options;
 
     return {
         chat: async (context: DiscordMessageContext, onStreamEvent?: (event: AgentStreamEvent) => void): Promise<string | null> => {
@@ -530,7 +534,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                     msg:       'Agent starting to process message',
                 });
 
-                // 5. Query with MCP servers and sandboxed execution
+                // 5. Query with MCP servers, plugins, and sandboxed execution
                 const response = query({
                     prompt:  userMessage,
                     options: {
@@ -539,6 +543,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                         tools:             EXPLICIT_TOOLS,
                         agents:            EXPLICIT_AGENTS,
                         mcpServers:        buildMcpServers(memoryMcpServer, discordMcpServer),
+                        plugins:           plugins && plugins.length > 0 ? plugins : undefined,
                         permissionMode:    'acceptEdits',
                         allowedTools:      buildAllowedTools(discordMcpServer),
                         maxThinkingTokens: 10000,  // Enable extended thinking for richer status context
@@ -552,8 +557,15 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
 
                 // 6. Extract final response (keep latest assistant message)
                 let lastAssistantText = '';
+                let sessionId: string | undefined;
 
                 for await (const message of response) {
+                    // Capture session ID from system init event
+                    const extractedSessionId = extractSessionId(message);
+                    if(extractedSessionId) {
+                        sessionId = extractedSessionId;
+                    }
+
                     // Log descriptive stream events
                     logStreamEvent(message as AgentStreamEvent);
 
@@ -573,14 +585,21 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                     }
                 }
 
-                // 7. Log completion
+                // 7. Clean up session file (fire-and-forget, errors logged internally)
+                // Stryker disable next-line all: Cleanup is fire-and-forget, not observable in tests
+                if(sessionId) {
+                    // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Fire-and-forget cleanup
+                    cleanupSession(sessionId);
+                }
+
+                // 8. Log completion
                 logger.info({
                     messageId:      context.messageId,
                     responseLength: lastAssistantText.length,
                     msg:            `Agent completed processing (${lastAssistantText.length} chars)`,
                 });
 
-                // 8. Return full response (chunking is handled by Discord handlers)
+                // 9. Return full response (chunking is handled by Discord handlers)
                 return lastAssistantText || null;
             } catch (error) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
