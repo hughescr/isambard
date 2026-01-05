@@ -15,6 +15,7 @@ import type { Client as DiscordClient, ActivitiesOptions } from 'discord.js';
 import type { PresenceConfig, PresencePhase } from './types.js';
 import type { ActiveStatusGenerator } from './status-generator-active.js';
 import type { IdleStatusGenerator } from './status-generator-idle.js';
+import { withDiscordRetry } from '@/integrations/discord/retry';
 
 /**
  * Interface for managing Discord presence state.
@@ -136,9 +137,17 @@ export function createPresenceManager(
     /**
      * Actually update Discord presence.
      */
-    function applyPresenceUpdate(activity: ActivitiesOptions): void {
+    async function applyPresenceUpdate(activity: ActivitiesOptions): Promise<void> {
         try {
-            discordClient.user?.setActivity(activity);
+            // Use low retry count for presence updates (not critical)
+            await withDiscordRetry(
+                () => {
+                    discordClient.user?.setActivity(activity);
+                    return Promise.resolve();
+                },
+                'setActivity',
+                { policy: { maxAttempts: 2 } }
+            );
             logger.info({ activity }, 'Updated Discord presence');
         } catch (error) {
             logger.error({ error, activity }, 'Failed to update Discord presence');
@@ -163,7 +172,7 @@ export function createPresenceManager(
         }
 
         const activity = await idleStatusGenerator.generate();
-        applyPresenceUpdate(activity);
+        await applyPresenceUpdate(activity);
     }
 
     /**
@@ -229,7 +238,7 @@ export function createPresenceManager(
                 // Check throttle: only update if cooldown has expired
                 if(isThrottleCooldownExpired()) {
                     const activity = activeStatusGenerator.generate(phase);
-                    applyPresenceUpdate(activity);
+                    await applyPresenceUpdate(activity);
                     lastActiveUpdateTime = Date.now();
                 } else {
                     const timeSinceLastUpdate = Date.now() - lastActiveUpdateTime;

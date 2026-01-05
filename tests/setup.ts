@@ -1,11 +1,15 @@
 // Test setup and configuration
 import { mock } from 'bun:test';
-import { assign, replace, padStart, isDate, isArray } from 'lodash';
+import { assign, replace, padStart, isDate, isArray, noop } from 'lodash';
 
 // Mock AWS SDK before any imports - we test OUR code, not AWS SDK
 // This eliminates cold-start costs entirely
 class MockDynamoDBClient {
-    config: Record<string, unknown>;
+    config:          Record<string, unknown>;
+    middlewareStack: {
+        add: (middleware: unknown, options: unknown) => void
+    };
+
     constructor(config: Record<string, unknown>) {
         this.config = {
             maxAttempts: async () => config.maxAttempts ?? 3,
@@ -16,6 +20,11 @@ class MockDynamoDBClient {
                     return { hostname: url.hostname, port: Number(url.port) || 8000, protocol: url.protocol };
                 }
                 : undefined,
+        };
+
+        // Mock middleware stack for timing middleware
+        this.middlewareStack = {
+            add: noop,
         };
     }
 }

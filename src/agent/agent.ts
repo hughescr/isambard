@@ -8,6 +8,8 @@ import type { ContextBuilder } from './context-builder';
 import { buildSystemPrompt } from './prompts/index.js';
 import { cleanupSession, extractSessionId } from './session-cleanup';
 import type { AgentStreamEvent } from './types';
+import { createRetryableQuery } from './claude-retry';
+import { loadRetryConfig } from '../config/retry-config';
 
 const CLAUDE_MODEL = 'sonnet';
 
@@ -511,6 +513,14 @@ export function logStreamEvent(message: AgentStreamEvent): void {
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     const { contextBuilder, memoryMcpServer, discordMcpServer, plugins } = options;
 
+    // Load retry configuration
+    const retryConfig = loadRetryConfig();
+
+    // Create retryable query function
+    const retryableQuery = createRetryableQuery(query, {
+        policy: retryConfig.claude,
+    });
+
     return {
         chat: async (context: DiscordMessageContext, onStreamEvent?: (event: AgentStreamEvent) => void): Promise<string | null> => {
             try {
@@ -533,8 +543,8 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                     msg:       'Agent starting to process message',
                 });
 
-                // 5. Query with MCP servers, plugins, and sandboxed execution
-                const response = query({
+                // 5. Query with MCP servers, plugins, and sandboxed execution (with retry)
+                const response = retryableQuery({
                     prompt:  userMessage,
                     options: {
                         model:             CLAUDE_MODEL,

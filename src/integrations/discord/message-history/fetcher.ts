@@ -4,6 +4,7 @@ import { DiscordIntegrationError } from '@/integrations/discord/errors';
 import { timestampToSnowflake } from '@/integrations/discord/message-history/snowflake';
 import type { DiscordSearchResult, DiscordAttachment, DiscordEmbed, DiscordReaction } from '@/integrations/discord/message-history/types';
 import { channelIdSchema, guildIdSchema } from '@/integrations/discord/types';
+import { withDiscordRetry } from '@/integrations/discord/retry';
 
 /**
  * Maximum number of messages Discord API returns per request.
@@ -257,7 +258,10 @@ export function createMessageFetcher(client: Client): MessageFetcher {
                     fetchOptions.before = cursor;
                 }
 
-                const batch = await channel.messages.fetch(fetchOptions);
+                const batch = await withDiscordRetry(
+                    () => channel.messages.fetch(fetchOptions),
+                    'fetchMessages'
+                );
 
                 // Stryker disable next-line ConditionalExpression,BlockStatement: Empty batch check terminates pagination loop early; break is redundant with line 277 but clearer
                 if(batch.size === 0) {
@@ -314,7 +318,10 @@ export function createMessageFetcher(client: Client): MessageFetcher {
         const channel = await getChannel(channelId);
 
         try {
-            const message = await channel.messages.fetch(messageId);
+            const message = await withDiscordRetry(
+                () => channel.messages.fetch(messageId),
+                'fetchMessageById'
+            );
             return transformMessage(message);
         } catch{
             // Message not found or inaccessible
@@ -338,7 +345,10 @@ export function createMessageFetcher(client: Client): MessageFetcher {
         const results: DiscordSearchResult[] = [];
         for(const messageId of messageIds) {
             try {
-                const message = await channel.messages.fetch(messageId);
+                const message = await withDiscordRetry(
+                    () => channel.messages.fetch(messageId),
+                    'fetchMessageById'
+                );
                 results.push(transformMessage(message));
             } catch{
                 // Skip messages that fail to fetch (not found or inaccessible)

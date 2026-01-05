@@ -1,4 +1,4 @@
-import type { Client, Message } from 'discord.js';
+import type { Client, Message, TextChannel } from 'discord.js';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { DiscordMessageContext, UserId, ChannelId } from './types';
@@ -8,6 +8,8 @@ import type { ClaudeAgent } from '@/agent/agent';
 import { createGuildId, createChannelId, createUserId } from './types';
 import { createStatusMiddleware } from './presence';
 import { splitMessage } from './messages';
+import { createDiscordRateLimiter } from './rate-limiter';
+import { withDiscordRetry } from './retry';
 
 /**
  * Creates a handler for the Discord 'clientReady' event.
@@ -140,6 +142,12 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         })
         : null;
 
+    // Create rate limiter for Discord message sending
+    const rateLimiter = createDiscordRateLimiter({
+        globalConcurrency: 5,
+        logger,
+    });
+
     // Helper function to process a message after filtering checks pass
     async function processMessage(message: Message): Promise<void> {
         // Convert Discord.js Message to DiscordMessageContext
@@ -184,16 +192,20 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
                 const chunks = splitMessage(reply);
 
                 try {
-                    // First chunk uses reply() to thread the response
-                    await message.reply(chunks[0]);
+                    // First chunk uses reply() to thread the response (with retry and rate limiting)
+                    await withDiscordRetry(
+                        () => rateLimiter.replyToMessage(message, chunks[0]),
+                        'replyToMessage'
+                    );
                     logger.info({ messageId: message.id, chunkIndex: 0, totalChunks: chunks.length, msg: 'Reply sent successfully' });
 
-                    // Subsequent chunks use channel.send() to continue the conversation
-                    // Use interface with send method for type safety
-                    interface SendableChannel { send: (content: string) => Promise<Message> }
-                    const channel = message.channel as SendableChannel;
+                    // Subsequent chunks use channel.send() to continue the conversation (with retry and rate limiting)
+                    const channel = message.channel as TextChannel;
                     for(let i = 1; i < chunks.length; i++) {
-                        await channel.send(chunks[i]);
+                        await withDiscordRetry(
+                            () => rateLimiter.sendToChannel(channel, chunks[i]),
+                            'sendToChannel'
+                        );
                         logger.info({ messageId: message.id, chunkIndex: i, totalChunks: chunks.length, msg: 'Continuation sent successfully' });
                     }
                 } catch (replyError) {

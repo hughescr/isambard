@@ -113,6 +113,19 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // Register error handler for Discord client errors
     client.on('error', createErrorHandler());
 
+    // Register rate limit handler for logging (if rest client is available)
+    if(client.rest) {
+        client.rest.on('rateLimited', (info) => {
+            logger.warn({
+                route:      info.route,
+                limit:      info.limit,
+                retryAfter: info.retryAfter,
+                global:     info.global,
+                msg:        'Discord rate limit hit, auto-retrying',
+            });
+        });
+    }
+
     // Register clientReady handler for logging
     client.on('clientReady', createReadyHandler());
 
