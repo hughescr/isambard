@@ -9,6 +9,23 @@
  * - Extracts session IDs from SDK stream events
  * - Removes session files after query completion
  * - Handles all errors gracefully without affecting main operation
+ *
+ * @warning UNDOCUMENTED SDK INTERNALS
+ *
+ * This module relies on undocumented Claude Agent SDK implementation details:
+ * - File paths: `~/.claude/projects/` and `~/.claude/session-env/`
+ * - File format: `.jsonl` session transcripts with JSON lines
+ * - Directory structure: `{project-path}/{session-id}.jsonl` where project-path is
+ *   the current working directory with slashes replaced by dashes
+ * - Sub-agent files: `agent-{agent-id}.jsonl` with parentUuid linking to parent session
+ *
+ * These paths and formats are NOT part of the SDK's public API and may change
+ * without notice in future SDK versions.
+ *
+ * Current implementation tested against: @anthropic-ai/claude-agent-sdk v0.1.76
+ *
+ * If cleanup starts failing silently after an SDK upgrade, check if the SDK's
+ * session file storage mechanism has changed.
  */
 
 import { unlink, access, rm, readdir, readFile } from 'node:fs/promises';
@@ -117,6 +134,20 @@ const cleanupSubAgentSessions = async (sessionId: string, projectPath: string): 
     const projectsDir = join(homedir(), '.claude', 'projects', projectPath);
 
     try {
+        // Check if projects directory exists - if not, SDK session tracking may have changed
+        await access(projectsDir);
+    } catch (error) {
+        // Directory doesn't exist - this could indicate SDK session storage has changed
+        logger.warn({
+            sessionId,
+            projectsDir,
+            error,
+            msg: 'SDK projects directory not found - session tracking may have changed in newer SDK version',
+        });
+        return;
+    }
+
+    try {
         // List all files in the projects directory
         const files = await readdir(projectsDir);
 
@@ -211,10 +242,24 @@ export const cleanupSession = async (sessionId: string): Promise<void> => {
     } catch (error) {
         // Handle file not found gracefully (already cleaned up)
         if((error as NodeJS.ErrnoException).code === 'ENOENT') {
-            logger.debug({
-                sessionId,
-                msg: `Session file not found (already cleaned up): ${sessionId}`,
-            });
+            // Check if the parent directory exists - if not, SDK session storage may have changed
+            const projectsBaseDir = join(homedir(), '.claude', 'projects');
+            try {
+                await access(projectsBaseDir);
+                // Directory exists but file doesn't - normal case, already cleaned up
+                logger.debug({
+                    sessionId,
+                    msg: `Session file not found (already cleaned up): ${sessionId}`,
+                });
+            } catch (accessError) {
+                // Projects directory doesn't exist - SDK session storage may have changed
+                logger.warn({
+                    sessionId,
+                    projectsBaseDir,
+                    error: accessError,
+                    msg:   'SDK projects directory not found - session file storage may have changed in newer SDK version',
+                });
+            }
             return;
         }
 

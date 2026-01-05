@@ -1,18 +1,11 @@
 import { access, readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { homedir } from 'node:os';
+import type { SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
 import { z } from 'zod';
 import semver from 'semver';
-
-/**
- * Plugin entry matching the SDK's expected format.
- */
-export interface PluginEntry {
-    type: 'local'
-    path: string
-}
 
 /**
  * Schema for plugins.json configuration file.
@@ -131,9 +124,9 @@ export async function findLatestMarketplaceVersion(marketplacePath: string, plug
 /**
  * Discovers in-repo plugins (directories with .claude-plugin/ under plugins/).
  * @param pluginsDir Path to the plugins directory
- * @returns Array of PluginEntry for discovered in-repo plugins
+ * @returns Array of SdkPluginConfig for discovered in-repo plugins
  */
-async function discoverInRepoPlugins(pluginsDir: string): Promise<PluginEntry[]> {
+async function discoverInRepoPlugins(pluginsDir: string): Promise<SdkPluginConfig[]> {
     if(!await pathExists(pluginsDir)) {
         return [];
     }
@@ -209,10 +202,10 @@ async function loadPluginsConfig(pluginsDir: string): Promise<PluginsConfig> {
  * Resolves external plugin paths from configuration.
  * @param externalPaths Array of paths (may include ~)
  * @param loadedNames Set of already-loaded plugin names (for deduplication)
- * @returns Array of PluginEntry for valid external plugins
+ * @returns Array of SdkPluginConfig for valid external plugins
  */
-async function resolveExternalPlugins(externalPaths: string[], loadedNames: Set<string>): Promise<PluginEntry[]> {
-    const plugins: PluginEntry[] = [];
+async function resolveExternalPlugins(externalPaths: string[], loadedNames: Set<string>): Promise<SdkPluginConfig[]> {
+    const plugins: SdkPluginConfig[] = [];
 
     for(const rawPath of externalPaths) {
         const resolvedPath = resolveExternalPath(rawPath);
@@ -258,14 +251,14 @@ async function resolveExternalPlugins(externalPaths: string[], loadedNames: Set<
  * @param marketplaceNames Array of plugin names to load from marketplace
  * @param marketplacePath Path to marketplace plugins directory
  * @param loadedNames Set of already-loaded plugin names (for deduplication)
- * @returns Array of PluginEntry for valid marketplace plugins
+ * @returns Array of SdkPluginConfig for valid marketplace plugins
  */
 async function resolveMarketplacePlugins(
     marketplaceNames: string[],
     marketplacePath: string,
     loadedNames: Set<string>
-): Promise<PluginEntry[]> {
-    const plugins: PluginEntry[] = [];
+): Promise<SdkPluginConfig[]> {
+    const plugins: SdkPluginConfig[] = [];
 
     for(const name of marketplaceNames) {
         // Skip if already loaded (deduplication)
@@ -305,14 +298,14 @@ async function resolveMarketplacePlugins(
  *
  * @param pluginsDir Path to the plugins directory (default: PROJECT_ROOT/plugins)
  * @param marketplacePath Path to marketplace plugins (default: ~/.claude/plugins)
- * @returns Array of PluginEntry objects ready for the SDK
+ * @returns Array of SdkPluginConfig objects ready for the SDK
  */
 export async function loadPlugins(
     pluginsDir: string,
     marketplacePath: string = join(homedir(), '.claude', 'plugins')
-): Promise<PluginEntry[]> {
+): Promise<SdkPluginConfig[]> {
     const loadedNames = new Set<string>();
-    const allPlugins: PluginEntry[] = [];
+    const allPlugins: SdkPluginConfig[] = [];
 
     // 1. Discover in-repo plugins (highest priority)
     const inRepoPlugins = await discoverInRepoPlugins(pluginsDir);

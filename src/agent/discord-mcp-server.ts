@@ -1,4 +1,5 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import _ from 'lodash';
 import type { MessageSearchService } from '../integrations/discord/message-history/search';
@@ -33,7 +34,7 @@ export function createDiscordMCPServer(searchService: MessageSearchService) {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit:     z.number().int().positive().max(100).optional().describe('Maximum messages to return (default 10, max 100)'),
                 },
-                async (args) => {
+                async (args): Promise<CallToolResult> => {
                     try {
                         const result = await searchService.searchMessages({
                             channelId: args.channelId,
@@ -64,7 +65,7 @@ export function createDiscordMCPServer(searchService: MessageSearchService) {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit:     z.number().int().positive().max(100).optional().describe('Number of messages to return (default 10, max 100)'),
                 },
-                async (args) => {
+                async (args): Promise<CallToolResult> => {
                     try {
                         const result = await searchService.getRecentMessages(
                             args.channelId,
@@ -92,7 +93,7 @@ export function createDiscordMCPServer(searchService: MessageSearchService) {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     messageId: z.union([z.string(), z.array(z.string())]).describe('Discord message ID or array of message IDs'),
                 },
-                async (args) => {
+                async (args): Promise<CallToolResult> => {
                     try {
                         // Handle array input
                         if(_.isArray(args.messageId)) {

@@ -1,4 +1,5 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
@@ -30,7 +31,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     path: z.string().describe('Memory path (e.g., /identity/core-values, /users/{userId}/name, /events/{type}/{timestamp})'),
                 },
-                async (args) => {
+                async (args): Promise<CallToolResult> => {
                     try {
                         const result = await backend.get(createMemoryPath(args.path));
                         if(!result) {
@@ -65,7 +66,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     tags:    z.array(z.string()).optional().describe('Optional tags for categorization'),
                 },
-                async (args) => {
+                async (args): Promise<CallToolResult> => {
                     try {
                         const path = createMemoryPath(`/${args.layer}/${args.name}`);
                         await backend.create({
@@ -100,7 +101,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     tags:    z.array(z.string()).optional().describe('Optional tags for categorization'),
                 },
-                async (args) => {
+                async (args): Promise<CallToolResult> => {
                     try {
                         const path = createMemoryPath(`/users/${args.userId}/${args.name}`);
                         await backend.create({
@@ -135,7 +136,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     tags:      z.array(z.string()).optional().describe('Optional tags for categorization'),
                 },
-                async (args) => {
+                async (args): Promise<CallToolResult> => {
                     try {
                         const timestamp = _.replace(new Date().toISOString(), /[:.]/g, '-');
                         const path = createMemoryPath(`/events/${args.eventType}/${timestamp}`);
@@ -178,7 +179,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     endDate:   z.string().datetime().optional().describe('Filter: items updated on or before this ISO8601 datetime'),
                 },
-                async (args) => {
+                async (args): Promise<CallToolResult> => {
                     try {
                         // Build options object only if filter params provided
                         const options = (args.limit ?? args.cursor ?? args.startDate ?? args.endDate)
@@ -230,7 +231,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     endDate:   z.string().datetime().optional().describe('Filter: items updated on or before this ISO8601 datetime'),
                 },
-                async (args) => {
+                async (args): Promise<CallToolResult> => {
                     try {
                         const rawPath = args.path ?? '/';
                         // Normalize: strip trailing slash (except for root)
@@ -281,7 +282,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                 'listTags',
                 'List all tags with their usage counts',
                 {},
-                async () => {
+                async (): Promise<CallToolResult> => {
                     try {
                         const result = await backend.get(TAG_REGISTRY_PATH);
                         if(!result) {

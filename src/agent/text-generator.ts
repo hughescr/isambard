@@ -33,6 +33,10 @@ export async function generateText(
     prompt: string,
     options?: TextGeneratorOptions
 ): Promise<string> {
+    /**
+     * V2 preview API for the upcoming TypeScript v2 SDK.
+     * @see https://platform.claude.com/docs/en/agent-sdk/typescript-v2-preview#unstable-v2-prompt
+     */
     const result = await unstable_v2_prompt(prompt, {
         model: 'haiku',
     });
@@ -73,6 +77,10 @@ export async function generateTextWithSystemPrompt(
 ): Promise<string> {
     const combinedPrompt = `System:\n${systemPrompt}\n\nUser:\n${userPrompt}`;
 
+    /**
+     * V2 preview API for the upcoming TypeScript v2 SDK.
+     * @see https://platform.claude.com/docs/en/agent-sdk/typescript-v2-preview#unstable-v2-prompt
+     */
     const result = await unstable_v2_prompt(combinedPrompt, {
         model: 'haiku',
     });

@@ -136,7 +136,9 @@ describe('cleanupSession', () => {
 
         await cleanupSession(sessionId);
 
-        expect(mockAccess).toHaveBeenCalledTimes(1);
+        // 2 access calls: 1 for sub-agent dir check, 1 for session file check
+        // (session-env cleanup uses rm with force:true, no access check needed)
+        expect(mockAccess).toHaveBeenCalledTimes(2);
         expect(mockUnlink).toHaveBeenCalledTimes(1);
         expect(mockUnlink.mock.calls[0][0]).toContain(sessionId);
     });
@@ -169,7 +171,17 @@ describe('cleanupSession', () => {
         const sessionId = 'nonexistent-session';
         const notFoundError = new Error('ENOENT') as NodeJS.ErrnoException;
         notFoundError.code = 'ENOENT';
-        mockAccess.mockImplementation(() => Promise.reject(notFoundError));
+
+        // First call (sub-agent dir check) succeeds, second call (session file) fails with ENOENT,
+        // third call (projects base dir check) succeeds to confirm directory exists
+        let callCount = 0;
+        mockAccess.mockImplementation(() => {
+            callCount++;
+            if(callCount === 2) {
+                return Promise.reject(notFoundError);
+            }
+            return Promise.resolve();
+        });
 
         await cleanupSession(sessionId);
 

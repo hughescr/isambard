@@ -1,6 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
-import type { PluginEntry } from './plugin-loader';
+import type { McpServerConfig, SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
 import type { DiscordMessageContext } from '../integrations/discord/types';
@@ -283,7 +282,7 @@ export interface ClaudeAgentOptions {
     /** Discord MCP server instance for message history access */
     discordMcpServer?: McpServerConfig
     /** Plugins to load (from plugin-loader.ts) */
-    plugins?:          PluginEntry[]
+    plugins?:          SdkPluginConfig[]
 }
 
 export interface ClaudeAgent {
@@ -547,6 +546,8 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                         permissionMode:    'acceptEdits',
                         allowedTools:      buildAllowedTools(discordMcpServer),
                         maxThinkingTokens: 10000,  // Enable extended thinking for richer status context
+                        // Explicitly disable filesystem settings loading - we provide all config programmatically
+                        settingSources:    [],
                         // Stryker disable all: Observability - stderr logging doesn't affect behavior
                         stderr:            (data: string) => {
                             logger.error({ stderr: data, msg: 'Agent SDK stderr' });
