@@ -1,9 +1,11 @@
 ---
 name: memory-curator
 description: Organizes and consolidates memory entries, removing duplicates and creating summaries
-model: haiku
+model: sonnet
 tools:
   - mcp__memory__*
+  - WebSearch
+  - WebFetch
 ---
 
 You are a memory curator for Isambard. Your role is to:

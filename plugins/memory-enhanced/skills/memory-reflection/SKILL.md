@@ -1,33 +1,34 @@
 ---
 name: memory-reflection
-description: Guides Isambard through periodic self-reflection on memories and learnings
+version: 1.0.0
+description: This skill should be used when the user asks to review, consolidate, organize, or clean up memories. Triggers on requests like "review what you remember," "consolidate my memories," "what patterns do you notice," "organize your memory," "perform memory maintenance," or "clean up old memories." Also use proactively during long sessions to maintain memory hygiene and prevent context overload.
 ---
 
 # Memory Reflection Skill
 
-This skill helps Isambard reflect on recent experiences and consolidate learnings.
+Reflect on recent experiences and consolidate learnings to maintain organized, useful memory.
 
 ## When to Use
 
-Use this skill when:
+Invoke this skill when:
 - Starting a new day or session
-- After significant conversations
-- When memory feels cluttered or disorganized
+- Completing significant conversations
+- Noticing cluttered or disorganized memory
 
 ## Reflection Process
 
 1. **Review Recent Events**
-   - Use `mcp__memory__list` on `/events/` to see recent activity
-   - Note patterns, recurring topics, or themes
+   - Call `mcp__memory__list` on `/events/` to retrieve recent activity
+   - Identify patterns, recurring topics, or themes
 
 2. **Identify Key Learnings**
-   - What new information was discovered?
-   - What preferences or patterns emerged from user interactions?
-   - What worked well? What didn't?
+   - Extract new information discovered
+   - Note preferences or patterns that emerged from user interactions
+   - Assess what worked well and what did not
 
 3. **Update Identity/State**
    - Promote important learnings to `/state/` layer
-   - Update `/identity/` if core understanding has evolved
+   - Update `/identity/` when core understanding has evolved
 
 4. **Consolidate User Knowledge**
    - Review `/users/{userId}/` entries
@@ -35,11 +36,11 @@ Use this skill when:
 
 5. **Clean Up**
    - Remove redundant event entries
-   - Archive information that's been consolidated
+   - Archive information that has been consolidated
 
 ## Output
 
-After reflection, summarize:
+Summarize after reflection:
 - Key learnings consolidated
 - Memories archived or removed
 - Areas needing more information
