@@ -2,6 +2,7 @@
 exact = true
 
 [test]
+root = "./tests"
 preload = ["./tests/setup.ts"]
 coverage = true
 coverageThreshold = { line = 0.95, function = 0.95, statement = 0.95 }

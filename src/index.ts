@@ -2,6 +2,8 @@ import { Resource } from 'sst';
 import _ from 'lodash';
 import type { Client } from 'discord.js';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { stat, mkdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { loadConfig, loadDynamoDBConfig } from './config/loader';
 import { createDynamoDBClient } from './storage/client';
 import { MemoryToolBackend } from './storage/memory-tool';
@@ -162,6 +164,17 @@ export async function createApp(): Promise<App> {
 // Application entry point - only run if this is the main module
 // eslint-disable-next-line n/no-unsupported-features/node-builtins -- import.meta.main is required for Bun
 if(import.meta.main) {
+    // Change to scratch directory for containment
+    const scratchDir = 'scratch';
+    try {
+        await stat(scratchDir);
+    } catch{
+        logger.info(`Creating scratch directory: ${scratchDir}`);
+        await mkdir(scratchDir);
+    }
+    logger.info(`Changing working directory to: ${resolve(scratchDir)}`);
+    process.chdir(scratchDir);
+
     logger.info('Isambard starting...');
 
     const app = await createApp();

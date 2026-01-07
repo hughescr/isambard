@@ -53,3 +53,6 @@ neo4j_db/
 
 # SST
 .sst/
+
+# Izzy scratch space
+scratch/
