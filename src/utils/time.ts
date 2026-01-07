@@ -11,6 +11,17 @@ import _ from 'lodash';
 import { z } from 'zod';
 
 /**
+ * Time thresholds for relative time formatting.
+ * These constants define the boundaries between different time units.
+ */
+const SECONDS_THRESHOLD = 60;  // < 60 seconds = "just now"
+const MINUTES_THRESHOLD = 60;  // < 60 minutes = show minutes
+const HOURS_THRESHOLD = 24;    // < 24 hours = show hours
+const DAYS_THRESHOLD = 7;      // < 7 days = show days
+const WEEKS_THRESHOLD = 30;    // < 30 days = show weeks
+const MONTHS_THRESHOLD = 365;  // < 365 days = show months
+
+/**
  * Time of day categories based on UTC hour.
  */
 export const timeOfDaySchema = z.enum(['morning', 'afternoon', 'evening', 'night']);
@@ -51,32 +62,32 @@ export type TimeContext = z.infer<typeof timeContextSchema>;
 export function formatRelativeTime(date: Date, now: Date = new Date()): string {
     const seconds = differenceInSeconds(now, date);
 
-    if(seconds < 60) {
+    if(seconds < SECONDS_THRESHOLD) {
         return 'just now';
     }
 
     const minutes = differenceInMinutes(now, date);
-    if(minutes < 60) {
+    if(minutes < MINUTES_THRESHOLD) {
         return minutes === 1 ? '1 minute ago' : `${minutes} minutes ago`;
     }
 
     const hours = differenceInHours(now, date);
-    if(hours < 24) {
+    if(hours < HOURS_THRESHOLD) {
         return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
     }
 
     const days = differenceInDays(now, date);
-    if(days < 7) {
+    if(days < DAYS_THRESHOLD) {
         return days === 1 ? '1 day ago' : `${days} days ago`;
     }
 
     const weeks = differenceInWeeks(now, date);
-    if(days < 30) {
+    if(days < WEEKS_THRESHOLD) {
         return weeks === 1 ? '1 week ago' : `${weeks} weeks ago`;
     }
 
     const months = differenceInMonths(now, date);
-    if(days < 365) {
+    if(days < MONTHS_THRESHOLD) {
         return months === 1 ? '1 month ago' : `${months} months ago`;
     }
 
@@ -195,32 +206,32 @@ export function formatMemoryTimestamp(updatedAt: string, now: Date = new Date())
 export function formatShortRelativeTime(date: Date, now: Date = new Date()): string {
     const seconds = differenceInSeconds(now, date);
 
-    if(seconds < 60) {
+    if(seconds < SECONDS_THRESHOLD) {
         return 'now';
     }
 
     const minutes = differenceInMinutes(now, date);
-    if(minutes < 60) {
+    if(minutes < MINUTES_THRESHOLD) {
         return `${minutes}m ago`;
     }
 
     const hours = differenceInHours(now, date);
-    if(hours < 24) {
+    if(hours < HOURS_THRESHOLD) {
         return `${hours}h ago`;
     }
 
     const days = differenceInDays(now, date);
-    if(days < 7) {
+    if(days < DAYS_THRESHOLD) {
         return `${days}d ago`;
     }
 
     const weeks = differenceInWeeks(now, date);
-    if(days < 30) {
+    if(days < WEEKS_THRESHOLD) {
         return `${weeks}w ago`;
     }
 
     const months = differenceInMonths(now, date);
-    if(days < 365) {
+    if(days < MONTHS_THRESHOLD) {
         return `${months}mo ago`;
     }
 
