@@ -1218,6 +1218,12 @@ describe('createClaudeAgent', () => {
                 'EnterPlanMode',
                 'ExitPlanMode',
                 'Task',
+                'Bash(git:*)',
+                'Bash(bun run:*)',
+                'Bash(bun test:*)',
+                'Bash(bun lint:*)',
+                'Bash(bun typecheck)',
+                'Bash(ls:*)',
             ]);
         });
 

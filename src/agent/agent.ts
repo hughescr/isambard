@@ -346,6 +346,13 @@ function buildAllowedTools(discordMcpServer?: McpServerConfig): string[] {
         'EnterPlanMode',
         'ExitPlanMode',
         'Task',
+        // Bash commands (specific safe commands only)
+        'Bash(git:*)',
+        'Bash(bun run:*)',
+        'Bash(bun test:*)',
+        'Bash(bun lint:*)',
+        'Bash(bun typecheck)',
+        'Bash(ls:*)',
     ];
 
     if(discordMcpServer) {
