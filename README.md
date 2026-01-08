@@ -149,25 +149,39 @@ src/
 │   ├── context-builder.ts    # Memory context loading
 │   ├── memory-mcp-server.ts  # MCP server for memory tools
 │   ├── discord-mcp-server.ts # MCP server for message history
-│   └── text-generator.ts     # Lightweight LLM text generation
+│   ├── text-generator.ts     # Lightweight LLM text generation
+│   ├── claude-retry.ts       # Retry logic for Claude API
+│   ├── plugin-loader.ts      # Plugin loading for Agent SDK
+│   ├── session-cleanup.ts    # Session lifecycle management
+│   └── prompts/              # System prompts
 ├── integrations/             # External services
 │   └── discord/              # Discord bot integration
 │       ├── presence/         # Dynamic status updates
 │       │   ├── manager.ts    # Presence state management
 │       │   ├── middleware.ts # Activity state transitions
 │       │   └── status-generator-*.ts  # Status text generators
-│       └── message-history/  # Message search/caching
-│           ├── search.ts     # Search service
-│           ├── fetcher.ts    # Discord API fetcher
-│           └── summarizer.ts # Overflow summarization
+│       ├── message-history/  # Message search/caching
+│       │   ├── search.ts     # Search service
+│       │   ├── fetcher.ts    # Discord API fetcher
+│       │   └── summarizer.ts # Overflow summarization
+│       ├── rate-limiter.ts   # Rate limiting
+│       └── retry.ts          # Retry logic
 ├── storage/                  # DynamoDB layer
 │   ├── memory-tool/          # Three-layer memory system
+│   │   ├── backend*.ts       # Backend operations
+│   │   └── handlers.ts       # Memory tool handlers
 │   ├── message-cache/        # Discord message cache
 │   ├── models/               # Entity definitions
-│   └── repositories/         # Data access
+│   ├── repositories/         # Data access
+│   ├── client.ts             # DynamoDB client
+│   └── dynamo-retry.ts       # Retry logic
 ├── config/                   # Zod-validated configuration
+│   ├── schemas.ts            # Configuration schemas
+│   ├── loader.ts             # Config loader
+│   └── retry-config.ts       # Retry configuration
 └── utils/                    # Shared utilities
-    └── time.ts               # Time formatting utilities
+    ├── time.ts               # Time formatting utilities
+    └── retry/                # Retry with exponential backoff
 ```
 
 ## Roadmaps

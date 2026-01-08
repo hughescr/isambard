@@ -50,7 +50,7 @@ Isambard can propose improvements to its own code:
 
 ### Directory Structure
 - `src/agent/` - Claude Agent SDK integration
-- `src/storage/` - DynamoDB models and repositories
+- `src/storage/` - DynamoDB models, repositories, and storage backends
 - `src/integrations/` - External services (Discord, etc.)
 - `src/config/` - Configuration with Zod validation
 - `src/utils/` - Shared utilities
@@ -63,16 +63,25 @@ The agent subsystem connects Discord to Claude with persistent memory:
 - `src/agent/discord-mcp-server.ts` - MCP server for Discord message history (searchMessages, getRecentMessages, getMessageById)
 - `src/agent/text-generator.ts` - Lightweight LLM text generation via Haiku
 - `src/agent/types.ts` - Agent stream event types
+- `src/agent/claude-retry.ts` - Retry logic for Claude API calls
+- `src/agent/plugin-loader.ts` - Plugin loading and management for Claude Agent SDK
+- `src/agent/session-cleanup.ts` - Session cleanup and lifecycle management
+- `src/agent/prompts/` - Agent system prompts
+  - `system-prompt.ts` - Main system prompt for the agent
+  - `index.ts` - Public exports
+- `src/agent/index.ts` - Public exports
 - `src/index.ts` - Application entry point with lifecycle management
 
 ### Discord Integration
 The Discord integration provides bot functionality:
-- `src/integrations/discord/types.ts` - Branded types (GuildId, ChannelId, UserId)
+- `src/integrations/discord/types.ts` - Branded types (GuildId, ChannelId, UserId, MessageId)
 - `src/integrations/discord/errors.ts` - Error hierarchy
 - `src/integrations/discord/client.ts` - Discord.js client factory
 - `src/integrations/discord/handlers.ts` - Event handlers (ready, error, messageCreate)
 - `src/integrations/discord/bot.ts` - Bot factory with start/stop lifecycle
 - `src/integrations/discord/messages.ts` - Message splitting utilities (splitMessage for Discord's 2000-char limit)
+- `src/integrations/discord/rate-limiter.ts` - Rate limiting for Discord API calls
+- `src/integrations/discord/retry.ts` - Retry logic for Discord operations
 - `src/integrations/discord/index.ts` - Public exports
 
 ### Discord Presence System
@@ -95,7 +104,6 @@ Message search and caching for historical context:
   - `fetcher.ts` - Discord API message fetcher
   - `search.ts` - Message search service
   - `summarizer.ts` - Overflow message summarization
-  - `index.ts` - Public exports
 
 ### Message Cache
 DynamoDB-backed cache for Discord messages:
@@ -117,14 +125,42 @@ Custom memory tool implementation with DynamoDB backend and three-layer architec
   - `backend.ts` - Main backend facade
   - `backend-core.ts` - Core CRUD operations
   - `backend-query.ts` - Query operations (list, searchByTag)
+  - `backend-tag-registry.ts` - Tag registry management for searchable tags
   - `backend-versions.ts` - Version history management
-  - `handlers.ts` - Facade re-exporting all handlers
-  - `handlers-basic.ts` - Basic handlers: view, create, delete_memory, insert
-  - `handlers-advanced.ts` - Advanced handlers: str_replace, rename, search, recall, list_by_layer, consolidate
+  - `handlers.ts` - All memory tool handlers (view, create, delete_memory, insert, str_replace, rename, search, recall, list_by_layer, consolidate)
   - `index.ts` - Public exports
 
+### Storage Subsystem
+DynamoDB integration and data access layer:
+- `src/storage/client.ts` - DynamoDB client factory
+- `src/storage/errors.ts` - Storage-related error hierarchy
+- `src/storage/dynamo-retry.ts` - Retry logic for DynamoDB operations
+- `src/storage/index.ts` - Public exports
+- `src/storage/models/` - Entity definitions
+  - `memory.ts` - Memory entity model
+- `src/storage/repositories/` - Data access repositories
+  - `base.ts` - Base repository with common CRUD operations
+  - `memory.ts` - Memory repository
+- `src/storage/utils/` - Storage utilities
+  - `strip-keys.ts` - Utility to strip DynamoDB internal keys
+  - `index.ts` - Public exports
+
+### Configuration Subsystem
+Zod-validated configuration loading:
+- `src/config/schemas.ts` - Zod schemas for configuration validation
+- `src/config/loader.ts` - Configuration loader with environment variable support
+- `src/config/retry-config.ts` - Retry configuration constants
+- `src/config/index.ts` - Public exports
+
 ### Utilities
-- `src/utils/time.ts` - Time utilities (formatRelativeTime, getTimeOfDay, getCurrentTimeContext, formatShortRelativeTime)
+- `src/utils/time.ts` - Time utilities (formatRelativeTime, getTimeOfDay, getCurrentTimeContext, formatShortRelativeTime, formatMemoryTimestamp)
+- `src/utils/retry/` - Retry utilities with exponential backoff
+  - `types.ts` - Retry configuration types
+  - `classifier.ts` - Error classification for retry decisions
+  - `delay.ts` - Exponential backoff delay calculation
+  - `retry-async.ts` - Retry wrapper for async functions
+  - `retry-async-generator.ts` - Retry wrapper for async generators
+  - `index.ts` - Public exports
 
 ### Key Patterns
 - **Repository Pattern** for data access
@@ -134,6 +170,8 @@ Custom memory tool implementation with DynamoDB backend and three-layer architec
 - **Structured Logging** with correlation IDs
 - **Custom MCP Servers** for memory and Discord message history tools
 - **Three-Layer Memory Architecture** with paths: `/identity/`, `/state/`, `/events/`, `/users/{userId}/`
+- **Retry Logic with Exponential Backoff** for network resilience (Claude API, DynamoDB, Discord)
+- **Error Classification** for intelligent retry decisions
 
 ## Roadmaps
 - [Short-term (Weeks 1-2)](../roadmaps/short-term.md)
