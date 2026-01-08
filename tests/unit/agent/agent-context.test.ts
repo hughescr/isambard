@@ -959,8 +959,8 @@ describe.concurrent('createClaudeAgent context integration', () => {
                     error:     testError,
                     userId:    '111222333',
                     messageId: 'msg_999',
-                    msg:       expect.stringContaining('Failed to get Claude response for message msg_999 from user 111222333'),
-                })
+                }),
+                expect.stringContaining('Failed to get Claude response for message msg_999 from user 111222333')
             );
         });
     });

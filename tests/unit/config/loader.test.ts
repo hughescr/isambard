@@ -34,19 +34,6 @@ function createMockResources(
 
 describe.concurrent('loadConfig', () => {
     describe('Happy Path', () => {
-        test('should load configuration with all valid values', () => {
-            const resources = createMockResources();
-            const config = loadConfig(resources);
-
-            expect(config).toBeDefined();
-            expect(config.app).toBeDefined();
-            expect(config.agent).toBeDefined();
-            expect(config.caldav).toBeDefined();
-            expect(config.email).toBeDefined();
-            expect(config.discord).toBeDefined();
-            expect(config.box).toBeDefined();
-        });
-
         test('should return properly typed Config object', () => {
             const resources = createMockResources();
             const config = loadConfig(resources);
@@ -101,7 +88,6 @@ describe.concurrent('loadConfig', () => {
                 NodeEnv: { value: undefined },
             });
 
-            expect(() => loadConfig(resources)).toThrow();
             expect(() => loadConfig(resources)).toThrow(/app\.nodeEnv/);
         });
 
@@ -110,7 +96,6 @@ describe.concurrent('loadConfig', () => {
                 CaldavPassword: { value: undefined },
             });
 
-            expect(() => loadConfig(resources)).toThrow();
             expect(() => loadConfig(resources)).toThrow(/caldav\.password|password/);
         });
 
@@ -119,7 +104,6 @@ describe.concurrent('loadConfig', () => {
                 DiscordBotToken: { value: undefined },
             });
 
-            expect(() => loadConfig(resources)).toThrow();
             expect(() => loadConfig(resources)).toThrow(/discord\.botToken|botToken/);
         });
 
@@ -128,7 +112,6 @@ describe.concurrent('loadConfig', () => {
                 ClaudeCodeOAuthToken: { value: undefined },
             });
 
-            expect(() => loadConfig(resources)).toThrow();
             expect(() => loadConfig(resources)).toThrow(/agent\.oauthToken|oauthToken/);
         });
 
@@ -147,7 +130,7 @@ describe.concurrent('loadConfig', () => {
                 Port: { value: 'not-a-number' },
             });
 
-            expect(() => loadConfig(resources)).toThrow();
+            expect(() => loadConfig(resources)).toThrow(/Expected number|Invalid/i);
         });
 
         test('should throw error for invalid IMAP port', () => {
@@ -155,7 +138,7 @@ describe.concurrent('loadConfig', () => {
                 ImapPort: { value: 'abc' },
             });
 
-            expect(() => loadConfig(resources)).toThrow();
+            expect(() => loadConfig(resources)).toThrow(/Expected number|Invalid/i);
         });
 
         test('should throw error for invalid URL format', () => {
@@ -163,7 +146,7 @@ describe.concurrent('loadConfig', () => {
                 CaldavUrl: { value: 'not-a-valid-url' },
             });
 
-            expect(() => loadConfig(resources)).toThrow();
+            expect(() => loadConfig(resources)).toThrow(/Invalid url|url/i);
         });
 
         test('should throw error for invalid nodeEnv value', () => {
@@ -171,7 +154,7 @@ describe.concurrent('loadConfig', () => {
                 NodeEnv: { value: 'invalid-env' },
             });
 
-            expect(() => loadConfig(resources)).toThrow();
+            expect(() => loadConfig(resources)).toThrow(/Invalid option|expected one of/i);
         });
 
         test('should throw error for port out of valid range', () => {
@@ -179,7 +162,7 @@ describe.concurrent('loadConfig', () => {
                 SmtpPort: { value: '99999' },
             });
 
-            expect(() => loadConfig(resources)).toThrow();
+            expect(() => loadConfig(resources)).toThrow(/Too big|expected number to be <=/i);
         });
 
         test('should throw error for negative port', () => {
@@ -187,7 +170,7 @@ describe.concurrent('loadConfig', () => {
                 ImapPort: { value: '-1' },
             });
 
-            expect(() => loadConfig(resources)).toThrow();
+            expect(() => loadConfig(resources)).toThrow(/Too small|expected number to be >=/i);
         });
 
         test('should throw error for empty ClaudeCodeOAuthToken', () => {
@@ -195,7 +178,7 @@ describe.concurrent('loadConfig', () => {
                 ClaudeCodeOAuthToken: { value: '' },
             });
 
-            expect(() => loadConfig(resources)).toThrow();
+            expect(() => loadConfig(resources)).toThrow(/\[REDACTED\]/);
         });
     });
 

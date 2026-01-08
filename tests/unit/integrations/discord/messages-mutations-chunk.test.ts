@@ -7,23 +7,7 @@ import {
 
 describe.concurrent('Discord Message Splitting', () => {
     describe('splitMessage', () => {
-        describe('mutation coverage helpers', () => {
-            test('should handle word exactly equal to maxLength (boundary test)', () => {
-                // Tests that word.length > maxLength is correctly > not >=
-                const word = _.repeat('x', 50);
-                const result = splitMessage(word, 50);
-                expect(result).toEqual([word]); // Should NOT be character-split
-            });
-
-            test('should character-split word that is exactly one char over maxLength', () => {
-                // Tests that word.length > maxLength triggers at 51 chars for max=50
-                const word = _.repeat('y', 51);
-                const result = splitMessage(word, 50);
-                expect(result.length).toBe(2);
-                expect(result[0].length).toBe(50);
-                expect(result[1].length).toBe(1);
-            });
-
+        describe('mutation coverage - cascade behavior', () => {
             test('should handle multiple words where first word needs character split', () => {
                 // Tests the interaction between word splitting and character splitting
                 const longWord = _.repeat('a', 60);
@@ -36,76 +20,6 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result[0]).toBe(_.repeat('a', 50));
                 expect(result[1]).toBe(_.repeat('a', 10));
                 expect(result[2]).toBe('short');
-            });
-
-            test('should handle text with multiple consecutive spaces (regex + filter)', () => {
-                // Tests that \s+ correctly splits on multiple spaces and filter removes empty strings
-                // When splitting is needed, multiple spaces get normalized to single space
-                const message = 'word1    word2     word3    word4';
-                const result = splitMessage(message, 15);
-                // After splitting and reconstructing, spaces are normalized
-                for(const chunk of result) {
-                    expect(chunk.length).toBeLessThanOrEqual(15);
-                    // Each chunk should have normalized spaces (no double spaces)
-                    expect(chunk).not.toMatch(/ {2}/);
-                }
-            });
-
-            test('should split at correct word boundary when accumulating', () => {
-                // Tests the separator logic (currentChunk.length > 0 ? ' ' : '')
-                const message = 'aa bb cc dd ee';
-                const result = splitMessage(message, 8);
-
-                // 'aa bb' = 5 chars (fits), 'aa bb cc' = 8 chars (fits exactly),
-                // 'aa bb cc dd' = 11 chars (too long, split before dd)
-                expect(result).toContain('aa bb cc');
-                expect(result).toContain('dd ee');
-            });
-
-            test('should handle sentence with no punctuation (falls through to word split)', () => {
-                // Tests that text without sentence-ending punctuation falls back to word splitting
-                const message = _.trim(_.repeat('word ', 30));
-                const result = splitMessage(message, 50);
-
-                expect(result.length).toBeGreaterThan(1);
-                for(const chunk of result) {
-                    expect(chunk.length).toBeLessThanOrEqual(50);
-                }
-            });
-
-            test('should correctly handle text after last sentence', () => {
-                // Tests the remaining text after sentence pattern matching
-                const message = 'First sentence. Incomplete text without period';
-                const result = splitMessage(message, 25);
-
-                // Should handle both the sentence and the trailing text
-                expect(result.length).toBeGreaterThan(1);
-                const allText = result.join(' ');
-                expect(allText).toContain('First sentence.');
-                expect(allText).toContain('Incomplete');
-            });
-
-            test('should handle first word fitting when second word would overflow', () => {
-                // Tests word accumulation boundary: first word fits, adding second overflows
-                const message = 'aaaa bbbb cccc';
-                const result = splitMessage(message, 9);
-
-                // 'aaaa bbbb' = 9 chars (exactly fits)
-                // 'aaaa bbbb cccc' = 14 chars (overflow)
-                expect(result).toEqual(['aaaa bbbb', 'cccc']);
-            });
-
-            test('should handle empty chunk after character split of long word', () => {
-                // Tests the currentChunk = '' reset after pushing a character-split word
-                const message = _.repeat('a', 60) + ' ' + _.repeat('b', 60);
-                const result = splitMessage(message, 50);
-
-                // Should properly handle both long words
-                expect(result.length).toBe(4); // Two words, each split into 2 parts
-                expect(result[0]).toBe(_.repeat('a', 50));
-                expect(result[1]).toBe(_.repeat('a', 10));
-                expect(result[2]).toBe(_.repeat('b', 50));
-                expect(result[3]).toBe(_.repeat('b', 10));
             });
 
             test('should handle paragraph with long sentence that needs word splitting', () => {
@@ -132,66 +46,20 @@ describe.concurrent('Discord Message Splitting', () => {
             });
         });
 
-        describe('mutation coverage - splitMessage main function', () => {
-            test('should return empty string for empty input', () => {
-                // Tests: if(trimmedText.length === 0) return ['']
-                const result = splitMessage('');
-                expect(result).toEqual(['']);
-                expect(result[0]).toBe('');
+        describe('mutation coverage - multiple consecutive long items', () => {
+            test('should handle empty chunk after character split of long word', () => {
+                // Tests the currentChunk = '' reset after pushing a character-split word
+                const message = _.repeat('a', 60) + ' ' + _.repeat('b', 60);
+                const result = splitMessage(message, 50);
+
+                // Should properly handle both long words
+                expect(result.length).toBe(4); // Two words, each split into 2 parts
+                expect(result[0]).toBe(_.repeat('a', 50));
+                expect(result[1]).toBe(_.repeat('a', 10));
+                expect(result[2]).toBe(_.repeat('b', 50));
+                expect(result[3]).toBe(_.repeat('b', 10));
             });
 
-            test('should return empty string for whitespace input', () => {
-                // Tests: trimmedText.length === 0 after trimming
-                const result = splitMessage('   \t\n   ');
-                expect(result).toEqual(['']);
-            });
-
-            test('should return single chunk for text at maxLength', () => {
-                // Tests: trimmedText.length <= maxLength
-                const text = _.repeat('x', 50);
-                const result = splitMessage(text, 50);
-                expect(result).toEqual([text]);
-            });
-
-            test('should return single chunk for text under maxLength', () => {
-                // Tests <= boundary
-                const text = _.repeat('x', 49);
-                const result = splitMessage(text, 50);
-                expect(result).toEqual([text]);
-            });
-
-            test('should split text one char over maxLength', () => {
-                // Tests <= vs < boundary
-                const text = _.repeat('x', 51);
-                const result = splitMessage(text, 50);
-                expect(result.length).toBe(2);
-            });
-
-            test('should filter out empty chunks from final result', () => {
-                // Tests: _.filter(chunks, chunk => chunk.length > 0)
-                const text = 'word1 word2 word3';
-                const result = splitMessage(text, 10);
-                for(const chunk of result) {
-                    expect(chunk.length).toBeGreaterThan(0);
-                }
-            });
-
-            test('should use DISCORD_SAFE_LENGTH as default', () => {
-                // Tests default parameter
-                const text = _.repeat('x', DISCORD_SAFE_LENGTH);
-                const result = splitMessage(text);
-                expect(result).toEqual([text]);
-            });
-
-            test('should split when exceeding default length', () => {
-                // Use explicit maxLength to avoid processing 1900+ chars
-                const text = _.repeat('x', 101);
-                const result = splitMessage(text, 100);
-                expect(result.length).toBe(2);
-            });
-        });
-
-        describe('mutation coverage - edge conditions with empty chunks', () => {
             test('should handle transition from accumulated chunk to long word', () => {
                 // Verifies the flush-then-split flow
                 const message = 'aa bb ' + _.repeat('x', 100);
@@ -217,18 +85,9 @@ describe.concurrent('Discord Message Splitting', () => {
                 const result = splitMessage(message, 50);
                 expect(result[0]).toBe('Hi');
             });
-
-            test('should produce non-empty result for any non-whitespace input', () => {
-                const inputs = ['a', 'ab', 'abc', 'a.', 'a!', 'a?', 'a\n\nb'];
-                for(const input of inputs) {
-                    const result = splitMessage(input, 100);
-                    expect(result.length).toBeGreaterThan(0);
-                    expect(result[0].length).toBeGreaterThan(0);
-                }
-            });
         });
 
-        describe('mutation coverage - loop boundary for character split', () => {
+        describe('mutation coverage - currentChunk reset', () => {
             test('should not produce empty string at end of character split', () => {
                 // Kill: i < word.length vs i <= word.length
                 // At i=length, slice returns empty string
@@ -251,6 +110,40 @@ describe.concurrent('Discord Message Splitting', () => {
                 // Each chunk should have exactly 5 chars
                 for(const chunk of result) {
                     expect(chunk.length).toBe(5);
+                }
+            });
+        });
+
+        describe('mutation coverage - splitMessage main function', () => {
+            test('should filter out empty chunks from final result', () => {
+                // Tests: _.filter(chunks, chunk => chunk.length > 0)
+                const text = 'word1 word2 word3';
+                const result = splitMessage(text, 10);
+                for(const chunk of result) {
+                    expect(chunk.length).toBeGreaterThan(0);
+                }
+            });
+
+            test('should use DISCORD_SAFE_LENGTH as default', () => {
+                // Tests default parameter
+                const text = _.repeat('x', DISCORD_SAFE_LENGTH);
+                const result = splitMessage(text);
+                expect(result).toEqual([text]);
+            });
+
+            test('should split when exceeding default length', () => {
+                // Use explicit maxLength to avoid processing 1900+ chars
+                const text = _.repeat('x', 101);
+                const result = splitMessage(text, 100);
+                expect(result.length).toBe(2);
+            });
+
+            test('should produce non-empty result for any non-whitespace input', () => {
+                const inputs = ['a', 'ab', 'abc', 'a.', 'a!', 'a?', 'a\n\nb'];
+                for(const input of inputs) {
+                    const result = splitMessage(input, 100);
+                    expect(result.length).toBeGreaterThan(0);
+                    expect(result[0].length).toBeGreaterThan(0);
                 }
             });
         });

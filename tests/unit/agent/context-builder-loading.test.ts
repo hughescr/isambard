@@ -501,8 +501,8 @@ describe('createContextBuilder loading methods', () => {
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     identityLength: 0,
-                    msg:            'Core identity loaded',
-                })
+                }),
+                'Core identity loaded'
             );
         });
 
@@ -529,8 +529,8 @@ describe('createContextBuilder loading methods', () => {
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     identityLength: result.length,
-                    msg:            'Core identity loaded',
-                })
+                }),
+                'Core identity loaded'
             );
         });
     });
@@ -679,8 +679,8 @@ describe('createContextBuilder loading methods', () => {
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     userId,
-                    msg: 'Loading user context',
-                })
+                }),
+                'Loading user context'
             );
         });
 
@@ -717,8 +717,8 @@ describe('createContextBuilder loading methods', () => {
                 expect.objectContaining({
                     userId,
                     memoryCount: 2,
-                    msg:         'User context loaded',
-                })
+                }),
+                'User context loaded'
             );
         });
     });
@@ -930,8 +930,8 @@ describe('createContextBuilder loading methods', () => {
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     eventCount: 3,
-                    msg:        'Recent events loaded',
-                })
+                }),
+                'Recent events loaded'
             );
         });
 
@@ -1380,8 +1380,8 @@ describe('createContextBuilder loading methods', () => {
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     userId,
-                    msg: 'User timezone not found',
-                })
+                }),
+                'User timezone not found'
             );
         });
 

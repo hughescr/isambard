@@ -567,7 +567,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                         settingSources:    [],
                         // Stryker disable all: Observability - stderr logging doesn't affect behavior
                         stderr:            (data: string) => {
-                            logger.error({ stderr: data, msg: 'Agent SDK stderr' });
+                            logger.error({ stderr: data }, 'Agent SDK stderr');
                         },
                         // Stryker restore all
                     },
@@ -621,7 +621,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 return lastAssistantText || null;
             } catch (error) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
-                logger.error({ error, userId: context.userId, messageId: context.messageId, msg: `Failed to get Claude response for message ${context.messageId} from user ${context.userId}: ${errorMessage}` });
+                logger.error({ error, userId: context.userId, messageId: context.messageId }, `Failed to get Claude response for message ${context.messageId} from user ${context.userId}: ${errorMessage}`);
                 return null;
             }
         },

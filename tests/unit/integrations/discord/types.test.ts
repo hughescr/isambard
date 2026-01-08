@@ -15,104 +15,43 @@ import {
     type UserId
 } from '@/integrations/discord/types';
 
-describe.concurrent('guildIdSchema', () => {
-    test('should accept valid guild ID', () => {
-        const result = guildIdSchema.safeParse('123456789012345678');
+const idSchemas = [
+    ['GuildId', guildIdSchema, '123456789012345678', 12345, createGuildId, isGuildId],
+    ['ChannelId', channelIdSchema, '987654321098765432', 98765, createChannelId, isChannelId],
+    ['UserId', userIdSchema, '111222333444555666', 11122, createUserId, isUserId],
+] as const;
+
+describe.concurrent('branded ID schemas', () => {
+    test.each(idSchemas)('%s schema should accept valid ID', (_name, schema, validId) => {
+        const result = schema.safeParse(validId);
         expect(result.success).toBe(true);
     });
 
-    test('should reject empty string', () => {
-        const result = guildIdSchema.safeParse('');
+    test.each(idSchemas)('%s schema should reject empty string', (_name, schema) => {
+        const result = schema.safeParse('');
         expect(result.success).toBe(false);
     });
 
-    test('should include descriptive error message for empty GuildId', () => {
-        const result = guildIdSchema.safeParse('');
+    test.each(idSchemas)('%s schema should include descriptive error message for empty ID', (_name, schema) => {
+        const result = schema.safeParse('');
         expect(result.success).toBe(false);
         if(!result.success) {
             expect(result.error.issues[0]?.message).toContain('cannot be empty');
         }
     });
 
-    test('should reject non-string values', () => {
-        const result = guildIdSchema.safeParse(12345);
+    test.each(idSchemas)('%s schema should reject non-string values', (_name, schema, _validId, invalidNumber) => {
+        const result = schema.safeParse(invalidNumber);
         expect(result.success).toBe(false);
     });
 
-    test('should create branded GuildId type', () => {
-        const result = guildIdSchema.safeParse('123456789012345678');
+    test.each(idSchemas)('%s schema should create branded type', (_name, schema, validId) => {
+        const result = schema.safeParse(validId);
         expect(result.success).toBe(true);
         if(result.success) {
-            const guildId: GuildId = result.data;
-            expect(guildId).toBe('123456789012345678' as GuildId);
-        }
-    });
-});
-
-describe('channelIdSchema', () => {
-    test('should accept valid channel ID', () => {
-        const result = channelIdSchema.safeParse('987654321098765432');
-        expect(result.success).toBe(true);
-    });
-
-    test('should reject empty string', () => {
-        const result = channelIdSchema.safeParse('');
-        expect(result.success).toBe(false);
-    });
-
-    test('should include descriptive error message for empty ChannelId', () => {
-        const result = channelIdSchema.safeParse('');
-        expect(result.success).toBe(false);
-        if(!result.success) {
-            expect(result.error.issues[0]?.message).toContain('cannot be empty');
-        }
-    });
-
-    test('should reject non-string values', () => {
-        const result = channelIdSchema.safeParse(98765);
-        expect(result.success).toBe(false);
-    });
-
-    test('should create branded ChannelId type', () => {
-        const result = channelIdSchema.safeParse('987654321098765432');
-        expect(result.success).toBe(true);
-        if(result.success) {
-            const channelId: ChannelId = result.data;
-            expect(channelId).toBe('987654321098765432' as ChannelId);
-        }
-    });
-});
-
-describe('userIdSchema', () => {
-    test('should accept valid user ID', () => {
-        const result = userIdSchema.safeParse('111222333444555666');
-        expect(result.success).toBe(true);
-    });
-
-    test('should reject empty string', () => {
-        const result = userIdSchema.safeParse('');
-        expect(result.success).toBe(false);
-    });
-
-    test('should include descriptive error message for empty UserId', () => {
-        const result = userIdSchema.safeParse('');
-        expect(result.success).toBe(false);
-        if(!result.success) {
-            expect(result.error.issues[0]?.message).toContain('cannot be empty');
-        }
-    });
-
-    test('should reject non-string values', () => {
-        const result = userIdSchema.safeParse(11122);
-        expect(result.success).toBe(false);
-    });
-
-    test('should create branded UserId type', () => {
-        const result = userIdSchema.safeParse('111222333444555666');
-        expect(result.success).toBe(true);
-        if(result.success) {
-            const userId: UserId = result.data;
-            expect(userId).toBe('111222333444555666' as UserId);
+            // TypeScript ensures branded type is correct at compile time
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument -- Parameterized test requires type assertion across different branded types
+            expect(result.data).toBe(validId as any);
         }
     });
 });
@@ -213,116 +152,42 @@ describe('discordMessageContextSchema', () => {
     });
 });
 
-describe('createGuildId', () => {
-    test('should create GuildId from valid string', () => {
-        const guildId = createGuildId('123456789012345678');
-        expect(guildId).toBe('123456789012345678' as GuildId);
+describe('ID creator functions', () => {
+    test.each(idSchemas)('create%s should create branded type from valid string', (_name, _schema, validId, _invalidNumber, creator) => {
+        const result = creator(validId);
+        // TypeScript ensures branded type is correct at compile time
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument -- Parameterized test requires type assertion across different branded types
+        expect(result).toBe(validId as any);
     });
 
-    test('should throw error for empty string', () => {
-        expect(() => createGuildId('')).toThrow();
+    test.each(idSchemas)('create%s should throw error for empty string', (_name, _schema, _validId, _invalidNumber, creator) => {
+        expect(() => creator('')).toThrow();
     });
 
-    test('should throw error for non-string input', () => {
+    test.each(idSchemas)('create%s should throw error for non-string input', (_name, _schema, _validId, invalidNumber, creator) => {
         // @ts-expect-error - testing runtime validation
-        expect(() => createGuildId(12345)).toThrow();
+        expect(() => creator(invalidNumber)).toThrow();
     });
 });
 
-describe('createChannelId', () => {
-    test('should create ChannelId from valid string', () => {
-        const channelId = createChannelId('987654321098765432');
-        expect(channelId).toBe('987654321098765432' as ChannelId);
+describe('ID predicate functions', () => {
+    test.each(idSchemas)('is%s should return true for valid branded type', (_name, _schema, validId, _invalidNumber, creator, predicate) => {
+        const id = creator(validId);
+        expect(predicate(id)).toBe(true);
     });
 
-    test('should throw error for empty string', () => {
-        expect(() => createChannelId('')).toThrow();
+    test.each(idSchemas)('is%s should return true for valid string', (_name, _schema, validId, _invalidNumber, _creator, predicate) => {
+        expect(predicate(validId)).toBe(true);
     });
 
-    test('should throw error for non-string input', () => {
-        // @ts-expect-error - testing runtime validation
-        expect(() => createChannelId(98765)).toThrow();
-    });
-});
-
-describe('createUserId', () => {
-    test('should create UserId from valid string', () => {
-        const userId = createUserId('111222333444555666');
-        expect(userId).toBe('111222333444555666' as UserId);
+    test.each(idSchemas)('is%s should return false for empty string', (_name, _schema, _validId, _invalidNumber, _creator, predicate) => {
+        expect(predicate('')).toBe(false);
     });
 
-    test('should throw error for empty string', () => {
-        expect(() => createUserId('')).toThrow();
-    });
-
-    test('should throw error for non-string input', () => {
-        // @ts-expect-error - testing runtime validation
-        expect(() => createUserId(11122)).toThrow();
-    });
-});
-
-describe('isGuildId', () => {
-    test('should return true for valid GuildId', () => {
-        const guildId = createGuildId('123456789012345678');
-        expect(isGuildId(guildId)).toBe(true);
-    });
-
-    test('should return true for valid string', () => {
-        expect(isGuildId('123456789012345678')).toBe(true);
-    });
-
-    test('should return false for empty string', () => {
-        expect(isGuildId('')).toBe(false);
-    });
-
-    test('should return false for non-string values', () => {
-        expect(isGuildId(12345)).toBe(false);
-        expect(isGuildId(null)).toBe(false);
-        expect(isGuildId(undefined)).toBe(false);
-        expect(isGuildId({})).toBe(false);
-    });
-});
-
-describe('isChannelId', () => {
-    test('should return true for valid ChannelId', () => {
-        const channelId = createChannelId('987654321098765432');
-        expect(isChannelId(channelId)).toBe(true);
-    });
-
-    test('should return true for valid string', () => {
-        expect(isChannelId('987654321098765432')).toBe(true);
-    });
-
-    test('should return false for empty string', () => {
-        expect(isChannelId('')).toBe(false);
-    });
-
-    test('should return false for non-string values', () => {
-        expect(isChannelId(98765)).toBe(false);
-        expect(isChannelId(null)).toBe(false);
-        expect(isChannelId(undefined)).toBe(false);
-        expect(isChannelId({})).toBe(false);
-    });
-});
-
-describe('isUserId', () => {
-    test('should return true for valid UserId', () => {
-        const userId = createUserId('111222333444555666');
-        expect(isUserId(userId)).toBe(true);
-    });
-
-    test('should return true for valid string', () => {
-        expect(isUserId('111222333444555666')).toBe(true);
-    });
-
-    test('should return false for empty string', () => {
-        expect(isUserId('')).toBe(false);
-    });
-
-    test('should return false for non-string values', () => {
-        expect(isUserId(11122)).toBe(false);
-        expect(isUserId(null)).toBe(false);
-        expect(isUserId(undefined)).toBe(false);
-        expect(isUserId({})).toBe(false);
+    test.each(idSchemas)('is%s should return false for non-string values', (_name, _schema, _validId, invalidNumber, _creator, predicate) => {
+        expect(predicate(invalidNumber)).toBe(false);
+        expect(predicate(null)).toBe(false);
+        expect(predicate(undefined)).toBe(false);
+        expect(predicate({})).toBe(false);
     });
 });

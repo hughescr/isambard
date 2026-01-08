@@ -50,52 +50,86 @@ describe.concurrent('retryConfigSchema', () => {
         });
     });
 
-    describe('claude section', () => {
-        test('should accept valid maxAttempts', () => {
-            const result = retryConfigSchema.safeParse({
-                claude: { maxAttempts: 3 },
-            });
-            expect(result.success).toBe(true);
-            if(result.success) {
-                expect(result.data.claude.maxAttempts).toBe(3);
+    describe('bounded integer fields', () => {
+        const boundedFields = [
+            ['claude',   'maxAttempts',      1,    5,     3,     true],
+            ['discord',  'maxAttempts',      1,    3,     2,     true],
+            ['discord',  'baseDelayMs',      100,  5000,  1000,  false],
+            ['dynamodb', 'defaultTimeoutMs', 1000, 60000, 20000, false],
+            ['dynamodb', 'queryTimeoutMs',   1000, 60000, 30000, false],
+        ] as const;
+
+        test.each(boundedFields)(
+            '%s.%s should accept valid value',
+            (section, field, _min, _max, validValue, _requiresInteger) => {
+                const result = retryConfigSchema.safeParse({
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Dynamic key access needed for parameterized test
+                    [section]: { [field]: validValue },
+                });
+                expect(result.success).toBe(true);
+                if(result.success) {
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Dynamic key access needed for parameterized test
+                    expect((result.data as any)[section][field]).toBe(validValue);
+                }
             }
-        });
+        );
 
-        test('should reject maxAttempts below minimum (0)', () => {
-            const result = retryConfigSchema.safeParse({
-                claude: { maxAttempts: 0 },
-            });
-            expect(result.success).toBe(false);
-        });
+        test.each(boundedFields)(
+            '%s.%s should reject below minimum',
+            (section, field, min, _max, _validValue, _requiresInteger) => {
+                const result = retryConfigSchema.safeParse({
+                    [section]: { [field]: min - 1 },
+                });
+                expect(result.success).toBe(false);
+            }
+        );
 
-        test('should reject maxAttempts above maximum (6)', () => {
-            const result = retryConfigSchema.safeParse({
-                claude: { maxAttempts: 6 },
-            });
-            expect(result.success).toBe(false);
-        });
+        test.each(boundedFields)(
+            '%s.%s should reject above maximum',
+            (section, field, _min, max, _validValue, _requiresInteger) => {
+                const result = retryConfigSchema.safeParse({
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Dynamic key access needed for parameterized test
+                    [section]: { [field]: max + 1 },
+                });
+                expect(result.success).toBe(false);
+            }
+        );
 
-        test('should accept maxAttempts at minimum boundary (1)', () => {
-            const result = retryConfigSchema.safeParse({
-                claude: { maxAttempts: 1 },
-            });
-            expect(result.success).toBe(true);
-        });
+        test.each(boundedFields)(
+            '%s.%s should accept at minimum boundary',
+            (section, field, min, _max, _validValue, _requiresInteger) => {
+                const result = retryConfigSchema.safeParse({
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Dynamic key access needed for parameterized test
+                    [section]: { [field]: min },
+                });
+                expect(result.success).toBe(true);
+            }
+        );
 
-        test('should accept maxAttempts at maximum boundary (5)', () => {
-            const result = retryConfigSchema.safeParse({
-                claude: { maxAttempts: 5 },
-            });
-            expect(result.success).toBe(true);
-        });
+        test.each(boundedFields)(
+            '%s.%s should accept at maximum boundary',
+            (section, field, _min, max, _validValue, _requiresInteger) => {
+                const result = retryConfigSchema.safeParse({
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Dynamic key access needed for parameterized test
+                    [section]: { [field]: max },
+                });
+                expect(result.success).toBe(true);
+            }
+        );
 
-        test('should reject non-integer maxAttempts', () => {
-            const result = retryConfigSchema.safeParse({
-                claude: { maxAttempts: 2.5 },
-            });
-            expect(result.success).toBe(false);
-        });
+        // eslint-disable-next-line lodash/prefer-lodash-method -- Native filter is more readable for simple predicate
+        test.each(boundedFields.filter(f => f[5]))(
+            '%s.%s should reject non-integer values',
+            (section, field, _min, _max, validValue, _requiresInteger) => {
+                const result = retryConfigSchema.safeParse({
+                    [section]: { [field]: validValue + 0.5 },
+                });
+                expect(result.success).toBe(false);
+            }
+        );
+    });
 
+    describe('unique field behaviors', () => {
         test('should inherit retryPolicy fields from base schema', () => {
             const result = retryConfigSchema.safeParse({
                 claude: {
@@ -113,162 +147,6 @@ describe.concurrent('retryConfigSchema', () => {
                 expect(result.data.claude.backoffMultiplier).toBe(3);
                 expect(result.data.claude.jitterFraction).toBe(0.2);
             }
-        });
-    });
-
-    describe('discord section', () => {
-        test('should accept valid maxAttempts', () => {
-            const result = retryConfigSchema.safeParse({
-                discord: { maxAttempts: 2 },
-            });
-            expect(result.success).toBe(true);
-            if(result.success) {
-                expect(result.data.discord.maxAttempts).toBe(2);
-            }
-        });
-
-        test('should reject maxAttempts below minimum (0)', () => {
-            const result = retryConfigSchema.safeParse({
-                discord: { maxAttempts: 0 },
-            });
-            expect(result.success).toBe(false);
-        });
-
-        test('should reject maxAttempts above maximum (4)', () => {
-            const result = retryConfigSchema.safeParse({
-                discord: { maxAttempts: 4 },
-            });
-            expect(result.success).toBe(false);
-        });
-
-        test('should accept maxAttempts at minimum boundary (1)', () => {
-            const result = retryConfigSchema.safeParse({
-                discord: { maxAttempts: 1 },
-            });
-            expect(result.success).toBe(true);
-        });
-
-        test('should accept maxAttempts at maximum boundary (3)', () => {
-            const result = retryConfigSchema.safeParse({
-                discord: { maxAttempts: 3 },
-            });
-            expect(result.success).toBe(true);
-        });
-
-        test('should accept valid baseDelayMs', () => {
-            const result = retryConfigSchema.safeParse({
-                discord: { baseDelayMs: 1000 },
-            });
-            expect(result.success).toBe(true);
-            if(result.success) {
-                expect(result.data.discord.baseDelayMs).toBe(1000);
-            }
-        });
-
-        test('should reject baseDelayMs below minimum (99)', () => {
-            const result = retryConfigSchema.safeParse({
-                discord: { baseDelayMs: 99 },
-            });
-            expect(result.success).toBe(false);
-        });
-
-        test('should reject baseDelayMs above maximum (5001)', () => {
-            const result = retryConfigSchema.safeParse({
-                discord: { baseDelayMs: 5001 },
-            });
-            expect(result.success).toBe(false);
-        });
-
-        test('should accept baseDelayMs at minimum boundary (100)', () => {
-            const result = retryConfigSchema.safeParse({
-                discord: { baseDelayMs: 100 },
-            });
-            expect(result.success).toBe(true);
-        });
-
-        test('should accept baseDelayMs at maximum boundary (5000)', () => {
-            const result = retryConfigSchema.safeParse({
-                discord: { baseDelayMs: 5000 },
-            });
-            expect(result.success).toBe(true);
-        });
-    });
-
-    describe('dynamodb section', () => {
-        test('should accept valid defaultTimeoutMs', () => {
-            const result = retryConfigSchema.safeParse({
-                dynamodb: { defaultTimeoutMs: 20000 },
-            });
-            expect(result.success).toBe(true);
-            if(result.success) {
-                expect(result.data.dynamodb.defaultTimeoutMs).toBe(20000);
-            }
-        });
-
-        test('should reject defaultTimeoutMs below minimum (999)', () => {
-            const result = retryConfigSchema.safeParse({
-                dynamodb: { defaultTimeoutMs: 999 },
-            });
-            expect(result.success).toBe(false);
-        });
-
-        test('should reject defaultTimeoutMs above maximum (60001)', () => {
-            const result = retryConfigSchema.safeParse({
-                dynamodb: { defaultTimeoutMs: 60001 },
-            });
-            expect(result.success).toBe(false);
-        });
-
-        test('should accept defaultTimeoutMs at minimum boundary (1000)', () => {
-            const result = retryConfigSchema.safeParse({
-                dynamodb: { defaultTimeoutMs: 1000 },
-            });
-            expect(result.success).toBe(true);
-        });
-
-        test('should accept defaultTimeoutMs at maximum boundary (60000)', () => {
-            const result = retryConfigSchema.safeParse({
-                dynamodb: { defaultTimeoutMs: 60000 },
-            });
-            expect(result.success).toBe(true);
-        });
-
-        test('should accept valid queryTimeoutMs', () => {
-            const result = retryConfigSchema.safeParse({
-                dynamodb: { queryTimeoutMs: 30000 },
-            });
-            expect(result.success).toBe(true);
-            if(result.success) {
-                expect(result.data.dynamodb.queryTimeoutMs).toBe(30000);
-            }
-        });
-
-        test('should reject queryTimeoutMs below minimum (999)', () => {
-            const result = retryConfigSchema.safeParse({
-                dynamodb: { queryTimeoutMs: 999 },
-            });
-            expect(result.success).toBe(false);
-        });
-
-        test('should reject queryTimeoutMs above maximum (60001)', () => {
-            const result = retryConfigSchema.safeParse({
-                dynamodb: { queryTimeoutMs: 60001 },
-            });
-            expect(result.success).toBe(false);
-        });
-
-        test('should accept queryTimeoutMs at minimum boundary (1000)', () => {
-            const result = retryConfigSchema.safeParse({
-                dynamodb: { queryTimeoutMs: 1000 },
-            });
-            expect(result.success).toBe(true);
-        });
-
-        test('should accept queryTimeoutMs at maximum boundary (60000)', () => {
-            const result = retryConfigSchema.safeParse({
-                dynamodb: { queryTimeoutMs: 60000 },
-            });
-            expect(result.success).toBe(true);
         });
     });
 

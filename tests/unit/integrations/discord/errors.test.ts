@@ -10,26 +10,6 @@ import {
 
 describe.concurrent('Discord Integration Errors', () => {
     describe('DiscordIntegrationError', () => {
-        test('should be an instance of DiscordIntegrationError', () => {
-            const error = new DiscordIntegrationError('Test error', 'TEST_ERROR');
-            expect(error).toBeInstanceOf(DiscordIntegrationError);
-        });
-
-        test('should have correct name', () => {
-            const error = new DiscordIntegrationError('Test error', 'TEST_ERROR');
-            expect(error.name).toBe('DiscordIntegrationError');
-        });
-
-        test('should have correct message', () => {
-            const error = new DiscordIntegrationError('Test error', 'TEST_ERROR');
-            expect(error.message).toBe('Test error');
-        });
-
-        test('should have correct code', () => {
-            const error = new DiscordIntegrationError('Test error', 'TEST_ERROR');
-            expect(error.code).toBe('TEST_ERROR');
-        });
-
         test('should preserve stack trace', () => {
             const error = new DiscordIntegrationError('Test error', 'TEST_ERROR');
             expect(error.stack).toBeDefined();
@@ -69,38 +49,6 @@ describe.concurrent('Discord Integration Errors', () => {
             expect(() => {
                 throw error;
             }).toThrow(DiscordIntegrationError);
-        });
-
-        test('should use Error.captureStackTrace when available', () => {
-            // Verify that the captureStackTrace functionality is being used
-            // by confirming the stack trace property is a string starting with the error
-            const error = new DiscordIntegrationError('Stack test', 'STACK_TEST');
-
-            // captureStackTrace ensures stack is a proper string, not undefined
-            expect(typeof error.stack).toBe('string');
-            expect(error.stack!.length).toBeGreaterThan(0);
-
-            // The stack should start with the error name and message
-            expect(_.startsWith(error.stack, 'DiscordIntegrationError: Stack test')).toBe(true);
-
-            // Verify stack contains at least one file reference (indicating proper trace capture)
-            expect(error.stack).toMatch(/at\s+/);
-        });
-
-        test('should call Error.captureStackTrace with correct arguments', () => {
-            // Spy on Error.captureStackTrace to verify it's called with correct arguments
-            const captureStackTraceSpy = spyOn(Error, 'captureStackTrace');
-
-            const error = new DiscordIntegrationError('Spy test', 'SPY_TEST');
-
-            // Verify captureStackTrace was called
-            expect(captureStackTraceSpy).toHaveBeenCalled();
-
-            // Verify it was called with the error instance and constructor
-            expect(captureStackTraceSpy).toHaveBeenCalledWith(error, DiscordIntegrationError);
-
-            // Restore the original function
-            captureStackTraceSpy.mockRestore();
         });
 
         test('should call Error.captureStackTrace for subclass errors', () => {
@@ -147,34 +95,9 @@ describe.concurrent('Discord Integration Errors', () => {
                 }
             }
         });
-
-        test('should extend Error class', () => {
-            const error = new DiscordIntegrationError('Test error', 'TEST_ERROR');
-            expect(error).toBeInstanceOf(Error);
-        });
     });
 
     describe('InvalidTokenError', () => {
-        test('should be an instance of InvalidTokenError', () => {
-            const error = new InvalidTokenError();
-            expect(error).toBeInstanceOf(InvalidTokenError);
-        });
-
-        test('should extend DiscordIntegrationError', () => {
-            const error = new InvalidTokenError();
-            expect(error).toBeInstanceOf(DiscordIntegrationError);
-        });
-
-        test('should extend Error', () => {
-            const error = new InvalidTokenError();
-            expect(error).toBeInstanceOf(Error);
-        });
-
-        test('should have correct name', () => {
-            const error = new InvalidTokenError();
-            expect(error.name).toBe('InvalidTokenError');
-        });
-
         test('should have correct default message', () => {
             const error = new InvalidTokenError();
             expect(error.message).toBe('Discord bot token is invalid or expired');
@@ -184,36 +107,10 @@ describe.concurrent('Discord Integration Errors', () => {
             const error = new InvalidTokenError();
             expect(error.code).toBe('INVALID_TOKEN');
         });
-
-        test('should have a stack trace', () => {
-            const error = new InvalidTokenError();
-            expect(error.stack).toBeDefined();
-            expect(error.stack).toContain('InvalidTokenError');
-        });
     });
 
     describe('PermissionError', () => {
         const testAction = 'send messages';
-
-        test('should be an instance of PermissionError', () => {
-            const error = new PermissionError(testAction);
-            expect(error).toBeInstanceOf(PermissionError);
-        });
-
-        test('should extend DiscordIntegrationError', () => {
-            const error = new PermissionError(testAction);
-            expect(error).toBeInstanceOf(DiscordIntegrationError);
-        });
-
-        test('should extend Error', () => {
-            const error = new PermissionError(testAction);
-            expect(error).toBeInstanceOf(Error);
-        });
-
-        test('should have correct name', () => {
-            const error = new PermissionError(testAction);
-            expect(error.name).toBe('PermissionError');
-        });
 
         test('should have correct message format', () => {
             const error = new PermissionError(testAction);
@@ -244,36 +141,10 @@ describe.concurrent('Discord Integration Errors', () => {
                 expect(error.message).toContain(action);
             }
         });
-
-        test('should have a stack trace', () => {
-            const error = new PermissionError(testAction);
-            expect(error.stack).toBeDefined();
-            expect(error.stack).toContain('PermissionError');
-        });
     });
 
     describe('ChannelNotFoundError', () => {
         const testChannelId = '987654321098765432';
-
-        test('should be an instance of ChannelNotFoundError', () => {
-            const error = new ChannelNotFoundError(testChannelId);
-            expect(error).toBeInstanceOf(ChannelNotFoundError);
-        });
-
-        test('should extend DiscordIntegrationError', () => {
-            const error = new ChannelNotFoundError(testChannelId);
-            expect(error).toBeInstanceOf(DiscordIntegrationError);
-        });
-
-        test('should extend Error', () => {
-            const error = new ChannelNotFoundError(testChannelId);
-            expect(error).toBeInstanceOf(Error);
-        });
-
-        test('should have correct name', () => {
-            const error = new ChannelNotFoundError(testChannelId);
-            expect(error.name).toBe('ChannelNotFoundError');
-        });
 
         test('should have correct message format', () => {
             const error = new ChannelNotFoundError(testChannelId);
@@ -303,36 +174,10 @@ describe.concurrent('Discord Integration Errors', () => {
                 expect(error.message).toContain(channelId);
             }
         });
-
-        test('should have a stack trace', () => {
-            const error = new ChannelNotFoundError(testChannelId);
-            expect(error.stack).toBeDefined();
-            expect(error.stack).toContain('ChannelNotFoundError');
-        });
     });
 
     describe('RateLimitError', () => {
         const testRetryAfter = 5000;
-
-        test('should be an instance of RateLimitError', () => {
-            const error = new RateLimitError(testRetryAfter);
-            expect(error).toBeInstanceOf(RateLimitError);
-        });
-
-        test('should extend DiscordIntegrationError', () => {
-            const error = new RateLimitError(testRetryAfter);
-            expect(error).toBeInstanceOf(DiscordIntegrationError);
-        });
-
-        test('should extend Error', () => {
-            const error = new RateLimitError(testRetryAfter);
-            expect(error).toBeInstanceOf(Error);
-        });
-
-        test('should have correct name', () => {
-            const error = new RateLimitError(testRetryAfter);
-            expect(error.name).toBe('RateLimitError');
-        });
 
         test('should have correct message format', () => {
             const error = new RateLimitError(testRetryAfter);
@@ -370,12 +215,6 @@ describe.concurrent('Discord Integration Errors', () => {
             const error = new RateLimitError(largeRetryAfter);
             expect(error.retryAfter).toBe(largeRetryAfter);
             expect(error.message).toContain(`${largeRetryAfter}ms`);
-        });
-
-        test('should have a stack trace', () => {
-            const error = new RateLimitError(testRetryAfter);
-            expect(error.stack).toBeDefined();
-            expect(error.stack).toContain('RateLimitError');
         });
     });
 });

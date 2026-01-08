@@ -270,6 +270,9 @@ describe('Discord Event Handlers', () => {
             // logger.error({ error, msg }) - check msg property in object
             const loggedObject = lastCall[0] as { error: Error, msg: string };
             expect(loggedObject.msg.includes('Callback error')).toBe(true);
+
+            // Verify no reply was sent on error
+            expect(mockMessage.reply).not.toHaveBeenCalled();
         });
 
         it('should handle errors in reply gracefully', async () => {

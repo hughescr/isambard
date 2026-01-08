@@ -125,7 +125,9 @@ export function createStatusMiddleware(
 
                 // Refresh typing every 8 seconds (Discord timeout is ~10s)
                 typingInterval = setInterval(() => {
-                    void channel.sendTyping();
+                    void channel.sendTyping().catch((error: unknown) => {
+                        logger.error({ error, messageId: context.messageId, msg: 'Failed to send typing indicator' });
+                    });
                 }, 8000);
             }
 

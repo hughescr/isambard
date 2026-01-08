@@ -587,5 +587,38 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(allText).toContain('?');
             });
         });
+
+        describe('mutation coverage - empty string checks !== ""', () => {
+            test('should not push empty chunk when currentChunk is empty', () => {
+                // Kill: if(currentChunk !== '') -> if(true)
+                // Would push empty string if always true
+                const longWord = _.repeat('x', 100);
+                const result = splitMessage(longWord, 50);
+                expect(result.length).toBe(2);
+                expect(result).not.toContain('');
+                // Verify no leading empty chunk
+                expect(result[0]).toBe(_.repeat('x', 50));
+            });
+
+            test('should use correct separator based on currentChunk state', () => {
+                // Kill: currentChunk !== '' ? ' ' : '' -> true ? ' ' : ''
+                // Would add leading space to first word if always true
+                const message = 'first second';
+                const result = splitMessage(message, 100);
+                expect(result[0]).not.toMatch(/^\s/); // No leading space
+            });
+
+            test('should verify currentChunk !== "" controls separator', () => {
+                // Directly test the separator logic
+                const message = 'aaa bbb ccc';
+                const result = splitMessage(message, 8);
+                // 'aaa bbb' = 7 fits, adding ' ccc' = 11 overflows
+                expect(result[0]).toBe('aaa bbb');
+                expect(result[1]).toBe('ccc');
+                // No leading spaces
+                expect(result[0]).not.toMatch(/^\s/);
+                expect(result[1]).not.toMatch(/^\s/);
+            });
+        });
     });
 });

@@ -99,7 +99,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
 
             // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant - empty array join returns ''
             if(result.items.length === 0) {
-                logger.debug({ identityLength: 0, msg: 'Core identity loaded' });
+                logger.debug({ identityLength: 0 }, 'Core identity loaded');
                 return '';
             }
 
@@ -109,12 +109,12 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                 ? content.slice(0, maxIdentityChars - 3) + '...'
                 : content;
 
-            logger.debug({ identityLength: identity.length, msg: 'Core identity loaded' });
+            logger.debug({ identityLength: identity.length }, 'Core identity loaded');
             return identity;
         },
 
         loadRecentContext: async (userId: string, limit = 3, now: Date = new Date()): Promise<string[]> => {
-            logger.debug({ userId, msg: 'Loading user context' });
+            logger.debug({ userId }, 'Loading user context');
 
             // Load recent state/events for this user via tag search
             const result = await backend.searchByTag(`user:${userId}`, undefined, { limit });
@@ -124,7 +124,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                 formatMemoryPreview(item.path, item.content, item.updatedAt, now)
             );
 
-            logger.debug({ userId, memoryCount: memories.length, msg: 'User context loaded' });
+            logger.debug({ userId, memoryCount: memories.length }, 'User context loaded');
             return memories;
         },
 
@@ -244,7 +244,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                 events.unshift('⚠️ No activity in the last 14 days. Showing older events:');
             }
 
-            logger.debug({ eventCount: events.length, msg: 'Recent events loaded' });
+            logger.debug({ eventCount: events.length }, 'Recent events loaded');
             return events;
         },
 
@@ -253,7 +253,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             const item = await backend.get(path);
 
             if(!item) {
-                logger.debug({ userId, msg: 'User timezone not found' });
+                logger.debug({ userId }, 'User timezone not found');
                 return undefined;
             }
 

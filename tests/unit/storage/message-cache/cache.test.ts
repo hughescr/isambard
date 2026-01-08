@@ -1,3 +1,4 @@
+import _ from 'lodash';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import {
@@ -402,6 +403,103 @@ describe.concurrent('MessageCache', () => {
             const count = await cache.clearChannel(channelId);
 
             expect(count).toBe(0);
+        });
+    });
+
+    describe('concurrent operations', () => {
+        test('should handle concurrent getMessagesInRange calls safely', async () => {
+            // Setup cache with some data
+            const mockMessages: CachedMessage[] = [
+                { id: '120' as MessageId, content: 'First', authorId: 'a', timestamp: '2024-01-15T10:00:00.000Z' },
+                { id: '150' as MessageId, content: 'Second', authorId: 'a', timestamp: '2024-01-15T10:10:00.000Z' },
+                { id: '180' as MessageId, content: 'Third', authorId: 'a', timestamp: '2024-01-15T10:20:00.000Z' },
+                { id: '210' as MessageId, content: 'Fourth', authorId: 'a', timestamp: '2024-01-15T10:30:00.000Z' },
+            ];
+
+            const mockItem: CachedSegmentItem = {
+                PK:             'CHANNEL#123456789012345678',
+                SK:             'SEGMENT#100#250',
+                channelId,
+                startSnowflake: '100' as MessageId,
+                endSnowflake:   '250' as MessageId,
+                messages:       mockMessages,
+                fetchedAt:      '2024-01-15T10:40:00.000Z',
+            };
+
+            ddbMock.on(QueryCommand).resolves({ Items: [mockItem] });
+
+            const promises = [
+                cache.getMessagesInRange(channelId, '100' as MessageId, '200' as MessageId),
+                cache.getMessagesInRange(channelId, '150' as MessageId, '250' as MessageId),
+                cache.getMessagesInRange(channelId, '100' as MessageId, '250' as MessageId),
+            ];
+
+            const results = await Promise.all(promises);
+
+            // All should complete without error
+            expect(results).toHaveLength(3);
+            // Results should be consistent
+            _.forEach(results, (result) => {
+                expect(result.messages).toBeDefined();
+                expect(_.isArray(result.messages)).toBe(true);
+            });
+        });
+
+        test('should handle concurrent storeMessages calls safely', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            const messages1: CachedMessage[] = [
+                { id: '120' as MessageId, content: 'Batch 1 First', authorId: 'a', timestamp: '2024-01-15T10:00:00.000Z' },
+                { id: '150' as MessageId, content: 'Batch 1 Second', authorId: 'a', timestamp: '2024-01-15T10:10:00.000Z' },
+            ];
+
+            const messages2: CachedMessage[] = [
+                { id: '250' as MessageId, content: 'Batch 2 First', authorId: 'b', timestamp: '2024-01-15T10:20:00.000Z' },
+                { id: '280' as MessageId, content: 'Batch 2 Second', authorId: 'b', timestamp: '2024-01-15T10:30:00.000Z' },
+            ];
+
+            await Promise.all([
+                cache.storeMessages(channelId, '100' as MessageId, '200' as MessageId, messages1),
+                cache.storeMessages(channelId, '200' as MessageId, '300' as MessageId, messages2),
+            ]);
+
+            // Verify both batches were stored
+            const calls = ddbMock.commandCalls(PutCommand);
+            expect(calls.length).toBeGreaterThanOrEqual(2);
+        });
+
+        test('should handle concurrent mixed operations safely', async () => {
+            const mockItem: CachedSegmentItem = {
+                PK:             'CHANNEL#123456789012345678',
+                SK:             'SEGMENT#100#200',
+                channelId,
+                startSnowflake: '100' as MessageId,
+                endSnowflake:   '200' as MessageId,
+                messages:       [
+                    { id: '150' as MessageId, content: 'Message', authorId: 'a', timestamp: '2024-01-15T10:10:00.000Z' },
+                ],
+                fetchedAt: '2024-01-15T10:30:00.000Z',
+            };
+
+            ddbMock.on(QueryCommand).resolves({ Items: [mockItem] });
+            ddbMock.on(PutCommand).resolves({});
+
+            const newMessages: CachedMessage[] = [
+                { id: '250' as MessageId, content: 'New', authorId: 'b', timestamp: '2024-01-15T10:40:00.000Z' },
+            ];
+
+            // Mix of reads and writes
+            const promises = [
+                cache.getMessagesInRange(channelId, '100' as MessageId, '200' as MessageId),
+                cache.storeMessages(channelId, '200' as MessageId, '300' as MessageId, newMessages),
+                cache.findGaps(channelId, '100' as MessageId, '300' as MessageId),
+                cache.isRangeFullyCached(channelId, '100' as MessageId, '200' as MessageId),
+            ];
+
+            const results = await Promise.all(promises);
+
+            // All operations should complete without error
+            expect(results).toHaveLength(4);
         });
     });
 });

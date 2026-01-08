@@ -7,88 +7,6 @@ import {
 describe.concurrent('Discord Message Splitting', () => {
     describe('splitMessage', () => {
         describe('Codex-targeted mutation killing tests', () => {
-            test('should handle paragraph with sentence at exact end (no trailing whitespace)', () => {
-                // Kill: line 109 regex - sentence at end of string
-                const para1 = 'Short.';
-                const para2 = 'More text here.';
-                const message = `${para1}\n\n${para2}`;
-                const result = splitMessage(message, 20);
-                expect(result).toContain('Short.');
-            });
-
-            test('should execute sentence extraction loop for text with punctuation', () => {
-                // Kill: lines 114-125 sentence extraction loop
-                const s1 = _.repeat('a', 40) + '.';
-                const s2 = _.repeat('b', 40) + '.';
-                const message = `${s1} ${s2}`;
-                const result = splitMessage(message, 50);
-                expect(result[0]).toBe(s1);
-                expect(result[1]).toBe(s2);
-            });
-
-            test('should handle remaining text after last sentence match', () => {
-                // Kill: lines 114-125 remaining text handling
-                const message = 'First sentence. And some trailing words';
-                const result = splitMessage(message, 20);
-                const allText = result.join(' ');
-                expect(allText).toContain('trailing words');
-            });
-
-            test('should use sentence splitting when punctuation exists', () => {
-                // Kill: line 144 fallback check
-                const message = 'A. B.';
-                const result = splitMessage(message, 10);
-                expect(result).toEqual(['A. B.']);
-            });
-
-            test('should use word splitting when no punctuation exists', () => {
-                // Kill: line 144 fallback check
-                const message = 'word1 word2 word3';
-                const result = splitMessage(message, 12);
-                expect(result.length).toBeGreaterThan(1);
-            });
-
-            test('should split long sentence and reset currentChunk properly', () => {
-                // Kill: lines 164-172 long sentence handling
-                const shortSent = 'Hi.';
-                const longSent = _.repeat('x', 60) + '.';
-                const afterSent = 'End.';
-                const message = `${shortSent} ${longSent} ${afterSent}`;
-                const result = splitMessage(message, 50);
-
-                expect(result[0]).toBe('Hi.');
-                expect(result).toContain('End.');
-                expect(result).not.toContain('');
-            });
-
-            test('should NOT push empty chunk in sentence overflow', () => {
-                // Kill: lines 180-185 overflow flush - no empty chunks
-                const longSent = _.repeat('x', 60) + '.';
-                const shortSent = 'Y.';
-                const message = `${longSent} ${shortSent}`;
-                const result = splitMessage(message, 50);
-                expect(result).not.toContain('');
-            });
-
-            test('should NOT push empty chunk in paragraph overflow', () => {
-                // Kill: line 245 overflow flush - no empty chunks
-                const longPara = _.repeat('x', 100);
-                const shortPara = 'Y';
-                const message = `${longPara}\n\n${shortPara}`;
-                const result = splitMessage(message, 50);
-                expect(result).not.toContain('');
-            });
-
-            test('should use correct separator - empty for first, space for subsequent', () => {
-                // Kill: lines 180-185 separator logic
-                const s1 = 'A.';
-                const s2 = 'B.';
-                const s3 = 'C.';
-                const message = `${s1} ${s2} ${s3}`;
-                const result = splitMessage(message, 10);
-                expect(result).toEqual(['A. B. C.']);
-            });
-
             test('should collapse multiple spaces when splitting words (kills /\\s+/ -> /\\s/)', () => {
                 // Kill: line 51 regex mutation
                 const word1 = _.repeat('a', 25);
@@ -131,16 +49,6 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result).toHaveLength(2);
             });
 
-            test('should execute while loop body to extract sentences (kills empty block)', () => {
-                // Kill: line 114 block becomes empty
-                const s1 = _.repeat('a', 45) + '.';
-                const s2 = _.repeat('b', 45) + '.';
-                const message = `${s1} ${s2}`;
-                const result = splitMessage(message, 50);
-                expect(result[0]).toBe(s1);
-                expect(result[1]).toBe(s2);
-            });
-
             test('should NOT include remaining text when lastIndex equals text.length (kills if(true))', () => {
                 // Kill: line 123 if(lastIndex < text.length) -> if(true)
                 const message = 'A. B. C.'; // Ends exactly at punctuation
@@ -177,14 +85,15 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result).not.toContain('');
             });
 
-            test('should NOT fall back to word split when sentences exist (kills if(true))', () => {
-                // Kill: line 144 if(sentences.length === 0) -> if(true)
-                const s1 = _.repeat('a', 45) + '.';
-                const s2 = _.repeat('b', 45) + '.';
-                const message = `${s1} ${s2}`;
-                const result = splitMessage(message, 50);
-                expect(result[0]).toBe(s1);
-                expect(result[1]).toBe(s2);
+            test('should correctly check sentences.length === 0 (kills !== mutation)', () => {
+                // Kill: line 144 sentences.length === 0 -> sentences.length !== 0
+                const withPunct = 'A. B.';
+                const result1 = splitMessage(withPunct, 10);
+                expect(result1).toEqual(['A. B.']); // Sentences combined
+
+                const noPunct = 'aa bb cc dd ee ff';
+                const result2 = splitMessage(noPunct, 10);
+                expect(result2.length).toBeGreaterThan(1); // Must word split
             });
 
             test('should fall back to word split when no sentences exist (kills if(false))', () => {
@@ -197,24 +106,6 @@ describe.concurrent('Discord Message Splitting', () => {
                 }
             });
 
-            test('should correctly check sentences.length === 0 (kills !== mutation)', () => {
-                // Kill: line 144 sentences.length === 0 -> sentences.length !== 0
-                const withPunct = 'A. B.';
-                const result1 = splitMessage(withPunct, 10);
-                expect(result1).toEqual(['A. B.']); // Sentences combined
-
-                const noPunct = 'aa bb cc dd ee ff';
-                const result2 = splitMessage(noPunct, 10);
-                expect(result2.length).toBeGreaterThan(1); // Must word split
-            });
-
-            test('should execute fallback block to word split (kills empty block)', () => {
-                // Kill: line 144 block removed
-                const message = 'no punctuation here just words needing split';
-                const result = splitMessage(message, 20);
-                expect(result.length).toBeGreaterThan(1);
-            });
-
             test('should handle long sentence that exceeds maxLength (kills if(false))', () => {
                 // Kill: line 164 if(exceedsLimtest(sentence.length, maxLength)) -> if(false)
                 const shortSent = 'Hi.';
@@ -223,27 +114,6 @@ describe.concurrent('Discord Message Splitting', () => {
                 const result = splitMessage(message, 50);
                 expect(result[0]).toBe('Hi.');
                 expect(result.length).toBeGreaterThan(2);
-            });
-
-            test('should execute long sentence handling block (kills empty block)', () => {
-                // Kill: line 164 block removed
-                const shortSent = 'Hi.';
-                const longSent = _.repeat('x', 60) + '.';
-                const afterSent = 'End.';
-                const message = `${shortSent} ${longSent} ${afterSent}`;
-                const result = splitMessage(message, 50);
-                expect(result[0]).toBe('Hi.');
-                expect(result).toContain('End.');
-            });
-
-            test('should not push empty chunk in sentence overflow (kills if(true))', () => {
-                // Kill: line 180 if(currentChunk !== '') -> if(true)
-                const s1 = _.repeat('x', 45) + '.';
-                const s2 = _.repeat('y', 45) + '.';
-                const s3 = _.repeat('z', 45) + '.';
-                const message = `${s1} ${s2} ${s3}`;
-                const result = splitMessage(message, 50);
-                expect(result).not.toContain('');
             });
 
             test('should compare currentChunk to empty string exactly (kills string literal mutation)', () => {
@@ -257,16 +127,6 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result).not.toContain('');
             });
 
-            test('should not push empty chunk in paragraph overflow (kills if(true))', () => {
-                // Kill: line 245 if(currentChunk !== '') -> if(true)
-                const p1 = _.repeat('x', 45);
-                const p2 = _.repeat('y', 45);
-                const p3 = _.repeat('z', 45);
-                const message = `${p1}\n\n${p2}\n\n${p3}`;
-                const result = splitMessage(message, 50);
-                expect(result).not.toContain('');
-            });
-
             test('should compare paragraph currentChunk to empty string exactly (kills string literal mutation)', () => {
                 // Kill: line 245 currentChunk !== '' -> currentChunk !== "Stryker was here!"
                 const p1 = _.repeat('a', 45);
@@ -276,13 +136,6 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result[0]).toBe(p1);
                 expect(result[1]).toBe(p2);
                 expect(result).not.toContain('');
-            });
-
-            test('should execute empty input handling block (kills block removal)', () => {
-                // Kill: line 290 block removed
-                const result = splitMessage('');
-                expect(result).toEqual(['']);
-                expect(result).toHaveLength(1);
             });
 
             test('should compare normalized to empty string exactly (kills string literal mutation)', () => {
@@ -312,14 +165,6 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result).toHaveLength(1);
             });
 
-            test('should preserve sentence boundary not word boundary (kills while loop mutations)', () => {
-                // Kill: line 114 while(false) or empty block
-                const message = 'Short words here.'; // 18 chars including period
-                const result = splitMessage(message, 20);
-                expect(result).toHaveLength(1);
-                expect(result[0]).toBe('Short words here.');
-            });
-
             test('should split at sentence boundary, not word boundary for multi-sentence text', () => {
                 // Kill: line 114 mutations that prevent sentence extraction
                 const s1 = 'aaaa.'; // 5 chars
@@ -329,14 +174,6 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result).toHaveLength(2);
                 expect(result[0]).toBe('aaaa.');
                 expect(result[1]).toBe('bbbb.');
-            });
-
-            test('should extract sentences from text even when total fits (kills if(trimmed) -> if(true))', () => {
-                // Kill: line 116 if(trimmed) -> if(true)
-                const message = 'A.   B.'; // Multiple spaces between sentences
-                const result = splitMessage(message, 100);
-                expect(result).toHaveLength(1);
-                expect(result[0]).toBe('A.   B.');
             });
 
             test('should handle sentence at exact end of string for regex $ pattern', () => {
@@ -373,16 +210,6 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result2[1]).toBe('ccc ddd');
             });
 
-            test('should not have empty chunks when sentence overflow pushes to empty currentChunk (kills if(currentChunk !== "") -> if(true))', () => {
-                // Kill: lines 180 and 245
-                const longSent = _.repeat('x', 60) + '.'; // 61 chars > 50
-                const shortSent = 'Y.'; // 2 chars
-                const message = `${longSent} ${shortSent}`;
-                const result = splitMessage(message, 50);
-                expect(result).not.toContain('');
-                expect(result[result.length - 1]).toBe('Y.');
-            });
-
             test('should correctly check empty string comparison (kills Stryker string literal mutation)', () => {
                 // Kill: lines 180, 245, 290 string literal mutations
                 const s1 = _.repeat('a', 45) + '.';
@@ -403,14 +230,6 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result[0]).toBe('');
                 expect(result).toHaveLength(1);
                 expect(result[0].length).toBe(0);
-            });
-
-            test('should return early for text within limit (kills if(!exceedsLimit) mutations)', () => {
-                // Kill: line 295 mutations
-                const text = 'short text';
-                const result = splitMessage(text, 100);
-                expect(result).toEqual(['short text']);
-                expect(result).toHaveLength(1);
             });
 
             test('should produce different output for sentence vs word split (critical for while(false) kill)', () => {

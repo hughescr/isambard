@@ -34,29 +34,6 @@ describe.concurrent('Discord Message Splitting', () => {
             });
         });
 
-        describe('mutation coverage - while loop execution', () => {
-            test('should execute sentence extraction loop', () => {
-                // Tests: while((match = sentencePattern.exec(text)) !== null)
-                // If while(false), no sentences would be extracted
-                const message = 'First. Second. Third.';
-                const result = splitMessage(message, 10);
-                // Should find and process sentences
-                expect(result.length).toBeGreaterThan(1);
-                expect(result).toContain('First.');
-            });
-
-            test('should process all sentences in while loop', () => {
-                // Tests that loop body executes (not just the condition)
-                const message = 'A. B. C.';
-                const result = splitMessage(message, 5);
-                // Each sentence should be in output
-                const allText = result.join(' ');
-                expect(allText).toContain('A.');
-                expect(allText).toContain('B.');
-                expect(allText).toContain('C.');
-            });
-        });
-
         describe('mutation coverage - remaining text after sentences', () => {
             test('should include remaining text after last sentence', () => {
                 // Tests: if(lastIndex < text.length) { ... sentences.push(remaining) }
@@ -79,29 +56,22 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result).toEqual(['Complete sentence.']);
                 expect(result.length).toBe(1);
             });
-        });
 
-        describe('mutation coverage - while loop and sentence extraction', () => {
-            test('should extract all sentences when splitting needed', () => {
-                // Kill: while(false) - loop never runs
-                const message = 'A. B. C. D. E.';
-                const result = splitMessage(message, 5);
-                const allText = result.join(' ');
-                // All sentences should be in output
-                expect(allText).toContain('A.');
-                expect(allText).toContain('B.');
-                expect(allText).toContain('C.');
-                expect(allText).toContain('D.');
-                expect(allText).toContain('E.');
+            test('should track lastIndex correctly for remaining text', () => {
+                // Kill: text.slice(lastIndex) -> text
+                const message = 'Sentence. trailing';
+                const result = splitMessage(message, 100);
+                // 'trailing' should appear once, not duplicated
+                const occurrences = (result[0].match(/trailing/g) ?? []).length;
+                expect(occurrences).toBe(1);
             });
 
-            test('should update lastIndex during sentence extraction', () => {
-                // Kill: empty while loop body
-                // If loop body doesn't execute, lastIndex stays 0
-                // and remaining text logic would capture entire text
-                const message = 'Sent1. remaining';
+            test('should handle text where lastIndex equals text.length', () => {
+                // Kill: lastIndex < text.length -> lastIndex <= text.length
+                // When sentence ends exactly at text end, no remaining text
+                const message = 'Complete sentence.';
                 const result = splitMessage(message, 100);
-                expect(result[0]).toBe('Sent1. remaining');
+                expect(result).toEqual(['Complete sentence.']);
             });
         });
 
@@ -124,57 +94,6 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result.length).toBe(2);
                 expect(result[0].length).toBe(50);
                 expect(result[1].length).toBe(50);
-            });
-        });
-
-        describe('mutation coverage - while loop in sentence extraction', () => {
-            test('should execute while loop to extract sentences', () => {
-                // Kill: while(false) - loop must execute
-                const message = 'A. B. C.';
-                const result = splitMessage(message, 4);
-                // All sentences must be found when forcing sentence-level splits
-                const allText = result.join(' ');
-                expect(allText).toContain('A.');
-                expect(allText).toContain('B.');
-                expect(allText).toContain('C.');
-            });
-
-            test('should update lastIndex in while loop body', () => {
-                // Kill: empty while loop body
-                // If body doesn't execute, lastIndex stays 0
-                const message = 'First. Second.';
-                const result = splitMessage(message, 100);
-                expect(result).toEqual(['First. Second.']);
-            });
-        });
-
-        describe('mutation coverage - while loop and lastIndex', () => {
-            test('should extract all sentences from text', () => {
-                // Kill: while(false) - loop never executes
-                const message = 'A. B. C. D.';
-                const result = splitMessage(message, 5);
-                const allText = result.join(' ');
-                expect(allText).toContain('A.');
-                expect(allText).toContain('B.');
-                expect(allText).toContain('C.');
-                expect(allText).toContain('D.');
-            });
-
-            test('should track lastIndex correctly for remaining text', () => {
-                // Kill: text.slice(lastIndex) -> text
-                const message = 'Sentence. trailing';
-                const result = splitMessage(message, 100);
-                // 'trailing' should appear once, not duplicated
-                const occurrences = (result[0].match(/trailing/g) ?? []).length;
-                expect(occurrences).toBe(1);
-            });
-
-            test('should handle text where lastIndex equals text.length', () => {
-                // Kill: lastIndex < text.length -> lastIndex <= text.length
-                // When sentence ends exactly at text end, no remaining text
-                const message = 'Complete sentence.';
-                const result = splitMessage(message, 100);
-                expect(result).toEqual(['Complete sentence.']);
             });
         });
 
