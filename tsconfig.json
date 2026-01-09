@@ -18,6 +18,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*", "tests/**/*", "scripts/**/*", "tools/**/*"],
-  "exclude": ["node_modules", "dist", "sst.config.ts", "sst/**/*", "plugins"]
+  "include": ["src/**/*", "tests/**/*", "tools/**/*"],
+  "exclude": ["node_modules", "dist", "plugins", "reports"]
 }
