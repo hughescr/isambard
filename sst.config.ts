@@ -3,31 +3,31 @@
 /* eslint-enable @typescript-eslint/triple-slash-reference -- Re-enable rule after required SST reference */
 
 export default $config({
-  app(input: any) {
-    return {
-      name: 'isambard',
-      removal: input?.stage === 'production' ? 'retain' : 'remove',
-      protect: ['production'].includes(input?.stage),
-      home: 'aws',
-      providers: {
-        aws: { region: 'us-west-2' },
-      },
-    };
-  },
-  async run() {
+    app(input) {
+        return {
+            name:      'isambard',
+            removal:   input?.stage === 'production' ? 'retain' : 'remove',
+            protect:   ['production'].includes(input?.stage),
+            home:      'aws',
+            providers: {
+                aws: { region: 'us-west-2' },
+            },
+        };
+    },
+    async run() {
     // Import secrets first to ensure they exist
-    const secrets = await import('./sst/secrets');
+        const secrets = await import('./sst/secrets');
 
-    // Import non-secret configuration
-    const { config } = await import('./sst/config');
+        // Import non-secret configuration
+        const { config } = await import('./sst/config');
 
-    // Import infrastructure
-    const { memoryTable } = await import('./sst/dynamo');
+        // Import infrastructure
+        const { memoryTable } = await import('./sst/dynamo');
 
-    return {
-      memoryTable: memoryTable.name,
-      secrets,
-      config,
-    };
-  },
+        return {
+            memoryTable: memoryTable.name,
+            secrets,
+            config,
+        };
+    },
 });
