@@ -233,4 +233,227 @@ describe.concurrent('createDiscordRateLimiter', () => {
 
         limiter.stop();
     });
+
+    test('logs debug message when recovering from queue error', async () => {
+        const mockLogger = {
+            debug: mock(),
+        };
+
+        const mockChannel = {
+            id:   'channel-1',
+            send: mock()
+                .mockRejectedValueOnce(new Error('First send failed'))
+                .mockResolvedValueOnce({ id: 'msg-2' }),
+        } as unknown as TextChannel;
+
+        const limiter = createDiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
+
+        // First send fails
+        await expect(
+            limiter.sendToChannel(mockChannel, 'Message 1')
+        ).rejects.toThrow('First send failed');
+
+        // Second send should work and logger should have been called for error recovery
+        await limiter.sendToChannel(mockChannel, 'Message 2');
+
+        // Verify debug was called with error recovery message
+        const debugCalls = mockLogger.debug.mock.calls as [Record<string, unknown>][];
+        const errorRecoveryCalls = _.filter(debugCalls, ['0.msg', 'Previous send in queue failed, continuing queue']);
+        expect(errorRecoveryCalls).toHaveLength(1);
+        expect(errorRecoveryCalls[0][0].channelId).toBe('channel-1');
+
+        limiter.stop();
+    });
+
+    test('logs debug messages during queue execution', async () => {
+        const mockLogger = {
+            debug: mock(),
+        };
+
+        const mockChannel = {
+            id:   'channel-1',
+            send: mock().mockResolvedValue({ id: 'msg-1' }),
+        } as unknown as TextChannel;
+
+        const limiter = createDiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
+
+        await limiter.sendToChannel(mockChannel, 'Test message');
+
+        // Verify all expected debug calls
+        const debugCalls = mockLogger.debug.mock.calls as [Record<string, unknown>][];
+
+        // Should have: queueing, executing, and sending
+        const queueingCalls = _.filter(debugCalls, ['0.msg', 'Queueing send to channel']);
+        const executingCalls = _.filter(debugCalls, ['0.msg', 'Executing queued operation']);
+        const sendingCalls = _.filter(debugCalls, ['0.msg', 'Sending to channel']);
+
+        expect(queueingCalls).toHaveLength(1);
+        expect(queueingCalls[0][0].channelId).toBe('channel-1');
+        expect(queueingCalls[0][0].contentLength).toBe(12);
+
+        expect(executingCalls).toHaveLength(1);
+        expect(executingCalls[0][0].channelId).toBe('channel-1');
+
+        expect(sendingCalls).toHaveLength(1);
+        expect(sendingCalls[0][0].channelId).toBe('channel-1');
+
+        limiter.stop();
+    });
+
+    test('works correctly without logger', async () => {
+        const mockChannel = {
+            id:   'channel-1',
+            send: mock().mockResolvedValue({ id: 'msg-1' }),
+        } as unknown as TextChannel;
+
+        // Create limiter without logger
+        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+
+        // Should work normally
+        const result = await limiter.sendToChannel(mockChannel, 'Hello');
+        expect(result.id).toBe('msg-1');
+
+        limiter.stop();
+    });
+
+    test('handles error recovery without logger', async () => {
+        const mockChannel = {
+            id:   'channel-1',
+            send: mock()
+                .mockRejectedValueOnce(new Error('Send failed'))
+                .mockResolvedValueOnce({ id: 'msg-2' }),
+        } as unknown as TextChannel;
+
+        // Create limiter without logger
+        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+
+        // First send fails
+        await expect(
+            limiter.sendToChannel(mockChannel, 'Message 1')
+        ).rejects.toThrow('Send failed');
+
+        // Second send should still work (queue recovery works without logger)
+        const result = await limiter.sendToChannel(mockChannel, 'Message 2');
+        expect(result.id).toBe('msg-2');
+
+        limiter.stop();
+    });
+
+    test('sendToChannel after stop() still completes in-flight requests', async () => {
+        const mockChannel = {
+            id:   'channel-1',
+            send: mock().mockResolvedValue({ id: 'msg-1' }),
+        } as unknown as TextChannel;
+
+        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+
+        // Start a send
+        const promise = limiter.sendToChannel(mockChannel, 'Message');
+
+        // Stop immediately
+        limiter.stop();
+
+        // The in-flight request should complete
+        const result = await promise;
+        expect(result.id).toBe('msg-1');
+    });
+
+    test('multiple sequential stop() calls do not throw', async () => {
+        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+
+        // Call stop multiple times
+        expect(() => {
+            limiter.stop();
+            limiter.stop();
+            limiter.stop();
+        }).not.toThrow();
+    });
+
+    test('handles very long message content', async () => {
+        const longMessage = _.repeat('x', 10000);
+
+        const mockChannel = {
+            id:   'channel-1',
+            send: mock().mockResolvedValue({ id: 'msg-1' }),
+        } as unknown as TextChannel;
+
+        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+
+        const result = await limiter.sendToChannel(mockChannel, longMessage);
+
+        expect(mockChannel.send).toHaveBeenCalledWith(longMessage);
+        expect(result.id).toBe('msg-1');
+
+        limiter.stop();
+    });
+
+    test('handles channels with numeric string IDs', async () => {
+        const mockChannel = {
+            id:   '123456789012345678',
+            send: mock().mockResolvedValue({ id: 'msg-1' }),
+        } as unknown as TextChannel;
+
+        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+
+        const result = await limiter.sendToChannel(mockChannel, 'Test');
+
+        expect(mockChannel.send).toHaveBeenCalledWith('Test');
+        expect(result.id).toBe('msg-1');
+
+        limiter.stop();
+    });
+
+    test('logs stop() with pending queue count', async () => {
+        const mockLogger = {
+            debug: mock(),
+        };
+
+        const mockChannel = {
+            id:   'channel-1',
+            send: mock().mockResolvedValue({ id: 'msg-1' }),
+        } as unknown as TextChannel;
+
+        const limiter = createDiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
+
+        // Start a send to create a queue
+        await limiter.sendToChannel(mockChannel, 'Message');
+
+        // Stop and check logging
+        limiter.stop();
+
+        const debugCalls = mockLogger.debug.mock.calls as [Record<string, unknown>][];
+        const stopCalls = _.filter(debugCalls, ['0.msg', 'Stopping rate limiter']);
+
+        expect(stopCalls).toHaveLength(1);
+        expect(stopCalls[0][0]).toHaveProperty('pendingQueueCount');
+    });
+
+    test('replyToMessage logs with message ID', async () => {
+        const mockLogger = {
+            debug: mock(),
+        };
+
+        const mockMessage = {
+            id:        'msg-original',
+            channelId: 'channel-1',
+            reply:     mock().mockResolvedValue({ id: 'msg-reply' }),
+        } as unknown as Message;
+
+        const limiter = createDiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
+
+        await limiter.replyToMessage(mockMessage, 'Reply text');
+
+        const debugCalls = mockLogger.debug.mock.calls as [Record<string, unknown>][];
+        const queueingCalls = _.filter(debugCalls, ['0.msg', 'Queueing reply to message']);
+        const replyingCalls = _.filter(debugCalls, ['0.msg', 'Replying to message']);
+
+        expect(queueingCalls).toHaveLength(1);
+        expect(queueingCalls[0][0].messageId).toBe('msg-original');
+        expect(queueingCalls[0][0].channelId).toBe('channel-1');
+
+        expect(replyingCalls).toHaveLength(1);
+        expect(replyingCalls[0][0].messageId).toBe('msg-original');
+
+        limiter.stop();
+    });
 });

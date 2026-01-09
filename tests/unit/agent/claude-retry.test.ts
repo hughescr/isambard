@@ -169,6 +169,364 @@ describe('classifyClaudeError', () => {
             message:  'HTTP 500',
         });
     });
+
+    describe('extractRetryAfter edge cases', () => {
+        it('should return 0 when retryAfter is 0', () => {
+            const error = { status: 429, retryAfter: 0 };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category:     'rate_limited',
+                message:      'HTTP 429',
+                retryAfterMs: 0,
+            });
+        });
+
+        it('should return undefined for negative retryAfter', () => {
+            const error = { status: 429, retryAfter: -5 };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category:     'rate_limited',
+                message:      'HTTP 429',
+                retryAfterMs: undefined,
+            });
+        });
+
+        it('should handle string retryAfter "0"', () => {
+            const error = { status: 429, retryAfter: '0' };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category:     'rate_limited',
+                message:      'HTTP 429',
+                retryAfterMs: 0,
+            });
+        });
+
+        it('should return undefined for non-numeric string retryAfter', () => {
+            const error = { status: 429, retryAfter: 'invalid' };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category:     'rate_limited',
+                message:      'HTTP 429',
+                retryAfterMs: undefined,
+            });
+        });
+
+        it('should return 0 when retry-after header is "0"', () => {
+            const error = { status: 429, headers: { 'retry-after': '0' } };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category:     'rate_limited',
+                message:      'HTTP 429',
+                retryAfterMs: 0,
+            });
+        });
+
+        it('should return undefined for negative retry-after header', () => {
+            const error = { status: 429, headers: { 'retry-after': '-5' } };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category:     'rate_limited',
+                message:      'HTTP 429',
+                retryAfterMs: undefined,
+            });
+        });
+
+        it('should return undefined for non-numeric retry-after header', () => {
+            const error = { status: 429, headers: { 'retry-after': 'invalid' } };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category:     'rate_limited',
+                message:      'HTTP 429',
+                retryAfterMs: undefined,
+            });
+        });
+
+        it('should ignore headers that are not objects', () => {
+            const error = { status: 429, headers: 'not an object' };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category:     'rate_limited',
+                message:      'HTTP 429',
+                retryAfterMs: undefined,
+            });
+        });
+
+        it('should ignore headers without retry-after', () => {
+            const error = { status: 429, headers: { 'content-type': 'application/json' } };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category:     'rate_limited',
+                message:      'HTTP 429',
+                retryAfterMs: undefined,
+            });
+        });
+
+        it('should ignore retry-after header that is not a string', () => {
+            const error = { status: 429, headers: { 'retry-after': 123 } };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category:     'rate_limited',
+                message:      'HTTP 429',
+                retryAfterMs: undefined,
+            });
+        });
+    });
+
+    describe('HTTP status boundary tests', () => {
+        it('should classify status 499 as permanent (client error boundary)', () => {
+            const error = { status: 499, message: 'Client Closed Request' };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'permanent',
+                message:  'Client Closed Request',
+            });
+        });
+
+        it('should classify status 500 as transient (server error boundary)', () => {
+            const error = { status: 500, message: 'Internal Server Error' };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'transient',
+                message:  'Internal Server Error',
+            });
+        });
+
+        it('should classify status 599 as transient (upper server error boundary)', () => {
+            const error = { status: 599, message: 'Network Connect Timeout Error' };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'transient',
+                message:  'Network Connect Timeout Error',
+            });
+        });
+
+        it('should classify status 600+ as permanent (outside server error range)', () => {
+            const error = { status: 600, message: 'Unknown status' };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'permanent',
+                message:  'Unknown status',
+            });
+        });
+
+        it('should handle string status codes', () => {
+            const error = { status: '502', message: 'Bad Gateway' };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'transient',
+                message:  'Bad Gateway',
+            });
+        });
+
+        it('should handle string status codes for client errors', () => {
+            const error = { status: '404', message: 'Not Found' };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'permanent',
+                message:  'Not Found',
+            });
+        });
+    });
+
+    describe('Network error classification edge cases', () => {
+        it('should not classify non-Error object with ECONNRESET in message', () => {
+            const error = { message: 'Error: ECONNRESET connection lost' };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'permanent',
+                message:  'Error: ECONNRESET connection lost',
+            });
+        });
+
+        it('should handle network error with code but no message', () => {
+            const error = { code: 'ECONNRESET' };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'transient',
+                message:  'Network error',
+            });
+        });
+
+        it('should handle network error with empty message', () => {
+            const error = { code: 'ETIMEDOUT', message: '' };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'transient',
+                message:  'Network error',
+            });
+        });
+
+        it('should classify Error object with ECONNRESET in message as transient', () => {
+            const error = new Error('Connection failed: ECONNRESET');
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'transient',
+                message:  'Connection failed: ECONNRESET',
+            });
+        });
+
+        it('should classify Error object with ETIMEDOUT in message as transient', () => {
+            const error = new Error('Request timeout: ETIMEDOUT');
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'transient',
+                message:  'Request timeout: ETIMEDOUT',
+            });
+        });
+
+        it('should classify Error object with ECONNREFUSED in message as transient', () => {
+            const error = new Error('Connection refused: ECONNREFUSED');
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'transient',
+                message:  'Connection refused: ECONNREFUSED',
+            });
+        });
+
+        it('should ignore code property that is not a string', () => {
+            const error = { code: 123, message: 'Some error' };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'permanent',
+                message:  'Some error',
+            });
+        });
+
+        it('should ignore code property that is not a network error code', () => {
+            const error = { code: 'ENOENT', message: 'File not found' };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'permanent',
+                message:  'File not found',
+            });
+        });
+    });
+
+    describe('Error message extraction edge cases', () => {
+        it('should use fallback for empty string message', () => {
+            const error = { message: '' };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'permanent',
+                message:  'Unknown error',
+            });
+        });
+
+        it('should use fallback for null message', () => {
+            const error = { message: null };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'permanent',
+                message:  'Unknown error',
+            });
+        });
+
+        it('should use fallback for undefined message', () => {
+            const error = { message: undefined };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'permanent',
+                message:  'Unknown error',
+            });
+        });
+
+        it('should use fallback for numeric message', () => {
+            const error = { message: 123 };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'permanent',
+                message:  'Unknown error',
+            });
+        });
+
+        it('should use fallback for boolean message', () => {
+            const error = { message: false };
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'permanent',
+                message:  'Unknown error',
+            });
+        });
+
+        it('should use fallback for empty string error', () => {
+            const error = '';
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'permanent',
+                message:  'Unknown error',
+            });
+        });
+
+        it('should use fallback for null error', () => {
+            const error = null;
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'permanent',
+                message:  'Unknown error',
+            });
+        });
+
+        it('should use fallback for undefined error', () => {
+            const error = undefined;
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'permanent',
+                message:  'Unknown error',
+            });
+        });
+
+        it('should use fallback for number error', () => {
+            const error = 123;
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'permanent',
+                message:  'Unknown error',
+            });
+        });
+
+        it('should use fallback for boolean error', () => {
+            const error = false;
+            const result = classifyClaudeError(error);
+
+            expect(result).toEqual({
+                category: 'permanent',
+                message:  'Unknown error',
+            });
+        });
+    });
 });
 
 describe('createRetryableQuery', () => {

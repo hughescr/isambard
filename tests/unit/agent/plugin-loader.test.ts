@@ -29,6 +29,32 @@ describe.concurrent('resolveExternalPath', () => {
         const result = resolveExternalPath('~/path/with/~/tilde');
         expect(result).toBe(join(homeDir, 'path/with/~/tilde'));
     });
+
+    test('should return empty string for empty input', () => {
+        const result = resolveExternalPath('');
+        expect(result).toBe('');
+    });
+
+    test('should expand exact ~ to home directory', () => {
+        const homeDir = homedir();
+        const result = resolveExternalPath('~');
+        expect(result).toBe(homeDir);
+    });
+
+    test('should not expand ~ in middle of path', () => {
+        const result = resolveExternalPath('/path/~/foo');
+        expect(result).toBe('/path/~/foo');
+    });
+
+    test('should preserve relative paths without tilde', () => {
+        const result = resolveExternalPath('./relative/path');
+        expect(result).toBe('./relative/path');
+    });
+
+    test('should preserve relative parent paths', () => {
+        const result = resolveExternalPath('../relative/path');
+        expect(result).toBe('../relative/path');
+    });
 });
 
 describe('findLatestMarketplaceVersion', () => {
@@ -117,6 +143,70 @@ describe('findLatestMarketplaceVersion', () => {
 
         const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
         expect(result).toBe(validVersion);
+    });
+
+    test('should ignore files when scanning for version directories', async () => {
+        const pluginDir = join(tempDir, 'test-plugin');
+        const validVersion = join(pluginDir, '1.0.0');
+        await createMockPluginDir(validVersion);
+
+        // Create a file (not a directory) with a semver name
+        await writeFile(join(pluginDir, '2.0.0'), 'this is a file not a directory');
+
+        const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
+        expect(result).toBe(validVersion);
+    });
+
+    test('should skip invalid semver versions (missing patch)', async () => {
+        const pluginDir = join(tempDir, 'test-plugin');
+        const validVersion = join(pluginDir, '1.0.0');
+        const invalidSemver = join(pluginDir, '1.2'); // Missing patch version
+
+        await createMockPluginDir(validVersion);
+        await createMockPluginDir(invalidSemver);
+
+        const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
+        expect(result).toBe(validVersion);
+    });
+
+    test('should return undefined when all versions are invalid', async () => {
+        const pluginDir = join(tempDir, 'test-plugin');
+        const invalidSemver1 = join(pluginDir, '1.2');
+        const invalidSemver2 = join(pluginDir, 'not-a-version');
+
+        await createMockPluginDir(invalidSemver1);
+        await createMockPluginDir(invalidSemver2);
+
+        const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
+        expect(result).toBeUndefined();
+    });
+
+    test('should handle versions with prerelease metadata', async () => {
+        const pluginDir = join(tempDir, 'test-plugin');
+        const version1 = join(pluginDir, '1.0.0-alpha.1');
+        const version2 = join(pluginDir, '1.0.0-beta.1');
+
+        await createMockPluginDir(version1);
+        await createMockPluginDir(version2);
+
+        const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
+        // beta comes after alpha in semver
+        expect(result).toBe(version2);
+    });
+
+    test('should handle versions with build metadata', async () => {
+        const pluginDir = join(tempDir, 'test-plugin');
+        const version1 = join(pluginDir, '1.0.0+build.1');
+        const version2 = join(pluginDir, '1.0.0+build.2');
+
+        await createMockPluginDir(version1);
+        await createMockPluginDir(version2);
+
+        const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
+        // Build metadata doesn't affect precedence, but we should handle it
+        expect(result).toBeDefined();
+        // Non-null assertion safe since we verified toBeDefined
+        expect([version1, version2]).toContain(result!);
     });
 });
 
@@ -430,6 +520,99 @@ describe('loadPlugins', () => {
                 expect.objectContaining({
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg: expect.stringContaining('Failed to parse plugins.json'),
+                })
+            );
+        });
+
+        test('should handle null value in plugins.json', async () => {
+            await writeFile(join(pluginsDir, 'plugins.json'), 'null');
+
+            const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
+            await createMockPluginDir(inRepoPlugin);
+
+            const result = await loadPlugins(pluginsDir, marketplaceDir);
+
+            // Should warn and use defaults
+            expect(result).toHaveLength(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                    msg: expect.stringContaining('Invalid plugins.json schema'),
+                })
+            );
+        });
+
+        test('should handle array in plugins.json', async () => {
+            await writeFile(join(pluginsDir, 'plugins.json'), '[]');
+
+            const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
+            await createMockPluginDir(inRepoPlugin);
+
+            const result = await loadPlugins(pluginsDir, marketplaceDir);
+
+            // Should warn and use defaults
+            expect(result).toHaveLength(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                    msg: expect.stringContaining('Invalid plugins.json schema'),
+                })
+            );
+        });
+
+        test('should handle empty object in plugins.json', async () => {
+            await writeFile(join(pluginsDir, 'plugins.json'), '{}');
+
+            const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
+            await createMockPluginDir(inRepoPlugin);
+
+            const result = await loadPlugins(pluginsDir, marketplaceDir);
+
+            // Empty object should be valid with defaults applied
+            expect(result).toHaveLength(1);
+        });
+
+        test('should handle missing externalPaths field', async () => {
+            await writeFile(join(pluginsDir, 'plugins.json'), JSON.stringify({ marketplace: [] }));
+
+            const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
+            await createMockPluginDir(inRepoPlugin);
+
+            const result = await loadPlugins(pluginsDir, marketplaceDir);
+
+            // Should use default empty array for externalPaths
+            expect(result).toHaveLength(1);
+        });
+
+        test('should handle missing marketplace field', async () => {
+            await writeFile(join(pluginsDir, 'plugins.json'), JSON.stringify({ externalPaths: [] }));
+
+            const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
+            await createMockPluginDir(inRepoPlugin);
+
+            const result = await loadPlugins(pluginsDir, marketplaceDir);
+
+            // Should use default empty array for marketplace
+            expect(result).toHaveLength(1);
+        });
+
+        test('should handle invalid schema in plugins.json (wrong types)', async () => {
+            await writeFile(
+                join(pluginsDir, 'plugins.json'),
+                JSON.stringify({ externalPaths: 'not-an-array', marketplace: 123 })
+            );
+
+            const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
+            await createMockPluginDir(inRepoPlugin);
+
+            const result = await loadPlugins(pluginsDir, marketplaceDir);
+
+            // Should warn about invalid schema and use defaults
+            expect(result).toHaveLength(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                    msg: expect.stringContaining('Invalid plugins.json schema'),
                 })
             );
         });

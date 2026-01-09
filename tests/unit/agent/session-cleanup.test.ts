@@ -112,6 +112,48 @@ describe.concurrent('extractSessionId', () => {
 
         expect(result).toBeUndefined();
     });
+
+    test('should return undefined for array input', () => {
+        const result = extractSessionId(['not', 'an', 'object']);
+
+        expect(result).toBeUndefined();
+    });
+
+    test('should return undefined for event with null session_id', () => {
+        const event: SystemEvent = {
+            type:       'system',
+            subtype:    'init',
+            session_id: null as unknown as string, // Test null explicitly
+        };
+
+        const result = extractSessionId(event);
+
+        expect(result).toBeNull();
+    });
+
+    test('should return empty string for event with empty string session_id', () => {
+        const event: SystemEvent = {
+            type:       'system',
+            subtype:    'init',
+            session_id: '',
+        };
+
+        const result = extractSessionId(event);
+
+        expect(result).toBe('');
+    });
+
+    test('should return undefined for system event missing subtype field', () => {
+        const event = {
+            type:       'system',
+            session_id: 'should-not-extract',
+            // subtype field is missing entirely
+        };
+
+        const result = extractSessionId(event);
+
+        expect(result).toBeUndefined();
+    });
 });
 
 describe('cleanupSession', () => {
@@ -367,5 +409,125 @@ describe('cleanupSession', () => {
                 msg: expect.stringContaining('sub-agent'),
             })
         );
+    });
+
+    test('should skip files that do not match agent file pattern', async () => {
+        const sessionId = 'pattern-test';
+        const files = [
+            'session.jsonl',          // Wrong pattern
+            'nagent-abc.jsonl',       // Wrong prefix
+            'agent-abc.json',         // Wrong extension
+            'agent-.jsonl',           // Empty name after prefix
+            'agent-valid.jsonl',      // SHOULD match
+        ];
+
+        mockReaddir.mockImplementation(() => Promise.resolve(files));
+        mockReadFile.mockImplementation(() => Promise.resolve('{"parentUuid":"pattern-test"}\n'));
+
+        await cleanupSession(sessionId);
+
+        // Should only read the valid agent file
+        expect(mockReadFile).toHaveBeenCalledTimes(1);
+        expect(mockReadFile).toHaveBeenCalledWith(expect.stringContaining('agent-valid.jsonl'), 'utf-8');
+    });
+
+    test('should match agent files with dashes in name', async () => {
+        const sessionId = 'dash-test';
+        const files = ['agent-abc-def-ghi.jsonl'];
+
+        mockReaddir.mockImplementation(() => Promise.resolve(files));
+        mockReadFile.mockImplementation(() => Promise.resolve('{"parentUuid":"dash-test"}\n'));
+
+        await cleanupSession(sessionId);
+
+        // Should read and process the file with dashes
+        expect(mockReadFile).toHaveBeenCalledWith(expect.stringContaining('agent-abc-def-ghi.jsonl'), 'utf-8');
+    });
+
+    test('should handle agent file with malformed JSON gracefully', async () => {
+        const sessionId = 'malformed-json';
+        const agentFiles = ['agent-malformed.jsonl'];
+
+        mockReaddir.mockImplementation(() => Promise.resolve(agentFiles));
+        mockReadFile.mockImplementation(() => Promise.resolve('not valid json{'));
+
+        // Should complete without throwing
+        await cleanupSession(sessionId);
+
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({
+                sessionId,
+                agentFile: 'agent-malformed.jsonl',
+                msg:       expect.stringContaining('sub-agent'),
+            })
+        );
+    });
+
+    test('should skip agent file with no parentUuid field', async () => {
+        const sessionId = 'no-parent-uuid';
+        const agentFiles = ['agent-no-parent.jsonl'];
+
+        mockReaddir.mockImplementation(() => Promise.resolve(agentFiles));
+        mockReadFile.mockImplementation(() => Promise.resolve('{"isSidechain":true}\n'));
+
+        await cleanupSession(sessionId);
+
+        // Should not attempt to unlink the file (only main session file should be unlinked)
+        const unlinkCalls = _.map(mockUnlink.mock.calls, 0);
+        expect(_.some(unlinkCalls, path => path.includes('agent-no-parent.jsonl'))).toBe(false);
+    });
+
+    test('should skip agent file with non-string parentUuid', async () => {
+        const sessionId = 'non-string-parent';
+        const agentFiles = ['agent-non-string.jsonl'];
+
+        mockReaddir.mockImplementation(() => Promise.resolve(agentFiles));
+        mockReadFile.mockImplementation(() => Promise.resolve('{"parentUuid":123}\n'));
+
+        await cleanupSession(sessionId);
+
+        // Should not attempt to unlink the file
+        const unlinkCalls = _.map(mockUnlink.mock.calls, 0);
+        expect(_.some(unlinkCalls, path => path.includes('agent-non-string.jsonl'))).toBe(false);
+    });
+
+    test('should skip agent file with different parentUuid', async () => {
+        const sessionId = 'our-session';
+        const agentFiles = ['agent-different.jsonl'];
+
+        mockReaddir.mockImplementation(() => Promise.resolve(agentFiles));
+        mockReadFile.mockImplementation(() => Promise.resolve('{"parentUuid":"different-session"}\n'));
+
+        await cleanupSession(sessionId);
+
+        // Should not attempt to unlink the file
+        const unlinkCalls = _.map(mockUnlink.mock.calls, 0);
+        expect(_.some(unlinkCalls, path => path.includes('agent-different.jsonl'))).toBe(false);
+    });
+
+    test('should handle empty agent file content gracefully', async () => {
+        const sessionId = 'empty-file';
+        const agentFiles = ['agent-empty.jsonl'];
+
+        mockReaddir.mockImplementation(() => Promise.resolve(agentFiles));
+        mockReadFile.mockImplementation(() => Promise.resolve(''));
+
+        // Should complete without throwing
+        await cleanupSession(sessionId);
+
+        // File should not be deleted since there's no valid JSON
+        const unlinkCalls = _.map(mockUnlink.mock.calls, 0);
+        expect(_.some(unlinkCalls, path => path.includes('agent-empty.jsonl'))).toBe(false);
+    });
+
+    test('should handle whitespace-only session ID', async () => {
+        const sessionId = '   ';
+
+        await cleanupSession(sessionId);
+
+        // Whitespace is truthy in JavaScript but should still attempt cleanup
+        // The function validates with !sessionId which will be false for whitespace
+        // So it should proceed with cleanup
+        expect(mockAccess).toHaveBeenCalled();
     });
 });

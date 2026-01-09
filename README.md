@@ -137,7 +137,7 @@ See [.claude/CLAUDE.md](.claude/CLAUDE.md) for full development instructions.
 - All tests must pass
 - Zero TypeScript errors
 - Zero lint warnings
-- Mutation score >= 90% (per stryker.conf.mjs)
+- Mutation score == 100% (per stryker.conf.mjs)
 
 ## Architecture
 
