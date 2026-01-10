@@ -29,8 +29,10 @@ describe('Discord Presence Flow (Integration)', () => {
     beforeEach(() => {
         jest.useFakeTimers();
         mockGenerateText.mockReset();
+        mockGenerateText.mockClear();
         mockGenerateText.mockImplementation(_constant(Promise.resolve('Contemplating digital dreams')));
         mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockClear();
         mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve('Contemplating digital dreams')));
 
         // Mock Discord client

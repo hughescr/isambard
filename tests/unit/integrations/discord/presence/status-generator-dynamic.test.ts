@@ -116,6 +116,7 @@ describe('truncateToWordBoundary', () => {
 describe('DynamicStatusGenerator', () => {
     beforeEach(() => {
         mockGenerateText.mockReset();
+        mockGenerateText.mockClear();
         mockGenerateText.mockResolvedValue('Pondering deeply...');
         // Clear logger mocks - use try/catch in case another test corrupted the mock
         try {

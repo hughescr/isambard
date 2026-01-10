@@ -38,6 +38,7 @@ function createMockSearchResult(overrides: Partial<{
 describe.concurrent('createMessageSummarizer', () => {
     beforeEach(() => {
         mockGenerateText.mockReset();
+        mockGenerateText.mockClear();
         mockGenerateText.mockResolvedValue('This is a test summary.');
     });
 

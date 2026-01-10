@@ -20,6 +20,7 @@ describe.concurrent('IdleStatusGenerator', () => {
 
     beforeEach(() => {
         mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockClear();
         mockGenerateTextWithSystemPrompt.mockResolvedValue('Dozing peacefully');
     });
 
