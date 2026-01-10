@@ -17,3 +17,4 @@ coveragePathIgnorePatterns = [
 ]
 onlyFailures = true
 timeout = 5
+randomize = true
