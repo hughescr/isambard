@@ -13,7 +13,8 @@ import type { DiscordMessageContext } from '@/integrations/discord/types';
 import type { DynamicStatusGenerator } from '@/integrations/discord/presence/status-generator-dynamic';
 
 // Helper to wait for async safeUpdatePhase promises to settle
-const flushPromises = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve); });
+// Using queueMicrotask instead of setImmediate for faster promise resolution
+const flushPromises = (): Promise<void> => new Promise((resolve) => { queueMicrotask(resolve); });
 
 describe('StatusMiddleware', () => {
     let mockPresenceManager: any;

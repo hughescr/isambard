@@ -1,15 +1,14 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { describe, test, expect, beforeEach } from 'bun:test';
 import { join } from 'node:path';
-import { tmpdir, homedir } from 'node:os';
+import { homedir } from 'node:os';
 import _ from 'lodash';
-import { mockLogger } from '../../setup';
+import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
 import { loadPlugins, resolveExternalPath, findLatestMarketplaceVersion } from '@/agent/plugin-loader';
 
-// Helper to create mock directory structures
+// Helper to create mock directory structures in the in-memory filesystem
 async function createMockPluginDir(basePath: string): Promise<void> {
-    await mkdir(join(basePath, '.claude-plugin'), { recursive: true });
-    await writeFile(join(basePath, '.claude-plugin', 'plugin.json'), '{}');
+    await mockFsPromises.mkdir(join(basePath, '.claude-plugin'), { recursive: true });
+    await mockFsPromises.writeFile(join(basePath, '.claude-plugin', 'plugin.json'), '{}');
 }
 
 describe.concurrent('resolveExternalPath', () => {
@@ -58,15 +57,11 @@ describe.concurrent('resolveExternalPath', () => {
 });
 
 describe('findLatestMarketplaceVersion', () => {
-    let tempDir: string;
+    const tempDir = '/mock-test-dir';
 
     beforeEach(async () => {
-        tempDir = join(tmpdir(), `plugin-loader-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-        await mkdir(tempDir, { recursive: true });
-    });
-
-    afterEach(async () => {
-        await rm(tempDir, { recursive: true, force: true });
+        resetMockFs();
+        await mockFsPromises.mkdir(tempDir, { recursive: true });
     });
 
     test('should return undefined for non-existent plugin directory', async () => {
@@ -116,7 +111,7 @@ describe('findLatestMarketplaceVersion', () => {
         const invalidVersion = join(pluginDir, '2.0.0');
 
         await createMockPluginDir(validVersion);
-        await mkdir(invalidVersion, { recursive: true });
+        await mockFsPromises.mkdir(invalidVersion, { recursive: true });
         // No .claude-plugin directory in invalidVersion
 
         const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
@@ -125,9 +120,9 @@ describe('findLatestMarketplaceVersion', () => {
 
     test('should return undefined if no valid version directories exist', async () => {
         const pluginDir = join(tempDir, 'test-plugin');
-        await mkdir(pluginDir, { recursive: true });
+        await mockFsPromises.mkdir(pluginDir, { recursive: true });
         // Create a directory without .claude-plugin
-        await mkdir(join(pluginDir, '1.0.0'), { recursive: true });
+        await mockFsPromises.mkdir(join(pluginDir, '1.0.0'), { recursive: true });
 
         const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
         expect(result).toBeUndefined();
@@ -151,7 +146,7 @@ describe('findLatestMarketplaceVersion', () => {
         await createMockPluginDir(validVersion);
 
         // Create a file (not a directory) with a semver name
-        await writeFile(join(pluginDir, '2.0.0'), 'this is a file not a directory');
+        await mockFsPromises.writeFile(join(pluginDir, '2.0.0'), 'this is a file not a directory');
 
         const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
         expect(result).toBe(validVersion);
@@ -211,20 +206,17 @@ describe('findLatestMarketplaceVersion', () => {
 });
 
 describe('loadPlugins', () => {
-    let tempDir: string;
-    let pluginsDir: string;
-    let marketplaceDir: string;
+    const tempDir = '/mock-test-dir';
+    const pluginsDir = join(tempDir, 'plugins');
+    const marketplaceDir = join(tempDir, '.claude', 'plugins');
 
     beforeEach(async () => {
-        tempDir = join(tmpdir(), `plugin-loader-integration-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-        pluginsDir = join(tempDir, 'plugins');
-        marketplaceDir = join(tempDir, '.claude', 'plugins');
-
-        await mkdir(pluginsDir, { recursive: true });
-        await mkdir(marketplaceDir, { recursive: true });
+        resetMockFs();
+        await mockFsPromises.mkdir(pluginsDir, { recursive: true });
+        await mockFsPromises.mkdir(marketplaceDir, { recursive: true });
 
         // Create default empty plugins.json
-        await writeFile(
+        await mockFsPromises.writeFile(
             join(pluginsDir, 'plugins.json'),
             JSON.stringify({ externalPaths: [], marketplace: [] })
         );
@@ -232,10 +224,6 @@ describe('loadPlugins', () => {
         mockLogger.warn.mockClear();
         mockLogger.info.mockClear();
         mockLogger.debug.mockClear();
-    });
-
-    afterEach(async () => {
-        await rm(tempDir, { recursive: true, force: true });
     });
 
     describe('in-repo plugin discovery', () => {
@@ -251,8 +239,8 @@ describe('loadPlugins', () => {
 
         test('should ignore directories without .claude-plugin and warn', async () => {
             const notAPlugin = join(pluginsDir, 'not-a-plugin');
-            await mkdir(notAPlugin, { recursive: true });
-            await writeFile(join(notAPlugin, 'some-file.txt'), 'content');
+            await mockFsPromises.mkdir(notAPlugin, { recursive: true });
+            await mockFsPromises.writeFile(join(notAPlugin, 'some-file.txt'), 'content');
 
             const result = await loadPlugins(pluginsDir, marketplaceDir);
 
@@ -289,7 +277,7 @@ describe('loadPlugins', () => {
         });
 
         test('should skip README.md when scanning for in-repo plugins', async () => {
-            await writeFile(join(pluginsDir, 'README.md'), '# Plugins');
+            await mockFsPromises.writeFile(join(pluginsDir, 'README.md'), '# Plugins');
 
             const result = await loadPlugins(pluginsDir, marketplaceDir);
 
@@ -302,7 +290,7 @@ describe('loadPlugins', () => {
             const externalPlugin = join(tempDir, 'external-plugin');
             await createMockPluginDir(externalPlugin);
 
-            await writeFile(
+            await mockFsPromises.writeFile(
                 join(pluginsDir, 'plugins.json'),
                 JSON.stringify({ externalPaths: [externalPlugin], marketplace: [] })
             );
@@ -314,7 +302,7 @@ describe('loadPlugins', () => {
         });
 
         test('should warn and skip missing external paths', async () => {
-            await writeFile(
+            await mockFsPromises.writeFile(
                 join(pluginsDir, 'plugins.json'),
                 JSON.stringify({ externalPaths: ['/nonexistent/plugin'], marketplace: [] })
             );
@@ -333,10 +321,10 @@ describe('loadPlugins', () => {
 
         test('should warn and skip external paths without .claude-plugin directory', async () => {
             const invalidPlugin = join(tempDir, 'invalid-plugin');
-            await mkdir(invalidPlugin, { recursive: true });
+            await mockFsPromises.mkdir(invalidPlugin, { recursive: true });
             // No .claude-plugin directory
 
-            await writeFile(
+            await mockFsPromises.writeFile(
                 join(pluginsDir, 'plugins.json'),
                 JSON.stringify({ externalPaths: [invalidPlugin], marketplace: [] })
             );
@@ -359,7 +347,7 @@ describe('loadPlugins', () => {
             const marketplacePlugin = join(marketplaceDir, 'cool-plugin', '1.0.0');
             await createMockPluginDir(marketplacePlugin);
 
-            await writeFile(
+            await mockFsPromises.writeFile(
                 join(pluginsDir, 'plugins.json'),
                 JSON.stringify({ externalPaths: [], marketplace: ['cool-plugin'] })
             );
@@ -377,7 +365,7 @@ describe('loadPlugins', () => {
             await createMockPluginDir(v1);
             await createMockPluginDir(v2);
 
-            await writeFile(
+            await mockFsPromises.writeFile(
                 join(pluginsDir, 'plugins.json'),
                 JSON.stringify({ externalPaths: [], marketplace: ['versioned-plugin'] })
             );
@@ -389,7 +377,7 @@ describe('loadPlugins', () => {
         });
 
         test('should warn and skip missing marketplace plugins', async () => {
-            await writeFile(
+            await mockFsPromises.writeFile(
                 join(pluginsDir, 'plugins.json'),
                 JSON.stringify({ externalPaths: [], marketplace: ['nonexistent-plugin'] })
             );
@@ -415,7 +403,7 @@ describe('loadPlugins', () => {
             await createMockPluginDir(inRepoPlugin);
             await createMockPluginDir(externalPlugin);
 
-            await writeFile(
+            await mockFsPromises.writeFile(
                 join(pluginsDir, 'plugins.json'),
                 JSON.stringify({ externalPaths: [externalPlugin], marketplace: [] })
             );
@@ -433,7 +421,7 @@ describe('loadPlugins', () => {
             await createMockPluginDir(inRepoPlugin);
             await createMockPluginDir(marketplacePlugin);
 
-            await writeFile(
+            await mockFsPromises.writeFile(
                 join(pluginsDir, 'plugins.json'),
                 JSON.stringify({ externalPaths: [], marketplace: ['shared-plugin'] })
             );
@@ -451,7 +439,7 @@ describe('loadPlugins', () => {
             await createMockPluginDir(externalPlugin);
             await createMockPluginDir(marketplacePlugin);
 
-            await writeFile(
+            await mockFsPromises.writeFile(
                 join(pluginsDir, 'plugins.json'),
                 JSON.stringify({
                     externalPaths: [externalPlugin],
@@ -474,7 +462,7 @@ describe('loadPlugins', () => {
             await createMockPluginDir(externalPlugin);
             await createMockPluginDir(marketplacePlugin);
 
-            await writeFile(
+            await mockFsPromises.writeFile(
                 join(pluginsDir, 'plugins.json'),
                 JSON.stringify({
                     externalPaths: [externalPlugin],
@@ -494,7 +482,7 @@ describe('loadPlugins', () => {
 
     describe('error handling', () => {
         test('should handle missing plugins.json gracefully', async () => {
-            await rm(join(pluginsDir, 'plugins.json'));
+            await mockFsPromises.rm(join(pluginsDir, 'plugins.json'));
 
             const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
             await createMockPluginDir(inRepoPlugin);
@@ -507,7 +495,7 @@ describe('loadPlugins', () => {
         });
 
         test('should handle invalid JSON in plugins.json', async () => {
-            await writeFile(join(pluginsDir, 'plugins.json'), '{ invalid json }');
+            await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), '{ invalid json }');
 
             const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
             await createMockPluginDir(inRepoPlugin);
@@ -525,7 +513,7 @@ describe('loadPlugins', () => {
         });
 
         test('should handle null value in plugins.json', async () => {
-            await writeFile(join(pluginsDir, 'plugins.json'), 'null');
+            await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), 'null');
 
             const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
             await createMockPluginDir(inRepoPlugin);
@@ -543,7 +531,7 @@ describe('loadPlugins', () => {
         });
 
         test('should handle array in plugins.json', async () => {
-            await writeFile(join(pluginsDir, 'plugins.json'), '[]');
+            await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), '[]');
 
             const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
             await createMockPluginDir(inRepoPlugin);
@@ -561,7 +549,7 @@ describe('loadPlugins', () => {
         });
 
         test('should handle empty object in plugins.json', async () => {
-            await writeFile(join(pluginsDir, 'plugins.json'), '{}');
+            await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), '{}');
 
             const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
             await createMockPluginDir(inRepoPlugin);
@@ -573,7 +561,7 @@ describe('loadPlugins', () => {
         });
 
         test('should handle missing externalPaths field', async () => {
-            await writeFile(join(pluginsDir, 'plugins.json'), JSON.stringify({ marketplace: [] }));
+            await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), JSON.stringify({ marketplace: [] }));
 
             const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
             await createMockPluginDir(inRepoPlugin);
@@ -585,7 +573,7 @@ describe('loadPlugins', () => {
         });
 
         test('should handle missing marketplace field', async () => {
-            await writeFile(join(pluginsDir, 'plugins.json'), JSON.stringify({ externalPaths: [] }));
+            await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), JSON.stringify({ externalPaths: [] }));
 
             const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
             await createMockPluginDir(inRepoPlugin);
@@ -597,7 +585,7 @@ describe('loadPlugins', () => {
         });
 
         test('should handle invalid schema in plugins.json (wrong types)', async () => {
-            await writeFile(
+            await mockFsPromises.writeFile(
                 join(pluginsDir, 'plugins.json'),
                 JSON.stringify({ externalPaths: 'not-an-array', marketplace: 123 })
             );
@@ -618,7 +606,7 @@ describe('loadPlugins', () => {
         });
 
         test('should handle missing plugins directory gracefully', async () => {
-            await rm(pluginsDir, { recursive: true, force: true });
+            await mockFsPromises.rm(pluginsDir, { recursive: true, force: true });
 
             const result = await loadPlugins(pluginsDir, marketplaceDir);
 
@@ -626,9 +614,9 @@ describe('loadPlugins', () => {
         });
 
         test('should handle missing marketplace directory gracefully', async () => {
-            await rm(marketplaceDir, { recursive: true, force: true });
+            await mockFsPromises.rm(marketplaceDir, { recursive: true, force: true });
 
-            await writeFile(
+            await mockFsPromises.writeFile(
                 join(pluginsDir, 'plugins.json'),
                 JSON.stringify({ externalPaths: [], marketplace: ['some-plugin'] })
             );

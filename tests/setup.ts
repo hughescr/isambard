@@ -1,6 +1,23 @@
 // Test setup and configuration
 import { mock } from 'bun:test';
-import { assign, replace, padStart, isDate, isArray, noop } from 'lodash';
+import {
+    assign,
+    replace,
+    padStart,
+    isDate,
+    isArray,
+    noop,
+    chain,
+    startsWith,
+    slice,
+    includes,
+    split,
+    last,
+    compact,
+    join,
+    filter,
+    forEach
+} from 'lodash';
 
 // Mock AWS SDK before any imports - we test OUR code, not AWS SDK
 // This eliminates cold-start costs entirely
@@ -155,6 +172,125 @@ mock.module('@/agent/text-generator', () => ({
     generateText:                 mockGenerateText,
     generateTextWithSystemPrompt: mockGenerateTextWithSystemPrompt,
 }));
+
+// Mock node:fs/promises to avoid filesystem I/O cold-start cost
+// Returns in-memory fake filesystem without calling real FS APIs
+const mockFs = new Map<string, { type: 'file' | 'dir', content?: string }>();
+
+export const mockFsPromises = {
+    access: mock(async (path: string) => {
+        if(!mockFs.has(path)) {
+            const err = new Error(`ENOENT: no such file or directory, access '${path}'`) as NodeJS.ErrnoException;
+            err.code = 'ENOENT';
+            throw err;
+        }
+    }),
+    stat: mock(async (path: string) => {
+        const entry = mockFs.get(path);
+        if(!entry) {
+            const err = new Error(`ENOENT: no such file or directory, stat '${path}'`) as NodeJS.ErrnoException;
+            err.code = 'ENOENT';
+            throw err;
+        }
+        return {
+            isDirectory: () => entry.type === 'dir',
+            isFile:      () => entry.type === 'file',
+        };
+    }),
+    readdir: mock(async (path: string, options?: { withFileTypes?: boolean }) => {
+        const entry = mockFs.get(path);
+        if(!entry?.type || entry.type !== 'dir') {
+            const err = new Error(`ENOENT: no such file or directory, scandir '${path}'`) as NodeJS.ErrnoException;
+            err.code = 'ENOENT';
+            throw err;
+        }
+
+        // Normalize path by removing trailing slashes
+        const normalizedPath = replace(path, /\/+$/, '');
+
+        // Find all direct children of this directory
+        const entries = Array.from(mockFs.entries());
+        const children = chain(entries)
+            .filter(([childPath]: [string, { type: 'file' | 'dir', content?: string }]) => {
+                // Must start with parent path
+                if(!startsWith(childPath, normalizedPath + '/')) {
+                    return false;
+                }
+                // Get the relative path after the parent
+                const relative = slice(childPath, normalizedPath.length + 1);
+                // Only include direct children (no nested slashes)
+                return relative && !includes(relative, '/');
+            })
+            .map(([childPath, childEntry]: [string, { type: 'file' | 'dir', content?: string }]) => {
+                const parts = split(childPath, '/');
+                const name = last(parts) ?? '';
+                if(options?.withFileTypes) {
+                    return {
+                        name,
+                        isDirectory: () => childEntry.type === 'dir',
+                        isFile:      () => childEntry.type === 'file',
+                    };
+                }
+                return name;
+            })
+            .value();
+
+        return children;
+    }),
+    readFile: mock(async (path: string, _encoding?: string) => {
+        const entry = mockFs.get(path);
+        if(!entry?.type || entry.type !== 'file') {
+            const err = new Error(`ENOENT: no such file or directory, open '${path}'`) as NodeJS.ErrnoException;
+            err.code = 'ENOENT';
+            throw err;
+        }
+        return entry.content ?? '';
+    }),
+    writeFile: mock(async (path: string, content: string) => {
+        mockFs.set(path, { type: 'file', content });
+    }),
+    mkdir: mock(async (path: string, options?: { recursive?: boolean }) => {
+        if(options?.recursive) {
+            // Create all parent directories
+            const parts = compact(split(path, '/'));
+            const isAbsolute = startsWith(path, '/');
+
+            for(let i = 0; i < parts.length; i++) {
+                const pathParts = slice(parts, 0, i + 1);
+                const currentPath = isAbsolute
+                    ? '/' + join(pathParts, '/')
+                    : join(pathParts, '/');
+
+                if(!mockFs.has(currentPath)) {
+                    mockFs.set(currentPath, { type: 'dir' });
+                }
+            }
+        } else {
+            mockFs.set(path, { type: 'dir' });
+        }
+    }),
+    rm: mock(async (_path: string, _options?: { recursive?: boolean, force?: boolean }) => {
+        // Clear all entries starting with this path
+        const keys = Array.from(mockFs.keys());
+        const toDelete = filter(keys, (key: string) => key === _path || startsWith(key, _path + '/'));
+        forEach(toDelete, (key: string) => mockFs.delete(key));
+    }),
+};
+
+// Export a helper to reset the mock filesystem between tests
+export function resetMockFs(): void {
+    mockFs.clear();
+    mockFsPromises.access.mockClear();
+    mockFsPromises.stat.mockClear();
+    mockFsPromises.readdir.mockClear();
+    mockFsPromises.readFile.mockClear();
+    mockFsPromises.writeFile.mockClear();
+    mockFsPromises.mkdir.mockClear();
+    mockFsPromises.rm.mockClear();
+}
+
+// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
+mock.module('node:fs/promises', () => mockFsPromises);
 
 // Mock Intl.DateTimeFormat to avoid timezone API cold-start cost
 // Returns predictable fake data without calling real ICU APIs

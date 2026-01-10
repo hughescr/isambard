@@ -63,7 +63,7 @@ describe.concurrent('retryConfigSchema', () => {
             '%s.%s should accept valid value',
             (section, field, _min, _max, validValue, _requiresInteger) => {
                 const result = retryConfigSchema.safeParse({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Dynamic key access needed for parameterized test
+
                     [section]: { [field]: validValue },
                 });
                 expect(result.success).toBe(true);
@@ -88,7 +88,7 @@ describe.concurrent('retryConfigSchema', () => {
             '%s.%s should reject above maximum',
             (section, field, _min, max, _validValue, _requiresInteger) => {
                 const result = retryConfigSchema.safeParse({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Dynamic key access needed for parameterized test
+
                     [section]: { [field]: max + 1 },
                 });
                 expect(result.success).toBe(false);
@@ -99,7 +99,7 @@ describe.concurrent('retryConfigSchema', () => {
             '%s.%s should accept at minimum boundary',
             (section, field, min, _max, _validValue, _requiresInteger) => {
                 const result = retryConfigSchema.safeParse({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Dynamic key access needed for parameterized test
+
                     [section]: { [field]: min },
                 });
                 expect(result.success).toBe(true);
@@ -110,7 +110,7 @@ describe.concurrent('retryConfigSchema', () => {
             '%s.%s should accept at maximum boundary',
             (section, field, _min, max, _validValue, _requiresInteger) => {
                 const result = retryConfigSchema.safeParse({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Dynamic key access needed for parameterized test
+
                     [section]: { [field]: max },
                 });
                 expect(result.success).toBe(true);
