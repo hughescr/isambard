@@ -6,27 +6,19 @@
  * after a query completes. This prevents disk space accumulation from ephemeral
  * bot interactions that don't need session persistence.
  */
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import { mockLogger } from '../../setup';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
 import _ from 'lodash';
 
-// Mock fs/promises before importing session-cleanup
-const mockAccess = mock<(path: string) => Promise<void>>(() => Promise.resolve());
-const mockUnlink = mock<(path: string) => Promise<void>>(() => Promise.resolve());
-const mockRm = mock<(path: string, options?: { recursive?: boolean, force?: boolean }) => Promise<void>>(() => Promise.resolve());
-const mockReaddir = mock<(path: string) => Promise<string[]>>(() => Promise.resolve([]));
-const mockReadFile = mock<(path: string, encoding: string) => Promise<string>>(() => Promise.resolve(''));
+// Use the mocks from setup.ts instead of creating new ones
+// (setup.ts already mocks node:fs/promises globally)
+const mockAccess = mockFsPromises.access;
+const mockUnlink = mockFsPromises.unlink;
+const mockRm = mockFsPromises.rm;
+const mockReaddir = mockFsPromises.readdir;
+const mockReadFile = mockFsPromises.readFile;
 
-// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
-mock.module('node:fs/promises', () => ({
-    access:   mockAccess,
-    unlink:   mockUnlink,
-    rm:       mockRm,
-    readdir:  mockReaddir,
-    readFile: mockReadFile,
-}));
-
-// Import after mocking
+// Import after setup.ts has mocked the module
 import { cleanupSession, getSessionFilePath, extractSessionId } from '../../../src/agent/session-cleanup';
 import type { SystemEvent } from '../../../src/agent/types';
 
@@ -171,6 +163,11 @@ describe('cleanupSession', () => {
         mockRm.mockImplementation(() => Promise.resolve());
         mockReaddir.mockImplementation(() => Promise.resolve([]));
         mockReadFile.mockImplementation(() => Promise.resolve(''));
+    });
+
+    afterEach(() => {
+        // Restore original mock implementations for test isolation
+        resetMockFs();
     });
 
     test('should delete session file when it exists', async () => {

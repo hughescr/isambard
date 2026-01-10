@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach } from 'bun:test';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import _ from 'lodash';
-import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
+import { mockLogger, mockFsPromises, resetMockFsPrefix } from '../../setup';
 import { loadPlugins, resolveExternalPath, findLatestMarketplaceVersion } from '@/agent/plugin-loader';
 
 // Helper to create mock directory structures in the in-memory filesystem
@@ -57,10 +57,10 @@ describe.concurrent('resolveExternalPath', () => {
 });
 
 describe('findLatestMarketplaceVersion', () => {
-    const tempDir = '/mock-test-dir';
+    const tempDir = '/mock-find-version';
 
     beforeEach(async () => {
-        resetMockFs();
+        resetMockFsPrefix('/mock-find-version');
         await mockFsPromises.mkdir(tempDir, { recursive: true });
     });
 
@@ -206,12 +206,12 @@ describe('findLatestMarketplaceVersion', () => {
 });
 
 describe('loadPlugins', () => {
-    const tempDir = '/mock-test-dir';
+    const tempDir = '/mock-load-plugins';
     const pluginsDir = join(tempDir, 'plugins');
     const marketplaceDir = join(tempDir, '.claude', 'plugins');
 
     beforeEach(async () => {
-        resetMockFs();
+        resetMockFsPrefix('/mock-load-plugins');
         await mockFsPromises.mkdir(pluginsDir, { recursive: true });
         await mockFsPromises.mkdir(marketplaceDir, { recursive: true });
 
