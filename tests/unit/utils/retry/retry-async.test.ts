@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- test mock values */
-/* eslint-disable @typescript-eslint/await-thenable -- testing promise rejection */
+/* eslint-disable @typescript-eslint/await-thenable -- Bun's expect().rejects/resolves needs await but types don't reflect it */
 /* eslint-disable @typescript-eslint/no-empty-function -- test mocks */
 /* eslint-disable lodash/prefer-noop -- test clarity */
 import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
@@ -45,9 +45,7 @@ describe('retryAsync', () => {
     });
 
     afterEach(() => {
-        jest.clearAllTimers();
         jest.useRealTimers();
-        jest.restoreAllMocks();
     });
 
     describe('Successful operations', () => {

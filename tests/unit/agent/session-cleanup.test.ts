@@ -22,7 +22,7 @@ const mockReadFile = mockFsPromises.readFile;
 import { cleanupSession, getSessionFilePath, extractSessionId } from '../../../src/agent/session-cleanup';
 import type { SystemEvent } from '../../../src/agent/types';
 
-describe.concurrent('getSessionFilePath', () => {
+describe('getSessionFilePath', () => {
     test('should construct path from session ID', () => {
         const sessionId = 'abc123-def456';
         const result = getSessionFilePath(sessionId);
@@ -49,7 +49,7 @@ describe.concurrent('getSessionFilePath', () => {
     });
 });
 
-describe.concurrent('extractSessionId', () => {
+describe('extractSessionId', () => {
     test('should extract session_id from system init event', () => {
         const event: SystemEvent = {
             type:       'system',

@@ -29,8 +29,13 @@ describe.concurrent('createDiscordBot', () => {
 
     afterEach(() => {
         // Restore all spies to prevent test isolation issues
+        // Use try-catch to ensure all spies are restored even if one throws
         for(const spy of spies) {
-            spy.mockRestore();
+            try {
+                spy.mockRestore();
+            } catch{
+                // Ignore errors - spy may already be restored
+            }
         }
         spies.length = 0;
     });

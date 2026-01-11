@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/await-thenable -- Bun's expect().rejects/resolves needs await but types don't reflect it */
 import { describe, test, expect, beforeEach } from 'bun:test';
 import _ from 'lodash';
 import { createMessageSummarizer } from '@/integrations/discord/message-history/summarizer';
@@ -35,10 +36,9 @@ function createMockSearchResult(overrides: Partial<{
     };
 }
 
-describe.concurrent('createMessageSummarizer', () => {
+describe('createMessageSummarizer', () => {
     beforeEach(() => {
         mockGenerateText.mockReset();
-        mockGenerateText.mockClear();
         mockGenerateText.mockResolvedValue('This is a test summary.');
     });
 
@@ -190,7 +190,6 @@ describe.concurrent('createMessageSummarizer', () => {
 
             const summarizer = createMessageSummarizer({});
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(summarizer.summarizeMessages([message])).rejects.toThrow('API rate limit exceeded');
         });
 
@@ -212,7 +211,6 @@ describe.concurrent('createMessageSummarizer', () => {
 
             const summarizer = createMessageSummarizer({});
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(summarizer.summarizeMessages(messages)).rejects.toThrow('Network error on second call');
         });
 
@@ -555,7 +553,6 @@ describe.concurrent('createMessageSummarizer', () => {
             });
 
             // First call should fail
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(summarizer.summarizeMessages([message1])).rejects.toThrow('API error');
 
             // Second call should still work (semaphore was released properly)

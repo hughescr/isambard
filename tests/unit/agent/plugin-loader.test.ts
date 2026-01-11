@@ -11,7 +11,7 @@ async function createMockPluginDir(basePath: string): Promise<void> {
     await mockFsPromises.writeFile(join(basePath, '.claude-plugin', 'plugin.json'), '{}');
 }
 
-describe.concurrent('resolveExternalPath', () => {
+describe('resolveExternalPath', () => {
     test('should expand ~ to home directory', () => {
         const homeDir = homedir();
         const result = resolveExternalPath('~/my-plugin');

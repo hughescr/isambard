@@ -9,7 +9,7 @@ import { createGuildId, createChannelId, createUserId } from '../../../src/integ
 import type { ContextBuilder } from '../../../src/agent/context-builder';
 import * as timeUtils from '../../../src/utils/time';
 
-describe.concurrent('createClaudeAgent context integration', () => {
+describe('createClaudeAgent context integration', () => {
     let mockMessageContext: DiscordMessageContext;
     let mockContextBuilder: ContextBuilder;
     let querySpy: ReturnType<typeof spyOn>;
@@ -67,7 +67,7 @@ describe.concurrent('createClaudeAgent context integration', () => {
         querySpy.mockRestore();
     });
 
-    describe.concurrent('context builder integration', () => {
+    describe('context builder integration', () => {
         test('should load core identity when contextBuilder provided', async () => {
             (mockContextBuilder.loadCoreIdentity as ReturnType<typeof mock>).mockResolvedValue('I am Isambard, a helpful AI assistant.');
 
@@ -473,7 +473,7 @@ describe.concurrent('createClaudeAgent context integration', () => {
         });
     });
 
-    describe.concurrent('temporal reasoning in system prompt', () => {
+    describe('temporal reasoning in system prompt', () => {
         test('should include temporal reasoning section in system prompt', async () => {
             const agent = createClaudeAgent({});
 
@@ -545,7 +545,7 @@ describe.concurrent('createClaudeAgent context integration', () => {
         });
     });
 
-    describe.concurrent('message stream processing', () => {
+    describe('message stream processing', () => {
         test('should ignore non-assistant messages in stream', async () => {
             querySpy.mockImplementation((_params: any): any => {
                 async function* mockGenerator() {
@@ -811,7 +811,7 @@ describe.concurrent('createClaudeAgent context integration', () => {
         });
     });
 
-    describe.concurrent('stream event callbacks', () => {
+    describe('stream event callbacks', () => {
         test('should invoke callback for each stream event', async () => {
             const events: any[] = [];
             querySpy.mockImplementation((_params: any): any => {
@@ -917,7 +917,7 @@ describe.concurrent('createClaudeAgent context integration', () => {
         });
     });
 
-    describe.concurrent('error handling and logging', () => {
+    describe('error handling and logging', () => {
         test('should return full long responses without truncation (handlers do chunking)', async () => {
             const longText = _.repeat('x', 2000);
             querySpy.mockImplementation((_params: any): any => {
@@ -965,7 +965,7 @@ describe.concurrent('createClaudeAgent context integration', () => {
         });
     });
 
-    describe.concurrent('structured logging', () => {
+    describe('structured logging', () => {
         test('should log message processing start with context', async () => {
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);

@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import _ from 'lodash';
 import {
     retryConfigSchema,
     loadRetryConfig,
@@ -177,7 +178,16 @@ describe('loadRetryConfig', () => {
     });
 
     afterEach(() => {
-        process.env = originalEnv;
+        // Delete keys added during test
+        // eslint-disable-next-line lodash/prefer-lodash-method -- Native methods used to avoid TypeScript UMD global errors
+        Object.keys(process.env).forEach((key) => {
+            if(!(key in originalEnv)) {
+                delete process.env[key];
+            }
+        });
+        // Restore original values
+        // eslint-disable-next-line lodash/prefer-lodash-method -- Native methods used to avoid TypeScript UMD global errors
+        Object.assign(process.env, originalEnv);
     });
 
     test('should use defaults when no env vars are set', () => {

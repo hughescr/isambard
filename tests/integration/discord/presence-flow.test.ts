@@ -29,10 +29,8 @@ describe('Discord Presence Flow (Integration)', () => {
     beforeEach(() => {
         jest.useFakeTimers();
         mockGenerateText.mockReset();
-        mockGenerateText.mockClear();
         mockGenerateText.mockImplementation(_constant(Promise.resolve('Contemplating digital dreams')));
         mockGenerateTextWithSystemPrompt.mockReset();
-        mockGenerateTextWithSystemPrompt.mockClear();
         mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve('Contemplating digital dreams')));
 
         // Mock Discord client
@@ -60,7 +58,8 @@ describe('Discord Presence Flow (Integration)', () => {
     });
 
     afterEach(() => {
-        jest.useRealTimers();
+        jest.clearAllTimers();     // Clear while still in fake mode
+        jest.useRealTimers();      // Then restore real timers
     });
 
     it('should update presence through full message processing lifecycle', async () => {
@@ -101,7 +100,7 @@ describe('Discord Presence Flow (Integration)', () => {
         // Create mock agent that simulates stream events
         const streamCallbacks: ((event: AgentStreamEvent) => void)[] = [];
         mockAgent = {
-            chat: mock(async (context: DiscordMessageContext, onStreamEvent?: (event: AgentStreamEvent) => void) => {
+            chat: mock(async (_context: DiscordMessageContext, onStreamEvent?: (event: AgentStreamEvent) => void) => {
                 if(onStreamEvent) {
                     streamCallbacks.push(onStreamEvent);
 

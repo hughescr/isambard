@@ -4,7 +4,7 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Mock methods */
 /* eslint-disable @typescript-eslint/await-thenable -- expect().rejects returns a promise */
 
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, jest } from 'bun:test';
 import _ from 'lodash';
 import {
     createMessageSearchService,
@@ -81,6 +81,9 @@ describe.concurrent('createMessageSearchService', () => {
     const testChannelId = '123456789012345678';
 
     beforeEach(() => {
+        // Ensure real timers and system time is reset to prevent leakage from other tests
+        jest.useRealTimers();
+
         mockFetcher = {
             fetchMessages: mock(() => Promise.resolve({ messages: [], hasMore: false })),
             fetchById:     mock(() => Promise.resolve(null)),

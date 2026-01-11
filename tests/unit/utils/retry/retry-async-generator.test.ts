@@ -47,9 +47,7 @@ describe('retryAsyncGenerator', () => {
     });
 
     afterEach(() => {
-        jest.clearAllTimers();
         jest.useRealTimers();
-        jest.restoreAllMocks();
     });
 
     describe('Successful generators', () => {

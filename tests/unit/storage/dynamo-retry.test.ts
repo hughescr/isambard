@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/await-thenable -- Bun's expect().rejects/resolves needs await but types don't reflect it */
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { withDynamoTimeout, DynamoTimeoutError } from '@/storage/dynamo-retry';
 import type { RetryLogger } from '@/utils/retry/types';
@@ -36,9 +37,7 @@ describe('withDynamoTimeout', () => {
     });
 
     afterEach(() => {
-        jest.clearAllTimers();
         jest.useRealTimers();
-        jest.restoreAllMocks();
     });
 
     describe('successful operations', () => {
@@ -100,9 +99,7 @@ describe('withDynamoTimeout', () => {
             // Advance past timeout
             jest.advanceTimersByTime(1001);
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a promise
             await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a promise
             await expect(resultPromise).rejects.toThrow("DynamoDB operation 'PutItem' timed out after 1000ms");
         });
 
@@ -119,7 +116,6 @@ describe('withDynamoTimeout', () => {
 
             jest.advanceTimersByTime(2001);
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a promise
             await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
 
             expect(mockLogger.error).toHaveBeenCalledWith({
@@ -166,7 +162,6 @@ describe('withDynamoTimeout', () => {
 
             jest.advanceTimersByTime(1001);
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a promise
             await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
 
             // Should not have called logger (it wasn't provided)
@@ -201,7 +196,6 @@ describe('withDynamoTimeout', () => {
 
             jest.advanceTimersByTime(1501);
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a promise
             await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
         });
     });
@@ -228,9 +222,7 @@ describe('withDynamoTimeout', () => {
             jest.advanceTimersByTime(1001);
 
             // Fast should succeed, slow should timeout
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a promise
             await expect(slow).rejects.toThrow(DynamoTimeoutError);
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().resolves is a promise
             await expect(fast).resolves.toBe('fast');
         });
     });
@@ -248,9 +240,7 @@ describe('withDynamoTimeout', () => {
                 logger:    mockLogger,
             });
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a promise
             await expect(resultPromise).rejects.toThrow('DynamoDB validation error');
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a promise
             await expect(resultPromise).rejects.not.toThrow(DynamoTimeoutError);
 
             // Should not log timeout error (different error type)
@@ -274,7 +264,6 @@ describe('withDynamoTimeout', () => {
             jest.advanceTimersByTime(501);
 
             // Should get timeout error (race winner)
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a promise
             await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
         });
     });

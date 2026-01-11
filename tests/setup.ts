@@ -307,21 +307,21 @@ export const mockFsPromises = {
 export function resetMockFs(): void {
     mockFs.clear();
     // Restore original implementations and clear call history
-    mockFsPromises.access.mockClear();
+    mockFsPromises.access.mockReset();
     mockFsPromises.access.mockImplementation(originalAccessImpl);
-    mockFsPromises.stat.mockClear();
+    mockFsPromises.stat.mockReset();
     mockFsPromises.stat.mockImplementation(originalStatImpl);
-    mockFsPromises.readdir.mockClear();
+    mockFsPromises.readdir.mockReset();
     mockFsPromises.readdir.mockImplementation(originalReaddirImpl);
-    mockFsPromises.readFile.mockClear();
+    mockFsPromises.readFile.mockReset();
     mockFsPromises.readFile.mockImplementation(originalReadFileImpl);
-    mockFsPromises.writeFile.mockClear();
+    mockFsPromises.writeFile.mockReset();
     mockFsPromises.writeFile.mockImplementation(originalWriteFileImpl);
-    mockFsPromises.mkdir.mockClear();
+    mockFsPromises.mkdir.mockReset();
     mockFsPromises.mkdir.mockImplementation(originalMkdirImpl);
-    mockFsPromises.rm.mockClear();
+    mockFsPromises.rm.mockReset();
     mockFsPromises.rm.mockImplementation(originalRmImpl);
-    mockFsPromises.unlink.mockClear();
+    mockFsPromises.unlink.mockReset();
     mockFsPromises.unlink.mockImplementation(originalUnlinkImpl);
 }
 
@@ -333,23 +333,26 @@ export function resetMockFsPrefix(prefix: string): void {
         }
     }
     // Restore original implementations and clear call history
-    mockFsPromises.access.mockClear();
+    mockFsPromises.access.mockReset();
     mockFsPromises.access.mockImplementation(originalAccessImpl);
-    mockFsPromises.stat.mockClear();
+    mockFsPromises.stat.mockReset();
     mockFsPromises.stat.mockImplementation(originalStatImpl);
-    mockFsPromises.readdir.mockClear();
+    mockFsPromises.readdir.mockReset();
     mockFsPromises.readdir.mockImplementation(originalReaddirImpl);
-    mockFsPromises.readFile.mockClear();
+    mockFsPromises.readFile.mockReset();
     mockFsPromises.readFile.mockImplementation(originalReadFileImpl);
-    mockFsPromises.writeFile.mockClear();
+    mockFsPromises.writeFile.mockReset();
     mockFsPromises.writeFile.mockImplementation(originalWriteFileImpl);
-    mockFsPromises.mkdir.mockClear();
+    mockFsPromises.mkdir.mockReset();
     mockFsPromises.mkdir.mockImplementation(originalMkdirImpl);
-    mockFsPromises.rm.mockClear();
+    mockFsPromises.rm.mockReset();
     mockFsPromises.rm.mockImplementation(originalRmImpl);
-    mockFsPromises.unlink.mockClear();
+    mockFsPromises.unlink.mockReset();
     mockFsPromises.unlink.mockImplementation(originalUnlinkImpl);
 }
+
+// Note: Tests should call resetMockFs() or resetMockFsPrefix() in their own afterEach hooks
+// to prevent memory accumulation. We don't do automatic cleanup here since this is module-level code.
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
 mock.module('node:fs/promises', () => mockFsPromises);

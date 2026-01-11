@@ -58,9 +58,7 @@ describe('PresenceManager Lifecycle', () => {
     });
 
     afterEach(() => {
-        jest.clearAllTimers();
         jest.useRealTimers();
-        jest.restoreAllMocks();
     });
 
     describe('null/undefined handling', () => {

@@ -163,7 +163,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
             });
         });
 
-        describe.concurrent('output formatting', () => {
+        describe('output formatting', () => {
             test('should search with multiple tags using AND logic', async () => {
                 const backend = createMockBackend();
                 backend.searchByTag = mock(async () => ({
@@ -467,7 +467,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
             });
         });
 
-        describe.concurrent('output formatting', () => {
+        describe('output formatting', () => {
             test('should return auto-load items grouped by layer', async () => {
                 const backend = createMockBackend();
                 backend.getAutoLoadItems = mock(async () => [
@@ -774,7 +774,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
             });
         });
 
-        describe.concurrent('output formatting', () => {
+        describe('output formatting', () => {
             test('should include content with line numbers when requested', async () => {
                 const backend = createMockBackend();
                 backend.listByLayer = mock(async () => ({

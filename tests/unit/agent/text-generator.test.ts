@@ -11,20 +11,17 @@ import {
     originalGenerateTextWithSystemPrompt
 } from '../../setup';
 
-describe.concurrent('generateText', () => {
+describe('generateText', () => {
     beforeEach(() => {
         // Reset text-generator mocks to call through to real implementations
         // (in case another test file set mockImplementation to a stub)
         mockGenerateText.mockReset();
-        mockGenerateText.mockClear();
         mockGenerateText.mockImplementation(originalGenerateText);
         mockGenerateTextWithSystemPrompt.mockReset();
-        mockGenerateTextWithSystemPrompt.mockClear();
         mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
 
         // Set up SDK mock to control what the real generateText returns
         mockUnstableV2Prompt.mockReset();
-        mockUnstableV2Prompt.mockClear();
         mockUnstableV2Prompt.mockResolvedValue({
             subtype: 'success',
             result:  '  Hello, world!  ',
@@ -289,19 +286,16 @@ describe.concurrent('generateText', () => {
     });
 });
 
-describe.concurrent('generateText with stripMarkdown option', () => {
+describe('generateText with stripMarkdown option', () => {
     beforeEach(() => {
         // Reset text-generator mocks to call through to real implementations
         mockGenerateText.mockReset();
-        mockGenerateText.mockClear();
         mockGenerateText.mockImplementation(originalGenerateText);
         mockGenerateTextWithSystemPrompt.mockReset();
-        mockGenerateTextWithSystemPrompt.mockClear();
         mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
 
         // Set up SDK mock
         mockUnstableV2Prompt.mockReset();
-        mockUnstableV2Prompt.mockClear();
     });
 
     describe('stripMarkdown: false (default)', () => {
@@ -498,20 +492,17 @@ describe.concurrent('generateText with stripMarkdown option', () => {
     });
 });
 
-describe.concurrent('generateTextWithSystemPrompt', () => {
+describe('generateTextWithSystemPrompt', () => {
     beforeEach(() => {
         // Reset text-generator mocks to call through to real implementations
         // (in case another test file set mockImplementation to a stub)
         mockGenerateText.mockReset();
-        mockGenerateText.mockClear();
         mockGenerateText.mockImplementation(originalGenerateText);
         mockGenerateTextWithSystemPrompt.mockReset();
-        mockGenerateTextWithSystemPrompt.mockClear();
         mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
 
         // Set up SDK mock to control what the real generateTextWithSystemPrompt returns
         mockUnstableV2Prompt.mockReset();
-        mockUnstableV2Prompt.mockClear();
         mockUnstableV2Prompt.mockResolvedValue({
             subtype: 'success',
             result:  '  Generated response  ',
@@ -791,19 +782,16 @@ describe.concurrent('generateTextWithSystemPrompt', () => {
     });
 });
 
-describe.concurrent('generateTextWithSystemPrompt with stripMarkdown option', () => {
+describe('generateTextWithSystemPrompt with stripMarkdown option', () => {
     beforeEach(() => {
         // Reset text-generator mocks to call through to real implementations
         mockGenerateText.mockReset();
-        mockGenerateText.mockClear();
         mockGenerateText.mockImplementation(originalGenerateText);
         mockGenerateTextWithSystemPrompt.mockReset();
-        mockGenerateTextWithSystemPrompt.mockClear();
         mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
 
         // Set up SDK mock
         mockUnstableV2Prompt.mockReset();
-        mockUnstableV2Prompt.mockClear();
     });
 
     describe('stripMarkdown: false (default)', () => {

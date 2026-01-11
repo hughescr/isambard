@@ -110,7 +110,7 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
             expect(mockBackend.delete).not.toHaveBeenCalled();
         });
 
-        describe.concurrent('error validation', () => {
+        describe('error validation', () => {
             const createMockBackend = (getOverride?: () => Promise<unknown>) => ({
                 create:   mock(async () => ({})),
                 get:      getOverride ? mock(getOverride) : mock(async () => undefined),

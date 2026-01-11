@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/await-thenable -- testing promise rejection */
+/* eslint-disable @typescript-eslint/await-thenable -- Bun's expect().rejects/resolves needs await but types don't reflect it */
 /* eslint-disable @typescript-eslint/no-empty-function -- test mocks */
 /* eslint-disable lodash/prefer-noop -- test clarity */
 /* eslint-disable require-yield -- testing generators that throw before yield */
@@ -563,9 +563,7 @@ describe('createRetryableQuery', () => {
     });
 
     afterEach(() => {
-        jest.clearAllTimers();
         jest.useRealTimers();
-        jest.restoreAllMocks();
     });
 
     describe('Success cases', () => {
@@ -727,11 +725,13 @@ describe('createRetryableQuery', () => {
             const retryableQuery = createRetryableQuery(mockQueryFn, { deps });
             const result = retryableQuery({ prompt: 'test', options: {} });
 
-            await expect(async () => {
+            const consumeGenerator = async () => {
                 for await (const _ of result) {
                     // Should not get here
                 }
-            }).toThrow();
+            };
+
+            await expect(consumeGenerator()).rejects.toThrow();
 
             expect(mockQueryFn).toHaveBeenCalledTimes(1);
             expect(sleepMock).not.toHaveBeenCalled();
@@ -748,11 +748,13 @@ describe('createRetryableQuery', () => {
             const retryableQuery = createRetryableQuery(mockQueryFn, { deps });
             const result = retryableQuery({ prompt: 'test', options: {} });
 
-            await expect(async () => {
+            const consumeGenerator = async () => {
                 for await (const _ of result) {
                     // Should not get here
                 }
-            }).toThrow();
+            };
+
+            await expect(consumeGenerator()).rejects.toThrow();
 
             expect(mockQueryFn).toHaveBeenCalledTimes(1);
             expect(sleepMock).not.toHaveBeenCalled();
@@ -768,11 +770,13 @@ describe('createRetryableQuery', () => {
             const retryableQuery = createRetryableQuery(mockQueryFn, { deps });
             const result = retryableQuery({ prompt: 'test', options: {} });
 
-            await expect(async () => {
+            const consumeGenerator = async () => {
                 for await (const _ of result) {
                     // Should not get here
                 }
-            }).toThrow();
+            };
+
+            await expect(consumeGenerator()).rejects.toThrow();
 
             expect(mockQueryFn).toHaveBeenCalledTimes(1);
         });
@@ -851,11 +855,13 @@ describe('createRetryableQuery', () => {
             const retryableQuery = createRetryableQuery(mockQueryFn, { deps });
             const result = retryableQuery({ prompt: 'test', options: {} });
 
-            await expect(async () => {
+            const consumeGenerator = async () => {
                 for await (const _ of result) {
                     // Should not get here
                 }
-            }).toThrow();
+            };
+
+            await expect(consumeGenerator()).rejects.toThrow();
 
             expect(mockQueryFn).toHaveBeenCalledTimes(2); // maxAttempts = 2
             expect(sleepMock).toHaveBeenCalledTimes(1); // 1 retry
@@ -876,11 +882,13 @@ describe('createRetryableQuery', () => {
             });
             const result = retryableQuery({ prompt: 'test', options: {} });
 
-            await expect(async () => {
+            const consumeGenerator = async () => {
                 for await (const _ of result) {
                     // Should not get here
                 }
-            }).toThrow();
+            };
+
+            await expect(consumeGenerator()).rejects.toThrow();
 
             expect(mockQueryFn).toHaveBeenCalledTimes(4);
             expect(sleepMock).toHaveBeenCalledTimes(3);
@@ -935,11 +943,13 @@ describe('createRetryableQuery', () => {
             const retryableQuery = createRetryableQuery(mockQueryFn, { deps });
             const result = retryableQuery({ prompt: 'test', options: {} });
 
-            await expect(async () => {
+            const consumeGenerator = async () => {
                 for await (const _ of result) {
                     // Should not get here
                 }
-            }).toThrow();
+            };
+
+            await expect(consumeGenerator()).rejects.toThrow();
 
             expect(mockQueryFn).toHaveBeenCalledTimes(2);
         });

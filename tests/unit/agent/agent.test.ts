@@ -10,7 +10,7 @@ import type { DiscordMessageContext } from '../../../src/integrations/discord/ty
 import { createGuildId, createChannelId, createUserId } from '../../../src/integrations/discord/types';
 import type { ContextBuilder } from '../../../src/agent/context-builder';
 
-describe.concurrent('parseToolName', () => {
+describe('parseToolName', () => {
     test('should convert MCP tool names to ParsedToolName with module and tool', () => {
         const result1: ParsedToolName = parseToolName('mcp__memory__view');
         expect(result1).toEqual({ module: 'memory', tool: 'view' });
@@ -97,7 +97,7 @@ describe.concurrent('parseToolName', () => {
     });
 });
 
-describe.concurrent('redactSensitiveArgs', () => {
+describe('redactSensitiveArgs', () => {
     describe('basic redaction', () => {
         test('should redact apiKey', () => {
             const input = { apiKey: 'sk-secret-123' };
@@ -642,7 +642,7 @@ describe('logStreamEvent', () => {
     });
 });
 
-describe.concurrent('extractToolUses', () => {
+describe('extractToolUses', () => {
     test('should return empty array for non-assistant messages', () => {
         const message = { type: 'user', message: { content: [] } };
         expect(extractToolUses(message)).toEqual([]);
@@ -738,7 +738,7 @@ describe.concurrent('extractToolUses', () => {
     });
 });
 
-describe.concurrent('extractThinkingContent', () => {
+describe('extractThinkingContent', () => {
     test('should return empty string for non-assistant messages', () => {
         const message = { type: 'user', message: { content: [] } };
         expect(extractThinkingContent(message)).toBe('');

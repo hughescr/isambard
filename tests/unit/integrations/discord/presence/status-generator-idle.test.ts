@@ -9,7 +9,7 @@ import { constant as _constant, keys as _keys, repeat as _repeat, size as _size 
 import { createIdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
 import { mockGenerateTextWithSystemPrompt } from '../../../../setup';
 
-describe.concurrent('IdleStatusGenerator', () => {
+describe('IdleStatusGenerator', () => {
     const mockLogger = {
         debug: mock(() => undefined),
         warn:  mock(() => undefined),
@@ -20,7 +20,6 @@ describe.concurrent('IdleStatusGenerator', () => {
 
     beforeEach(() => {
         mockGenerateTextWithSystemPrompt.mockReset();
-        mockGenerateTextWithSystemPrompt.mockClear();
         mockGenerateTextWithSystemPrompt.mockResolvedValue('Dozing peacefully');
     });
 
