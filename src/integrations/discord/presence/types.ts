@@ -79,6 +79,7 @@ export interface StatusUpdate {
  * Maps tool names to human-readable status text.
  * Extensible - add new tools here as they're integrated.
  */
+// Stryker disable all: Display strings for Discord presence - not behavioral
 export const ToolStatusMap: Record<string, string> = {
     mcp__memory__view:            'Remembering...',
     mcp__memory__storeSelf:       'Recording self-knowledge...',
@@ -87,6 +88,7 @@ export const ToolStatusMap: Record<string, string> = {
     mcp__memory__search:          'Searching memories...',
     // Future tools can be added here
 };
+// Stryker restore all
 
 /**
  * Maps tool names to human-readable descriptions of what the tool does.

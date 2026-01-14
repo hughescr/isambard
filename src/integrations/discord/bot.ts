@@ -111,6 +111,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     let presenceManager: PresenceManager | undefined;
 
     // Register error handler for Discord client errors
+    // Stryker disable next-line StringLiteral: Discord.js event name
     client.on('error', createErrorHandler());
 
     // Register rate limit handler for logging (if rest client is available)

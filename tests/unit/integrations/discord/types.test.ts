@@ -30,11 +30,6 @@ describe.concurrent('branded ID schemas', () => {
     test.each(idSchemas)('%s schema should reject empty string', (_name, schema) => {
         const result = schema.safeParse('');
         expect(result.success).toBe(false);
-    });
-
-    test.each(idSchemas)('%s schema should include descriptive error message for empty ID', (_name, schema) => {
-        const result = schema.safeParse('');
-        expect(result.success).toBe(false);
         if(!result.success) {
             expect(result.error.issues[0]?.message).toContain('cannot be empty');
         }
@@ -43,16 +38,6 @@ describe.concurrent('branded ID schemas', () => {
     test.each(idSchemas)('%s schema should reject non-string values', (_name, schema, _validId, invalidNumber) => {
         const result = schema.safeParse(invalidNumber);
         expect(result.success).toBe(false);
-    });
-
-    test.each(idSchemas)('%s schema should create branded type', (_name, schema, validId) => {
-        const result = schema.safeParse(validId);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            // TypeScript ensures branded type is correct at compile time
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument -- Parameterized test requires type assertion across different branded types
-            expect(result.data).toBe(validId as any);
-        }
     });
 });
 
@@ -72,82 +57,53 @@ describe('discordMessageContextSchema', () => {
         expect(result.success).toBe(true);
     });
 
-    test('should require guildId', () => {
+    test('should reject missing or invalid required fields', () => {
+        // Missing guildId
         const { guildId: _guildId, ...noGuildId } = validContext;
-        const result = discordMessageContextSchema.safeParse(noGuildId);
-        expect(result.success).toBe(false);
-    });
+        expect(discordMessageContextSchema.safeParse(noGuildId).success).toBe(false);
 
-    test('should require valid GuildId type for guildId', () => {
-        const result = discordMessageContextSchema.safeParse({ ...validContext, guildId: '' });
-        expect(result.success).toBe(false);
-    });
+        // Invalid guildId (empty string)
+        expect(discordMessageContextSchema.safeParse({ ...validContext, guildId: '' }).success).toBe(false);
 
-    test('should require channelId', () => {
+        // Missing channelId
         const { channelId: _channelId, ...noChannelId } = validContext;
-        const result = discordMessageContextSchema.safeParse(noChannelId);
-        expect(result.success).toBe(false);
-    });
+        expect(discordMessageContextSchema.safeParse(noChannelId).success).toBe(false);
 
-    test('should require valid ChannelId type for channelId', () => {
-        const result = discordMessageContextSchema.safeParse({ ...validContext, channelId: '' });
-        expect(result.success).toBe(false);
-    });
-
-    test('should require userId', () => {
+        // Missing userId
         const { userId: _userId, ...noUserId } = validContext;
-        const result = discordMessageContextSchema.safeParse(noUserId);
-        expect(result.success).toBe(false);
-    });
+        expect(discordMessageContextSchema.safeParse(noUserId).success).toBe(false);
 
-    test('should require valid UserId type for userId', () => {
-        const result = discordMessageContextSchema.safeParse({ ...validContext, userId: '' });
-        expect(result.success).toBe(false);
-    });
-
-    test('should require messageId', () => {
+        // Missing messageId
         const { messageId: _messageId, ...noMessageId } = validContext;
-        const result = discordMessageContextSchema.safeParse(noMessageId);
-        expect(result.success).toBe(false);
-    });
+        expect(discordMessageContextSchema.safeParse(noMessageId).success).toBe(false);
 
-    test('should reject empty messageId', () => {
-        const result = discordMessageContextSchema.safeParse({ ...validContext, messageId: '' });
-        expect(result.success).toBe(false);
-    });
+        // Empty messageId
+        expect(discordMessageContextSchema.safeParse({ ...validContext, messageId: '' }).success).toBe(false);
 
-    test('should require content', () => {
+        // Missing content
         const { content: _content, ...noContent } = validContext;
-        const result = discordMessageContextSchema.safeParse(noContent);
-        expect(result.success).toBe(false);
-    });
+        expect(discordMessageContextSchema.safeParse(noContent).success).toBe(false);
 
-    test('should accept empty content string', () => {
-        const result = discordMessageContextSchema.safeParse({ ...validContext, content: '' });
-        expect(result.success).toBe(true);
-    });
-
-    test('should require timestamp', () => {
+        // Missing timestamp
         const { timestamp: _timestamp, ...noTimestamp } = validContext;
-        const result = discordMessageContextSchema.safeParse(noTimestamp);
-        expect(result.success).toBe(false);
+        expect(discordMessageContextSchema.safeParse(noTimestamp).success).toBe(false);
+
+        // Invalid timestamp
+        expect(discordMessageContextSchema.safeParse({ ...validContext, timestamp: 'not-a-date' }).success).toBe(false);
     });
 
-    test('should validate timestamp as ISO datetime', () => {
-        const result = discordMessageContextSchema.safeParse({ ...validContext, timestamp: 'not-a-date' });
-        expect(result.success).toBe(false);
-    });
+    test('should accept field constraints: empty content and various ISO timestamps', () => {
+        // Empty content is allowed
+        expect(discordMessageContextSchema.safeParse({ ...validContext, content: '' }).success).toBe(true);
 
-    test('should accept valid ISO datetime formats', () => {
+        // Various valid ISO timestamps
         const timestamps = [
             '2024-01-15T10:30:00.000Z',
             '2024-12-31T23:59:59.999Z',
             '2024-06-15T12:00:00.000Z',
         ];
-
         for(const timestamp of timestamps) {
-            const result = discordMessageContextSchema.safeParse({ ...validContext, timestamp });
-            expect(result.success).toBe(true);
+            expect(discordMessageContextSchema.safeParse({ ...validContext, timestamp }).success).toBe(true);
         }
     });
 });
@@ -160,31 +116,31 @@ describe('ID creator functions', () => {
         expect(result).toBe(validId as any);
     });
 
-    test.each(idSchemas)('create%s should throw error for empty string', (_name, _schema, _validId, _invalidNumber, creator) => {
+    test.each(idSchemas)('create%s should throw error for invalid input', (_name, _schema, _validId, invalidNumber, creator) => {
+        // Empty string
         expect(() => creator('')).toThrow();
-    });
 
-    test.each(idSchemas)('create%s should throw error for non-string input', (_name, _schema, _validId, invalidNumber, creator) => {
+        // Non-string input
         // @ts-expect-error - testing runtime validation
         expect(() => creator(invalidNumber)).toThrow();
     });
 });
 
 describe('ID predicate functions', () => {
-    test.each(idSchemas)('is%s should return true for valid branded type', (_name, _schema, validId, _invalidNumber, creator, predicate) => {
+    test.each(idSchemas)('is%s should return true for valid ID', (_name, _schema, validId, _invalidNumber, creator, predicate) => {
+        // Valid branded type
         const id = creator(validId);
         expect(predicate(id)).toBe(true);
-    });
 
-    test.each(idSchemas)('is%s should return true for valid string', (_name, _schema, validId, _invalidNumber, _creator, predicate) => {
+        // Valid string
         expect(predicate(validId)).toBe(true);
     });
 
-    test.each(idSchemas)('is%s should return false for empty string', (_name, _schema, _validId, _invalidNumber, _creator, predicate) => {
+    test.each(idSchemas)('is%s should return false for invalid input', (_name, _schema, _validId, invalidNumber, _creator, predicate) => {
+        // Empty string
         expect(predicate('')).toBe(false);
-    });
 
-    test.each(idSchemas)('is%s should return false for non-string values', (_name, _schema, _validId, invalidNumber, _creator, predicate) => {
+        // Non-string values
         expect(predicate(invalidNumber)).toBe(false);
         expect(predicate(null)).toBe(false);
         expect(predicate(undefined)).toBe(false);

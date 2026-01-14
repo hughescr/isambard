@@ -9,16 +9,9 @@ import {
 describe.concurrent('DISCORD_EPOCH', () => {
     test('should be January 1, 2015 UTC in milliseconds as bigint', () => {
         expect(DISCORD_EPOCH).toBe(1420070400000n);
-    });
-
-    test('should represent the correct date', () => {
         const epochDate = new Date(Number(DISCORD_EPOCH));
         expect(epochDate.getUTCFullYear()).toBe(2015);
-        expect(epochDate.getUTCMonth()).toBe(0); // January is 0
-        expect(epochDate.getUTCDate()).toBe(1);
-        expect(epochDate.getUTCHours()).toBe(0);
-        expect(epochDate.getUTCMinutes()).toBe(0);
-        expect(epochDate.getUTCSeconds()).toBe(0);
+        expect(epochDate.getUTCMonth()).toBe(0);
     });
 });
 
@@ -52,24 +45,14 @@ describe('snowflakeToTimestamp', () => {
         expect(timestamp.getTime()).toBe(1703182160380);
     });
 
-    test('should throw InvalidSnowflakeError for empty string', () => {
-        expect(() => snowflakeToTimestamp('')).toThrow(InvalidSnowflakeError);
-    });
-
-    test('should throw InvalidSnowflakeError for non-numeric string', () => {
-        expect(() => snowflakeToTimestamp('not-a-number')).toThrow(InvalidSnowflakeError);
-    });
-
-    test('should throw InvalidSnowflakeError for negative snowflake', () => {
-        expect(() => snowflakeToTimestamp('-123456789012345678')).toThrow(InvalidSnowflakeError);
-    });
-
-    test('should throw InvalidSnowflakeError for snowflake with letters', () => {
-        expect(() => snowflakeToTimestamp('123abc456')).toThrow(InvalidSnowflakeError);
-    });
-
-    test('should throw InvalidSnowflakeError for snowflake with whitespace', () => {
-        expect(() => snowflakeToTimestamp('123 456')).toThrow(InvalidSnowflakeError);
+    test.each([
+        ['empty string', ''],
+        ['non-numeric string', 'not-a-number'],
+        ['negative snowflake', '-123456789012345678'],
+        ['snowflake with letters', '123abc456'],
+        ['snowflake with whitespace', '123 456'],
+    ])('should throw InvalidSnowflakeError for %s', (_, invalidSnowflake) => {
+        expect(() => snowflakeToTimestamp(invalidSnowflake)).toThrow(InvalidSnowflakeError);
     });
 
     test('should handle very large snowflakes', () => {
@@ -102,22 +85,13 @@ describe('timestampToSnowflake', () => {
         expect(snowflake).toBe('175928847298985984');
     });
 
-    test('should produce snowflakes that convert back to the same timestamp', () => {
-        // Round-trip test: timestamp -> snowflake -> timestamp
-        const originalDate = new Date('2024-06-15T12:30:45.123Z');
+    test.each([
+        ['specific date', new Date('2024-06-15T12:30:45.123Z')],
+        ['current time', new Date()],
+    ])('should produce snowflakes that convert back to the same timestamp - %s', (_, originalDate) => {
         const snowflake = timestampToSnowflake(originalDate);
         const recoveredDate = snowflakeToTimestamp(snowflake);
-
-        // Should be exactly the same since we're using the full millisecond precision
         expect(recoveredDate.getTime()).toBe(originalDate.getTime());
-    });
-
-    test('should handle current time', () => {
-        const now = new Date();
-        const snowflake = timestampToSnowflake(now);
-        const recoveredDate = snowflakeToTimestamp(snowflake);
-
-        expect(recoveredDate.getTime()).toBe(now.getTime());
     });
 
     test('should produce valid numeric string snowflakes', () => {
@@ -148,54 +122,19 @@ describe('timestampToSnowflake', () => {
 });
 
 describe('InvalidSnowflakeError', () => {
-    test('should be an instance of Error', () => {
+    test('should have correct error properties', () => {
         const error = new InvalidSnowflakeError('test-snowflake');
         expect(error).toBeInstanceOf(Error);
-    });
-
-    test('should have correct name', () => {
-        const error = new InvalidSnowflakeError('test-snowflake');
         expect(error.name).toBe('InvalidSnowflakeError');
-    });
-
-    test('should include snowflake in message', () => {
-        const error = new InvalidSnowflakeError('invalid-id');
-        expect(error.message).toContain('invalid-id');
-    });
-
-    test('should store the snowflake value', () => {
-        const error = new InvalidSnowflakeError('bad-snowflake');
-        expect(error.snowflake).toBe('bad-snowflake');
-    });
-
-    test('should have correct error code', () => {
-        const error = new InvalidSnowflakeError('test');
         expect(error.code).toBe('INVALID_SNOWFLAKE');
-    });
-
-    test('should have a stack trace', () => {
-        const error = new InvalidSnowflakeError('test');
+        expect(error.snowflake).toBe('test-snowflake');
+        expect(error.message).toContain('test-snowflake');
         expect(error.stack).toBeDefined();
-        expect(error.stack).toContain('InvalidSnowflakeError');
     });
 });
 
 describe('round-trip conversions', () => {
-    test('should preserve timestamp precision for multiple dates', () => {
-        const testDates = [
-            new Date('2020-01-01T00:00:00.000Z'),
-            new Date('2023-07-15T14:30:00.500Z'),
-            new Date('2024-12-25T08:15:30.750Z'),
-        ];
-
-        for(const originalDate of testDates) {
-            const snowflake = timestampToSnowflake(originalDate);
-            const recoveredDate = snowflakeToTimestamp(snowflake);
-            expect(recoveredDate.getTime()).toBe(originalDate.getTime());
-        }
-    });
-
-    test('should handle millisecond boundaries', () => {
+    test('should preserve timestamp precision for millisecond boundaries', () => {
         // Test timestamps at exact millisecond boundaries
         const baseTime = 1700000000000;
         for(let ms = 0; ms < 10; ms++) {

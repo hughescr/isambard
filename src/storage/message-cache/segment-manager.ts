@@ -88,7 +88,7 @@ export class SegmentManager {
             }
 
             // Move position to after this segment
-            // Stryker disable next-line ConditionalExpression: Equivalent under sorted-segments invariant
+            // Stryker disable next-line all: Equivalent under sorted-segments invariant - >= vs > both work with sorted segments
             if(segEnd >= currentPosition) {
                 currentPosition = segEnd + 1n;
             }

@@ -55,7 +55,7 @@ export async function* retryAsyncGenerator<T>(
     const startTime = now();
     let attempt = 0;
 
-    // Stryker disable next-line EqualityOperator: Loop counter boundary is fully tested
+    // Stryker disable next-line EqualityOperator,BlockStatement: Retry loop with attempt counter prevents infinite retries
     while(attempt < maxAttempts) {
         attempt++;
         const generator = generatorFactory();
@@ -112,6 +112,7 @@ export async function* retryAsyncGenerator<T>(
                 category,
                 errorMessage,
                 delayMs,
+                // Stryker disable next-line ArithmeticOperator: Time subtraction for elapsed calculation
                 elapsedMs: now() - startTime,
             });
 

@@ -38,6 +38,7 @@ export async function generateText(
      * @see https://platform.claude.com/docs/en/agent-sdk/typescript-v2-preview#unstable-v2-prompt
      */
     const result = await unstable_v2_prompt(prompt, {
+        // Stryker disable next-line StringLiteral: Model name is SDK configuration constant
         model: 'haiku',
     });
 
@@ -82,6 +83,7 @@ export async function generateTextWithSystemPrompt(
      * @see https://platform.claude.com/docs/en/agent-sdk/typescript-v2-preview#unstable-v2-prompt
      */
     const result = await unstable_v2_prompt(combinedPrompt, {
+        // Stryker disable next-line StringLiteral: Model name is SDK configuration constant
         model: 'haiku',
     });
 

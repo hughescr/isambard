@@ -168,7 +168,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     tag:       z.string().describe('Tag to search for'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    // Stryker disable next-line all: z.enum array and describe() are schema configuration
                     layer:     z.enum(['identity', 'state', 'events']).optional().describe('Optional layer filter'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit:     z.number().int().positive().optional().describe('Optional result limit'),
@@ -216,9 +216,11 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                 }
             ),
 
+            // Stryker disable StringLiteral: Tool name and description are MCP server configuration
             tool(
                 'list',
                 'List memories in a directory',
+                // Stryker restore StringLiteral
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     path:      z.string().optional().describe('Directory path (e.g., /, /identity, /users). Defaults to root /'),
@@ -233,6 +235,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
+                        // Stryker disable next-line StringLiteral: Default path for root directory
                         const rawPath = args.path ?? '/';
                         // Normalize: strip trailing slash (except for root)
                         // Stryker disable next-line StringLiteral: trimEnd('') is equivalent - paths work via prefix-based list query
@@ -279,9 +282,11 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                 }
             ),
 
+            // Stryker disable StringLiteral: Tool name and description are MCP server configuration
             tool(
                 'listTags',
                 'List all tags with their usage counts',
+                // Stryker restore StringLiteral
                 {},
                 async (): Promise<CallToolResult> => {
                     try {

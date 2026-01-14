@@ -10,172 +10,97 @@ import {
 } from '@/utils/time';
 
 describe.concurrent('timeOfDaySchema', () => {
-    test('should accept "morning"', () => {
-        expect(timeOfDaySchema.safeParse('morning').success).toBe(true);
+    test.each(['morning', 'afternoon', 'evening', 'night'])('should accept valid time of day "%s"', (timeOfDay) => {
+        expect(timeOfDaySchema.safeParse(timeOfDay).success).toBe(true);
     });
 
-    test('should accept "afternoon"', () => {
-        expect(timeOfDaySchema.safeParse('afternoon').success).toBe(true);
-    });
-
-    test('should accept "evening"', () => {
-        expect(timeOfDaySchema.safeParse('evening').success).toBe(true);
-    });
-
-    test('should accept "night"', () => {
-        expect(timeOfDaySchema.safeParse('night').success).toBe(true);
-    });
-
-    test('should reject invalid time of day', () => {
-        expect(timeOfDaySchema.safeParse('dawn').success).toBe(false);
-    });
-
-    test('should reject empty string', () => {
-        expect(timeOfDaySchema.safeParse('').success).toBe(false);
+    test.each(['dawn', ''])('should reject invalid time of day "%s"', (invalid) => {
+        expect(timeOfDaySchema.safeParse(invalid).success).toBe(false);
     });
 });
 
 describe('dayOfWeekSchema', () => {
-    test('should accept "Sunday"', () => {
-        expect(dayOfWeekSchema.safeParse('Sunday').success).toBe(true);
-    });
+    test.each(['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'])(
+        'should accept valid day "%s"', (day) => {
+            expect(dayOfWeekSchema.safeParse(day).success).toBe(true);
+        }
+    );
 
-    test('should accept "Monday"', () => {
-        expect(dayOfWeekSchema.safeParse('Monday').success).toBe(true);
-    });
-
-    test('should accept "Tuesday"', () => {
-        expect(dayOfWeekSchema.safeParse('Tuesday').success).toBe(true);
-    });
-
-    test('should accept "Wednesday"', () => {
-        expect(dayOfWeekSchema.safeParse('Wednesday').success).toBe(true);
-    });
-
-    test('should accept "Thursday"', () => {
-        expect(dayOfWeekSchema.safeParse('Thursday').success).toBe(true);
-    });
-
-    test('should accept "Friday"', () => {
-        expect(dayOfWeekSchema.safeParse('Friday').success).toBe(true);
-    });
-
-    test('should accept "Saturday"', () => {
-        expect(dayOfWeekSchema.safeParse('Saturday').success).toBe(true);
-    });
-
-    test('should reject invalid day name', () => {
-        expect(dayOfWeekSchema.safeParse('Funday').success).toBe(false);
-    });
-
-    test('should reject empty string', () => {
-        expect(dayOfWeekSchema.safeParse('').success).toBe(false);
+    test.each(['Funday', ''])('should reject invalid day "%s"', (invalid) => {
+        expect(dayOfWeekSchema.safeParse(invalid).success).toBe(false);
     });
 });
 
 describe('timeContextSchema', () => {
-    test('should validate a complete TimeContext', () => {
-        const context: TimeContext = {
+    test('should validate complete and minimal TimeContext', () => {
+        const completeContext: TimeContext = {
             utc:           '2025-01-15T12:00:00.000Z',
             dayOfWeek:     'Wednesday',
             timeOfDay:     'afternoon',
             userTimezone:  'America/Los_Angeles',
             userLocalTime: '2025-01-15T04:00:00',
         };
-        const result = timeContextSchema.safeParse(context);
-        expect(result.success).toBe(true);
-    });
+        expect(timeContextSchema.safeParse(completeContext).success).toBe(true);
 
-    test('should validate TimeContext without optional fields', () => {
-        const context = {
+        const minimalContext = {
             utc:       '2025-01-15T12:00:00.000Z',
             dayOfWeek: 'Wednesday',
             timeOfDay: 'afternoon',
         };
-        const result = timeContextSchema.safeParse(context);
-        expect(result.success).toBe(true);
+        expect(timeContextSchema.safeParse(minimalContext).success).toBe(true);
     });
 
-    test('should reject invalid timeOfDay', () => {
-        const context = {
-            utc:       '2025-01-15T12:00:00.000Z',
-            dayOfWeek: 'Wednesday',
-            timeOfDay: 'invalid',
-        };
-        const result = timeContextSchema.safeParse(context);
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject invalid dayOfWeek', () => {
-        const context = {
-            utc:       '2025-01-15T12:00:00.000Z',
-            dayOfWeek: 'Funday',
-            timeOfDay: 'afternoon',
-        };
-        const result = timeContextSchema.safeParse(context);
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject missing required fields', () => {
-        const context = {
-            utc: '2025-01-15T12:00:00.000Z',
-        };
-        const result = timeContextSchema.safeParse(context);
-        expect(result.success).toBe(false);
+    test.each([
+        { utc: '2025-01-15T12:00:00.000Z', dayOfWeek: 'Wednesday', timeOfDay: 'invalid' },
+        { utc: '2025-01-15T12:00:00.000Z', dayOfWeek: 'Funday', timeOfDay: 'afternoon' },
+        { utc: '2025-01-15T12:00:00.000Z' },
+    ])('should reject invalid TimeContext: %o', (context) => {
+        expect(timeContextSchema.safeParse(context).success).toBe(false);
     });
 });
 
-describe('formatRelativeTime boundary conditions', () => {
-    test('should format 29 days as weeks (days < 30 boundary)', () => {
-        const now = new Date('2024-01-30T12:00:00Z');
-        const date = new Date('2024-01-01T12:00:00Z'); // 29 days ago
-        expect(formatRelativeTime(date, now)).toBe('4 weeks ago');
-    });
+describe('relative time formatting boundary conditions', () => {
+    test.each([
+        {
+            desc:          '29 days as weeks (days < 30)',
+            now:           new Date('2024-01-30T12:00:00Z'),
+            date:          new Date('2024-01-01T12:00:00Z'),
+            expectedLong:  '4 weeks ago',
+            expectedShort: '4w ago'
+        },
+        {
+            desc:          'exactly 30 days as weeks (not months yet)',
+            now:           new Date('2024-01-31T12:00:00Z'),
+            date:          new Date('2024-01-01T12:00:00Z'),
+            expectedLong:  '4 weeks ago',
+            expectedShort: '4w ago'
+        },
+        {
+            desc:          '364 days as months (days < 365)',
+            now:           new Date('2024-12-30T12:00:00Z'),
+            date:          new Date('2024-01-01T12:00:00Z'),
+            expectedLong:  /\d+ months ago/,
+            expectedShort: /\d+mo ago/
+        },
+        {
+            desc:          'exactly 365 days as years (days >= 365)',
+            now:           new Date('2025-01-01T12:00:00Z'),
+            date:          new Date('2024-01-01T12:00:00Z'),
+            expectedLong:  '1 year ago',
+            expectedShort: '1y ago'
+        }
+    ])('should format $desc', ({ date, now, expectedLong, expectedShort }) => {
+        if(typeof expectedLong === 'string') {
+            expect(formatRelativeTime(date, now)).toBe(expectedLong);
+        } else {
+            expect(formatRelativeTime(date, now)).toMatch(expectedLong);
+        }
 
-    test('should format exactly 30 days as weeks (not months yet)', () => {
-        const now = new Date('2024-01-31T12:00:00Z');
-        const date = new Date('2024-01-01T12:00:00Z'); // 30 days ago
-        // At exactly 30 days, differenceInMonths returns 0, so show weeks instead
-        expect(formatRelativeTime(date, now)).toBe('4 weeks ago');
-    });
-
-    test('should format 364 days as months (days < 365 boundary)', () => {
-        const now = new Date('2024-12-30T12:00:00Z');
-        const date = new Date('2024-01-01T12:00:00Z'); // 364 days ago
-        expect(formatRelativeTime(date, now)).toMatch(/\d+ months ago/);
-    });
-
-    test('should format exactly 365 days as years (days >= 365 transition)', () => {
-        const now = new Date('2025-01-01T12:00:00Z');
-        const date = new Date('2024-01-01T12:00:00Z'); // 365 days ago (leap year)
-        expect(formatRelativeTime(date, now)).toBe('1 year ago');
-    });
-});
-
-describe('formatShortRelativeTime boundary conditions', () => {
-    test('should format 29 days as weeks (days < 30 boundary)', () => {
-        const now = new Date('2024-01-30T12:00:00Z');
-        const date = new Date('2024-01-01T12:00:00Z'); // 29 days ago
-        expect(formatShortRelativeTime(date, now)).toBe('4w ago');
-    });
-
-    test('should format exactly 30 days as weeks (not months yet)', () => {
-        const now = new Date('2024-01-31T12:00:00Z');
-        const date = new Date('2024-01-01T12:00:00Z'); // 30 days ago
-        // At exactly 30 days, differenceInMonths returns 0, so show weeks instead
-        expect(formatShortRelativeTime(date, now)).toBe('4w ago');
-    });
-
-    test('should format 364 days as months (days < 365 boundary)', () => {
-        const now = new Date('2024-12-30T12:00:00Z');
-        const date = new Date('2024-01-01T12:00:00Z'); // 364 days ago
-        expect(formatShortRelativeTime(date, now)).toMatch(/\d+mo ago/);
-    });
-
-    test('should format exactly 365 days as years (days >= 365 transition)', () => {
-        const now = new Date('2025-01-01T12:00:00Z');
-        const date = new Date('2024-01-01T12:00:00Z'); // 365 days ago (leap year)
-        expect(formatShortRelativeTime(date, now)).toBe('1y ago');
+        if(typeof expectedShort === 'string') {
+            expect(formatShortRelativeTime(date, now)).toBe(expectedShort);
+        } else {
+            expect(formatShortRelativeTime(date, now)).toMatch(expectedShort);
+        }
     });
 });
 

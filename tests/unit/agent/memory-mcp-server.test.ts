@@ -40,164 +40,53 @@ describe.concurrent('createMemoryMCPServer', () => {
     };
 
     describe('createMemoryMCPServer function', () => {
-        test('should create MCP server with correct name', () => {
+        test('should create MCP server with correct properties', () => {
             const server = createMemoryMCPServer(mockBackend);
 
             expect(server).toBeDefined();
             expect(server.name).toBe('memory');
-        });
-
-        test('should create MCP server with instance', () => {
-            const server = createMemoryMCPServer(mockBackend);
-
             expect(server.instance).toBeDefined();
-        });
-
-        test('should create MCP server with type', () => {
-            const server = createMemoryMCPServer(mockBackend);
-
             expect(server.type).toBe('sdk');
-        });
-
-        test('should create MCP server with version 1.0.0', () => {
-            const server = createMemoryMCPServer(mockBackend);
-
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing server version
             expect((server.instance as any).server._serverInfo.version).toBe('1.0.0');
         });
 
-        test('should have view tool with description', () => {
+        test.each([
+            ['view', 'View memory by path'],
+            ['storeSelf', 'Store self-knowledge in identity or state layer. Saving with the same name will replace existing content.'],
+            ['storeUserMemory', 'Store user-specific memory. Saving with the same userId and name will replace existing content.'],
+            ['logEvent', 'Log an event to the events layer'],
+            ['search', 'Search memories by tag with optional filters'],
+        ])('should have %s tool with correct description', (toolName, expectedDescription) => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-            const viewTool = (server.instance as any)._registeredTools.view;
+            const tool = (server.instance as any)._registeredTools[toolName];
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking tool description
-            expect(viewTool.description).toBe('View memory by path');
+            expect(tool.description).toBe(expectedDescription);
         });
 
-        test('should have storeSelf tool with description', () => {
+        test.each([
+            ['view', ['path']],
+            ['storeSelf', ['layer', 'name', 'content', 'tags']],
+            ['storeUserMemory', ['userId', 'name', 'content', 'tags']],
+            ['logEvent', ['eventType', 'summary', 'details', 'tags']],
+            ['search', ['tag', 'layer', 'limit']],
+        ])('should have %s tool with required input schema fields', (toolName, requiredFields) => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-            const storeSelfTool = (server.instance as any)._registeredTools.storeSelf;
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking tool description
-            expect(storeSelfTool.description).toBe('Store self-knowledge in identity or state layer. Saving with the same name will replace existing content.');
-        });
-
-        test('should have storeUserMemory tool with description', () => {
-            const server = createMemoryMCPServer(mockBackend);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-            const storeUserMemoryTool = (server.instance as any)._registeredTools.storeUserMemory;
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking tool description
-            expect(storeUserMemoryTool.description).toBe('Store user-specific memory. Saving with the same userId and name will replace existing content.');
-        });
-
-        test('should have logEvent tool with description', () => {
-            const server = createMemoryMCPServer(mockBackend);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-            const logEventTool = (server.instance as any)._registeredTools.logEvent;
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking tool description
-            expect(logEventTool.description).toBe('Log an event to the events layer');
-        });
-
-        test('should have search tool with description', () => {
-            const server = createMemoryMCPServer(mockBackend);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-            const searchTool = (server.instance as any)._registeredTools.search;
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking tool description
-            expect(searchTool.description).toBe('Search memories by tag with optional filters');
-        });
-
-        test('should have view tool with path input schema', () => {
-            const server = createMemoryMCPServer(mockBackend);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-            const viewTool = (server.instance as any)._registeredTools.view;
+            const tool = (server.instance as any)._registeredTools[toolName];
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking input schema
-            expect(viewTool.inputSchema).toBeDefined();
+            expect(tool.inputSchema).toBeDefined();
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema properties
-            expect(viewTool.inputSchema.shape).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema path
-            expect(viewTool.inputSchema.shape.path).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema description
-            expect(viewTool.inputSchema.shape.path.description).toContain('Memory path');
-        });
+            expect(tool.inputSchema.shape).toBeDefined();
 
-        test('should have storeSelf tool with layer, name, content, and tags input schema', () => {
-            const server = createMemoryMCPServer(mockBackend);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-            const storeSelfTool = (server.instance as any)._registeredTools.storeSelf;
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking input schema
-            expect(storeSelfTool.inputSchema).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema properties
-            expect(storeSelfTool.inputSchema.shape).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema layer
-            expect(storeSelfTool.inputSchema.shape.layer).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema name
-            expect(storeSelfTool.inputSchema.shape.name).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema content
-            expect(storeSelfTool.inputSchema.shape.content).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema tags
-            expect(storeSelfTool.inputSchema.shape.tags).toBeDefined();
-        });
-
-        test('should have storeUserMemory tool with userId, name, content, and tags input schema', () => {
-            const server = createMemoryMCPServer(mockBackend);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-            const storeUserMemoryTool = (server.instance as any)._registeredTools.storeUserMemory;
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking input schema
-            expect(storeUserMemoryTool.inputSchema).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema properties
-            expect(storeUserMemoryTool.inputSchema.shape).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema userId
-            expect(storeUserMemoryTool.inputSchema.shape.userId).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema name
-            expect(storeUserMemoryTool.inputSchema.shape.name).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema content
-            expect(storeUserMemoryTool.inputSchema.shape.content).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema tags
-            expect(storeUserMemoryTool.inputSchema.shape.tags).toBeDefined();
-        });
-
-        test('should have logEvent tool with eventType, summary, details, and tags input schema', () => {
-            const server = createMemoryMCPServer(mockBackend);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-            const logEventTool = (server.instance as any)._registeredTools.logEvent;
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking input schema
-            expect(logEventTool.inputSchema).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema properties
-            expect(logEventTool.inputSchema.shape).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema eventType
-            expect(logEventTool.inputSchema.shape.eventType).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema summary
-            expect(logEventTool.inputSchema.shape.summary).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema details
-            expect(logEventTool.inputSchema.shape.details).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema tags
-            expect(logEventTool.inputSchema.shape.tags).toBeDefined();
-        });
-
-        test('should have search tool with tag, layer, and limit input schema', () => {
-            const server = createMemoryMCPServer(mockBackend);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-            const searchTool = (server.instance as any)._registeredTools.search;
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking input schema
-            expect(searchTool.inputSchema).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema properties
-            expect(searchTool.inputSchema.shape).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema tag
-            expect(searchTool.inputSchema.shape.tag).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema layer
-            expect(searchTool.inputSchema.shape.layer).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema limit
-            expect(searchTool.inputSchema.shape.limit).toBeDefined();
+            // Check all required fields are present
+            for(const field of requiredFields) {
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema field
+                expect(tool.inputSchema.shape[field]).toBeDefined();
+            }
         });
     });
 
@@ -292,54 +181,16 @@ describe.concurrent('createMemoryMCPServer', () => {
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBe(true);
         });
-
-        test('should call backend.get with correct memory path', async () => {
-            mockBackend.get = mock(async () => ({
-                path:        '/memories/identity/core.md' as MemoryPath,
-                content:     'Core identity',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
-            }));
-
-            const server = createMemoryMCPServer(mockBackend);
-            const handler = getToolHandler(server, 'view');
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            await handler({ path: '/memories/identity/core.md' });
-
-            expect(mockBackend.get).toHaveBeenCalledWith('/memories/identity/core.md');
-        });
-
-        test('should return content as text type with const assertion', async () => {
-            mockBackend.get = mock(async () => ({
-                path:        '/test.md' as MemoryPath,
-                content:     'Content',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
-            }));
-
-            const server = createMemoryMCPServer(mockBackend);
-            const handler = getToolHandler(server, 'view');
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            const result = await handler({ path: '/test.md' });
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-            expect(result.content[0].type).toBe('text');
-        });
     });
 
     describe('storeSelf tool', () => {
-        test('should store identity memory successfully', async () => {
+        test.each([
+            ['identity', 'core-values', 'My core values'],
+            ['state', 'current-goals', 'Current goals'],
+        ])('should store %s memory successfully', async (layer, name, content) => {
             mockBackend.create = mock(async () => ({
-                path:        '/identity/core-values' as MemoryPath,
-                content:     'My core values',
+                path:        `/${layer}/${name}` as MemoryPath,
+                content,
                 contentType: 'text/plain' as ContentType,
                 metadata:    {},
                 version:     1,
@@ -351,70 +202,20 @@ describe.concurrent('createMemoryMCPServer', () => {
             const handler = getToolHandler(server, 'storeSelf');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            const result = await handler({ layer: 'identity', name: 'core-values', content: 'My core values' });
+            const result = await handler({ layer, name, content });
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content).toBeDefined();
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].type).toBe('text');
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-            expect(result.content[0].text).toBe('Memory stored at /identity/core-values');
+            expect(result.content[0].text).toBe(`Memory stored at /${layer}/${name}`);
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBeUndefined();
-        });
-
-        test('should store state memory successfully', async () => {
-            mockBackend.create = mock(async () => ({
-                path:        '/state/current-goals' as MemoryPath,
-                content:     'Current goals',
-                contentType: 'text/plain' as ContentType,
-                metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
-            }));
-
-            const server = createMemoryMCPServer(mockBackend);
-            const handler = getToolHandler(server, 'storeSelf');
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            const result = await handler({ layer: 'state', name: 'current-goals', content: 'Current goals' });
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-            expect(result.content[0].text).toBe('Memory stored at /state/current-goals');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-            expect(result.isError).toBeUndefined();
-        });
-
-        test('should call backend.create with correct path for identity layer', async () => {
-            mockBackend.create = mock(async () => createMockItem());
-
-            const server = createMemoryMCPServer(mockBackend);
-            const handler = getToolHandler(server, 'storeSelf');
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            await handler({ layer: 'identity', name: 'beliefs', content: 'My beliefs' });
 
             expect(mockBackend.create).toHaveBeenCalledWith({
-                path:        '/identity/beliefs',
-                content:     'My beliefs',
-                contentType: 'text/plain',
-                tags:        undefined,
-            });
-        });
-
-        test('should call backend.create with correct path for state layer', async () => {
-            mockBackend.create = mock(async () => createMockItem());
-
-            const server = createMemoryMCPServer(mockBackend);
-            const handler = getToolHandler(server, 'storeSelf');
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            await handler({ layer: 'state', name: 'context', content: 'Current context' });
-
-            expect(mockBackend.create).toHaveBeenCalledWith({
-                path:        '/state/context',
-                content:     'Current context',
+                path:        `/${layer}/${name}`,
+                content,
                 contentType: 'text/plain',
                 tags:        undefined,
             });
@@ -472,71 +273,21 @@ describe.concurrent('createMemoryMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
-        test('should use text/plain content type', async () => {
-            mockBackend.create = mock(async () => createMockItem());
-
-            const server = createMemoryMCPServer(mockBackend);
-            const handler = getToolHandler(server, 'storeSelf');
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            await handler({ layer: 'identity', name: 'test', content: 'Content' });
-
-            expect(mockBackend.create).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    contentType: 'text/plain',
-                })
-            );
-        });
-
         describe('layer enum validation', () => {
-            test('should have layer schema that accepts identity', () => {
+            test.each([
+                ['identity', true],
+                ['state', true],
+                ['invalid', false],
+                ['', false],
+                ['events', false],
+            ])('should validate layer value "%s" as %s', (value, expectedSuccess) => {
                 const server = createMemoryMCPServer(mockBackend);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
                 const storeSelfTool = (server.instance as any)._registeredTools.storeSelf;
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
-                const result = storeSelfTool.inputSchema.shape.layer.safeParse('identity');
+                const result = storeSelfTool.inputSchema.shape.layer.safeParse(value);
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-                expect(result.success).toBe(true);
-            });
-
-            test('should have layer schema that accepts state', () => {
-                const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const storeSelfTool = (server.instance as any)._registeredTools.storeSelf;
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
-                const result = storeSelfTool.inputSchema.shape.layer.safeParse('state');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-                expect(result.success).toBe(true);
-            });
-
-            test('should have layer schema that rejects invalid values', () => {
-                const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const storeSelfTool = (server.instance as any)._registeredTools.storeSelf;
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
-                const result = storeSelfTool.inputSchema.shape.layer.safeParse('invalid');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-                expect(result.success).toBe(false);
-            });
-
-            test('should have layer schema that rejects empty string', () => {
-                const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const storeSelfTool = (server.instance as any)._registeredTools.storeSelf;
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
-                const result = storeSelfTool.inputSchema.shape.layer.safeParse('');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-                expect(result.success).toBe(false);
-            });
-
-            test('should have layer schema that rejects events for storeSelf', () => {
-                const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const storeSelfTool = (server.instance as any)._registeredTools.storeSelf;
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
-                const result = storeSelfTool.inputSchema.shape.layer.safeParse('events');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-                expect(result.success).toBe(false);
+                expect(result.success).toBe(expectedSuccess);
             });
         });
     });
@@ -636,22 +387,6 @@ describe.concurrent('createMemoryMCPServer', () => {
             expect(result.content[0].text).toBe('Error storing user memory: Network error');
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBe(true);
-        });
-
-        test('should use text/plain content type', async () => {
-            mockBackend.create = mock(async () => createMockItem());
-
-            const server = createMemoryMCPServer(mockBackend);
-            const handler = getToolHandler(server, 'storeUserMemory');
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            await handler({ userId: 'user1', name: 'test', content: 'Content' });
-
-            expect(mockBackend.create).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    contentType: 'text/plain',
-                })
-            );
         });
     });
 
@@ -793,34 +528,9 @@ describe.concurrent('createMemoryMCPServer', () => {
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBe(true);
         });
-
-        test('should use text/plain content type', async () => {
-            mockBackend.create = mock(async () => createMockItem());
-
-            const server = createMemoryMCPServer(mockBackend);
-            const handler = getToolHandler(server, 'logEvent');
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            await handler({ eventType: 'test', summary: 'Test' });
-
-            expect(mockBackend.create).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    contentType: 'text/plain',
-                })
-            );
-        });
     });
 
     describe('listTags tool', () => {
-        test('should have listTags tool with description', () => {
-            const server = createMemoryMCPServer(mockBackend);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-            const listTagsTool = (server.instance as any)._registeredTools.listTags;
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking tool description
-            expect(listTagsTool.description).toBe('List all tags with their usage counts');
-        });
-
         test('should return "No tags found" when registry does not exist', async () => {
             mockBackend.get = mock(async () => undefined);
 

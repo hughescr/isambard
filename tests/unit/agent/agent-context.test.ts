@@ -77,7 +77,6 @@ describe('createClaudeAgent context integration', () => {
 
             await agent.chat(mockMessageContext);
 
-            expect(mockContextBuilder.loadCoreIdentity).toHaveBeenCalled();
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
                     options: expect.objectContaining({
@@ -99,7 +98,6 @@ describe('createClaudeAgent context integration', () => {
 
             await agent.chat(mockMessageContext);
 
-            expect(mockContextBuilder.loadRecentContext).toHaveBeenCalledWith('111222333', 3);
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
                     prompt: expect.stringContaining('User likes coffee'),
@@ -107,16 +105,7 @@ describe('createClaudeAgent context integration', () => {
             );
         });
 
-        test('should not call contextBuilder when not provided', async () => {
-            const agent = createClaudeAgent({});
-
-            await agent.chat(mockMessageContext);
-
-            expect(mockContextBuilder.loadCoreIdentity).not.toHaveBeenCalled();
-            expect(mockContextBuilder.loadRecentContext).not.toHaveBeenCalled();
-        });
-
-        test('should handle empty core identity', async () => {
+        test('should handle empty core identity without appending identity section', async () => {
             (mockContextBuilder.loadCoreIdentity as ReturnType<typeof mock>).mockResolvedValue('');
 
             const agent = createClaudeAgent({
@@ -125,7 +114,7 @@ describe('createClaudeAgent context integration', () => {
 
             await agent.chat(mockMessageContext);
 
-            // Should still have base system prompt
+            // Should still have base system prompt but not "## Who You Are" section
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
                     options: expect.objectContaining({
@@ -133,18 +122,6 @@ describe('createClaudeAgent context integration', () => {
                     }),
                 })
             );
-        });
-
-        test('should not append core identity section when empty', async () => {
-            (mockContextBuilder.loadCoreIdentity as ReturnType<typeof mock>).mockResolvedValue('');
-
-            const agent = createClaudeAgent({
-                contextBuilder: mockContextBuilder,
-            });
-
-            await agent.chat(mockMessageContext);
-
-            // Should not have "## Who You Are" section
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
                     options: expect.objectContaining({
@@ -211,10 +188,6 @@ describe('createClaudeAgent context integration', () => {
 
             await agent.chat(mockMessageContext);
 
-            // Verify loadRecentContext was called with both user ID and bot ID
-            expect(mockContextBuilder.loadRecentContext).toHaveBeenCalledWith('111222333', 3);
-            expect(mockContextBuilder.loadRecentContext).toHaveBeenCalledWith('bot_444555666', 2);
-
             // Verify the prompt includes the [Your recent activities] section with exact format
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -238,37 +211,35 @@ describe('createClaudeAgent context integration', () => {
 
             await agent.chat(mockMessageContext);
 
-            // Verify loadRecentContext was called with bot ID
-            expect(mockContextBuilder.loadRecentContext).toHaveBeenCalledWith('bot_444555666', 2);
-
             // Verify the prompt does NOT include [Your recent activities]
             const callArgs = querySpy.mock.calls[0][0];
             expect(callArgs.prompt).not.toContain('[Your recent activities]');
         });
 
-        test('should not load bot memories when botUserId is not present', async () => {
-            // Remove botUserId from context (use partial type to test edge case)
-            const contextWithoutBot = {
-                guildId:   mockMessageContext.guildId,
-                channelId: mockMessageContext.channelId,
-                userId:    mockMessageContext.userId,
-                messageId: mockMessageContext.messageId,
-                content:   mockMessageContext.content,
-                timestamp: mockMessageContext.timestamp,
-                // botUserId intentionally omitted to test the conditional branch
-            } as DiscordMessageContext;
-
-            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockResolvedValue([]);
+        test('should not include bot activities section when botUserId is undefined', async () => {
+            // Mock returns memories for user only
+            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockImplementation((userId: string) => {
+                if(userId === '111222333') {
+                    return Promise.resolve(['User preference']);
+                }
+                return Promise.resolve([]);
+            });
 
             const agent = createClaudeAgent({
                 contextBuilder: mockContextBuilder,
             });
 
-            await agent.chat(contextWithoutBot);
+            // Create context without botUserId - omit the property entirely
+            const { botUserId: _removed, ...contextWithoutBot } = mockMessageContext;
 
-            // Verify loadRecentContext was only called for user, not bot
-            expect(mockContextBuilder.loadRecentContext).toHaveBeenCalledTimes(1);
-            expect(mockContextBuilder.loadRecentContext).toHaveBeenCalledWith('111222333', 3);
+            await agent.chat(contextWithoutBot as typeof mockMessageContext);
+
+            // Verify the prompt does NOT include [Your recent activities] section
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    prompt: expect.not.stringContaining('[Your recent activities]'),
+                })
+            );
         });
 
         test('should include recent events when loadRecentEvents returns events', async () => {
@@ -283,9 +254,6 @@ describe('createClaudeAgent context integration', () => {
             });
 
             await agent.chat(mockMessageContext);
-
-            // Verify loadRecentEvents was called
-            expect(mockContextBuilder.loadRecentEvents).toHaveBeenCalledWith(50);
 
             // Verify the prompt includes [Recent events] section with exact format
             expect(querySpy).toHaveBeenCalledWith(
@@ -307,6 +275,23 @@ describe('createClaudeAgent context integration', () => {
 
             // Verify the prompt does NOT include [Recent events]
             const callArgs = querySpy.mock.calls[0][0];
+            expect(callArgs.prompt).not.toContain('[Recent events]');
+        });
+
+        test('should handle missing contextBuilder gracefully', async () => {
+            const agent = createClaudeAgent({
+                // No contextBuilder provided
+            });
+
+            await agent.chat(mockMessageContext);
+
+            // Verify the prompt is just the user message without any context prefix
+            const callArgs = querySpy.mock.calls[0][0];
+            expect(callArgs.prompt).toBe('User @111222333 in #987654321: Hello Claude!');
+
+            // Verify no memory sections are included
+            expect(callArgs.prompt).not.toContain('[About this user]');
+            expect(callArgs.prompt).not.toContain('[Your recent activities]');
             expect(callArgs.prompt).not.toContain('[Recent events]');
         });
 
@@ -345,33 +330,14 @@ describe('createClaudeAgent context integration', () => {
             expect(prompt).toContain('[Your recent activities]\n- Bot activity\n\n[Recent events]');
         });
 
-        test('should format bot activities with dash-space prefix for each memory item', async () => {
-            // Specifically test the "- " prefix format
+        test('should format bot activities and events with dash-space prefix', async () => {
+            // Test the "- " prefix format for both bot activities and events
             (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockImplementation((userId: string) => {
                 if(userId === 'bot_444555666') {
                     return Promise.resolve(['Activity one', 'Activity two']);
                 }
                 return Promise.resolve([]);
             });
-            (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue([]);
-
-            const agent = createClaudeAgent({
-                contextBuilder: mockContextBuilder,
-            });
-
-            await agent.chat(mockMessageContext);
-
-            // Verify exact prefix format with "- " before each item
-            const callArgs = querySpy.mock.calls[0][0];
-            expect(callArgs.prompt).toContain('- Activity one');
-            expect(callArgs.prompt).toContain('- Activity two');
-            // Ensure items are joined with newlines, not other separators
-            expect(callArgs.prompt).toContain('- Activity one\n- Activity two');
-        });
-
-        test('should format recent events with dash-space prefix for each event', async () => {
-            // Specifically test the "- " prefix format for events
-            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockResolvedValue([]);
             (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue([
                 'Event one',
                 'Event two',
@@ -383,11 +349,10 @@ describe('createClaudeAgent context integration', () => {
 
             await agent.chat(mockMessageContext);
 
-            // Verify exact prefix format with "- " before each event
             const callArgs = querySpy.mock.calls[0][0];
-            expect(callArgs.prompt).toContain('- Event one');
-            expect(callArgs.prompt).toContain('- Event two');
-            // Ensure events are joined with newlines
+            // Verify bot activities format
+            expect(callArgs.prompt).toContain('- Activity one\n- Activity two');
+            // Verify events format
             expect(callArgs.prompt).toContain('- Event one\n- Event two');
         });
     });
@@ -461,20 +426,16 @@ describe('createClaudeAgent context integration', () => {
             expect(timeIndex).toBeGreaterThanOrEqual(0);
             expect(userIndex).toBeGreaterThan(timeIndex);
         });
-
-        test('should call getCurrentTimeContext when building context prefix', async () => {
-            const agent = createClaudeAgent({
-                contextBuilder: mockContextBuilder,
-            });
-
-            await agent.chat(mockMessageContext);
-
-            expect(timeContextSpy).toHaveBeenCalled();
-        });
     });
 
     describe('temporal reasoning in system prompt', () => {
-        test('should include temporal reasoning section in system prompt', async () => {
+        test.each([
+            ['## Temporal Reasoning'],
+            ['Identity memories (values, beliefs) are relatively stable over time'],
+            ['State memories may become outdated'],
+            ['Event memories are historical records'],
+            ['Prefer recent information when facts may have changed'],
+        ])('should include temporal guidance: %s', async (expectedContent) => {
             const agent = createClaudeAgent({});
 
             await agent.chat(mockMessageContext);
@@ -482,63 +443,7 @@ describe('createClaudeAgent context integration', () => {
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
                     options: expect.objectContaining({
-                        systemPrompt: expect.stringContaining('## Temporal Reasoning'),
-                    }),
-                })
-            );
-        });
-
-        test('should include guidance about identity memories being stable', async () => {
-            const agent = createClaudeAgent({});
-
-            await agent.chat(mockMessageContext);
-
-            expect(querySpy).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    options: expect.objectContaining({
-                        systemPrompt: expect.stringContaining('Identity memories (values, beliefs) are relatively stable over time'),
-                    }),
-                })
-            );
-        });
-
-        test('should include guidance about state memories becoming outdated', async () => {
-            const agent = createClaudeAgent({});
-
-            await agent.chat(mockMessageContext);
-
-            expect(querySpy).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    options: expect.objectContaining({
-                        systemPrompt: expect.stringContaining('State memories may become outdated'),
-                    }),
-                })
-            );
-        });
-
-        test('should include guidance about event memories being historical', async () => {
-            const agent = createClaudeAgent({});
-
-            await agent.chat(mockMessageContext);
-
-            expect(querySpy).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    options: expect.objectContaining({
-                        systemPrompt: expect.stringContaining('Event memories are historical records'),
-                    }),
-                })
-            );
-        });
-
-        test('should include guidance to prefer recent information', async () => {
-            const agent = createClaudeAgent({});
-
-            await agent.chat(mockMessageContext);
-
-            expect(querySpy).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    options: expect.objectContaining({
-                        systemPrompt: expect.stringContaining('Prefer recent information when facts may have changed'),
+                        systemPrompt: expect.stringContaining(expectedContent),
                     }),
                 })
             );

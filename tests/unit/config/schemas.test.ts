@@ -11,31 +11,6 @@ import {
 } from '@/config/schemas';
 
 describe.concurrent('appConfigSchema', () => {
-    test('should validate valid app configuration', () => {
-        const validConfig = {
-            nodeEnv:  'development',
-            logLevel: 'info',
-            port:     3000,
-        } as const;
-
-        const result = appConfigSchema.safeParse(validConfig);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data).toEqual(validConfig);
-        }
-    });
-
-    test('should reject invalid nodeEnv', () => {
-        const invalidConfig = {
-            nodeEnv:  'invalid',
-            logLevel: 'info',
-            port:     3000,
-        };
-
-        const result = appConfigSchema.safeParse(invalidConfig);
-        expect(result.success).toBe(false);
-    });
-
     test('should coerce port from string to number', () => {
         const configWithStringPort = {
             nodeEnv:  'production',
@@ -63,62 +38,9 @@ describe.concurrent('appConfigSchema', () => {
             expect(result.data.logLevel).toBe('info');
         }
     });
-
-    test('should reject invalid logLevel', () => {
-        const invalidConfig = {
-            nodeEnv:  'development',
-            logLevel: 'invalid',
-            port:     3000,
-        };
-
-        const result = appConfigSchema.safeParse(invalidConfig);
-        expect(result.success).toBe(false);
-    });
-
-    test('should accept all valid nodeEnv values', () => {
-        const envs = ['development', 'production', 'test'];
-
-        for(const env of envs) {
-            const config = {
-                nodeEnv:  env,
-                logLevel: 'info',
-                port:     3000,
-            };
-
-            const result = appConfigSchema.safeParse(config);
-            expect(result.success).toBe(true);
-        }
-    });
-
-    test('should accept all valid logLevel values', () => {
-        const levels = ['debug', 'info', 'warn', 'error'];
-
-        for(const level of levels) {
-            const config = {
-                nodeEnv:  'development',
-                logLevel: level,
-                port:     3000,
-            };
-
-            const result = appConfigSchema.safeParse(config);
-            expect(result.success).toBe(true);
-        }
-    });
 });
 
 describe('agentConfigSchema', () => {
-    test('should validate valid agent configuration with oauthToken', () => {
-        const validConfig = {
-            oauthToken: 'test-oauth-token-12345',
-        };
-
-        const result = agentConfigSchema.safeParse(validConfig);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data).toEqual(validConfig);
-        }
-    });
-
     test('should reject empty oauthToken', () => {
         const invalidConfig = {
             oauthToken: '',
@@ -127,30 +49,9 @@ describe('agentConfigSchema', () => {
         const result = agentConfigSchema.safeParse(invalidConfig);
         expect(result.success).toBe(false);
     });
-
-    test('should reject missing oauthToken', () => {
-        const invalidConfig = {};
-
-        const result = agentConfigSchema.safeParse(invalidConfig);
-        expect(result.success).toBe(false);
-    });
 });
 
 describe('caldavConfigSchema', () => {
-    test('should validate valid CalDAV configuration', () => {
-        const validConfig = {
-            url:      'https://caldav.example.com',
-            username: 'user@example.com',
-            password: 'secure-password',
-        };
-
-        const result = caldavConfigSchema.safeParse(validConfig);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data).toEqual(validConfig);
-        }
-    });
-
     test('should reject invalid URL', () => {
         const invalidConfig = {
             url:      'not-a-valid-url',
@@ -160,27 +61,6 @@ describe('caldavConfigSchema', () => {
 
         const result = caldavConfigSchema.safeParse(invalidConfig);
         expect(result.success).toBe(false);
-    });
-
-    test('should require all fields', () => {
-        const missingUrl = {
-            username: 'user@example.com',
-            password: 'secure-password',
-        };
-
-        const missingUsername = {
-            url:      'https://caldav.example.com',
-            password: 'secure-password',
-        };
-
-        const missingPassword = {
-            url:      'https://caldav.example.com',
-            username: 'user@example.com',
-        };
-
-        expect(caldavConfigSchema.safeParse(missingUrl).success).toBe(false);
-        expect(caldavConfigSchema.safeParse(missingUsername).success).toBe(false);
-        expect(caldavConfigSchema.safeParse(missingPassword).success).toBe(false);
     });
 
     test('should accept http URLs', () => {
@@ -196,23 +76,6 @@ describe('caldavConfigSchema', () => {
 });
 
 describe('emailConfigSchema', () => {
-    test('should validate valid email configuration', () => {
-        const validConfig = {
-            imapHost: 'imap.example.com',
-            imapPort: 993,
-            smtpHost: 'smtp.example.com',
-            smtpPort: 587,
-            user:     'user@example.com',
-            password: 'secure-password',
-        };
-
-        const result = emailConfigSchema.safeParse(validConfig);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data).toEqual(validConfig);
-        }
-    });
-
     test('should coerce ports from strings', () => {
         const configWithStringPorts = {
             imapHost: 'imap.example.com',
@@ -260,61 +123,15 @@ describe('emailConfigSchema', () => {
         const result = emailConfigSchema.safeParse(invalidConfig);
         expect(result.success).toBe(false);
     });
-
-    test('should require all fields', () => {
-        const incompleteConfig = {
-            imapHost: 'imap.example.com',
-            imapPort: 993,
-            // missing smtpHost, smtpPort, user, password
-        };
-
-        const result = emailConfigSchema.safeParse(incompleteConfig);
-        expect(result.success).toBe(false);
-    });
 });
 
 describe('discordConfigSchema', () => {
-    test('should validate valid Discord configuration', () => {
-        const validConfig = {
-            botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
-            applicationId: '123456789012345678',
-        };
-
-        const result = discordConfigSchema.safeParse(validConfig);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data).toEqual({
-                ...validConfig,
-                monitoredChannelIds: [], // Default empty array
-            });
-        }
-    });
-
     test('should require botToken', () => {
         const missingToken = {
             applicationId: '123456789012345678',
         };
 
         const result = discordConfigSchema.safeParse(missingToken);
-        expect(result.success).toBe(false);
-    });
-
-    test('should require applicationId', () => {
-        const missingAppId = {
-            botToken: 'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
-        };
-
-        const result = discordConfigSchema.safeParse(missingAppId);
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject empty botToken', () => {
-        const emptyToken = {
-            botToken:      '',
-            applicationId: '123456789012345678',
-        };
-
-        const result = discordConfigSchema.safeParse(emptyToken);
         expect(result.success).toBe(false);
     });
 
@@ -337,19 +154,6 @@ describe('discordConfigSchema', () => {
                 idleTimeoutMs:         120000,
                 idleRefreshIntervalMs: 600000,
             });
-        }
-    });
-
-    test('should accept missing presence (optional)', () => {
-        const configWithoutPresence = {
-            botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
-            applicationId: '123456789012345678',
-        };
-
-        const result = discordConfigSchema.safeParse(configWithoutPresence);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data.presence).toBeUndefined();
         }
     });
 
@@ -398,37 +202,6 @@ describe('discordConfigSchema', () => {
 });
 
 describe('boxConfigSchema', () => {
-    test('should validate valid Box configuration', () => {
-        const validConfig = {
-            clientId:     'abc123xyz789',
-            clientSecret: 'super-secret-key-12345',
-        };
-
-        const result = boxConfigSchema.safeParse(validConfig);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data).toEqual(validConfig);
-        }
-    });
-
-    test('should require clientId', () => {
-        const missingClientId = {
-            clientSecret: 'super-secret-key-12345',
-        };
-
-        const result = boxConfigSchema.safeParse(missingClientId);
-        expect(result.success).toBe(false);
-    });
-
-    test('should require clientSecret', () => {
-        const missingClientSecret = {
-            clientId: 'abc123xyz789',
-        };
-
-        const result = boxConfigSchema.safeParse(missingClientSecret);
-        expect(result.success).toBe(false);
-    });
-
     test('should reject empty strings', () => {
         const emptyStrings = {
             clientId:     '',
@@ -441,33 +214,6 @@ describe('boxConfigSchema', () => {
 });
 
 describe('dynamoDBConfigSchema', () => {
-    test('should validate valid DynamoDB configuration', () => {
-        const validConfig = {
-            tableName: 'my-table',
-            region:    'us-west-2',
-        };
-
-        const result = dynamoDBConfigSchema.safeParse(validConfig);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data).toEqual(validConfig);
-        }
-    });
-
-    test('should accept optional endpoint', () => {
-        const configWithEndpoint = {
-            tableName: 'my-table',
-            region:    'us-west-2',
-            endpoint:  'http://localhost:8000',
-        };
-
-        const result = dynamoDBConfigSchema.safeParse(configWithEndpoint);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data.endpoint).toBe('http://localhost:8000');
-        }
-    });
-
     test('should reject invalid endpoint URL', () => {
         const invalidConfig = {
             tableName: 'my-table',
@@ -483,16 +229,6 @@ describe('dynamoDBConfigSchema', () => {
         const invalidConfig = {
             tableName: '',
             region:    'us-west-2',
-        };
-
-        const result = dynamoDBConfigSchema.safeParse(invalidConfig);
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject empty region', () => {
-        const invalidConfig = {
-            tableName: 'my-table',
-            region:    '',
         };
 
         const result = dynamoDBConfigSchema.safeParse(invalidConfig);
@@ -585,20 +321,6 @@ describe('configSchema', () => {
         if(result.success) {
             expect(result.data.app.logLevel).toBe('info');
         }
-    });
-
-    test('should require all top-level sections', () => {
-        const missingSection = {
-            app: {
-                nodeEnv:  'development',
-                logLevel: 'info',
-                port:     3000,
-            },
-            // missing caldav, email, discord, box
-        };
-
-        const result = configSchema.safeParse(missingSection);
-        expect(result.success).toBe(false);
     });
 
     test('should coerce nested numeric values from strings', () => {

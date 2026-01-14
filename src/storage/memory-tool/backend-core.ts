@@ -75,6 +75,7 @@ export class MemoryToolBackendCore {
             path:           input.path,
             content:        input.content,
             contentType:    input.contentType,
+            // Stryker disable next-line LogicalOperator: ?? operator provides default empty object
             metadata:       input.metadata ?? {},
             tags:           input.tags,
             version:        1,

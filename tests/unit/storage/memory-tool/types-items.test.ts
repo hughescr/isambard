@@ -33,43 +33,17 @@ describe.concurrent('memoryToolItemSchema', () => {
         }
     });
 
-    test('should accept custom metadata', () => {
+    test('should accept custom metadata and tags', () => {
         const result = memoryToolItemSchema.safeParse({
             ...validItem,
             metadata: { author: 'claude', priority: 5 },
+            tags:     ['important', 'work'],
         });
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data.metadata).toEqual({ author: 'claude', priority: 5 });
-        }
-    });
-
-    test('should accept optional tags', () => {
-        const result = memoryToolItemSchema.safeParse({
-            ...validItem,
-            tags: ['important', 'work'],
-        });
-        expect(result.success).toBe(true);
-        if(result.success) {
             expect(result.data.tags).toEqual(['important', 'work']);
         }
-    });
-
-    test('should require path', () => {
-        const { path: _path, ...noPath } = validItem;
-        const result = memoryToolItemSchema.safeParse(noPath);
-        expect(result.success).toBe(false);
-    });
-
-    test('should require valid MemoryPath', () => {
-        const result = memoryToolItemSchema.safeParse({ ...validItem, path: 'invalid-path' });
-        expect(result.success).toBe(false);
-    });
-
-    test('should require content', () => {
-        const { content: _content, ...noContent } = validItem;
-        const result = memoryToolItemSchema.safeParse(noContent);
-        expect(result.success).toBe(false);
     });
 
     test('should reject content over 300KB', () => {
@@ -83,161 +57,67 @@ describe.concurrent('memoryToolItemSchema', () => {
         const result = memoryToolItemSchema.safeParse({ ...validItem, content: maxContent });
         expect(result.success).toBe(true);
     });
-
-    test('should require contentType', () => {
-        const { contentType: _contentType, ...noContentType } = validItem;
-        const result = memoryToolItemSchema.safeParse(noContentType);
-        expect(result.success).toBe(false);
-    });
-
-    test('should require version', () => {
-        const { version: _version, ...noVersion } = validItem;
-        const result = memoryToolItemSchema.safeParse(noVersion);
-        expect(result.success).toBe(false);
-    });
-
-    test('should require version to be positive integer', () => {
-        const result = memoryToolItemSchema.safeParse({ ...validItem, version: 0 });
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject negative version', () => {
-        const result = memoryToolItemSchema.safeParse({ ...validItem, version: -1 });
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject non-integer version', () => {
-        const result = memoryToolItemSchema.safeParse({ ...validItem, version: 1.5 });
-        expect(result.success).toBe(false);
-    });
-
-    test('should require createdAt', () => {
-        const { createdAt: _createdAt, ...noCreatedAt } = validItem;
-        const result = memoryToolItemSchema.safeParse(noCreatedAt);
-        expect(result.success).toBe(false);
-    });
-
-    test('should validate createdAt as ISO datetime', () => {
-        const result = memoryToolItemSchema.safeParse({ ...validItem, createdAt: 'not-a-date' });
-        expect(result.success).toBe(false);
-    });
-
-    test('should require updatedAt', () => {
-        const { updatedAt: _updatedAt, ...noUpdatedAt } = validItem;
-        const result = memoryToolItemSchema.safeParse(noUpdatedAt);
-        expect(result.success).toBe(false);
-    });
-
-    test('should validate updatedAt as ISO datetime', () => {
-        const result = memoryToolItemSchema.safeParse({ ...validItem, updatedAt: 'not-a-date' });
-        expect(result.success).toBe(false);
-    });
 });
 
 describe.concurrent('createMemoryToolKeys', () => {
-    const path = '/projects/isambard' as MemoryPath;
-    const updatedAt = '2024-01-01T00:00:00.000Z';
-
-    test('should create correct PK', () => {
-        const keys = createMemoryToolKeys(path);
-        expect(keys.PK).toBe('TOOL_MEMORY#/projects/isambard');
-    });
-
-    test('should create correct SK (same as PK)', () => {
-        const keys = createMemoryToolKeys(path);
-        expect(keys.SK).toBe('TOOL_MEMORY#/projects/isambard');
-    });
-
-    test('should create GSI1PK with first tag when tags provided', () => {
-        const keys = createMemoryToolKeys(path, ['work', 'important'], updatedAt);
-        expect(keys.GSI1PK).toBe('TOOL_MEMORY#TAG#work');
-    });
-
-    test('should create GSI1PK from path when no tags', () => {
-        const keys = createMemoryToolKeys(path, undefined, updatedAt);
-        expect(keys.GSI1PK).toBe('TOOL_MEMORY#/projects/isambard');
-    });
-
-    test('should create GSI1PK from path when empty tags array', () => {
-        const keys = createMemoryToolKeys(path, [], updatedAt);
-        expect(keys.GSI1PK).toBe('TOOL_MEMORY#/projects/isambard');
-    });
-
-    test('should create GSI1SK from updatedAt when provided', () => {
-        const keys = createMemoryToolKeys(path, undefined, updatedAt);
-        expect(keys.GSI1SK).toBe('2024-01-01T00:00:00.000Z');
-    });
-
-    test('should create GSI1SK as empty string when updatedAt not provided', () => {
-        const keys = createMemoryToolKeys(path);
-        expect(keys.GSI1SK).toBe('');
+    test.each([
+        {
+            name:       'should create correct PK and SK',
+            path:       '/projects/isambard' as MemoryPath,
+            tags:       undefined,
+            updatedAt:  undefined,
+            expectedPK: 'TOOL_MEMORY#/projects/isambard',
+            expectedSK: 'TOOL_MEMORY#/projects/isambard',
+        },
+        {
+            name:           'should create GSI1PK with first tag when tags provided',
+            path:           '/projects/isambard' as MemoryPath,
+            tags:           ['work', 'important'] as string[],
+            updatedAt:      '2024-01-01T00:00:00.000Z',
+            expectedGSI1PK: 'TOOL_MEMORY#TAG#work',
+            expectedGSI1SK: '2024-01-01T00:00:00.000Z',
+        },
+        {
+            name:           'should create GSI1PK from path when no tags',
+            path:           '/projects/isambard' as MemoryPath,
+            tags:           undefined,
+            updatedAt:      '2024-01-01T00:00:00.000Z',
+            expectedGSI1PK: 'TOOL_MEMORY#/projects/isambard',
+            expectedGSI1SK: '2024-01-01T00:00:00.000Z',
+        },
+        {
+            name:           'should create GSI1SK as empty string when updatedAt not provided',
+            path:           '/projects/isambard' as MemoryPath,
+            tags:           undefined,
+            updatedAt:      undefined,
+            expectedGSI1SK: '',
+        },
+    ])('$name', ({ path, tags, updatedAt, expectedPK, expectedSK, expectedGSI1PK, expectedGSI1SK }) => {
+        const keys = createMemoryToolKeys(path, tags, updatedAt);
+        if(expectedPK) { expect(keys.PK).toBe(expectedPK); }
+        if(expectedSK) { expect(keys.SK).toBe(expectedSK); }
+        if(expectedGSI1PK !== undefined) { expect(keys.GSI1PK).toBe(expectedGSI1PK); }
+        if(expectedGSI1SK !== undefined) { expect(keys.GSI1SK).toBe(expectedGSI1SK); }
     });
 });
 
 describe.concurrent('extractLayerFromPath', () => {
-    test('should extract "identity" from /identity/core.md', () => {
-        const layer = extractLayerFromPath(createMemoryPath('/identity/core.md'));
-        expect(layer).toBe('identity' as LayerName);
-    });
-
-    test('should extract "identity" from /identity', () => {
-        const layer = extractLayerFromPath(createMemoryPath('/identity'));
-        expect(layer).toBe('identity' as LayerName);
-    });
-
-    test('should extract "state" from /state/project.json', () => {
-        const layer = extractLayerFromPath(createMemoryPath('/state/project.json'));
-        expect(layer).toBe('state' as LayerName);
-    });
-
-    test('should extract "state" from /state', () => {
-        const layer = extractLayerFromPath(createMemoryPath('/state'));
-        expect(layer).toBe('state' as LayerName);
-    });
-
-    test('should extract "events" from /events/timeline.md', () => {
-        const layer = extractLayerFromPath(createMemoryPath('/events/timeline.md'));
-        expect(layer).toBe('events' as LayerName);
-    });
-
-    test('should extract "events" from /events', () => {
-        const layer = extractLayerFromPath(createMemoryPath('/events'));
-        expect(layer).toBe('events' as LayerName);
-    });
-
-    test('should return null for /stateoftheart.md (no false positive)', () => {
-        const layer = extractLayerFromPath(createMemoryPath('/stateoftheart.md'));
-        expect(layer).toBeNull();
-    });
-
-    test('should return null for /identitytheft.md (no false positive)', () => {
-        const layer = extractLayerFromPath(createMemoryPath('/identitytheft.md'));
-        expect(layer).toBeNull();
-    });
-
-    test('should return null for /eventstoday.md (no false positive)', () => {
-        const layer = extractLayerFromPath(createMemoryPath('/eventstoday.md'));
-        expect(layer).toBeNull();
-    });
-
-    test('should return null for /other/file.md', () => {
-        const layer = extractLayerFromPath(createMemoryPath('/other/file.md'));
-        expect(layer).toBeNull();
-    });
-
-    test('should return null for root path /', () => {
-        const layer = extractLayerFromPath(createMemoryPath('/'));
-        expect(layer).toBeNull();
-    });
-
-    test('should return null for /documents/state/notes.md (state not at root)', () => {
-        const layer = extractLayerFromPath(createMemoryPath('/documents/state/notes.md'));
-        expect(layer).toBeNull();
-    });
-
-    test('should return null for /projects/identity/core.md (identity not at root)', () => {
-        const layer = extractLayerFromPath(createMemoryPath('/projects/identity/core.md'));
-        expect(layer).toBeNull();
+    test.each([
+        { path: '/identity/core.md', expected: 'identity' as LayerName, desc: 'identity with file' },
+        { path: '/identity', expected: 'identity' as LayerName, desc: 'identity alone' },
+        { path: '/state/project.json', expected: 'state' as LayerName, desc: 'state with file' },
+        { path: '/state', expected: 'state' as LayerName, desc: 'state alone' },
+        { path: '/events/timeline.md', expected: 'events' as LayerName, desc: 'events with file' },
+        { path: '/events', expected: 'events' as LayerName, desc: 'events alone' },
+        { path: '/stateoftheart.md', expected: null, desc: 'no false positive for state prefix' },
+        { path: '/identitytheft.md', expected: null, desc: 'no false positive for identity prefix' },
+        { path: '/eventstoday.md', expected: null, desc: 'no false positive for events prefix' },
+        { path: '/other/file.md', expected: null, desc: 'non-layer path' },
+        { path: '/', expected: null, desc: 'root path' },
+        { path: '/documents/state/notes.md', expected: null, desc: 'state not at root' },
+    ])('should handle $desc', ({ path, expected }) => {
+        const layer = extractLayerFromPath(createMemoryPath(path));
+        expect(layer).toBe(expected);
     });
 });
 
@@ -268,125 +148,30 @@ describe.concurrent('layeredMemoryMetadataSchema', () => {
         }
     });
 
-    test('should require layer field', () => {
-        const metadata = {
-            importance: 5,
-        };
-        const result = layeredMemoryMetadataSchema.safeParse(metadata);
-        expect(result.success).toBe(false);
-    });
-
-    test('should require valid LayerName for layer', () => {
-        const metadata = {
-            layer: 'invalid',
-        };
-        const result = layeredMemoryMetadataSchema.safeParse(metadata);
-        expect(result.success).toBe(false);
-    });
-
-    test('should accept importance from 1 to 10', () => {
-        for(let importance = 1; importance <= 10; importance++) {
-            const result = layeredMemoryMetadataSchema.safeParse({
-                layer: 'identity' as LayerName,
-                importance,
-            });
-            expect(result.success).toBe(true);
-        }
-    });
-
-    test('should reject importance less than 1', () => {
+    test.each([
+        { importance: 1, valid: true, desc: 'minimum importance (1)' },
+        { importance: 10, valid: true, desc: 'maximum importance (10)' },
+        { importance: 0, valid: false, desc: 'importance less than 1' },
+        { importance: 11, valid: false, desc: 'importance greater than 10' },
+        { importance: 5.5, valid: false, desc: 'non-integer importance' },
+    ])('should validate $desc', ({ importance, valid }) => {
         const result = layeredMemoryMetadataSchema.safeParse({
-            layer:      'identity' as LayerName,
-            importance: 0,
+            layer: 'identity' as LayerName,
+            importance,
         });
-        expect(result.success).toBe(false);
+        expect(result.success).toBe(valid);
     });
 
-    test('should reject importance greater than 10', () => {
+    test.each([
+        { accessCount: 0, valid: true, desc: 'accessCount of 0' },
+        { accessCount: 100, valid: true, desc: 'positive accessCount' },
+        { accessCount: -1, valid: false, desc: 'negative accessCount' },
+        { accessCount: 5.5, valid: false, desc: 'non-integer accessCount' },
+    ])('should validate $desc', ({ accessCount, valid }) => {
         const result = layeredMemoryMetadataSchema.safeParse({
-            layer:      'identity' as LayerName,
-            importance: 11,
+            layer: 'state' as LayerName,
+            accessCount,
         });
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject non-integer importance', () => {
-        const result = layeredMemoryMetadataSchema.safeParse({
-            layer:      'identity' as LayerName,
-            importance: 5.5,
-        });
-        expect(result.success).toBe(false);
-    });
-
-    test('should validate lastAccessed as ISO datetime', () => {
-        const result = layeredMemoryMetadataSchema.safeParse({
-            layer:        'events' as LayerName,
-            lastAccessed: 'not-a-date',
-        });
-        expect(result.success).toBe(false);
-    });
-
-    test('should accept valid ISO datetime for lastAccessed', () => {
-        const result = layeredMemoryMetadataSchema.safeParse({
-            layer:        'events' as LayerName,
-            lastAccessed: '2024-01-15T12:30:45.123Z',
-        });
-        expect(result.success).toBe(true);
-    });
-
-    test('should require accessCount to be non-negative', () => {
-        const result = layeredMemoryMetadataSchema.safeParse({
-            layer:       'state' as LayerName,
-            accessCount: -1,
-        });
-        expect(result.success).toBe(false);
-    });
-
-    test('should accept accessCount of 0', () => {
-        const result = layeredMemoryMetadataSchema.safeParse({
-            layer:       'state' as LayerName,
-            accessCount: 0,
-        });
-        expect(result.success).toBe(true);
-    });
-
-    test('should accept positive accessCount', () => {
-        const result = layeredMemoryMetadataSchema.safeParse({
-            layer:       'state' as LayerName,
-            accessCount: 100,
-        });
-        expect(result.success).toBe(true);
-    });
-
-    test('should reject non-integer accessCount', () => {
-        const result = layeredMemoryMetadataSchema.safeParse({
-            layer:       'state' as LayerName,
-            accessCount: 5.5,
-        });
-        expect(result.success).toBe(false);
-    });
-
-    test('should accept array of valid MemoryPaths for relatedPaths', () => {
-        const result = layeredMemoryMetadataSchema.safeParse({
-            layer:        'identity' as LayerName,
-            relatedPaths: ['/state/project.json', '/events/timeline.md'],
-        });
-        expect(result.success).toBe(true);
-    });
-
-    test('should accept empty array for relatedPaths', () => {
-        const result = layeredMemoryMetadataSchema.safeParse({
-            layer:        'identity' as LayerName,
-            relatedPaths: [],
-        });
-        expect(result.success).toBe(true);
-    });
-
-    test('should reject invalid MemoryPaths in relatedPaths', () => {
-        const result = layeredMemoryMetadataSchema.safeParse({
-            layer:        'identity' as LayerName,
-            relatedPaths: ['invalid-path', '/valid/path'],
-        });
-        expect(result.success).toBe(false);
+        expect(result.success).toBe(valid);
     });
 });

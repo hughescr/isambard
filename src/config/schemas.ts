@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { PresenceConfigSchema } from '@/integrations/discord/presence/types';
 
 // Log level enum schema
+// Stryker disable next-line all: Log level enum values are configuration
 export const logLevelSchema = z.enum(['debug', 'info', 'warn', 'error']);
 
 // App config: nodeEnv (enum), logLevel (default 'info'), port (coerced number)

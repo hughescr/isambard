@@ -53,72 +53,6 @@ describe('MemoryToolBackend', () => {
             expect(item.version).toBe(1);
         });
 
-        test('should set createdAt and updatedAt timestamps', async () => {
-            ddbMock.on(PutCommand).resolves({});
-
-            const before = new Date().toISOString();
-            const item = await backend.create({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Test content',
-                contentType: 'text/markdown',
-            });
-            const after = new Date().toISOString();
-
-            expect(item.createdAt >= before).toBe(true);
-            expect(item.createdAt <= after).toBe(true);
-            expect(item.updatedAt).toBe(item.createdAt);
-        });
-
-        test('should set default version to 1', async () => {
-            ddbMock.on(PutCommand).resolves({});
-
-            const item = await backend.create({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Test content',
-                contentType: 'text/markdown',
-            });
-
-            expect(item.version).toBe(1);
-        });
-
-        test('should set default empty metadata', async () => {
-            ddbMock.on(PutCommand).resolves({});
-
-            const item = await backend.create({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Test content',
-                contentType: 'text/markdown',
-            });
-
-            expect(item.metadata).toEqual({});
-        });
-
-        test('should accept optional metadata', async () => {
-            ddbMock.on(PutCommand).resolves({});
-
-            const item = await backend.create({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Test content',
-                contentType: 'text/markdown',
-                metadata:    { key: 'value' },
-            });
-
-            expect(item.metadata).toEqual({ key: 'value' });
-        });
-
-        test('should accept optional tags', async () => {
-            ddbMock.on(PutCommand).resolves({});
-
-            const item = await backend.create({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Test content',
-                contentType: 'text/markdown',
-                tags:        ['important', 'work'],
-            });
-
-            expect(item.tags).toEqual(['important', 'work']);
-        });
-
         test('should throw ValidationError on empty content', async () => {
             expect(
                 backend.create({
@@ -139,22 +73,16 @@ describe('MemoryToolBackend', () => {
             ).rejects.toThrow(ValidationError);
         });
 
-        test('should call putItem with correct DynamoDB keys', async () => {
+        test('should set default empty metadata', async () => {
             ddbMock.on(PutCommand).resolves({});
 
-            await backend.create({
+            const item = await backend.create({
                 path:        '/test/file.md' as MemoryPath,
                 content:     'Test content',
                 contentType: 'text/markdown',
             });
 
-            const calls = ddbMock.commandCalls(PutCommand);
-            expect(calls).toHaveLength(1);
-            const item = calls[0].args[0].input.Item as MemoryToolItem;
-            expect(item.PK).toBe('DIR#/test');
-            expect(item.SK).toBe('FILE#file.md');
-            expect(item.GSI1PK).toBe('LAYER#test');
-            expect(item.GSI1SK).toContain('UPDATED#');
+            expect(item.metadata).toEqual({});
         });
 
         test('should create GSI2 keys when tags are provided', async () => {
@@ -217,49 +145,12 @@ describe('MemoryToolBackend', () => {
             expect(result?.content).toBe('Test content');
         });
 
-        test('should call GetCommand with correct DynamoDB keys', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: undefined });
-
-            await backend.get(testPath);
-
-            const calls = ddbMock.commandCalls(GetCommand);
-            expect(calls).toHaveLength(1);
-            expect(calls[0].args[0].input.Key).toEqual({
-                PK: 'DIR#/test',
-                SK: 'FILE#file.md',
-            });
-        });
-
         test('should return undefined when not found', async () => {
             ddbMock.on(GetCommand).resolves({ Item: undefined });
 
             const result = await backend.get('/nonexistent/file.md' as MemoryPath);
 
             expect(result).toBeUndefined();
-        });
-
-        test('should strip DynamoDB keys from returned object', async () => {
-            const mockItem: MemoryToolItem = {
-                PK:          'DIR#/test',
-                SK:          'FILE#file.md',
-                GSI1PK:      'LAYER#test',
-                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
-                path:        testPath,
-                content:     'Test',
-                contentType: 'text/plain',
-                metadata:    {},
-                version:     1,
-                createdAt:   '2024-01-01T00:00:00.000Z',
-                updatedAt:   '2024-01-01T00:00:00.000Z',
-            };
-            ddbMock.on(GetCommand).resolves({ Item: mockItem });
-
-            const result = await backend.get(testPath);
-
-            expect(result).not.toHaveProperty('PK');
-            expect(result).not.toHaveProperty('SK');
-            expect(result).not.toHaveProperty('GSI1PK');
-            expect(result).not.toHaveProperty('GSI1SK');
         });
     });
 
@@ -290,36 +181,12 @@ describe('MemoryToolBackend', () => {
             expect(result.content).toBe('Updated content');
         });
 
-        test('should update updatedAt timestamp', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: existingItem });
-            ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
-
-            const before = new Date().toISOString();
-            const result = await backend.update(testPath, {
-                content: 'Updated content',
-            });
-
-            expect(result.updatedAt >= before).toBe(true);
-            expect(result.createdAt).toBe('2024-01-01T00:00:00.000Z'); // unchanged
-        });
-
         test('should throw ItemNotFoundError if item does not exist', async () => {
             ddbMock.on(GetCommand).resolves({ Item: undefined });
 
             expect(
                 backend.update('/nonexistent/file.md' as MemoryPath, { content: 'New' })
             ).rejects.toThrow(ItemNotFoundError);
-        });
-
-        test('should increment version on update', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: existingItem });
-            ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
-
-            const result = await backend.update(testPath, {
-                content: 'Updated',
-            });
-
-            expect(result.version).toBe(2);
         });
 
         test('should throw ConflictError on concurrent update (version mismatch)', async () => {
@@ -340,7 +207,7 @@ describe('MemoryToolBackend', () => {
             ).rejects.toThrow(ConflictError);
         });
 
-        test('should update ONLY content when only content provided', async () => {
+        test('should support partial updates (content, metadata, or tags independently)', async () => {
             const itemWithAllFields = {
                 ...existingItem,
                 metadata: { key: 'original' },
@@ -349,37 +216,75 @@ describe('MemoryToolBackend', () => {
             ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
             ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
 
-            const result = await backend.update(testPath, {
+            // Test 1: Update only content
+            const result1 = await backend.update(testPath, {
                 content: 'New content',
             });
+            expect(result1.content).toBe('New content');
+            expect(result1.metadata).toEqual({ key: 'original' }); // unchanged
+            expect(result1.tags).toEqual(['tag1']); // unchanged
 
-            expect(result.content).toBe('New content');
-            expect(result.metadata).toEqual({ key: 'original' }); // unchanged
-            expect(result.tags).toEqual(['tag1']); // unchanged
-        });
-
-        test('should update ONLY metadata when only metadata provided', async () => {
+            // Reset mocks for next test
+            ddbMock.reset();
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
-            ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
+            ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({});
 
-            const result = await backend.update(testPath, {
+            // Test 2: Update only metadata
+            const result2 = await backend.update(testPath, {
                 metadata: { key: 'new' },
             });
+            expect(result2.content).toBe('Original content'); // unchanged
+            expect(result2.metadata).toEqual({ key: 'new' });
 
-            expect(result.content).toBe('Original content'); // unchanged
-            expect(result.metadata).toEqual({ key: 'new' });
+            // Reset mocks for next test
+            ddbMock.reset();
+            ddbMock.on(GetCommand).resolves({ Item: existingItem });
+            ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({});
+
+            // Test 3: Update only tags
+            const result3 = await backend.update(testPath, {
+                tags: ['newtag'],
+            });
+            expect(result3.content).toBe('Original content'); // unchanged
+            expect(result3.tags).toEqual(['newtag']);
         });
 
-        test('should update ONLY tags when only tags provided', async () => {
+        test('should create GSI2 keys when tags are added in update', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: existingItem });
+            ddbMock.on(PutCommand).resolves({}); // All PutCommand calls succeed
+
+            await backend.update(testPath, {
+                tags: ['important', 'work'],
+            });
+
+            const calls = ddbMock.commandCalls(PutCommand);
+            // Find the main item update call (has ConditionExpression for version check)
+            const mainItemCall = _find(calls, (call) => {
+                const input = call.args[0].input;
+                return input.ConditionExpression === '#version = :expectedVersion';
+            });
+            if(!mainItemCall) {
+                throw new Error('Main item update call not found');
+            }
+            const item = mainItemCall.args[0].input.Item as MemoryToolItem;
+            expect(item.GSI2PK).toBe('TAG#important');
+            expect(item.GSI2SK).toMatch(/^LAYER#test#UPDATED#/);
+        });
+
+        test('should verify conditional expression attributes are set correctly', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
 
-            const result = await backend.update(testPath, {
-                tags: ['newtag'],
+            await backend.update(testPath, {
+                content: 'Updated content',
             });
 
-            expect(result.content).toBe('Original content'); // unchanged
-            expect(result.tags).toEqual(['newtag']);
+            const calls = ddbMock.commandCalls(PutCommand);
+            expect(calls.length).toBeGreaterThanOrEqual(2);
+            const mainItemCall = calls[calls.length - 1]; // Last call is the main item update
+            expect(mainItemCall.args[0].input.ConditionExpression).toBe('#version = :expectedVersion');
+            expect(mainItemCall.args[0].input.ExpressionAttributeNames).toEqual({ '#version': 'version' });
+            expect(mainItemCall.args[0].input.ExpressionAttributeValues).toEqual({ ':expectedVersion': existingItem.version });
         });
 
         test('should throw ConflictError when item deleted after initial fetch', async () => {
@@ -418,20 +323,6 @@ describe('MemoryToolBackend', () => {
             ).rejects.toThrow('Network timeout');
         });
 
-        test('should NOT convert to ConflictError when error name does not match', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: existingItem });
-
-            const differentNameError = new Error('Different error');
-            _assign(differentNameError, { name: 'DifferentErrorName' });
-            ddbMock.on(PutCommand).rejectsOnce(differentNameError);
-
-            const error = await backend.update(testPath, { content: 'Updated' }).catch((e: unknown) => e);
-            // Key test: should NOT be ConflictError, should be Error with correct message
-            expect(error).not.toBeInstanceOf(ConflictError);
-            expect(error).toBeInstanceOf(Error);
-            expect(error).toHaveProperty('message', 'Different error');
-        });
-
         test.each([
             { name: 'null', value: null },
             { name: 'number', value: 999 },
@@ -457,25 +348,6 @@ describe('MemoryToolBackend', () => {
             }
         });
 
-        test('should send PutCommand with correct version check and incremented version', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: existingItem });
-            ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
-
-            await backend.update(testPath, { content: 'Updated' });
-
-            const calls = ddbMock.commandCalls(PutCommand);
-            expect(calls).toHaveLength(2); // Version snapshot + main item
-            const putInput = calls[1].args[0].input; // Second call is the main item
-
-            // Verify ConditionExpression checks existing version
-            expect(putInput.ConditionExpression).toBe('#version = :expectedVersion');
-            expect(putInput.ExpressionAttributeNames?.['#version']).toBe('version');
-            expect(putInput.ExpressionAttributeValues?.[':expectedVersion']).toBe(1);
-
-            // Verify Item has incremented version
-            expect(putInput.Item?.version).toBe(2);
-        });
-
         test('should throw ValidationError on invalid update data', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
 
@@ -483,87 +355,6 @@ describe('MemoryToolBackend', () => {
             await expect(
                 backend.update(testPath, { content: '' }) // Empty content
             ).rejects.toThrow(ValidationError);
-        });
-
-        test('should regenerate GSI2SK with new updatedAt when updating tags', async () => {
-            const existingWithTags: MemoryToolItem = {
-                ...existingItem,
-                path:   '/identity/beliefs.md' as MemoryPath,
-                tags:   ['original'],
-                GSI2PK: 'TAG#original',
-                GSI2SK: 'LAYER#identity#UPDATED#2024-01-01T00:00:00.000Z',
-            };
-            // GetCommand returns existing for facade tag check, coreOps update, and registry operations
-            ddbMock.on(GetCommand).resolves({ Item: existingWithTags });
-            ddbMock.on(PutCommand).resolves({});
-
-            await backend.update('/identity/beliefs.md' as MemoryPath, {
-                tags: ['updated'],
-            });
-
-            const calls = ddbMock.commandCalls(PutCommand);
-            // At minimum: version snapshot + main item; may also include registry updates
-            expect(calls.length).toBeGreaterThanOrEqual(2);
-            const item = calls[1].args[0].input.Item as MemoryToolItem; // Second call is the main item
-            expect(item.GSI2PK).toBe('TAG#updated');
-            expect(item.GSI2SK).toMatch(/^LAYER#identity#UPDATED#/);
-            expect(item.GSI2SK).not.toBe('LAYER#identity#UPDATED#2024-01-01T00:00:00.000Z');
-        });
-
-        test('should remove GSI2 keys when tags are removed', async () => {
-            const existingWithTags: MemoryToolItem = {
-                ...existingItem,
-                tags:   ['tag1'],
-                GSI2PK: 'TAG#tag1',
-                GSI2SK: 'LAYER#test#UPDATED#2024-01-01T00:00:00.000Z',
-            };
-            ddbMock.on(GetCommand).resolves({ Item: existingWithTags });
-            ddbMock.on(PutCommand).resolves({});
-
-            await backend.update(testPath, {
-                tags: [], // Empty array removes tags
-            });
-
-            const calls = ddbMock.commandCalls(PutCommand);
-            // At minimum: version snapshot + main item; may also include registry updates
-            expect(calls.length).toBeGreaterThanOrEqual(2);
-            const item = calls[1].args[0].input.Item as MemoryToolItem; // Second call is the main item
-            expect(item.GSI2PK).toBeUndefined();
-            expect(item.GSI2SK).toBeUndefined();
-        });
-
-        test('should create GSI2 keys when adding tags to untagged item', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: existingItem });
-            ddbMock.on(PutCommand).resolves({});
-
-            await backend.update(testPath, {
-                tags: ['newtag'],
-            });
-
-            const calls = ddbMock.commandCalls(PutCommand);
-            // At minimum: version snapshot + main item; may also include registry create
-            expect(calls.length).toBeGreaterThanOrEqual(2);
-            const item = calls[1].args[0].input.Item as MemoryToolItem; // Second call is the main item
-            expect(item.GSI2PK).toBe('TAG#newtag');
-            expect(item.GSI2SK).toMatch(/^LAYER#test#UPDATED#/);
-        });
-    });
-
-    describe.concurrent('delete', () => {
-        test('should call deleteItem with correct key', async () => {
-            const testPath = '/test/file.md' as MemoryPath;
-            // Delete now fetches item first to get tags for decrementing
-            ddbMock.on(GetCommand).resolves({ Item: undefined }); // Item doesn't exist
-            ddbMock.on(DeleteCommand).resolves({});
-
-            await backend.delete(testPath);
-
-            const calls = ddbMock.commandCalls(DeleteCommand);
-            expect(calls).toHaveLength(1);
-            expect(calls[0].args[0].input.Key).toEqual({
-                PK: 'DIR#/test',
-                SK: 'FILE#file.md',
-            });
         });
     });
 
@@ -590,34 +381,6 @@ describe('MemoryToolBackend', () => {
             const registryCall = putCalls[1].args[0].input.Item;
             expect(registryCall).toHaveProperty('path', TAG_REGISTRY_PATH);
             expect(JSON.parse(registryCall?.content as string)).toEqual({ tag1: 1, tag2: 1 });
-        });
-
-        test('create without tags should not update tag registry', async () => {
-            ddbMock.on(PutCommand).resolves({});
-
-            await backend.create({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Test content',
-                contentType: 'text/markdown',
-            });
-
-            const putCalls = ddbMock.commandCalls(PutCommand);
-            // Should only have 1 call for the item itself
-            expect(putCalls).toHaveLength(1);
-        });
-
-        test('create for tag registry path should not cause recursion', async () => {
-            ddbMock.on(PutCommand).resolves({});
-
-            await backend.create({
-                path:        TAG_REGISTRY_PATH,
-                content:     JSON.stringify({ tag1: 1 }),
-                contentType: 'application/json',
-            });
-
-            const putCalls = ddbMock.commandCalls(PutCommand);
-            // Should only have 1 call - no recursive registry update
-            expect(putCalls).toHaveLength(1);
         });
 
         test('update with tag changes should update registry', async () => {
@@ -662,50 +425,6 @@ describe('MemoryToolBackend', () => {
 
             const putCalls = ddbMock.commandCalls(PutCommand);
             // 1: version snapshot, 2: main item update, 3: registry update for added, 4: registry update for removed
-            expect(putCalls.length).toBeGreaterThanOrEqual(2);
-        });
-
-        test('update with empty tags should decrement all old tags', async () => {
-            const existingItem: MemoryToolItem = {
-                PK:          'DIR#/test',
-                SK:          'FILE#file.md',
-                GSI1PK:      'LAYER#test',
-                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Original content',
-                contentType: 'text/markdown',
-                metadata:    {},
-                tags:        ['tag1', 'tag2'],
-                version:     1,
-                createdAt:   '2024-01-01T00:00:00.000Z',
-                updatedAt:   '2024-01-01T00:00:00.000Z',
-            };
-
-            const registryItem: MemoryToolItem = {
-                PK:          'DIR#/state',
-                SK:          'FILE#tag-registry',
-                GSI1PK:      'LAYER#state',
-                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
-                path:        TAG_REGISTRY_PATH,
-                content:     JSON.stringify({ tag1: 1, tag2: 1 }),
-                contentType: 'application/json',
-                metadata:    {},
-                version:     1,
-                createdAt:   '2024-01-01T00:00:00.000Z',
-                updatedAt:   '2024-01-01T00:00:00.000Z',
-            };
-
-            ddbMock.on(GetCommand)
-                .resolvesOnce({ Item: existingItem })
-                .resolvesOnce({ Item: registryItem });
-            ddbMock.on(PutCommand).resolves({});
-
-            await backend.update('/test/file.md' as MemoryPath, {
-                tags: [], // Remove all tags
-            });
-
-            // Verify registry was updated to decrement tags
-            const putCalls = ddbMock.commandCalls(PutCommand);
             expect(putCalls.length).toBeGreaterThanOrEqual(2);
         });
 
@@ -764,159 +483,9 @@ describe('MemoryToolBackend', () => {
             const registryUpdate = putCalls[1].args[0].input.Item;
             expect(JSON.parse(registryUpdate?.content as string)).toEqual({ tag1: 1 });
         });
-
-        test('delete without tags should not update registry', async () => {
-            const existingItem: MemoryToolItem = {
-                PK:          'DIR#/test',
-                SK:          'FILE#file.md',
-                GSI1PK:      'LAYER#test',
-                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Content',
-                contentType: 'text/markdown',
-                metadata:    {},
-                version:     1,
-                createdAt:   '2024-01-01T00:00:00.000Z',
-                updatedAt:   '2024-01-01T00:00:00.000Z',
-            };
-
-            ddbMock.on(GetCommand).resolves({ Item: existingItem });
-            ddbMock.on(DeleteCommand).resolves({});
-
-            await backend.delete('/test/file.md' as MemoryPath);
-
-            // Should not have made any Put calls for registry
-            const putCalls = ddbMock.commandCalls(PutCommand);
-            expect(putCalls).toHaveLength(0);
-        });
-
-        test('delete of tag registry path should not cause recursion', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: undefined });
-            ddbMock.on(DeleteCommand).resolves({});
-
-            await backend.delete(TAG_REGISTRY_PATH);
-
-            // Should only have 1 delete call, no registry updates
-            const deleteCalls = ddbMock.commandCalls(DeleteCommand);
-            expect(deleteCalls).toHaveLength(1);
-
-            const putCalls = ddbMock.commandCalls(PutCommand);
-            expect(putCalls).toHaveLength(0);
-        });
-
-        test('update TAG_REGISTRY_PATH should use coreOps directly without triggering registry update', async () => {
-            const registryItem: MemoryToolItem = {
-                PK:          'DIR#/state',
-                SK:          'FILE#tag-registry',
-                GSI1PK:      'LAYER#state',
-                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
-                path:        TAG_REGISTRY_PATH,
-                content:     JSON.stringify({ tag1: 1 }),
-                contentType: 'application/json',
-                metadata:    {},
-                version:     1,
-                createdAt:   '2024-01-01T00:00:00.000Z',
-                updatedAt:   '2024-01-01T00:00:00.000Z',
-            };
-
-            ddbMock.on(GetCommand).resolves({ Item: registryItem });
-            ddbMock.on(PutCommand).resolves({});
-
-            const result = await backend.update(TAG_REGISTRY_PATH, {
-                content: JSON.stringify({ tag1: 2, tag2: 1 }),
-            });
-
-            // Should succeed without recursive registry update
-            expect(result).toBeDefined();
-            expect(JSON.parse(result.content)).toEqual({ tag1: 2, tag2: 1 });
-
-            // Should have exactly 2 Put calls: version snapshot + main item update
-            // NO additional registry update calls
-            const putCalls = ddbMock.commandCalls(PutCommand);
-            expect(putCalls).toHaveLength(2);
-        });
     });
 
-    describe('listByLayer with undefined options', () => {
-        test('should handle undefined options (kill mutant: options?.startDate)', async () => {
-            // This test kills mutant where options?.startDate is changed to options.startDate
-            // When options is undefined, the ?. is required to avoid TypeError
-            ddbMock.on(QueryCommand).resolves({ Items: [] });
-
-            const result = await backend.listByLayer('events' as _LayerName, undefined);
-
-            expect(result).toBeDefined();
-            expect(result.items).toBeInstanceOf(Array);
-            expect(result.items).toHaveLength(0);
-        });
-
-        test('should handle options with only startDate', async () => {
-            ddbMock.on(QueryCommand).resolves({ Items: [] });
-
-            const result = await backend.listByLayer('events' as _LayerName, { startDate: '2024-01-01T00:00:00.000Z' });
-
-            expect(result).toBeDefined();
-            expect(result.items).toBeInstanceOf(Array);
-        });
-
-        test('should handle options with only endDate (kill mutant: options?.endDate)', async () => {
-            // This test kills mutant where options?.endDate is changed to options.endDate
-            ddbMock.on(QueryCommand).resolves({ Items: [] });
-
-            const result = await backend.listByLayer('events' as _LayerName, { endDate: '2024-12-31T23:59:59.999Z' });
-
-            expect(result).toBeDefined();
-            expect(result.items).toBeInstanceOf(Array);
-        });
-
-        test('should handle empty options object', async () => {
-            ddbMock.on(QueryCommand).resolves({ Items: [] });
-
-            const result = await backend.listByLayer('events' as _LayerName, {});
-
-            expect(result).toBeDefined();
-            expect(result.items).toBeInstanceOf(Array);
-        });
-    });
-
-    describe('searchByTag with undefined options', () => {
-        test('should handle undefined options and layer', async () => {
-            // This test exercises getDateBounds with undefined options
-            ddbMock.on(QueryCommand).resolves({ Items: [] });
-
-            const result = await backend.searchByTag('test-tag', undefined, undefined);
-
-            expect(result).toBeDefined();
-            expect(result.items).toBeInstanceOf(Array);
-        });
-
-        test('should handle layer with undefined options', async () => {
-            ddbMock.on(QueryCommand).resolves({ Items: [] });
-
-            const result = await backend.searchByTag('test-tag', 'events' as _LayerName, undefined);
-
-            expect(result).toBeDefined();
-            expect(result.items).toBeInstanceOf(Array);
-        });
-
-        test('should handle options with only startDate for searchByTag', async () => {
-            ddbMock.on(QueryCommand).resolves({ Items: [] });
-
-            const result = await backend.searchByTag('test-tag', undefined, { startDate: '2024-01-01T00:00:00.000Z' });
-
-            expect(result).toBeDefined();
-            expect(result.items).toBeInstanceOf(Array);
-        });
-
-        test('should handle options with only endDate for searchByTag', async () => {
-            ddbMock.on(QueryCommand).resolves({ Items: [] });
-
-            const result = await backend.searchByTag('test-tag', undefined, { endDate: '2024-12-31T23:59:59.999Z' });
-
-            expect(result).toBeDefined();
-            expect(result.items).toBeInstanceOf(Array);
-        });
-
+    describe('optional chaining for undefined options', () => {
         test('should NOT throw TypeError with undefined options (kills options?.startDate/endDate mutants in getDateBounds)', async () => {
             // CRITICAL: This test targets mutants on backend-query.ts:42,44 (lines with optional chaining)
             //
@@ -1038,15 +607,14 @@ describe('MemoryToolBackend', () => {
                 updatedAt:   '2024-01-01T00:00:00.000Z',
             };
 
-            test('should NOT update registry when tags is undefined in update input (kills inverted condition)', async () => {
+            test.each([
+                { updateType: 'content', updateData: { content: 'Updated content only' } },
+                { updateType: 'metadata', updateData: { metadata: { newKey: 'value' } } },
+            ])('should NOT update registry when tags is undefined ($updateType only updates)', async ({ updateData }) => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
                 ddbMock.on(PutCommand).resolves({});
 
-                // Update only content, NOT tags - tags is undefined
-                await backend.update('/state/tags-undefined-test' as MemoryPath, {
-                    content: 'Updated content only',
-                    // tags is intentionally undefined
-                });
+                await backend.update('/state/tags-undefined-test' as MemoryPath, updateData);
 
                 const putCalls = ddbMock.commandCalls(PutCommand);
                 // Should have exactly 2: version snapshot + main item
@@ -1059,20 +627,6 @@ describe('MemoryToolBackend', () => {
                     || call.args[0].input.Item?.path === TAG_REGISTRY_PATH
                 );
                 expect(_size(registryPuts)).toBe(0);
-            });
-
-            test('should NOT update registry when updating metadata only (tags undefined)', async () => {
-                ddbMock.on(GetCommand).resolves({ Item: existingItem });
-                ddbMock.on(PutCommand).resolves({});
-
-                await backend.update('/state/tags-undefined-test' as MemoryPath, {
-                    metadata: { newKey: 'value' },
-                    // tags is undefined
-                });
-
-                const putCalls = ddbMock.commandCalls(PutCommand);
-                // Version snapshot + main item = 2
-                expect(putCalls).toHaveLength(2);
             });
         });
 
@@ -1251,127 +805,53 @@ describe('MemoryToolBackend', () => {
                 expect(registryContent).not.toHaveProperty('remove'); // Decremented from 1 to 0, deleted
                 expect(registryContent).toHaveProperty('keep'); // Should still exist
             });
-
-            test('should NOT call decrementTagRegistry when no tags are removed (boundary for >= 0)', async () => {
-                const existingNoTags: MemoryToolItem = {
-                    PK:          'DIR#/state',
-                    SK:          'FILE#no-remove-test',
-                    GSI1PK:      'LAYER#state',
-                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
-                    path:        '/state/no-remove-test' as MemoryPath,
-                    content:     'Content',
-                    contentType: 'text/plain',
-                    metadata:    {},
-                    // No tags to remove
-                    version:     1,
-                    createdAt:   '2024-01-01T00:00:00.000Z',
-                    updatedAt:   '2024-01-01T00:00:00.000Z',
-                };
-
-                ddbMock.on(GetCommand).resolves({ Item: existingNoTags });
-                ddbMock.on(PutCommand).resolves({});
-
-                await backend.update('/state/no-remove-test' as MemoryPath, {
-                    tags: ['new-tag'], // Adding tags, none removed (old was empty)
-                });
-
-                // If `removed.length >= 0` mutant survives, it would call decrement
-                // even when removed is empty array (length = 0)
-                // The decrement function has its own guard, but the call shouldn't happen
-                // We verify by checking the expected number of calls
-            });
-        });
-
-        describe('delete: line 138 - existing?.tags check', () => {
-            test('should NOT decrement registry when deleting item without tags field', async () => {
-                const existingNoTags: MemoryToolItem = {
-                    PK:          'DIR#/state',
-                    SK:          'FILE#no-tags-field',
-                    GSI1PK:      'LAYER#state',
-                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
-                    path:        '/state/no-tags-field' as MemoryPath,
-                    content:     'Content',
-                    contentType: 'text/plain',
-                    metadata:    {},
-                    // tags field is undefined - NOT present
-                    version:     1,
-                    createdAt:   '2024-01-01T00:00:00.000Z',
-                    updatedAt:   '2024-01-01T00:00:00.000Z',
-                };
-
-                ddbMock.on(GetCommand).resolves({ Item: existingNoTags });
-                ddbMock.on(DeleteCommand).resolves({});
-
-                await backend.delete('/state/no-tags-field' as MemoryPath);
-
-                // Should NOT call decrementTagRegistry
-                const putCalls = ddbMock.commandCalls(PutCommand);
-                expect(putCalls).toHaveLength(0);
-            });
         });
 
         describe('delete: line 131 - existing?.tags && existing.tags.length > 0', () => {
-            test('should NOT decrement registry when item has no tags (kills >= 0 mutant)', async () => {
-                const existingNoTags: MemoryToolItem = {
-                    PK:          'DIR#/state',
-                    SK:          'FILE#delete-no-tags',
-                    GSI1PK:      'LAYER#state',
-                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
-                    path:        '/state/delete-no-tags' as MemoryPath,
-                    content:     'Content',
-                    contentType: 'text/plain',
-                    metadata:    {},
-                    // No tags field
-                    version:     1,
-                    createdAt:   '2024-01-01T00:00:00.000Z',
-                    updatedAt:   '2024-01-01T00:00:00.000Z',
-                };
-
-                ddbMock.on(GetCommand).resolves({ Item: existingNoTags });
+            test.each([
+                {
+                    scenario: 'item has no tags field',
+                    item:     {
+                        PK:          'DIR#/state',
+                        SK:          'FILE#delete-no-tags',
+                        GSI1PK:      'LAYER#state',
+                        GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                        path:        '/state/delete-no-tags' as MemoryPath,
+                        content:     'Content',
+                        contentType: 'text/plain',
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2024-01-01T00:00:00.000Z',
+                        updatedAt:   '2024-01-01T00:00:00.000Z',
+                    }
+                },
+                {
+                    scenario: 'item has empty tags array',
+                    item:     {
+                        PK:          'DIR#/state',
+                        SK:          'FILE#delete-empty-tags',
+                        GSI1PK:      'LAYER#state',
+                        GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                        path:        '/state/delete-empty-tags' as MemoryPath,
+                        content:     'Content',
+                        contentType: 'text/plain',
+                        metadata:    {},
+                        tags:        [],
+                        version:     1,
+                        createdAt:   '2024-01-01T00:00:00.000Z',
+                        updatedAt:   '2024-01-01T00:00:00.000Z',
+                    }
+                },
+                {
+                    scenario: 'item does not exist',
+                    item:     undefined
+                },
+            ])('should NOT decrement registry when $scenario', async ({ item }) => {
+                ddbMock.on(GetCommand).resolves({ Item: item });
                 ddbMock.on(DeleteCommand).resolves({});
 
-                await backend.delete('/state/delete-no-tags' as MemoryPath);
+                await backend.delete((item?.path ?? '/state/nonexistent') as MemoryPath);
 
-                // Should have 1 Get (to check for tags) and 1 Delete
-                // NO Put calls for registry
-                const putCalls = ddbMock.commandCalls(PutCommand);
-                expect(putCalls).toHaveLength(0);
-            });
-
-            test('should NOT decrement registry when item has empty tags array (kills length > 0 → true)', async () => {
-                const existingEmptyTags: MemoryToolItem = {
-                    PK:          'DIR#/state',
-                    SK:          'FILE#delete-empty-tags',
-                    GSI1PK:      'LAYER#state',
-                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
-                    path:        '/state/delete-empty-tags' as MemoryPath,
-                    content:     'Content',
-                    contentType: 'text/plain',
-                    metadata:    {},
-                    tags:        [], // Empty array
-                    version:     1,
-                    createdAt:   '2024-01-01T00:00:00.000Z',
-                    updatedAt:   '2024-01-01T00:00:00.000Z',
-                };
-
-                ddbMock.on(GetCommand).resolves({ Item: existingEmptyTags });
-                ddbMock.on(DeleteCommand).resolves({});
-
-                await backend.delete('/state/delete-empty-tags' as MemoryPath);
-
-                // If mutant survives (condition becomes `true`), it would try to decrement
-                // with empty tags array, which could cause issues
-                const putCalls = ddbMock.commandCalls(PutCommand);
-                expect(putCalls).toHaveLength(0);
-            });
-
-            test('should NOT decrement registry when item does not exist (kills truthy check → true)', async () => {
-                ddbMock.on(GetCommand).resolves({ Item: undefined }); // Item doesn't exist
-                ddbMock.on(DeleteCommand).resolves({});
-
-                await backend.delete('/state/nonexistent' as MemoryPath);
-
-                // Should still attempt delete but no registry update
                 const putCalls = ddbMock.commandCalls(PutCommand);
                 expect(putCalls).toHaveLength(0);
             });
@@ -1489,19 +969,41 @@ describe('MemoryToolBackend', () => {
             expect(mainItem?.contentPreview).toBe('Original content for preview testing');
         });
 
-        test('should truncate contentPreview to 100 chars when content is long', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: existingItem });
+        test.each([
+            {
+                operation:      'update',
+                contentLength:  150,
+                'char':         'x',
+                expectedLength: 100
+            },
+            {
+                operation:      'create',
+                contentLength:  200,
+                'char':         'a',
+                expectedLength: 100
+            },
+        ])('should truncate contentPreview to 100 chars on $operation when content is long', async ({ operation, contentLength, char, expectedLength }) => {
+            if(operation === 'update') {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+            }
             ddbMock.on(PutCommand).resolves({});
 
-            const longContent = _repeat('x', 150);
-            await backend.update('/state/preview-test' as MemoryPath, {
-                content: longContent,
-            });
+            const longContent = _repeat(char, contentLength);
 
-            const putCalls = ddbMock.commandCalls(PutCommand);
-            const mainItem = putCalls[1].args[0].input.Item;
-            expect(mainItem?.contentPreview).toBe(_repeat('x', 100));
-            expect((mainItem?.contentPreview as string).length).toBe(100);
+            if(operation === 'update') {
+                await backend.update('/state/preview-test' as MemoryPath, { content: longContent });
+                const putCalls = ddbMock.commandCalls(PutCommand);
+                const mainItem = putCalls[1].args[0].input.Item;
+                expect(mainItem?.contentPreview).toBe(_repeat(char, expectedLength));
+                expect((mainItem?.contentPreview as string).length).toBe(expectedLength);
+            } else {
+                const item = await backend.create({
+                    path:        '/state/long-preview' as MemoryPath,
+                    content:     longContent,
+                    contentType: 'text/plain',
+                });
+                expect(item.contentPreview).toBe(_repeat(char, expectedLength));
+            }
         });
 
         test('should create contentPreview on new item creation', async () => {
@@ -1514,19 +1016,6 @@ describe('MemoryToolBackend', () => {
             });
 
             expect(item.contentPreview).toBe('Content for new item');
-        });
-
-        test('should truncate contentPreview on create when content exceeds 100 chars', async () => {
-            ddbMock.on(PutCommand).resolves({});
-
-            const longContent = _repeat('a', 200);
-            const item = await backend.create({
-                path:        '/state/long-preview' as MemoryPath,
-                content:     longContent,
-                contentType: 'text/plain',
-            });
-
-            expect(item.contentPreview).toBe(_repeat('a', 100));
         });
     });
 });

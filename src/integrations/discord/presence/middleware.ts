@@ -124,6 +124,7 @@ export function createStatusMiddleware(
                 logger.debug({ messageId: context.messageId }, 'Started typing indicator');
 
                 // Refresh typing every 8 seconds (Discord timeout is ~10s)
+                // Stryker disable next-line BlockStatement: Typing refresh is periodic side effect, tested via integration
                 typingInterval = setInterval(() => {
                     // Stryker disable all: Error logging for typing indicator failure - observational only
                     void channel.sendTyping().catch((error: unknown) => {

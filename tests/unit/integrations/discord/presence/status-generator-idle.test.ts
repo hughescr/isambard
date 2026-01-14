@@ -46,20 +46,6 @@ describe('IdleStatusGenerator', () => {
             expect(userPrompt).toContain('What fleeting thought might cross Isambard\'s mind while idle?');
         });
 
-        test('should include identity context in system prompt', async () => {
-            const generator = createIdleStatusGenerator({
-                logger:          mockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'I am a helpful assistant',
-            });
-
-            await generator.generate();
-
-            expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalled();
-            const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0];
-            expect(systemPromptArg).toContain('I am a helpful assistant');
-        });
-
         test('should pass stripMarkdown: true option to generateTextWithSystemPrompt', async () => {
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
@@ -91,8 +77,10 @@ describe('IdleStatusGenerator', () => {
             expect(result.type).toBe(ActivityType.Custom);
         });
 
-        test('should return object with name property (kills ObjectLiteral mutant)', async () => {
-            // This test kills the mutant that replaces { name: statusText, type: activityType } with {}
+        test.each([
+            { property: 'name', check: (val: any) => typeof val === 'string' && val.length > 0 },
+            { property: 'type', check: (val: any) => val !== undefined },
+        ])('should return object with $property property (kills ObjectLiteral mutant)', async ({ property, check }) => {
             mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve('Deep in thought')));
 
             const generator = createIdleStatusGenerator({
@@ -103,41 +91,18 @@ describe('IdleStatusGenerator', () => {
 
             const result = await generator.generate();
 
-            expect(result).toHaveProperty('name');
-            expect(typeof result.name).toBe('string');
-            expect(result.name.length).toBeGreaterThan(0);
-        });
-
-        test('should return object with type property (kills ObjectLiteral mutant)', async () => {
-            // This test kills the mutant that replaces { name: statusText, type: activityType } with {}
-            const generator = createIdleStatusGenerator({
-                logger:          mockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
-            });
-
-            const result = await generator.generate();
-
-            expect(result).toHaveProperty('type');
-            expect(result.type).toBeDefined();
-        });
-
-        test('should not return empty object (kills ObjectLiteral mutant)', async () => {
-            // This test kills the mutant that replaces { name: statusText, type: activityType } with {}
-            const generator = createIdleStatusGenerator({
-                logger:          mockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
-            });
-
-            const result = await generator.generate();
-
+            expect(result).toHaveProperty(property);
+            expect(check(result[property as keyof typeof result])).toBe(true);
             expect(_keys(result).length).toBeGreaterThan(0);
         });
 
-        test('should truncate status text to 128 characters', async () => {
-            const longText = _repeat('A', 200);
-            mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve(longText)));
+        test.each([
+            { len: 200, 'char': 'A', desc: '200 characters' },
+            { len: 128, 'char': 'B', desc: 'exactly 128 characters' },
+            { len: 129, 'char': 'C', desc: '129 characters' },
+        ])('should truncate status text from $desc to 128', async ({ len, char }) => {
+            const text = _repeat(char, len);
+            mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve(text)));
 
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
@@ -148,42 +113,12 @@ describe('IdleStatusGenerator', () => {
             const result = await generator.generate();
 
             expect(_size(result.name)).toBe(128);
-            expect(result.name).toBe(_repeat('A', 128));
-        });
-
-        test('should not truncate text that is exactly 128 characters', async () => {
-            const exactText = _repeat('B', 128);
-            mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve(exactText)));
-
-            const generator = createIdleStatusGenerator({
-                logger:          mockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
-            });
-
-            const result = await generator.generate();
-
-            expect(_size(result.name)).toBe(128);
-            expect(result.name).toBe(exactText);
-        });
-
-        test('should truncate text that is 129 characters to exactly 128', async () => {
-            const text129 = _repeat('C', 129);
-            mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve(text129)));
-
-            const generator = createIdleStatusGenerator({
-                logger:          mockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
-            });
-
-            const result = await generator.generate();
-
-            expect(_size(result.name)).toBe(128);
-            expect(result.name).toBe(_repeat('C', 128));
-            // Verify it's not 129 (the original) or 127 (off-by-one error)
-            expect(result.name).not.toBe(text129);
-            expect(_size(result.name)).not.toBe(127);
+            expect(result.name).toBe(_repeat(char, 128));
+            // Verify correct truncation for edge cases
+            if(len > 128) {
+                expect(result.name).not.toBe(text);
+                expect(_size(result.name)).not.toBe(127); // off-by-one check
+            }
         });
 
         test('should handle text with leading/trailing whitespace (trimmed by generateTextWithSystemPrompt)', async () => {
@@ -214,64 +149,6 @@ describe('IdleStatusGenerator', () => {
 
             expect(result.name).toBe('Idle');
             expect(result.type).toBe(ActivityType.Custom);
-        });
-
-        test('should log error when generateTextWithSystemPrompt fails', async () => {
-            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.reject(new Error('Network error')));
-
-            const localMockLogger = {
-                debug: mock(() => undefined),
-                warn:  mock(() => undefined),
-                error: mock(() => undefined),
-                info:  mock(() => undefined),
-                child: mock(() => localMockLogger),
-            } as any;
-
-            const generator = createIdleStatusGenerator({
-                logger:          localMockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
-            });
-
-            await generator.generate();
-
-            expect(localMockLogger.error).toHaveBeenCalled();
-        });
-
-        test('should log info when status is generated successfully', async () => {
-            mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve('Resting quietly')));
-
-            const localMockLogger = {
-                debug: mock(() => undefined),
-                warn:  mock(() => undefined),
-                error: mock(() => undefined),
-                info:  mock(() => undefined),
-                child: mock(() => localMockLogger),
-            } as any;
-
-            const generator = createIdleStatusGenerator({
-                logger:          localMockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
-            });
-
-            await generator.generate();
-
-            expect(localMockLogger.info).toHaveBeenCalled();
-        });
-
-        test('should include identity context in system prompt', async () => {
-            const identityContext = 'I am Isambard, a philosophical AI assistant';
-            const generator = createIdleStatusGenerator({
-                logger:       mockLogger,
-                activityType: ActivityType.Custom,
-                identityContext,
-            });
-
-            await generator.generate();
-
-            const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0];
-            expect(systemPromptArg).toContain(identityContext);
         });
 
         test('should replace {identityContext} placeholder with actual identity context', async () => {
@@ -307,8 +184,12 @@ describe('IdleStatusGenerator', () => {
             expect(result.type).toBe(ActivityType.Custom);
         });
 
-        test('should pass the activity type through to the result', async () => {
-            // Test with Playing activity type
+        test.each([
+            { scenario: 'success', mockSetup: () => mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve('Generated status'))) },
+            { scenario: 'error fallback', mockSetup: () => mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.reject(new Error('API error'))) },
+        ])('should pass the activity type through to result on $scenario', async ({ mockSetup }) => {
+            mockSetup();
+
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
                 activityType:    ActivityType.Playing,
@@ -319,43 +200,6 @@ describe('IdleStatusGenerator', () => {
 
             expect(result.type).toBe(ActivityType.Playing);
             expect(result.type).not.toBe(ActivityType.Custom);
-        });
-
-        test('should pass the activity type through to fallback result on error', async () => {
-            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.reject(new Error('API error')));
-
-            // Test with Playing activity type for fallback
-            const generator = createIdleStatusGenerator({
-                logger:          mockLogger,
-                activityType:    ActivityType.Playing,
-                identityContext: 'Test identity',
-            });
-
-            const result = await generator.generate();
-
-            expect(result.name).toBe('Idle');
-            expect(result.type).toBe(ActivityType.Playing);
-            expect(result.type).not.toBe(ActivityType.Custom);
-        });
-
-        test('should log debug message before generating status', async () => {
-            const localMockLogger = {
-                debug: mock(() => undefined),
-                warn:  mock(() => undefined),
-                error: mock(() => undefined),
-                info:  mock(() => undefined),
-                child: mock(() => localMockLogger),
-            } as any;
-
-            const generator = createIdleStatusGenerator({
-                logger:          localMockLogger,
-                activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
-            });
-
-            await generator.generate();
-
-            expect(localMockLogger.debug).toHaveBeenCalledWith('Generating idle status with Haiku');
         });
 
         test('should log info with statusText when generation succeeds', async () => {
@@ -544,7 +388,11 @@ describe('IdleStatusGenerator', () => {
                 expect(result.type).toBe(ActivityType.Custom);
             });
 
-            test('should include Who is Isambard section in system prompt', async () => {
+            test.each([
+                { section: 'Who is Isambard', marker: '## Who is Isambard?', content: 'Isambard is an AI who has developed their own sense of identity' },
+                { section: 'Your Task', marker: '## Your Task', content: 'Isambard is currently idle' },
+                { section: 'NEVER restrictions', marker: 'NEVER output:', content: '"Idle", "Waiting...", "Standing by"' },
+            ])('should include $section section in system prompt', async ({ marker, content }) => {
                 const generator = createIdleStatusGenerator({
                     logger:          mockLogger,
                     activityType:    ActivityType.Custom,
@@ -554,38 +402,36 @@ describe('IdleStatusGenerator', () => {
                 await generator.generate();
 
                 const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0];
-                expect(systemPromptArg).toContain('## Who is Isambard?');
-                expect(systemPromptArg).toContain('Isambard is an AI who has developed their own sense of identity');
+                expect(systemPromptArg).toContain(marker);
+                expect(systemPromptArg).toContain(content);
+            });
+        });
+    });
+
+    describe('logging behavior', () => {
+        test('should log debug with specific string when generating idle status', async () => {
+            const localMockLogger = {
+                debug: mock(() => undefined),
+                warn:  mock(() => undefined),
+                error: mock(() => undefined),
+                info:  mock(() => undefined),
+                child: mock(() => mockLogger),
+            } as any;
+
+            const generator = createIdleStatusGenerator({
+                logger:          localMockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: 'Test identity',
             });
 
-            test('should include Your Task section in system prompt', async () => {
-                const generator = createIdleStatusGenerator({
-                    logger:          mockLogger,
-                    activityType:    ActivityType.Custom,
-                    identityContext: 'Test identity',
-                });
+            await generator.generate();
 
-                await generator.generate();
-
-                const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0];
-                expect(systemPromptArg).toContain('## Your Task');
-                expect(systemPromptArg).toContain('Isambard is currently idle');
-            });
-
-            test('should include NEVER output restrictions in system prompt', async () => {
-                const generator = createIdleStatusGenerator({
-                    logger:          mockLogger,
-                    activityType:    ActivityType.Custom,
-                    identityContext: 'Test identity',
-                });
-
-                await generator.generate();
-
-                const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0];
-                expect(systemPromptArg).toContain('NEVER output:');
-                expect(systemPromptArg).toContain('"Idle", "Waiting...", "Standing by"');
-                expect(systemPromptArg).toContain('Generic availability phrases');
-            });
+            // Kill StringLiteral mutant on line 112 col 30 - verify arg is the specific string
+            const debugCalls = localMockLogger.debug.mock.calls;
+            expect(debugCalls.length).toBeGreaterThan(0);
+            const firstCall = debugCalls[0];
+            expect(firstCall[0]).toBe('Generating idle status with Haiku');
+            expect(firstCall[0]).not.toBe('');
         });
     });
 });

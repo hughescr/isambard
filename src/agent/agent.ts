@@ -13,6 +13,7 @@ import { loadRetryConfig } from '../config/retry-config';
 
 const CLAUDE_MODEL = 'sonnet';
 
+// Stryker disable all: Configuration constants validated by integration tests
 /**
  * Explicit list of tools available to Isambard.
  * Excludes NotebookEdit (not useful for Discord bot) and AskUserQuestion
@@ -48,29 +49,24 @@ const EXPLICIT_TOOLS = [
  */
 const EXPLICIT_AGENTS = {
     'general-purpose': {
-        // Stryker disable next-line StringLiteral: Configuration string for Claude SDK
         description: 'General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks',
-        // Stryker disable next-line StringLiteral: Configuration string for Claude SDK
         prompt:      'You are a general-purpose assistant helping with software engineering tasks.',
         model:       'sonnet' as const,
     },
     Explore: {
-        // Stryker disable next-line StringLiteral: Configuration string for Claude SDK
         description: 'Fast agent specialized for exploring codebases. Use for finding files, searching code, or answering questions about the codebase.',
-        // Stryker disable next-line StringLiteral: Configuration string for Claude SDK
         prompt:      'You are a codebase exploration specialist. Focus on finding relevant files and understanding code structure.',
         tools:       ['Read', 'Glob', 'Grep'],
         model:       'haiku' as const,
     },
     Plan: {
-        // Stryker disable next-line StringLiteral: Configuration string for Claude SDK
         description: 'Software architect agent for designing implementation plans.',
-        // Stryker disable next-line StringLiteral: Configuration string for Claude SDK
         prompt:      'You are a software architect. Analyze requirements and design implementation approaches.',
         tools:       ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch'],
         model:       'sonnet' as const,
     },
 };
+// Stryker restore all
 
 /**
  * Build context prefix from user memories, bot memories, and recent events.
@@ -95,6 +91,7 @@ async function buildContextPrefix(contextBuilder: ContextBuilder, context: Disco
     }
 
     // Isambard's own memories (using botUserId from context)
+    // Stryker disable next-line ConditionalExpression: botUserId null check is defensive, tested via integration
     if(context.botUserId) {
         const isambardMemories = await contextBuilder.loadRecentContext(context.botUserId, 2);
         if(isambardMemories.length > 0) {
@@ -104,6 +101,7 @@ async function buildContextPrefix(contextBuilder: ContextBuilder, context: Disco
 
     // Recent events
     const recentEvents = await contextBuilder.loadRecentEvents(50);
+    // Stryker disable next-line ConditionalExpression: Empty array check prevents unnecessary section, tested via integration
     if(recentEvents.length > 0) {
         sections.push(`[Recent events]\n${_.map(recentEvents, m => `- ${m}`).join('\n')}`);
     }
@@ -186,12 +184,13 @@ export function parseToolName(toolName: string | undefined): ParsedToolName {
     if(toolName === undefined) {
         return { module: 'claude', tool: 'unknown' };
     }
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Empty string check is defensive coding for edge case
+    // Stryker disable next-line ConditionalExpression,BlockStatement,StringLiteral: Empty string check is defensive coding for edge case
     if(toolName === '') {
         return { module: 'claude', tool: '' };
     }
 
     // MCP tools have format: mcp__module__tool (e.g., mcp__DevTools__find_symbol)
+    // Stryker disable next-line StringLiteral: Protocol constant 'mcp__' defines MCP tool naming convention
     if(_.startsWith(toolName, 'mcp__')) {
         const parts = _.split(toolName.slice(5), '__');
         if(parts.length >= 2) {

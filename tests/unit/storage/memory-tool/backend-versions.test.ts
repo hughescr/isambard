@@ -91,50 +91,59 @@ describe.concurrent('MemoryToolBackend - Version Operations', () => {
             expect(result.some(item => item.path === '/state/context.md' as MemoryPath)).toBe(true);
         });
 
-        test('should respect maxIdentityItems limit', async () => {
-            const identityItems: MemoryToolItem[] = Array.from({ length: 10 }, (_, i) => ({
-                PK:          'DIR#/identity',
-                SK:          `FILE#file${i}.md`,
-                GSI1PK:      `PATH#/identity/file${i}.md`,
-                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
-                path:        `/identity/file${i}.md` as MemoryPath,
-                content:     `Content ${i}`,
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-                version:     1,
-                createdAt:   '2024-01-01T00:00:00.000Z',
-                updatedAt:   '2024-01-01T00:00:00.000Z',
-            }));
-            ddbMock.on(QueryCommand).resolvesOnce({ Items: identityItems }).resolvesOnce({ Items: [] });
+        test.each([
+            {
+                layer:       'identity',
+                layerPath:   '/identity',
+                option:      'maxIdentityItems',
+                queryIndex:  0,
+                itemFactory: (i: number) => ({
+                    PK:          'DIR#/identity',
+                    SK:          `FILE#file${i}.md`,
+                    GSI1PK:      `PATH#/identity/file${i}.md`,
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        `/identity/file${i}.md` as MemoryPath,
+                    content:     `Content ${i}`,
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                }),
+            },
+            {
+                layer:       'state',
+                layerPath:   '/state',
+                option:      'maxStateItems',
+                queryIndex:  1,
+                itemFactory: (i: number) => ({
+                    PK:          'DIR#/state',
+                    SK:          `FILE#file${i}.md`,
+                    GSI1PK:      `PATH#/state/file${i}.md`,
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        `/state/file${i}.md` as MemoryPath,
+                    content:     `Content ${i}`,
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    { accessCount: 100 - i },
+                    version:     1,
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                }),
+            },
+        ])('should respect $option limit', async ({ layerPath, option, queryIndex, itemFactory }) => {
+            const items: MemoryToolItem[] = Array.from({ length: 10 }, (_, i) => itemFactory(i));
 
-            const result = await backend.getAutoLoadItems({ maxIdentityItems: 3 });
+            if(queryIndex === 0) {
+                ddbMock.on(QueryCommand).resolvesOnce({ Items: items }).resolvesOnce({ Items: [] });
+            } else {
+                ddbMock.on(QueryCommand).resolvesOnce({ Items: [] }).resolvesOnce({ Items: items });
+            }
+
+            const result = await backend.getAutoLoadItems({ [option]: 3 });
 
             // eslint-disable-next-line lodash/prefer-lodash-method -- Native array method is clearer
-            const identityCount = result.filter(item => item.path.startsWith('/identity/' as MemoryPath)).length;
-            expect(identityCount).toBe(3);
-        });
-
-        test('should respect maxStateItems limit', async () => {
-            const stateItems: MemoryToolItem[] = Array.from({ length: 10 }, (_, i) => ({
-                PK:          'DIR#/state',
-                SK:          `FILE#file${i}.md`,
-                GSI1PK:      `PATH#/state/file${i}.md`,
-                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
-                path:        `/state/file${i}.md` as MemoryPath,
-                content:     `Content ${i}`,
-                contentType: 'text/markdown' as ContentType,
-                metadata:    { accessCount: 100 - i }, // Decreasing access counts
-                version:     1,
-                createdAt:   '2024-01-01T00:00:00.000Z',
-                updatedAt:   '2024-01-01T00:00:00.000Z',
-            }));
-            ddbMock.on(QueryCommand).resolvesOnce({ Items: [] }).resolvesOnce({ Items: stateItems });
-
-            const result = await backend.getAutoLoadItems({ maxStateItems: 3 });
-
-            // eslint-disable-next-line lodash/prefer-lodash-method -- Native array method is clearer
-            const stateCount = result.filter(item => item.path.startsWith('/state/' as MemoryPath)).length;
-            expect(stateCount).toBe(3);
+            const count = result.filter(item => item.path.startsWith(`${layerPath}/` as MemoryPath)).length;
+            expect(count).toBe(3);
         });
 
         test('should return empty array when no items exist', async () => {
@@ -187,7 +196,10 @@ describe.concurrent('MemoryToolBackend - Version Operations', () => {
             expect(result.some(item => item.path === '/state/context.md' as MemoryPath)).toBe(true);
         });
 
-        test('should use updatedAt when lastAccessed metadata is missing', async () => {
+        test.each([
+            { metadata: { accessCount: 100 }, description: 'updatedAt when lastAccessed metadata is missing' },
+            { metadata: {}, description: '0 as default accessCount when metadata is missing' },
+        ])('should use $description', async ({ metadata }) => {
             const stateItems: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/state',
@@ -197,30 +209,7 @@ describe.concurrent('MemoryToolBackend - Version Operations', () => {
                     path:        '/state/file1.md' as MemoryPath,
                     content:     'Content 1',
                     contentType: 'text/markdown',
-                    metadata:    { accessCount: 100 },
-                    version:     1,
-                    createdAt:   '2024-01-01T00:00:00.000Z',
-                    updatedAt:   '2024-01-10T00:00:00.000Z', // Should be used as lastAccessed
-                },
-            ];
-            ddbMock.on(QueryCommand).resolvesOnce({ Items: [] }).resolvesOnce({ Items: stateItems });
-
-            const result = await backend.getAutoLoadItems();
-
-            expect(result).toHaveLength(1);
-        });
-
-        test('should use 0 as default accessCount when metadata is missing', async () => {
-            const stateItems: MemoryToolItem[] = [
-                {
-                    PK:          'DIR#/state',
-                    SK:          'FILE#file1.md',
-                    GSI1PK:      'LAYER#/state/file1.md',
-                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
-                    path:        '/state/file1.md' as MemoryPath,
-                    content:     'Content 1',
-                    contentType: 'text/markdown',
-                    metadata:    {}, // No accessCount
+                    metadata,
                     version:     1,
                     createdAt:   '2024-01-01T00:00:00.000Z',
                     updatedAt:   '2024-01-10T00:00:00.000Z',
@@ -271,14 +260,6 @@ describe.concurrent('MemoryToolBackend - Version Operations', () => {
             expect(result.items[0].path).toBe('/test/file1.md' as MemoryPath);
         });
 
-        test('should return empty items when no matches', async () => {
-            ddbMock.on(QueryCommand).resolves({ Items: [] });
-
-            const result = await backend.list('/empty');
-
-            expect(result.items).toEqual([]);
-        });
-
         test('should call QueryCommand with correct parameters', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
@@ -286,10 +267,20 @@ describe.concurrent('MemoryToolBackend - Version Operations', () => {
 
             const calls = ddbMock.commandCalls(QueryCommand);
             expect(calls).toHaveLength(1);
-            const queryInput = calls[0].args[0].input;
-            expect(queryInput.KeyConditionExpression).toBe('PK = :pk');
-            expect(queryInput.ExpressionAttributeValues?.[':pk']).toBe('DIR#/test');
-            expect(queryInput.ScanIndexForward).toBe(true);
+            const input = calls[0].args[0].input;
+            expect(input.KeyConditionExpression).toBe('PK = :pk');
+            expect(input.ExpressionAttributeValues).toEqual({
+                ':pk': 'DIR#/test',
+            });
+            expect(input.ScanIndexForward).toBe(true);
+        });
+
+        test('should return empty items when no matches', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            const result = await backend.list('/empty');
+
+            expect(result.items).toEqual([]);
         });
 
         test('should support limit option', async () => {
@@ -313,26 +304,22 @@ describe.concurrent('MemoryToolBackend - Version Operations', () => {
             expect(calls[0].args[0].input.ExclusiveStartKey).toEqual(exclusiveStartKey);
         });
 
-        test('should return nextCursor when LastEvaluatedKey present', async () => {
+        test.each([
+            { hasLastKey: true, expectedCursor: 'defined' },
+            { hasLastKey: false, expectedCursor: 'undefined' },
+        ])('should return $expectedCursor nextCursor when LastEvaluatedKey is $hasLastKey', async ({ hasLastKey }) => {
             ddbMock.on(QueryCommand).resolves({
                 Items:            [],
-                LastEvaluatedKey: { PK: 'DIR#/test', SK: 'FILE#file.md' },
+                LastEvaluatedKey: hasLastKey ? { PK: 'DIR#/test', SK: 'FILE#file.md' } : undefined,
             });
 
             const result = await backend.list('/test');
 
-            expect(result.nextCursor).toBeDefined();
-        });
-
-        test('should return undefined nextCursor when LastEvaluatedKey missing', async () => {
-            ddbMock.on(QueryCommand).resolves({
-                Items: [],
-                // No LastEvaluatedKey
-            });
-
-            const result = await backend.list('/test');
-
-            expect(result.nextCursor).toBeUndefined();
+            if(hasLastKey) {
+                expect(result.nextCursor).toBeDefined();
+            } else {
+                expect(result.nextCursor).toBeUndefined();
+            }
         });
 
         test('should strip DynamoDB keys from returned items', async () => {
@@ -446,18 +433,6 @@ describe.concurrent('MemoryToolBackend - Version Operations', () => {
             const result = await backend.getVersion(testPath, 999);
 
             expect(result).toBeUndefined();
-        });
-
-        test('should call QueryCommand with correct version keys', async () => {
-            ddbMock.on(QueryCommand).resolves({ Items: [] });
-
-            await backend.getVersion(testPath, 2);
-
-            const calls = ddbMock.commandCalls(QueryCommand);
-            const lastCall = calls[calls.length - 1];
-            expect(lastCall.args[0].input.KeyConditionExpression).toContain('begins_with');
-            expect(lastCall.args[0].input.ExpressionAttributeValues?.[':pk']).toBe('DIR#/test');
-            expect(lastCall.args[0].input.ExpressionAttributeValues?.[':skPrefix']).toBe('VERSION#2#');
         });
 
         test('should strip DynamoDB keys from returned version', async () => {
@@ -593,20 +568,6 @@ describe.concurrent('MemoryToolBackend - Version Operations', () => {
             expect(result.length).toBeLessThanOrEqual(5);
         });
 
-        test('should query with correct DynamoDB parameters', async () => {
-            ddbMock.on(QueryCommand).resolves({ Items: [] });
-
-            await backend.listVersions(testPath);
-
-            const calls = ddbMock.commandCalls(QueryCommand);
-            const lastCall = calls[calls.length - 1];
-            const queryInput = lastCall.args[0].input;
-            expect(queryInput.KeyConditionExpression).toContain('PK');
-            expect(queryInput.KeyConditionExpression).toContain('begins_with');
-            expect(queryInput.ExpressionAttributeValues?.[':pk']).toBe('DIR#/test');
-            expect(queryInput.ExpressionAttributeValues?.[':skPrefix']).toBe('VERSION#');
-        });
-
         test('should sort versions in descending order (newest first)', async () => {
             // Mock returns items in descending order (ScanIndexForward: false)
             const mockVersions = [
@@ -645,7 +606,10 @@ describe.concurrent('MemoryToolBackend - Version Operations', () => {
             expect(result[0].version).toBeGreaterThan(result[result.length - 1].version);
         });
 
-        test('should not include contentPreview when content is empty', async () => {
+        test.each([
+            { content: '', expectedPreview: undefined, description: 'not include contentPreview when content is empty' },
+            { content: '12345678901234567890123456789012345678901234567890', expectedPreview: '12345678901234567890123456789012345678901234567890', description: 'not truncate contentPreview when content is exactly 50 chars' },
+        ])('should $description', async ({ content, expectedPreview }) => {
             const mockVersions = [
                 {
                     PK:          'DIR#/test',
@@ -653,7 +617,7 @@ describe.concurrent('MemoryToolBackend - Version Operations', () => {
                     GSI1PK:      'LAYER#/test/file.md',
                     GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
                     path:        testPath,
-                    content:     '',
+                    content,
                     contentType: 'text/markdown',
                     metadata:    {},
                     version:     1,
@@ -665,32 +629,12 @@ describe.concurrent('MemoryToolBackend - Version Operations', () => {
 
             const result = await backend.listVersions(testPath);
 
-            expect(result[0].contentPreview).toBeUndefined();
-        });
-
-        test('should not truncate contentPreview when content is exactly 50 chars', async () => {
-            const exactContent = '12345678901234567890123456789012345678901234567890'; // 50 chars
-            const mockVersions = [
-                {
-                    PK:          'DIR#/test',
-                    SK:          'VERSION#1#2024-01-01T00:00:00.000Z',
-                    GSI1PK:      'LAYER#/test/file.md',
-                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
-                    path:        testPath,
-                    content:     exactContent,
-                    contentType: 'text/markdown',
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2024-01-01T00:00:00.000Z',
-                    updatedAt:   '2024-01-01T00:00:00.000Z',
-                },
-            ];
-            ddbMock.on(QueryCommand).resolves({ Items: mockVersions });
-
-            const result = await backend.listVersions(testPath);
-
-            expect(result[0].contentPreview).toBe(exactContent);
-            expect(result[0].contentPreview!.length).toBe(50);
+            if(expectedPreview === undefined) {
+                expect(result[0].contentPreview).toBeUndefined();
+            } else {
+                expect(result[0].contentPreview).toBe(expectedPreview);
+                expect(result[0].contentPreview!.length).toBe(50);
+            }
         });
     });
 
@@ -751,14 +695,6 @@ describe.concurrent('MemoryToolBackend - Version Operations', () => {
             expect(_filter(deleteCalls, (_, idx) => idx >= ddbMock.commandCalls(QueryCommand).length - 1).length).toBe(0);
         });
 
-        test('should return 0 when no versions exist', async () => {
-            ddbMock.on(QueryCommand).resolves({ Items: [] });
-
-            const deletedCount = await backend.pruneVersions(testPath, 3);
-
-            expect(deletedCount).toBe(0);
-        });
-
         test('should delete versions in correct order (oldest first)', async () => {
             const mockVersions = [
                 {
@@ -785,44 +721,19 @@ describe.concurrent('MemoryToolBackend - Version Operations', () => {
             expect(lastDeleteCall.args[0].input.Key?.SK).toBe('VERSION#1#2024-01-01T00:00:00.000Z');
         });
 
-        test('should keep all versions if keepCount is greater than total versions', async () => {
-            const mockVersions = [
-                {
-                    PK: 'DIR#/test',
-                    SK: 'VERSION#2#2024-01-02T00:00:00.000Z',
-                },
-            ];
+        test.each([
+            { versions: 1, keepCount: 10, description: 'keep all versions if keepCount is greater than total versions' },
+            { versions: 3, keepCount: 3, description: 'return 0 when items.length exactly equals keepCount' },
+        ])('should $description', async ({ versions, keepCount }) => {
+            const mockVersions = Array.from({ length: versions }, (_, i) => ({
+                PK: 'DIR#/test',
+                SK: `VERSION#${i + 1}#2024-01-0${i + 1}T00:00:00.000Z`,
+            }));
             ddbMock.on(QueryCommand).resolves({ Items: mockVersions });
 
-            const deletedCount = await backend.pruneVersions(testPath, 10);
+            const deletedCount = await backend.pruneVersions(testPath, keepCount);
 
             expect(deletedCount).toBe(0);
-        });
-
-        test('should return 0 when items.length exactly equals keepCount', async () => {
-            const mockVersions = [
-                {
-                    PK: 'DIR#/test',
-                    SK: 'VERSION#3#2024-01-03T00:00:00.000Z',
-                },
-                {
-                    PK: 'DIR#/test',
-                    SK: 'VERSION#2#2024-01-02T00:00:00.000Z',
-                },
-                {
-                    PK: 'DIR#/test',
-                    SK: 'VERSION#1#2024-01-01T00:00:00.000Z',
-                },
-            ];
-            ddbMock.on(QueryCommand).resolves({ Items: mockVersions });
-
-            const deletedCount = await backend.pruneVersions(testPath, 3);
-
-            expect(deletedCount).toBe(0);
-            const deleteCalls = ddbMock.commandCalls(DeleteCommand);
-            // No deletes should occur after the query
-            const queryCalls = ddbMock.commandCalls(QueryCommand);
-            expect(_filter(deleteCalls, (_, idx) => idx >= queryCalls.length - 1).length).toBe(0);
         });
     });
 
@@ -870,34 +781,34 @@ describe.concurrent('MemoryToolBackend - Version Operations', () => {
             expect(versionPut.args[0].input.Item?.SK).toContain('VERSION#1#');
         });
 
-        test('should include GSI2 keys in version snapshot when tags present', async () => {
-            const itemWithTags: MemoryToolItem = {
-                ...existingItem,
-                tags:   ['important'],
-                GSI2PK: 'TAG#important',
-                GSI2SK: 'LAYER#test#UPDATED#2024-01-01T00:00:00.000Z',
-            };
-            ddbMock.on(GetCommand).resolves({ Item: itemWithTags });
+        test.each([
+            { hasTags: true, description: 'include GSI2 keys in version snapshot when tags present' },
+            { hasTags: false, description: 'not include GSI2 keys in version snapshot when tags absent' },
+        ])('should $description', async ({ hasTags }) => {
+            const item = hasTags
+                ? {
+                    ...existingItem,
+                    tags:   ['important'],
+                    GSI2PK: 'TAG#important',
+                    GSI2SK: 'LAYER#test#UPDATED#2024-01-01T00:00:00.000Z',
+                }
+                : existingItem;
+
+            ddbMock.on(GetCommand).resolves({ Item: item });
             ddbMock.on(PutCommand).resolves({});
 
             await backend.update(testPath, { content: 'Updated' });
 
             const putCalls = ddbMock.commandCalls(PutCommand);
             const versionPut = putCalls[putCalls.length - 2];
-            expect(versionPut.args[0].input.Item?.GSI2PK).toBe('TAG#important');
-            expect(versionPut.args[0].input.Item?.GSI2SK).toBe('LAYER#test#UPDATED#2024-01-01T00:00:00.000Z');
-        });
 
-        test('should not include GSI2 keys in version snapshot when tags absent', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: existingItem });
-            ddbMock.on(PutCommand).resolves({});
-
-            await backend.update(testPath, { content: 'Updated' });
-
-            const putCalls = ddbMock.commandCalls(PutCommand);
-            const versionPut = putCalls[putCalls.length - 2];
-            expect(versionPut.args[0].input.Item?.GSI2PK).toBeUndefined();
-            expect(versionPut.args[0].input.Item?.GSI2SK).toBeUndefined();
+            if(hasTags) {
+                expect(versionPut.args[0].input.Item?.GSI2PK).toBe('TAG#important');
+                expect(versionPut.args[0].input.Item?.GSI2SK).toBe('LAYER#test#UPDATED#2024-01-01T00:00:00.000Z');
+            } else {
+                expect(versionPut.args[0].input.Item?.GSI2PK).toBeUndefined();
+                expect(versionPut.args[0].input.Item?.GSI2SK).toBeUndefined();
+            }
         });
     });
 });

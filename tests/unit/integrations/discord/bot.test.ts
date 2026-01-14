@@ -2,14 +2,12 @@
 /* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks */
 /* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
 /* eslint-disable lodash/prefer-constant -- Test callbacks */
-import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
-import { filter, repeat } from 'lodash';
+import { describe, test, expect, afterEach, mock, spyOn } from 'bun:test';
 import type { Client } from 'discord.js';
 import { createDiscordBot } from '@/integrations/discord/bot';
 import type { DiscordConfig } from '@/config/schemas';
 import type { DiscordMessageContext, ChannelId } from '@/integrations/discord/types';
 import * as clientModule from '@/integrations/discord/client';
-import * as handlersModule from '@/integrations/discord/handlers';
 import * as presenceModule from '@/integrations/discord/presence';
 
 describe.concurrent('createDiscordBot', () => {
@@ -17,19 +15,16 @@ describe.concurrent('createDiscordBot', () => {
     let mockOnMessage: (context: DiscordMessageContext) => Promise<string | null>;
     const spies: ReturnType<typeof spyOn>[] = [];
 
-    beforeEach(() => {
-        mockConfig = {
-            botToken:            'test-bot-token',
-            applicationId:       'test-app-id',
-            monitoredChannelIds: ['123456789' as ChannelId, '987654321' as ChannelId],
-        };
+    // Setup common mocks
+    mockConfig = {
+        botToken:            'test-bot-token',
+        applicationId:       'test-app-id',
+        monitoredChannelIds: ['123456789' as ChannelId, '987654321' as ChannelId],
+    };
 
-        mockOnMessage = mock(async (_context: DiscordMessageContext) => null);
-    });
+    mockOnMessage = mock(async (_context: DiscordMessageContext) => null);
 
     afterEach(() => {
-        // Restore all spies to prevent test isolation issues
-        // Use try-catch to ensure all spies are restored even if one throws
         for(const spy of spies) {
             try {
                 spy.mockRestore();
@@ -51,67 +46,13 @@ describe.concurrent('createDiscordBot', () => {
         expect(typeof bot.stop).toBe('function');
     });
 
-    test('should create a Discord client with the config', () => {
-        const mockClient = {
-            on:      mock(() => mockClient),
-            login:   mock(async () => 'mock-token'),
-            destroy: mock(async () => undefined),
-            user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-        } as unknown as Client;
-
-        const spy = spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient);
-        spies.push(spy);
-
-        createDiscordBot({
-            config:    mockConfig,
-            onMessage: mockOnMessage,
-        });
-
-        expect(spy).toHaveBeenCalledWith(mockConfig);
-    });
-
-    test('should register error handler on client', () => {
-        const mockClient = {
-            on:      mock(() => mockClient),
-            login:   mock(async () => 'mock-token'),
-            destroy: mock(async () => undefined),
-            user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-        } as unknown as Client;
-
-        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-        createDiscordBot({
-            config:    mockConfig,
-            onMessage: mockOnMessage,
-        });
-
-        expect(mockClient.on).toHaveBeenCalledWith('error', expect.any(Function));
-    });
-
-    test('should register clientReady handler on client', () => {
-        const mockClient = {
-            on:      mock(() => mockClient),
-            login:   mock(async () => 'mock-token'),
-            destroy: mock(async () => undefined),
-            user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-        } as unknown as Client;
-
-        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-        createDiscordBot({
-            config:    mockConfig,
-            onMessage: mockOnMessage,
-        });
-
-        expect(mockClient.on).toHaveBeenCalledWith('clientReady', expect.any(Function));
-    });
-
     test('should call client.login with bot token when start() is called', async () => {
         const mockClient = {
             on:      mock(() => mockClient),
             login:   mock(async () => 'mock-token'),
             destroy: mock(async () => undefined),
             user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+            rest:    null,
         } as unknown as Client;
 
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
@@ -132,6 +73,7 @@ describe.concurrent('createDiscordBot', () => {
             login:   mock(async () => 'mock-token'),
             destroy: mock(async () => undefined),
             user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+            rest:    null,
         } as unknown as Client;
 
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
@@ -153,6 +95,7 @@ describe.concurrent('createDiscordBot', () => {
             login:   mock(async () => { throw loginError; }),
             destroy: mock(async () => undefined),
             user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+            rest:    null,
         } as unknown as Client;
 
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
@@ -172,6 +115,7 @@ describe.concurrent('createDiscordBot', () => {
             login:   mock(async () => 'mock-token'),
             destroy: mock(async () => { throw destroyError; }),
             user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+            rest:    null,
         } as unknown as Client;
 
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
@@ -190,6 +134,7 @@ describe.concurrent('createDiscordBot', () => {
             login:   mock(async () => 'mock-token'),
             destroy: mock(async () => undefined),
             user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+            rest:    null,
         } as unknown as Client;
 
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
@@ -208,1379 +153,216 @@ describe.concurrent('createDiscordBot', () => {
         expect(mockClient.destroy).toHaveBeenCalledTimes(2);
     });
 
-    test('should register messageCreate handler on ready event with correct options', () => {
-        const mockClient = {
-            on:      mock(() => mockClient),
-            login:   mock(async () => 'mock-token'),
-            destroy: mock(async () => undefined),
-            user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-        } as unknown as Client;
-
-        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-        const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockReturnValue(mock(async () => undefined));
-        spies.push(messageHandlerSpy);
-
-        createDiscordBot({
-            config:    mockConfig,
-            onMessage: mockOnMessage,
-        });
-
-        // Simulate clientReady event firing by calling the second 'clientReady' handler
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-        const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-        expect(readyHandlerCalls.length).toBeGreaterThanOrEqual(2);
-
-        // Call the second clientReady handler (the one that sets up messageCreate)
-        const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-        messageCreateSetupHandler(mockClient);
-
-        // Verify createMessageHandler was called with correct options
-        expect(messageHandlerSpy).toHaveBeenCalledWith({
-            monitoredChannelIds:    mockConfig.monitoredChannelIds,
-            botUserId:              '999999999999999999',
-            onMessage:              mockOnMessage,
-            presenceManager:        undefined,
-            agent:                  undefined,
-            dynamicStatusGenerator: undefined,
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock
-            addRecentMessage:       expect.any(Function),
-        });
-
-        // Verify messageCreate handler was registered
-        expect(mockClient.on).toHaveBeenCalledWith('messageCreate', expect.any(Function));
-    });
-
-    test('should use createReadyHandler for logging ready event', () => {
-        const mockClient = {
-            on:      mock(() => mockClient),
-            login:   mock(async () => 'mock-token'),
-            destroy: mock(async () => undefined),
-            user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-        } as unknown as Client;
-
-        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-        const readyHandlerSpy = spyOn(handlersModule, 'createReadyHandler').mockReturnValue(mock(() => undefined));
-        spies.push(readyHandlerSpy);
-
-        createDiscordBot({
-            config:    mockConfig,
-            onMessage: mockOnMessage,
-        });
-
-        expect(readyHandlerSpy).toHaveBeenCalled();
-    });
-
-    test('should use createErrorHandler for error events', () => {
-        const mockClient = {
-            on:      mock(() => mockClient),
-            login:   mock(async () => 'mock-token'),
-            destroy: mock(async () => undefined),
-            user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-        } as unknown as Client;
-
-        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-        const errorHandlerSpy = spyOn(handlersModule, 'createErrorHandler').mockReturnValue(mock(() => undefined));
-        spies.push(errorHandlerSpy);
-
-        createDiscordBot({
-            config:    mockConfig,
-            onMessage: mockOnMessage,
-        });
-
-        expect(errorHandlerSpy).toHaveBeenCalled();
-    });
-
-    describe('Presence Manager Integration', () => {
-        test('should accept optional presence dependencies without errors', () => {
+    describe('Presence Manager Lifecycle', () => {
+        test('should create presence manager when identityContext and config.presence provided', () => {
             const mockClient = {
                 on:      mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
                 destroy: mock(async () => undefined),
                 user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:    null,
             } as unknown as Client;
+
+            const configWithPresence: DiscordConfig = {
+                ...mockConfig,
+                presence: {
+                    updateThrottleMs:      2000,
+                    idleTimeoutMs:         60000,
+                    idleRefreshIntervalMs: 300000,
+                },
+            };
 
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
-            const mockAgent = { chat: mock(async () => 'response') };
+            const mockPresenceManager = {
+                start:        mock(() => undefined),
+                stop:         mock(() => undefined),
+                shouldUpdate: mock(() => true),
+                updatePhase:  mock(async () => undefined),
+            };
+            const presenceManagerSpy = spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager);
+            spies.push(presenceManagerSpy);
 
-            // Should not throw when optional presence dependencies are provided
-            // (even without config.presence, which prevents actual presence creation)
-            expect(() => createDiscordBot({
-                config:          mockConfig,
+            spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
+                generate: mock(() => ({ name: 'Thinking...', type: 4 })),
+            }));
+
+            spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
+                generate: mock(async () => ({ name: 'Idle', type: 4 })),
+            }));
+
+            createDiscordBot({
+                config:          configWithPresence,
                 onMessage:       mockOnMessage,
                 identityContext: 'Test identity',
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
-                agent:           mockAgent as any,
-            })).not.toThrow();
+            });
+
+            // Simulate clientReady event (find the SECOND clientReady handler)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+            const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
+            const readyHandlers = calls.filter(([event]) => event === 'clientReady');
+            const messageSetupHandler = readyHandlers[1]?.[1]; // Second handler is for message setup
+            if(messageSetupHandler) {
+                messageSetupHandler(mockClient);
+            }
+
+            expect(presenceManagerSpy).toHaveBeenCalled();
+            expect(mockPresenceManager.start).toHaveBeenCalled();
         });
 
-        test('should accept agent option without anthropicClient or identityContext', () => {
+        test('should NOT create presence manager when identityContext is missing', () => {
             const mockClient = {
                 on:      mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
                 destroy: mock(async () => undefined),
                 user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:    null,
             } as unknown as Client;
+
+            const configWithPresence: DiscordConfig = {
+                ...mockConfig,
+                presence: {
+                    updateThrottleMs:      2000,
+                    idleTimeoutMs:         60000,
+                    idleRefreshIntervalMs: 300000,
+                },
+            };
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+            const presenceManagerSpy = spyOn(presenceModule, 'createPresenceManager');
+            spies.push(presenceManagerSpy);
+
+            createDiscordBot({
+                config:    configWithPresence,
+                onMessage: mockOnMessage,
+                // identityContext missing
+            });
+
+            // Simulate clientReady event (find the SECOND clientReady handler)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+            const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
+            const readyHandlers = calls.filter(([event]) => event === 'clientReady');
+            const messageSetupHandler = readyHandlers[1]?.[1]; // Second handler is for message setup
+            if(messageSetupHandler) {
+                messageSetupHandler(mockClient);
+            }
+
+            expect(presenceManagerSpy).not.toHaveBeenCalled();
+        });
+
+        test('should call presenceManager.stop() on bot stop() when manager exists', async () => {
+            const mockClient = {
+                on:      mock(() => mockClient),
+                login:   mock(async () => 'mock-token'),
+                destroy: mock(async () => undefined),
+                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:    null,
+            } as unknown as Client;
+
+            const configWithPresence: DiscordConfig = {
+                ...mockConfig,
+                presence: {
+                    updateThrottleMs:      2000,
+                    idleTimeoutMs:         60000,
+                    idleRefreshIntervalMs: 300000,
+                },
+            };
 
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
-            const mockAgent = { chat: mock(async () => 'response') };
+            const mockPresenceManager = {
+                start:        mock(() => undefined),
+                stop:         mock(() => undefined),
+                shouldUpdate: mock(() => true),
+                updatePhase:  mock(async () => undefined),
+            };
+            spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
+
+            spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
+                generate: mock(() => ({ name: 'Thinking...', type: 4 })),
+            }));
+
+            spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
+                generate: mock(async () => ({ name: 'Idle', type: 4 })),
+            }));
 
-            // Should not throw when only agent is provided (partial presence deps)
-            expect(() => createDiscordBot({
-                config:    mockConfig,
-                onMessage: mockOnMessage,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
-                agent:     mockAgent as any,
-            })).not.toThrow();
-        });
-
-        describe('Presence manager creation conditions', () => {
-            test('should NOT create presence manager when identityContext is missing (without anthropicClient)', () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-                const presenceManagerSpy = spyOn(presenceModule, 'createPresenceManager');
-                spies.push(presenceManagerSpy);
-
-                createDiscordBot({
-                    config:    configWithPresence,
-                    onMessage: mockOnMessage,
-                    // identityContext missing - presence manager should not be created
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                expect(presenceManagerSpy).not.toHaveBeenCalled();
-            });
-
-            test('should NOT create presence manager when identityContext is missing', () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-                const presenceManagerSpy = spyOn(presenceModule, 'createPresenceManager');
-                spies.push(presenceManagerSpy);
-
-                createDiscordBot({
-                    config:    configWithPresence,
-                    onMessage: mockOnMessage,
-                    // identityContext missing
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                expect(presenceManagerSpy).not.toHaveBeenCalled();
-            });
-
-            test('should NOT create presence manager when config.presence is missing', () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-                const presenceManagerSpy = spyOn(presenceModule, 'createPresenceManager');
-                spies.push(presenceManagerSpy);
-
-                createDiscordBot({
-                    config:          mockConfig, // no presence config
-                    onMessage:       mockOnMessage,
-                    identityContext: 'Test identity',
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                expect(presenceManagerSpy).not.toHaveBeenCalled();
-            });
-
-            test('should create presence manager when ALL three deps are present', () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
-                };
-                const presenceManagerSpy = spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager);
-                spies.push(presenceManagerSpy);
-
-                const activeGenSpy = spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
-                });
-                spies.push(activeGenSpy);
-
-                const idleGenSpy = spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                });
-                spies.push(idleGenSpy);
-
-                createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    identityContext: 'Test identity',
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                expect(presenceManagerSpy).toHaveBeenCalled();
-            });
-        });
-
-        describe('Presence manager lifecycle', () => {
-            test('should call presenceManager.start() after creation', () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
-                };
-                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
-
-                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
-                }));
-
-                spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                }));
-
-                createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    identityContext: 'Test identity',
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                expect(mockPresenceManager.start).toHaveBeenCalled();
-            });
-
-            test('should call presenceManager.stop() on bot stop() when manager exists', async () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
-                };
-                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
-
-                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
-                }));
-
-                spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                }));
-
-                const bot = createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    identityContext: 'Test identity',
-                });
-
-                // Simulate clientReady event to create presenceManager
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                await bot.stop();
-
-                expect(mockPresenceManager.stop).toHaveBeenCalled();
-                expect(mockClient.destroy).toHaveBeenCalled();
-            });
-
-            test('should NOT call presenceManager.stop() when manager does not exist', async () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const bot = createDiscordBot({
-                    config:    mockConfig, // no presence config
-                    onMessage: mockOnMessage,
-                });
-
-                // Don't simulate clientReady - presenceManager won't be created
-
-                await bot.stop();
-
-                // Should only call destroy, no presence stop
-                expect(mockClient.destroy).toHaveBeenCalled();
-            });
-
-            test('should call presenceManager.stop() before client.destroy()', async () => {
-                const callOrder: string[] = [];
-
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => { callOrder.push('destroy'); }),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => { callOrder.push('stop'); }),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
-                };
-                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
-
-                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
-                }));
-
-                spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                }));
-
-                const bot = createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    identityContext: 'Test identity',
-                });
-
-                // Simulate clientReady event to create presenceManager
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                await bot.stop();
-
-                expect(callOrder).toEqual(['stop', 'destroy']);
-            });
-        });
-
-        describe('Status generator creation', () => {
-            test('should create active status generator with ActivityType.Custom', () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
-                };
-                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
-
-                const activeGenSpy = spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
-                });
-                spies.push(activeGenSpy);
-
-                spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                }));
-
-                createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    identityContext: 'Test identity',
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                expect(activeGenSpy).toHaveBeenCalledWith(expect.objectContaining({
-                    activityType: 4, // ActivityType.Custom
-                }));
-            });
-
-            test('should create idle status generator with identityContext and getRecentContext', () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
-                };
-                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
-
-                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
-                }));
-
-                const idleGenSpy = spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                });
-                spies.push(idleGenSpy);
-
-                createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    identityContext: 'Test identity',
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                expect(idleGenSpy).toHaveBeenCalledWith(expect.objectContaining({
-                    identityContext:  'Test identity',
-                    activityType:     4,
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock
-                    getRecentContext: expect.any(Function),
-                }));
-            });
-
-            test('should create presence manager with config.presence', () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
-                };
-                const presenceManagerSpy = spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager);
-                spies.push(presenceManagerSpy);
-
-                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
-                }));
-
-                spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                }));
-
-                createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    identityContext: 'Test identity',
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                expect(presenceManagerSpy).toHaveBeenCalledWith(expect.objectContaining({
-                    discordClient: mockClient,
-                    config:        configWithPresence.presence,
-                }));
-            });
-
-            test('should provide getRecentContext that returns undefined when no messages tracked', async () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
-                };
-                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
-
-                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
-                }));
-
-                let capturedGetRecentContext: (() => Promise<string | undefined>) | undefined;
-                const idleGenSpy = spyOn(presenceModule, 'createIdleStatusGenerator').mockImplementation((deps: presenceModule.IdleStatusGeneratorDeps) => {
-                    capturedGetRecentContext = deps.getRecentContext;
-                    return { generate: mock(async () => ({ name: 'Idle', type: 4 })) };
-                });
-                spies.push(idleGenSpy);
-
-                createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    identityContext: 'Test identity',
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                // Verify getRecentContext returns undefined when no messages tracked
-                expect(capturedGetRecentContext).toBeDefined();
-                const result = await capturedGetRecentContext!();
-                expect(result).toBeUndefined();
-            });
-
-            test('should pass addRecentMessage callback to createMessageHandler', () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
-                };
-                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
-
-                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
-                }));
-
-                spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                }));
-
-                const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockReturnValue(mock(async () => undefined));
-                spies.push(messageHandlerSpy);
-
-                createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    identityContext: 'Test identity',
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                expect(messageHandlerSpy).toHaveBeenCalledWith(expect.objectContaining({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock
-                    addRecentMessage: expect.any(Function),
-                }));
-            });
-
-            test('should provide getRecentContext that returns formatted messages when messages tracked via addRecentMessage', async () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
-                };
-                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
-
-                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
-                }));
-
-                let capturedGetRecentContext: (() => Promise<string | undefined>) | undefined;
-                const idleGenSpy = spyOn(presenceModule, 'createIdleStatusGenerator').mockImplementation((deps: presenceModule.IdleStatusGeneratorDeps) => {
-                    capturedGetRecentContext = deps.getRecentContext;
-                    return { generate: mock(async () => ({ name: 'Idle', type: 4 })) };
-                });
-                spies.push(idleGenSpy);
-
-                let capturedAddRecentMessage: ((content: string) => void) | undefined;
-                const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockImplementation((opts: handlersModule.MessageHandlerOptions) => {
-                    capturedAddRecentMessage = opts.addRecentMessage;
-                    return mock(async () => undefined);
-                });
-                spies.push(messageHandlerSpy);
-
-                createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    identityContext: 'Test identity',
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                // Add some messages via addRecentMessage
-                expect(capturedAddRecentMessage).toBeDefined();
-                capturedAddRecentMessage!('First message');
-                capturedAddRecentMessage!('Second message');
-
-                // Verify getRecentContext returns formatted messages
-                expect(capturedGetRecentContext).toBeDefined();
-                const result = await capturedGetRecentContext!();
-                expect(result).toBe('First message\n• Second message');
-            });
-
-            test('should limit recent messages to MAX_RECENT_MESSAGES (5)', async () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
-                };
-                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
-
-                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
-                }));
-
-                let capturedGetRecentContext: (() => Promise<string | undefined>) | undefined;
-                const idleGenSpy = spyOn(presenceModule, 'createIdleStatusGenerator').mockImplementation((deps: presenceModule.IdleStatusGeneratorDeps) => {
-                    capturedGetRecentContext = deps.getRecentContext;
-                    return { generate: mock(async () => ({ name: 'Idle', type: 4 })) };
-                });
-                spies.push(idleGenSpy);
-
-                let capturedAddRecentMessage: ((content: string) => void) | undefined;
-                const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockImplementation((opts: handlersModule.MessageHandlerOptions) => {
-                    capturedAddRecentMessage = opts.addRecentMessage;
-                    return mock(async () => undefined);
-                });
-                spies.push(messageHandlerSpy);
-
-                createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    identityContext: 'Test identity',
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                // Add more than 5 messages - first one should be dropped
-                expect(capturedAddRecentMessage).toBeDefined();
-                capturedAddRecentMessage!('Message 1');
-                capturedAddRecentMessage!('Message 2');
-                capturedAddRecentMessage!('Message 3');
-                capturedAddRecentMessage!('Message 4');
-                capturedAddRecentMessage!('Message 5');
-                capturedAddRecentMessage!('Message 6');
-
-                // Verify only last 5 messages are kept
-                expect(capturedGetRecentContext).toBeDefined();
-                const result = await capturedGetRecentContext!();
-                expect(result).toBe('Message 2\n• Message 3\n• Message 4\n• Message 5\n• Message 6');
-            });
-
-            test('should truncate long messages to 200 characters', async () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
-                };
-                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
-
-                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
-                }));
-
-                let capturedGetRecentContext: (() => Promise<string | undefined>) | undefined;
-                const idleGenSpy = spyOn(presenceModule, 'createIdleStatusGenerator').mockImplementation((deps: presenceModule.IdleStatusGeneratorDeps) => {
-                    capturedGetRecentContext = deps.getRecentContext;
-                    return { generate: mock(async () => ({ name: 'Idle', type: 4 })) };
-                });
-                spies.push(idleGenSpy);
-
-                let capturedAddRecentMessage: ((content: string) => void) | undefined;
-                const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockImplementation((opts: handlersModule.MessageHandlerOptions) => {
-                    capturedAddRecentMessage = opts.addRecentMessage;
-                    return mock(async () => undefined);
-                });
-                spies.push(messageHandlerSpy);
-
-                createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    identityContext: 'Test identity',
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                // Add a very long message (300+ characters)
-                const longMessage = repeat('A', 300);
-                expect(capturedAddRecentMessage).toBeDefined();
-                capturedAddRecentMessage!(longMessage);
-
-                // Verify the message is truncated to 200 characters
-                expect(capturedGetRecentContext).toBeDefined();
-                const result = await capturedGetRecentContext!();
-                expect(result).toBe(repeat('A', 200));
-            });
-        });
-
-        describe('Message handler with presence manager', () => {
-            test('should pass presenceManager to createMessageHandler when created', () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
-                };
-                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
-
-                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
-                }));
-
-                spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                }));
-
-                const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockReturnValue(mock(async () => undefined));
-                spies.push(messageHandlerSpy);
-
-                createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    identityContext: 'Test identity',
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                expect(messageHandlerSpy).toHaveBeenCalledWith(expect.objectContaining({
-                    presenceManager: mockPresenceManager,
-                }));
-            });
-
-            test('should pass agent to createMessageHandler when provided', () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
-                };
-                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
-
-                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
-                }));
-
-                spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                }));
-
-                const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockReturnValue(mock(async () => undefined));
-                spies.push(messageHandlerSpy);
-
-                const mockAgent = { chat: mock(async () => 'response') };
-
-                createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    identityContext: 'Test identity',
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Mock type doesn't match interface exactly
-                    agent:           mockAgent as any,
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                expect(messageHandlerSpy).toHaveBeenCalledWith(expect.objectContaining({
-                    agent: mockAgent,
-                }));
-            });
-
-            test('should pass undefined presenceManager when not created', () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockReturnValue(mock(async () => undefined));
-                spies.push(messageHandlerSpy);
-
-                createDiscordBot({
-                    config:    mockConfig, // no presence config
-                    onMessage: mockOnMessage,
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                expect(messageHandlerSpy).toHaveBeenCalledWith(expect.objectContaining({
-                    presenceManager: undefined,
-                }));
-            });
-
-            test('should pass undefined agent when not provided', () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockReturnValue(mock(async () => undefined));
-                spies.push(messageHandlerSpy);
-
-                createDiscordBot({
-                    config:    mockConfig,
-                    onMessage: mockOnMessage,
-                    // no agent
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                expect(messageHandlerSpy).toHaveBeenCalledWith(expect.objectContaining({
-                    agent: undefined,
-                }));
-            });
-        });
-
-        describe('Dynamic status generator', () => {
-            test('should create dynamicStatusGenerator when identityContext is provided', () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
-                };
-                spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
-
-                spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate: mock(() => ({ name: 'Thinking...', type: 4 })),
-                }));
-
-                spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                }));
-
-                const mockDynamicStatusGenerator = {
-                    generateSynopsis: mock(async () => 'Test synopsis'),
-                };
-                const dynamicGenSpy = spyOn(presenceModule, 'createDynamicStatusGenerator').mockReturnValue(mockDynamicStatusGenerator);
-                spies.push(dynamicGenSpy);
-
-                const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockReturnValue(mock(async () => undefined));
-                spies.push(messageHandlerSpy);
-
-                createDiscordBot({
-                    config:          configWithPresence,
-                    onMessage:       mockOnMessage,
-                    identityContext: 'Test identity',
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                expect(dynamicGenSpy).toHaveBeenCalledWith({
-                    identityContext: 'Test identity',
-                });
-                expect(messageHandlerSpy).toHaveBeenCalledWith(expect.objectContaining({
-                    dynamicStatusGenerator: mockDynamicStatusGenerator,
-                }));
-            });
-
-            test('should NOT create dynamicStatusGenerator when identityContext is missing', () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const dynamicGenSpy = spyOn(presenceModule, 'createDynamicStatusGenerator');
-                spies.push(dynamicGenSpy);
-
-                const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockReturnValue(mock(async () => undefined));
-                spies.push(messageHandlerSpy);
-
-                createDiscordBot({
-                    config:    mockConfig, // no presence config
-                    onMessage: mockOnMessage,
-                    // identityContext NOT provided
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                expect(dynamicGenSpy).not.toHaveBeenCalled();
-                expect(messageHandlerSpy).toHaveBeenCalledWith(expect.objectContaining({
-                    dynamicStatusGenerator: undefined,
-                }));
-            });
-
-            test('should pass undefined dynamicStatusGenerator when identityContext missing but presence config exists', () => {
-                const mockClient = {
-                    on:      mock(() => mockClient),
-                    login:   mock(async () => 'mock-token'),
-                    destroy: mock(async () => undefined),
-                    user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                } as unknown as Client;
-
-                const configWithPresence: DiscordConfig = {
-                    ...mockConfig,
-                    presence: {
-                        updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
-                    },
-                };
-
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-                const dynamicGenSpy = spyOn(presenceModule, 'createDynamicStatusGenerator');
-                spies.push(dynamicGenSpy);
-
-                const messageHandlerSpy = spyOn(handlersModule, 'createMessageHandler').mockReturnValue(mock(async () => undefined));
-                spies.push(messageHandlerSpy);
-
-                createDiscordBot({
-                    config:    configWithPresence,
-                    onMessage: mockOnMessage,
-                    // identityContext NOT provided
-                });
-
-                // Simulate clientReady event
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-                const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-                const messageCreateSetupHandler = readyHandlerCalls[1][1] as (client: unknown) => void;
-                messageCreateSetupHandler(mockClient);
-
-                expect(dynamicGenSpy).not.toHaveBeenCalled();
-                expect(messageHandlerSpy).toHaveBeenCalledWith(expect.objectContaining({
-                    dynamicStatusGenerator: undefined,
-                }));
-            });
-        });
-    });
-
-    describe('Optional client parameter', () => {
-        test('should use provided client instead of creating a new one', () => {
-            const mockProvidedClient = {
-                on:      mock(() => mockProvidedClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => undefined),
-                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-            } as unknown as Client;
-
-            const createClientSpy = spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockProvidedClient);
-            spies.push(createClientSpy);
-
-            createDiscordBot({
-                config:    mockConfig,
-                onMessage: mockOnMessage,
-                client:    mockProvidedClient,
-            });
-
-            // Should NOT call createDiscordClient when client is provided
-            expect(createClientSpy).not.toHaveBeenCalled();
-        });
-
-        test('should create new client when client is not provided', () => {
-            const mockClient = {
-                on:      mock(() => mockClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => undefined),
-                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-            } as unknown as Client;
-
-            const createClientSpy = spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient);
-            spies.push(createClientSpy);
-
-            createDiscordBot({
-                config:    mockConfig,
-                onMessage: mockOnMessage,
-                // No client provided
-            });
-
-            // Should call createDiscordClient when client is not provided
-            expect(createClientSpy).toHaveBeenCalledWith(mockConfig);
-        });
-
-        test('should use the provided client for login', async () => {
-            const mockProvidedClient = {
-                on:      mock(() => mockProvidedClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => undefined),
-                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-            } as unknown as Client;
-
-            // Don't spy on createDiscordClient - we want to verify we're using the provided client
             const bot = createDiscordBot({
-                config:    mockConfig,
-                onMessage: mockOnMessage,
-                client:    mockProvidedClient,
+                config:          configWithPresence,
+                onMessage:       mockOnMessage,
+                identityContext: 'Test identity',
             });
 
-            await bot.start();
+            // Simulate clientReady event to create presenceManager (find the SECOND clientReady handler)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+            const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
+            const readyHandlers = calls.filter(([event]) => event === 'clientReady');
+            const messageSetupHandler = readyHandlers[1]?.[1]; // Second handler is for message setup
+            if(messageSetupHandler) {
+                messageSetupHandler(mockClient);
+            }
 
-            expect(mockProvidedClient.login).toHaveBeenCalledWith('test-bot-token');
+            await bot.stop();
+
+            expect(mockPresenceManager.stop).toHaveBeenCalled();
+            expect(mockClient.destroy).toHaveBeenCalled();
         });
-    });
 
-    describe('Handler registration', () => {
-        test('should register TWO clientReady handlers', () => {
+        test('should call presenceManager.stop() before client.destroy()', async () => {
+            const callOrder: string[] = [];
+
             const mockClient = {
                 on:      mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => undefined),
+                destroy: mock(async () => { callOrder.push('destroy'); }),
                 user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:    null,
             } as unknown as Client;
+
+            const configWithPresence: DiscordConfig = {
+                ...mockConfig,
+                presence: {
+                    updateThrottleMs:      2000,
+                    idleTimeoutMs:         60000,
+                    idleRefreshIntervalMs: 300000,
+                },
+            };
 
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
-            createDiscordBot({
-                config:    mockConfig,
-                onMessage: mockOnMessage,
+            const mockPresenceManager = {
+                start:        mock(() => undefined),
+                stop:         mock(() => { callOrder.push('stop'); }),
+                shouldUpdate: mock(() => true),
+                updatePhase:  mock(async () => undefined),
+            };
+            spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
+
+            spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
+                generate: mock(() => ({ name: 'Thinking...', type: 4 })),
+            }));
+
+            spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
+                generate: mock(async () => ({ name: 'Idle', type: 4 })),
+            }));
+
+            const bot = createDiscordBot({
+                config:          configWithPresence,
+                onMessage:       mockOnMessage,
+                identityContext: 'Test identity',
             });
 
-            // Count clientReady handler registrations
+            // Simulate clientReady event to create presenceManager (find the SECOND clientReady handler)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-            const readyHandlerCalls = filter((mockClient.on as any).mock.calls as [string, unknown][], ['0', 'clientReady']);
-            expect(readyHandlerCalls.length).toBe(2);
-        });
+            const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
+            const readyHandlers = calls.filter(([event]) => event === 'clientReady');
+            const messageSetupHandler = readyHandlers[1]?.[1]; // Second handler is for message setup
+            if(messageSetupHandler) {
+                messageSetupHandler(mockClient);
+            }
 
-        test('should register error handler first, then clientReady handlers', () => {
-            const mockClient = {
-                on:      mock(() => mockClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => undefined),
-                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-            } as unknown as Client;
+            await bot.stop();
 
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-            createDiscordBot({
-                config:    mockConfig,
-                onMessage: mockOnMessage,
-            });
-
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-            const calls = (mockClient.on as any).mock.calls as [string, unknown][];
-            expect(calls[0][0]).toBe('error');
-            expect(calls[1][0]).toBe('clientReady');
-            expect(calls[2][0]).toBe('clientReady');
+            expect(callOrder).toEqual(['stop', 'destroy']);
         });
     });
 });

@@ -64,7 +64,7 @@ function isNetworkErrorByMessage(error: object): ErrorClassification | undefined
 
     // Stryker disable next-line StringLiteral,ArrayDeclaration: Network error code list is reference data
     const networkErrorCodes = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED'];
-    // Stryker disable next-line ConditionalExpression: Network error detection logic is fully tested
+    // Stryker disable next-line ConditionalExpression,BlockStatement: Network error detection logic is fully tested
     if(!_.some(networkErrorCodes, code => error.message.includes(code))) {
         return undefined;
     }

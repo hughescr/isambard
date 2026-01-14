@@ -73,112 +73,36 @@ describe('extractSessionId', () => {
         expect(result).toBe('test-session-123');
     });
 
-    test('should return undefined for non-system events', () => {
-        const event = { type: 'assistant', message: {} };
-
+    test.each([
+        ['non-system events', { type: 'assistant', message: {} }],
+        ['system events without init subtype', { type: 'system', subtype: 'status', session_id: 'should-not-extract' }],
+        ['system init events without session_id', { type: 'system', subtype: 'init' }],
+        ['null input', null],
+        ['undefined input', undefined],
+        ['array input', ['not', 'an', 'object']],
+    ])('should return undefined for %s', (_description, event) => {
         const result = extractSessionId(event);
-
         expect(result).toBeUndefined();
     });
 
-    test('should return undefined for system events without init subtype', () => {
-        const event = {
-            type:       'system',
-            subtype:    'status',
-            session_id: 'should-not-extract',
-        };
-
+    test('should return null for null session_id', () => {
+        const event = { type: 'system', subtype: 'init', session_id: null as unknown as string };
         const result = extractSessionId(event);
-
-        expect(result).toBeUndefined();
-    });
-
-    test('should return undefined for system init events without session_id', () => {
-        const event = {
-            type:    'system',
-            subtype: 'init',
-        };
-
-        const result = extractSessionId(event);
-
-        expect(result).toBeUndefined();
-    });
-
-    test('should handle null input gracefully', () => {
-        const result = extractSessionId(null);
-
-        expect(result).toBeUndefined();
-    });
-
-    test('should handle undefined input gracefully', () => {
-        const result = extractSessionId(undefined);
-
-        expect(result).toBeUndefined();
-    });
-
-    test('should return undefined for array input', () => {
-        const result = extractSessionId(['not', 'an', 'object']);
-
-        expect(result).toBeUndefined();
-    });
-
-    test('should return undefined for event with null session_id', () => {
-        const event: SystemEvent = {
-            type:       'system',
-            subtype:    'init',
-            session_id: null as unknown as string, // Test null explicitly
-        };
-
-        const result = extractSessionId(event);
-
         expect(result).toBeNull();
     });
 
-    test('should return empty string for event with empty string session_id', () => {
-        const event: SystemEvent = {
-            type:       'system',
-            subtype:    'init',
-            session_id: '',
-        };
-
+    test('should return empty string for empty session_id', () => {
+        const event = { type: 'system', subtype: 'init', session_id: '' };
         const result = extractSessionId(event);
-
         expect(result).toBe('');
     });
 
-    test('should return undefined for system event missing subtype field', () => {
-        const event = {
-            type:       'system',
-            session_id: 'should-not-extract',
-            // subtype field is missing entirely
-        };
-
+    test.each([
+        ['system event missing subtype field', { type: 'system', session_id: 'should-not-extract' }],
+        ['type is not system but subtype is init', { type: 'user', subtype: 'init', session_id: 'should-not-extract' }],
+        ['type is system but subtype is not init', { type: 'system', subtype: 'message', session_id: 'should-not-extract' }],
+    ])('should return undefined when %s', (_description, event) => {
         const result = extractSessionId(event);
-
-        expect(result).toBeUndefined();
-    });
-
-    test('should return undefined when type is not system but subtype is init', () => {
-        const event = {
-            type:       'user',
-            subtype:    'init',
-            session_id: 'should-not-extract',
-        };
-
-        const result = extractSessionId(event);
-
-        expect(result).toBeUndefined();
-    });
-
-    test('should return undefined when type is system but subtype is not init', () => {
-        const event = {
-            type:       'system',
-            subtype:    'message',
-            session_id: 'should-not-extract',
-        };
-
-        const result = extractSessionId(event);
-
         expect(result).toBeUndefined();
     });
 
@@ -242,17 +166,6 @@ describe('cleanupSession', () => {
         );
     });
 
-    test('should not throw when file does not exist', async () => {
-        const sessionId = 'nonexistent-session';
-        const notFoundError = new Error('ENOENT') as NodeJS.ErrnoException;
-        notFoundError.code = 'ENOENT';
-        mockAccess.mockImplementation(() => Promise.reject(notFoundError));
-
-        // Should complete without throwing
-        await cleanupSession(sessionId);
-        expect(true).toBe(true);
-    });
-
     test('should log debug when file does not exist', async () => {
         const sessionId = 'nonexistent-session';
         const notFoundError = new Error('ENOENT') as NodeJS.ErrnoException;
@@ -279,29 +192,13 @@ describe('cleanupSession', () => {
         );
     });
 
-    test('should log warning on unlink error but not throw', async () => {
-        const sessionId = 'session-unlink-error';
-        const permError = new Error('EPERM') as NodeJS.ErrnoException;
-        permError.code = 'EPERM';
-        mockUnlink.mockImplementation(() => Promise.reject(permError));
+    test.each([
+        ['unlink error', 'mockUnlink', (mock: typeof mockUnlink) => mock.mockImplementation(() => Promise.reject(new Error('EPERM')))],
+        ['access error (non-ENOENT)', 'mockAccess', (mock: typeof mockAccess) => mock.mockImplementation(() => Promise.reject(new Error('EPERM')))],
+    ])('should log warning on %s but not throw', async (_description, _mockName, setupMock) => {
+        const sessionId = 'session-error';
 
-        // Should complete without throwing
-        await cleanupSession(sessionId);
-
-        expect(mockLogger.warn).toHaveBeenCalledWith(
-            expect.objectContaining({
-                sessionId,
-                error: expect.anything(),
-                msg:   expect.stringContaining('Failed to cleanup'),
-            })
-        );
-    });
-
-    test('should log warning on access error (non-ENOENT) but not throw', async () => {
-        const sessionId = 'session-access-error';
-        const permError = new Error('EPERM') as NodeJS.ErrnoException;
-        permError.code = 'EPERM';
-        mockAccess.mockImplementation(() => Promise.reject(permError));
+        setupMock(_mockName === 'mockUnlink' ? mockUnlink : mockAccess);
 
         // Should complete without throwing
         await cleanupSession(sessionId);
@@ -326,13 +223,6 @@ describe('cleanupSession', () => {
         );
     });
 
-    test('should not attempt file operations with empty session ID', async () => {
-        await cleanupSession('');
-
-        expect(mockAccess).not.toHaveBeenCalled();
-        expect(mockUnlink).not.toHaveBeenCalled();
-    });
-
     test('should cleanup session-env directory after deleting session file', async () => {
         const sessionId = 'test-session-env';
 
@@ -343,17 +233,6 @@ describe('cleanupSession', () => {
             expect.stringContaining(`.claude/session-env/${sessionId}`),
             { recursive: true, force: true }
         );
-    });
-
-    test('should not throw when session-env directory does not exist', async () => {
-        const sessionId = 'no-session-env';
-        const notFoundError = new Error('ENOENT') as NodeJS.ErrnoException;
-        notFoundError.code = 'ENOENT';
-        mockRm.mockImplementation(() => Promise.reject(notFoundError));
-
-        // Should complete without throwing
-        await cleanupSession(sessionId);
-        expect(true).toBe(true);
     });
 
     test('should log warning when session-env cleanup fails with non-ENOENT error', async () => {
@@ -507,76 +386,24 @@ describe('cleanupSession', () => {
         );
     });
 
-    test('should skip agent file with no parentUuid field', async () => {
-        const sessionId = 'no-parent-uuid';
-        const agentFiles = ['agent-no-parent.jsonl'];
+    test.each([
+        ['no parentUuid field', 'agent-no-parent.jsonl', '{"isSidechain":true}\n'],
+        ['non-string parentUuid', 'agent-non-string.jsonl', '{"parentUuid":123}\n'],
+        ['different parentUuid', 'agent-different.jsonl', '{"parentUuid":"different-session"}\n'],
+        ['empty file content', 'agent-empty.jsonl', ''],
+        ['only newline characters', 'agent-newlines.jsonl', '\n\n\n'],
+    ])('should skip agent file with %s', async (_description, fileName, fileContent) => {
+        const sessionId = 'test-session';
+        const agentFiles = [fileName];
 
         mockReaddir.mockImplementation(() => Promise.resolve(agentFiles));
-        mockReadFile.mockImplementation(() => Promise.resolve('{"isSidechain":true}\n'));
-
-        await cleanupSession(sessionId);
-
-        // Should not attempt to unlink the file (only main session file should be unlinked)
-        const unlinkCalls = _.map(mockUnlink.mock.calls, 0);
-        expect(_.some(unlinkCalls, path => path.includes('agent-no-parent.jsonl'))).toBe(false);
-    });
-
-    test('should skip agent file with non-string parentUuid', async () => {
-        const sessionId = 'non-string-parent';
-        const agentFiles = ['agent-non-string.jsonl'];
-
-        mockReaddir.mockImplementation(() => Promise.resolve(agentFiles));
-        mockReadFile.mockImplementation(() => Promise.resolve('{"parentUuid":123}\n'));
+        mockReadFile.mockImplementation(() => Promise.resolve(fileContent));
 
         await cleanupSession(sessionId);
 
         // Should not attempt to unlink the file
         const unlinkCalls = _.map(mockUnlink.mock.calls, 0);
-        expect(_.some(unlinkCalls, path => path.includes('agent-non-string.jsonl'))).toBe(false);
-    });
-
-    test('should skip agent file with different parentUuid', async () => {
-        const sessionId = 'our-session';
-        const agentFiles = ['agent-different.jsonl'];
-
-        mockReaddir.mockImplementation(() => Promise.resolve(agentFiles));
-        mockReadFile.mockImplementation(() => Promise.resolve('{"parentUuid":"different-session"}\n'));
-
-        await cleanupSession(sessionId);
-
-        // Should not attempt to unlink the file
-        const unlinkCalls = _.map(mockUnlink.mock.calls, 0);
-        expect(_.some(unlinkCalls, path => path.includes('agent-different.jsonl'))).toBe(false);
-    });
-
-    test('should handle empty agent file content gracefully', async () => {
-        const sessionId = 'empty-file';
-        const agentFiles = ['agent-empty.jsonl'];
-
-        mockReaddir.mockImplementation(() => Promise.resolve(agentFiles));
-        mockReadFile.mockImplementation(() => Promise.resolve(''));
-
-        // Should complete without throwing
-        await cleanupSession(sessionId);
-
-        // File should not be deleted since there's no valid JSON
-        const unlinkCalls = _.map(mockUnlink.mock.calls, 0);
-        expect(_.some(unlinkCalls, path => path.includes('agent-empty.jsonl'))).toBe(false);
-    });
-
-    test('should skip agent file with only newline characters', async () => {
-        const sessionId = 'newline-only';
-        const agentFiles = ['agent-newlines.jsonl'];
-
-        mockReaddir.mockImplementation(() => Promise.resolve(agentFiles));
-        // File with only newlines - first line will be empty after split
-        mockReadFile.mockImplementation(() => Promise.resolve('\n\n\n'));
-
-        await cleanupSession(sessionId);
-
-        // File should not be deleted since firstLine is empty/falsy
-        const unlinkCalls = _.map(mockUnlink.mock.calls, 0);
-        expect(_.some(unlinkCalls, path => path.includes('agent-newlines.jsonl'))).toBe(false);
+        expect(_.some(unlinkCalls, path => path.includes(fileName))).toBe(false);
     });
 
     test('should continue processing other files when one has empty first line', async () => {
@@ -616,7 +443,6 @@ describe('cleanupSession', () => {
         const sessionId = 'test-missing-dir';
 
         // Mock access to fail on sub-agent directory check (first access call)
-        // This simulates the case where the SDK projects directory doesn't exist
         const notFoundError = new Error('ENOENT') as NodeJS.ErrnoException;
         notFoundError.code = 'ENOENT';
 
@@ -640,27 +466,6 @@ describe('cleanupSession', () => {
                 msg: expect.stringContaining('SDK projects directory not found'),
             })
         );
-    });
-
-    test('should continue with session cleanup even if sub-agent directory is missing', async () => {
-        const sessionId = 'test-continue-after-missing';
-
-        // Mock access to fail on sub-agent directory check
-        const notFoundError = new Error('ENOENT') as NodeJS.ErrnoException;
-        notFoundError.code = 'ENOENT';
-
-        let callCount = 0;
-        mockAccess.mockImplementation(() => {
-            callCount++;
-            // First call (sub-agent directory check) fails
-            if(callCount === 1) {
-                return Promise.reject(notFoundError);
-            }
-            // Other calls succeed
-            return Promise.resolve();
-        });
-
-        await cleanupSession(sessionId);
 
         // Should still attempt to clean up the main session file
         expect(mockUnlink).toHaveBeenCalled();

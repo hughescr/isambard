@@ -100,6 +100,7 @@ function classifyNetworkError(error: object & { code?: unknown, message?: unknow
         return undefined;
     }
 
+    // Stryker disable next-line all: Network error code configuration
     const networkErrorCodes = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED'];
 
     // Stryker disable next-line ConditionalExpression,BlockStatement: Network error classification

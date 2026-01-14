@@ -41,99 +41,55 @@ describe.concurrent('Memory MCP Server Pagination', () => {
 
     describe('list tool pagination', () => {
         describe('schema', () => {
-            test('should have limit parameter in input schema', () => {
+            test('should have pagination parameters in input schema', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
                 const listTool = (server.instance as any)._registeredTools.list;
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema
                 expect(listTool.inputSchema.shape.limit).toBeDefined();
-            });
-
-            test('should have cursor parameter in input schema', () => {
-                const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const listTool = (server.instance as any)._registeredTools.list;
-
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema
                 expect(listTool.inputSchema.shape.cursor).toBeDefined();
             });
 
-            test('should accept positive integer for limit', () => {
+            test.each([
+                ['positive integer', 10, true],
+                ['zero', 0, false],
+                ['negative', -5, false],
+                ['non-integer', 1.5, false],
+            ])('should validate limit: %s', (_label, value, shouldPass) => {
                 const server = createMemoryMCPServer(mockBackend);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
                 const listTool = (server.instance as any)._registeredTools.list;
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
-                const result = listTool.inputSchema.shape.limit.unwrap().safeParse(10);
+                const result = listTool.inputSchema.shape.limit.unwrap().safeParse(value);
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-                expect(result.success).toBe(true);
-            });
-
-            test('should reject non-positive limit', () => {
-                const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const listTool = (server.instance as any)._registeredTools.list;
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
-                const result = listTool.inputSchema.shape.limit.unwrap().safeParse(0);
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-                expect(result.success).toBe(false);
-            });
-
-            test('should reject negative limit', () => {
-                const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const listTool = (server.instance as any)._registeredTools.list;
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
-                const result = listTool.inputSchema.shape.limit.unwrap().safeParse(-5);
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-                expect(result.success).toBe(false);
-            });
-
-            test('should reject non-integer limit', () => {
-                const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const listTool = (server.instance as any)._registeredTools.list;
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
-                const result = listTool.inputSchema.shape.limit.unwrap().safeParse(1.5);
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-                expect(result.success).toBe(false);
+                expect(result.success).toBe(shouldPass);
             });
         });
 
         describe('backend calls with options', () => {
-            test('should pass limit to backend.list for non-layer paths', async () => {
+            test.each([
+                ['limit only', { limit: 10 }, { limit: 10 }],
+                ['cursor only', { cursor: 'dGVzdA==' }, { cursor: 'dGVzdA==' }],
+                ['both limit and cursor', { limit: 5, cursor: 'Y3Vyc29y' }, { limit: 5, cursor: 'Y3Vyc29y' }],
+                ['no options', {}, undefined],
+            ])('should pass %s to backend.list for non-layer paths', async (_label, handlerArgs, expectedOptions) => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ path: '/users/alice', limit: 10 });
+                await handler({ path: '/users/alice', ...handlerArgs });
 
-                expect(mockBackend.list).toHaveBeenCalledWith('/users/alice', { limit: 10 });
+                expect(mockBackend.list).toHaveBeenCalledWith('/users/alice', expectedOptions);
             });
 
-            test('should pass cursor to backend.list for non-layer paths', async () => {
-                const testCursor = 'dGVzdC1jdXJzb3I=';
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'list');
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ path: '/users/alice', cursor: testCursor });
-
-                expect(mockBackend.list).toHaveBeenCalledWith('/users/alice', { cursor: testCursor });
-            });
-
-            test('should pass both limit and cursor to backend.list', async () => {
-                const testCursor = 'dGVzdC1jdXJzb3I=';
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'list');
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ path: '/users/alice', limit: 5, cursor: testCursor });
-
-                expect(mockBackend.list).toHaveBeenCalledWith('/users/alice', { limit: 5, cursor: testCursor });
-            });
-
-            test('should pass limit to backend.listByLayer for layer paths', async () => {
+            test.each([
+                ['limit only', { limit: 20 }, { limit: 20 }],
+                ['cursor only', { cursor: 'bGF5ZXI=' }, { cursor: 'bGF5ZXI=' }],
+                ['both limit and cursor', { limit: 15, cursor: 'c3RhdGU=' }, { limit: 15, cursor: 'c3RhdGU=' }],
+                ['no options', {}, undefined],
+            ])('should pass %s to backend.listByLayer for layer paths', async (_label, handlerArgs, expectedOptions) => {
                 mockBackend.listByLayer = mock(async () => ({
                     items:      [],
                     nextCursor: undefined,
@@ -143,66 +99,9 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const handler = getToolHandler(server, 'list');
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ path: '/events', limit: 20 });
+                await handler({ path: '/events', ...handlerArgs });
 
-                expect(mockBackend.listByLayer).toHaveBeenCalledWith('events', { limit: 20 });
-            });
-
-            test('should pass cursor to backend.listByLayer for layer paths', async () => {
-                const testCursor = 'bGF5ZXItY3Vyc29y';
-                mockBackend.listByLayer = mock(async () => ({
-                    items:      [],
-                    nextCursor: undefined,
-                }));
-
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'list');
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ path: '/identity', cursor: testCursor });
-
-                expect(mockBackend.listByLayer).toHaveBeenCalledWith('identity', { cursor: testCursor });
-            });
-
-            test('should pass both limit and cursor to backend.listByLayer', async () => {
-                const testCursor = 'c3RhdGUtY3Vyc29y';
-                mockBackend.listByLayer = mock(async () => ({
-                    items:      [],
-                    nextCursor: undefined,
-                }));
-
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'list');
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ path: '/state', limit: 15, cursor: testCursor });
-
-                expect(mockBackend.listByLayer).toHaveBeenCalledWith('state', { limit: 15, cursor: testCursor });
-            });
-
-            test('should not pass options when neither limit nor cursor provided', async () => {
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'list');
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ path: '/users/bob' });
-
-                expect(mockBackend.list).toHaveBeenCalledWith('/users/bob', undefined);
-            });
-
-            test('should not pass options to listByLayer when neither limit nor cursor provided', async () => {
-                mockBackend.listByLayer = mock(async () => ({
-                    items:      [],
-                    nextCursor: undefined,
-                }));
-
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'list');
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ path: '/events' });
-
-                expect(mockBackend.listByLayer).toHaveBeenCalledWith('events', undefined);
+                expect(mockBackend.listByLayer).toHaveBeenCalledWith('events', expectedOptions);
             });
         });
 
@@ -288,12 +187,6 @@ describe.concurrent('Memory MCP Server Pagination', () => {
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema
                 expect(searchTool.inputSchema.shape.cursor).toBeDefined();
-            });
-
-            test('should accept string for cursor', () => {
-                const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const searchTool = (server.instance as any)._registeredTools.search;
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
                 const result = searchTool.inputSchema.shape.cursor.unwrap().safeParse('some-cursor-value');
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
@@ -302,48 +195,19 @@ describe.concurrent('Memory MCP Server Pagination', () => {
         });
 
         describe('backend calls with cursor', () => {
-            test('should pass cursor to backend.searchByTag', async () => {
-                const testCursor = 'c2VhcmNoLWN1cnNvcg==';
+            test.each([
+                ['cursor only', { tag: 'important', cursor: 'Y3Vyc29y' }, 'important', undefined, { cursor: 'Y3Vyc29y' }],
+                ['limit and cursor', { tag: 'important', limit: 10, cursor: 'Y3Vyc29y' }, 'important', undefined, { limit: 10, cursor: 'Y3Vyc29y' }],
+                ['layer, limit, and cursor', { tag: 'active', layer: 'state', limit: 5, cursor: 'c3RhdGU=' }, 'active', 'state', { limit: 5, cursor: 'c3RhdGU=' }],
+                ['layer and cursor only', { tag: 'test', layer: 'identity', cursor: 'aWRlbnRpdHk=' }, 'test', 'identity', { cursor: 'aWRlbnRpdHk=' }],
+            ])('should pass %s to backend.searchByTag', async (_label, handlerArgs, expectedTag, expectedLayer, expectedOptions) => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'search');
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ tag: 'important', cursor: testCursor });
+                await handler(handlerArgs);
 
-                expect(mockBackend.searchByTag).toHaveBeenCalledWith('important', undefined, { cursor: testCursor });
-            });
-
-            test('should pass both limit and cursor to backend.searchByTag', async () => {
-                const testCursor = 'c2VhcmNoLWN1cnNvcg==';
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'search');
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ tag: 'important', limit: 10, cursor: testCursor });
-
-                expect(mockBackend.searchByTag).toHaveBeenCalledWith('important', undefined, { limit: 10, cursor: testCursor });
-            });
-
-            test('should pass layer, limit, and cursor to backend.searchByTag', async () => {
-                const testCursor = 'ZnVsbC1vcHRpb25z';
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'search');
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ tag: 'active', layer: 'state', limit: 5, cursor: testCursor });
-
-                expect(mockBackend.searchByTag).toHaveBeenCalledWith('active', 'state', { limit: 5, cursor: testCursor });
-            });
-
-            test('should pass only cursor when limit not provided', async () => {
-                const testCursor = 'b25seS1jdXJzb3I=';
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'search');
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ tag: 'test', layer: 'identity', cursor: testCursor });
-
-                expect(mockBackend.searchByTag).toHaveBeenCalledWith('test', 'identity', { cursor: testCursor });
+                expect(mockBackend.searchByTag).toHaveBeenCalledWith(expectedTag, expectedLayer, expectedOptions);
             });
         });
 
@@ -441,47 +305,38 @@ describe.concurrent('Memory MCP Server Pagination', () => {
 
     describe('list tool date filtering', () => {
         describe('schema', () => {
-            test('should have startDate parameter in input schema', () => {
+            test('should have date parameters in input schema', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
                 const listTool = (server.instance as any)._registeredTools.list;
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema
                 expect(listTool.inputSchema.shape.startDate).toBeDefined();
-            });
-
-            test('should have endDate parameter in input schema', () => {
-                const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const listTool = (server.instance as any)._registeredTools.list;
-
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema
                 expect(listTool.inputSchema.shape.endDate).toBeDefined();
             });
 
-            test('should accept valid ISO8601 datetime for startDate', () => {
+            test.each([
+                ['valid ISO8601', '2024-01-01T00:00:00.000Z', true],
+                ['invalid string', 'not-a-date', false],
+            ])('should validate startDate: %s', (_label, value, shouldPass) => {
                 const server = createMemoryMCPServer(mockBackend);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
                 const listTool = (server.instance as any)._registeredTools.list;
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
-                const result = listTool.inputSchema.shape.startDate.unwrap().safeParse('2024-01-01T00:00:00.000Z');
+                const result = listTool.inputSchema.shape.startDate.unwrap().safeParse(value);
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-                expect(result.success).toBe(true);
-            });
-
-            test('should reject invalid datetime for startDate', () => {
-                const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const listTool = (server.instance as any)._registeredTools.list;
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
-                const result = listTool.inputSchema.shape.startDate.unwrap().safeParse('not-a-date');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-                expect(result.success).toBe(false);
+                expect(result.success).toBe(shouldPass);
             });
         });
 
         describe('backend calls with date options', () => {
-            test('should pass startDate to backend.listByLayer for layer paths', async () => {
+            test.each([
+                ['startDate only', { startDate: '2024-01-01T00:00:00.000Z' }, { startDate: '2024-01-01T00:00:00.000Z' }],
+                ['endDate only', { endDate: '2024-12-31T23:59:59.999Z' }, { endDate: '2024-12-31T23:59:59.999Z' }],
+                ['both dates', { startDate: '2024-01-01T00:00:00.000Z', endDate: '2024-06-30T23:59:59.999Z' }, { startDate: '2024-01-01T00:00:00.000Z', endDate: '2024-06-30T23:59:59.999Z' }],
+                ['dates with limit and cursor', { startDate: '2024-01-01T00:00:00.000Z', limit: 10, cursor: 'dGVzdA==' }, { startDate: '2024-01-01T00:00:00.000Z', limit: 10, cursor: 'dGVzdA==' }],
+            ])('should pass %s to backend.listByLayer for layer paths', async (_label, handlerArgs, expectedOptions) => {
                 mockBackend.listByLayer = mock(async () => ({
                     items:      [],
                     nextCursor: undefined,
@@ -491,71 +346,9 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const handler = getToolHandler(server, 'list');
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ path: '/events', startDate: '2024-01-01T00:00:00.000Z' });
+                await handler({ path: '/events', ...handlerArgs });
 
-                expect(mockBackend.listByLayer).toHaveBeenCalledWith('events', { startDate: '2024-01-01T00:00:00.000Z' });
-            });
-
-            test('should pass endDate to backend.listByLayer for layer paths', async () => {
-                mockBackend.listByLayer = mock(async () => ({
-                    items:      [],
-                    nextCursor: undefined,
-                }));
-
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'list');
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ path: '/identity', endDate: '2024-12-31T23:59:59.999Z' });
-
-                expect(mockBackend.listByLayer).toHaveBeenCalledWith('identity', { endDate: '2024-12-31T23:59:59.999Z' });
-            });
-
-            test('should pass both dates to backend.listByLayer', async () => {
-                mockBackend.listByLayer = mock(async () => ({
-                    items:      [],
-                    nextCursor: undefined,
-                }));
-
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'list');
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({
-                    path:      '/state',
-                    startDate: '2024-01-01T00:00:00.000Z',
-                    endDate:   '2024-06-30T23:59:59.999Z',
-                });
-
-                expect(mockBackend.listByLayer).toHaveBeenCalledWith('state', {
-                    startDate: '2024-01-01T00:00:00.000Z',
-                    endDate:   '2024-06-30T23:59:59.999Z',
-                });
-            });
-
-            test('should pass dates with limit and cursor to backend.listByLayer', async () => {
-                const testCursor = 'dGVzdC1jdXJzb3I=';
-                mockBackend.listByLayer = mock(async () => ({
-                    items:      [],
-                    nextCursor: undefined,
-                }));
-
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'list');
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({
-                    path:      '/events',
-                    startDate: '2024-01-01T00:00:00.000Z',
-                    limit:     10,
-                    cursor:    testCursor,
-                });
-
-                expect(mockBackend.listByLayer).toHaveBeenCalledWith('events', {
-                    startDate: '2024-01-01T00:00:00.000Z',
-                    limit:     10,
-                    cursor:    testCursor,
-                });
+                expect(mockBackend.listByLayer).toHaveBeenCalledWith('events', expectedOptions);
             });
 
             test('should pass dates to backend.list for non-layer paths', async () => {
@@ -572,28 +365,15 @@ describe.concurrent('Memory MCP Server Pagination', () => {
 
     describe('search tool date filtering', () => {
         describe('schema', () => {
-            test('should have startDate parameter in input schema', () => {
+            test('should have date parameters in input schema', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
                 const searchTool = (server.instance as any)._registeredTools.search;
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema
                 expect(searchTool.inputSchema.shape.startDate).toBeDefined();
-            });
-
-            test('should have endDate parameter in input schema', () => {
-                const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const searchTool = (server.instance as any)._registeredTools.search;
-
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema
                 expect(searchTool.inputSchema.shape.endDate).toBeDefined();
-            });
-
-            test('should accept valid ISO8601 datetime for startDate', () => {
-                const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const searchTool = (server.instance as any)._registeredTools.search;
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
                 const result = searchTool.inputSchema.shape.startDate.unwrap().safeParse('2024-01-01T00:00:00.000Z');
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
@@ -602,78 +382,22 @@ describe.concurrent('Memory MCP Server Pagination', () => {
         });
 
         describe('backend calls with date options', () => {
-            test('should pass startDate to backend.searchByTag', async () => {
+            test.each([
+                ['startDate only', { startDate: '2024-01-01T00:00:00.000Z' }, { startDate: '2024-01-01T00:00:00.000Z' }],
+                ['endDate only', { endDate: '2024-12-31T23:59:59.999Z' }, { endDate: '2024-12-31T23:59:59.999Z' }],
+                ['both dates', { startDate: '2024-01-01T00:00:00.000Z', endDate: '2024-06-30T23:59:59.999Z' }, { startDate: '2024-01-01T00:00:00.000Z', endDate: '2024-06-30T23:59:59.999Z' }],
+                ['layer and dates', { layer: 'identity', startDate: '2024-01-01T00:00:00.000Z' }, { startDate: '2024-01-01T00:00:00.000Z' }],
+                ['all options', { layer: 'events', limit: 5, cursor: 'Y3Vyc29y', startDate: '2024-01-01T00:00:00.000Z', endDate: '2024-12-31T23:59:59.999Z' }, { limit: 5, cursor: 'Y3Vyc29y', startDate: '2024-01-01T00:00:00.000Z', endDate: '2024-12-31T23:59:59.999Z' }],
+            ])('should pass %s to backend.searchByTag', async (_label, handlerArgs, expectedOptions) => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'search');
+                const tag = 'test';
+                const layer = 'layer' in handlerArgs ? handlerArgs.layer : undefined;
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ tag: 'important', startDate: '2024-01-01T00:00:00.000Z' });
+                await handler({ tag, ...handlerArgs });
 
-                expect(mockBackend.searchByTag).toHaveBeenCalledWith('important', undefined, { startDate: '2024-01-01T00:00:00.000Z' });
-            });
-
-            test('should pass endDate to backend.searchByTag', async () => {
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'search');
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ tag: 'active', endDate: '2024-12-31T23:59:59.999Z' });
-
-                expect(mockBackend.searchByTag).toHaveBeenCalledWith('active', undefined, { endDate: '2024-12-31T23:59:59.999Z' });
-            });
-
-            test('should pass both dates to backend.searchByTag', async () => {
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'search');
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({
-                    tag:       'recent',
-                    startDate: '2024-01-01T00:00:00.000Z',
-                    endDate:   '2024-06-30T23:59:59.999Z',
-                });
-
-                expect(mockBackend.searchByTag).toHaveBeenCalledWith('recent', undefined, {
-                    startDate: '2024-01-01T00:00:00.000Z',
-                    endDate:   '2024-06-30T23:59:59.999Z',
-                });
-            });
-
-            test('should pass layer and dates to backend.searchByTag', async () => {
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'search');
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({
-                    tag:       'important',
-                    layer:     'identity',
-                    startDate: '2024-01-01T00:00:00.000Z',
-                });
-
-                expect(mockBackend.searchByTag).toHaveBeenCalledWith('important', 'identity', { startDate: '2024-01-01T00:00:00.000Z' });
-            });
-
-            test('should pass all options to backend.searchByTag', async () => {
-                const testCursor = 'c2VhcmNoLWN1cnNvcg==';
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'search');
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({
-                    tag:       'tag1',
-                    layer:     'events',
-                    limit:     5,
-                    cursor:    testCursor,
-                    startDate: '2024-01-01T00:00:00.000Z',
-                    endDate:   '2024-12-31T23:59:59.999Z',
-                });
-
-                expect(mockBackend.searchByTag).toHaveBeenCalledWith('tag1', 'events', {
-                    limit:     5,
-                    cursor:    testCursor,
-                    startDate: '2024-01-01T00:00:00.000Z',
-                    endDate:   '2024-12-31T23:59:59.999Z',
-                });
+                expect(mockBackend.searchByTag).toHaveBeenCalledWith(tag, layer, expectedOptions);
             });
         });
     });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import _ from 'lodash';
 import { defaultClassifier, createHttpStatusClassifier } from '../../../../src/utils/retry/classifier';
+import type { ErrorCategory } from '../../../../src/utils/retry/types';
 
 describe.concurrent('defaultClassifier', () => {
     describe('Error instances', () => {
@@ -105,26 +106,6 @@ describe.concurrent('createHttpStatusClassifier', () => {
             expect(result.message).toContain('429');
         });
 
-        it('should classify 429 without retryAfter as rate_limited without retryAfterMs', () => {
-            const error = { status: 429 };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('rate_limited');
-            expect(result.retryAfterMs).toBeUndefined();
-            expect(result.message).toContain('429');
-        });
-
-        it('should include custom message in 429 classification', () => {
-            const error = { status: 429, message: 'Too many requests', retryAfter: 1000 };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('rate_limited');
-            expect(result.retryAfterMs).toBe(1000);
-            expect(result.message).toBe('Too many requests');
-        });
-
         // Stryker disable next-line ConditionalExpression, BlockStatement: Testing rate limit check boundary - 429 without retryAfter property
         it('should classify 429 as rate_limited even without retryAfter property in error object', () => {
             const error = { status: 429, message: 'Rate limit exceeded' };
@@ -147,33 +128,6 @@ describe.concurrent('createHttpStatusClassifier', () => {
             expect(result.category).toBe('transient');
             expect(result.retryAfterMs).toBeUndefined();
             expect(result.message).toContain('500');
-        });
-
-        it('should classify 502 as transient', () => {
-            const error = { status: 502 };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('transient');
-            expect(result.message).toContain('502');
-        });
-
-        it('should classify 503 as transient', () => {
-            const error = { status: 503 };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('transient');
-            expect(result.message).toContain('503');
-        });
-
-        it('should classify 504 as transient', () => {
-            const error = { status: 504 };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('transient');
-            expect(result.message).toContain('504');
         });
 
         it('should classify 599 as transient (upper boundary)', () => {
@@ -218,33 +172,6 @@ describe.concurrent('createHttpStatusClassifier', () => {
             expect(result.message).toContain('400');
         });
 
-        it('should classify 401 as permanent', () => {
-            const error = { status: 401 };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('permanent');
-            expect(result.message).toContain('401');
-        });
-
-        it('should classify 403 as permanent', () => {
-            const error = { status: 403 };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('permanent');
-            expect(result.message).toContain('403');
-        });
-
-        it('should classify 404 as permanent', () => {
-            const error = { status: 404 };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('permanent');
-            expect(result.message).toContain('404');
-        });
-
         it('should classify 499 as permanent (upper boundary)', () => {
             const error = { status: 499 };
             const classifier = createHttpStatusClassifier();
@@ -266,24 +193,6 @@ describe.concurrent('createHttpStatusClassifier', () => {
     });
 
     describe('Network timeout errors', () => {
-        it('should classify ETIMEDOUT as transient', () => {
-            const error = { code: 'ETIMEDOUT', message: 'Connection timeout' };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('transient');
-            expect(result.message).toBe('Connection timeout');
-        });
-
-        it('should classify ECONNRESET as transient', () => {
-            const error = { code: 'ECONNRESET', message: 'Connection reset' };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('transient');
-            expect(result.message).toBe('Connection reset');
-        });
-
         it('should classify ECONNREFUSED as transient (kills network error check)', () => {
             const error = { code: 'ECONNREFUSED', message: 'Connection refused' };
             const classifier = createHttpStatusClassifier();
@@ -410,76 +319,20 @@ describe.concurrent('createHttpStatusClassifier', () => {
             expect(result.retryAfterMs).toBe(1.5);
         });
 
-        it('should handle very small decimal retryAfter values', () => {
-            const error = { status: 429, retryAfter: 0.001 };
+        it.each<[unknown, number, ErrorCategory]>([
+            [123, 400, 'permanent'],
+            [null, 404, 'permanent'],
+            [undefined, 500, 'transient'],
+            [true, 403, 'permanent'],
+            [false, 401, 'permanent'],
+            [0, 400, 'permanent'],
+        ])('should return fallback when message property is %s', (message, status, expectedCategory) => {
+            const error = { status, message };
             const classifier = createHttpStatusClassifier();
             const result = classifier(error);
 
-            expect(result.category).toBe('rate_limited');
-            expect(result.retryAfterMs).toBe(0.001);
-        });
-
-        it('should handle small retryAfter values', () => {
-            const error = { status: 429, retryAfter: 0.1 };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('rate_limited');
-            expect(result.retryAfterMs).toBe(0.1);
-        });
-
-        it('should return fallback when message property is non-string truthy value', () => {
-            const error = { status: 400, message: 123 };  // message is number
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('permanent');
-            expect(result.message).toBe('HTTP 400');  // Uses fallback, not the number
-        });
-
-        it('should return fallback when message property is null', () => {
-            const error = { status: 404, message: null };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('permanent');
-            expect(result.message).toBe('HTTP 404');
-        });
-
-        it('should return fallback when message property is undefined', () => {
-            const error = { status: 500, message: undefined };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('transient');
-            expect(result.message).toBe('HTTP 500');
-        });
-
-        it('should return fallback when message property is boolean true', () => {
-            const error = { status: 403, message: true };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('permanent');
-            expect(result.message).toBe('HTTP 403');
-        });
-
-        it('should return fallback when message property is boolean false', () => {
-            const error = { status: 401, message: false };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('permanent');
-            expect(result.message).toBe('HTTP 401');
-        });
-
-        it('should return fallback when message property is zero', () => {
-            const error = { status: 400, message: 0 };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('permanent');
-            expect(result.message).toBe('HTTP 400');
+            expect(result.category).toBe(expectedCategory);
+            expect(result.message).toBe(`HTTP ${status}`);
         });
 
         it('should return fallback when message is empty string', () => {

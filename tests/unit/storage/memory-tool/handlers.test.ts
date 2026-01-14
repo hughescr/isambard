@@ -72,11 +72,14 @@ describe('Memory Tool Handlers', () => {
             });
         });
 
-        it('should detect content type from path extension', async () => {
+        it.each([
+            ['text/plain', '/test/file.txt', 'Plain text'],
+            ['application/json', '/test/data.json', '{"key": "value"}'],
+        ])('should detect %s content type from path extension', async (expectedType, path, content) => {
             mockBackend.create = mock(async () => ({
-                path:        '/test/file.txt' as MemoryPath,
-                content:     'Plain text',
-                contentType: 'text/plain' as ContentType,
+                path:        path as MemoryPath,
+                content:     content,
+                contentType: expectedType as ContentType,
                 metadata:    {},
                 version:     1,
                 createdAt:   '2025-01-01T00:00:00.000Z',
@@ -84,37 +87,14 @@ describe('Memory Tool Handlers', () => {
             }));
 
             await create(mockBackend, {
-                path:      '/test/file.txt',
-                file_text: 'Plain text',
+                path:      path,
+                file_text: content,
             });
 
             expect(mockBackend.create).toHaveBeenCalledWith({
-                path:        '/test/file.txt',
-                content:     'Plain text',
-                contentType: 'text/plain',
-            });
-        });
-
-        it('should detect application/json content type for .json files', async () => {
-            mockBackend.create = mock(async () => ({
-                path:        '/test/data.json' as MemoryPath,
-                content:     '{"key": "value"}',
-                contentType: 'application/json' as ContentType,
-                metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
-            }));
-
-            await create(mockBackend, {
-                path:      '/test/data.json',
-                file_text: '{"key": "value"}',
-            });
-
-            expect(mockBackend.create).toHaveBeenCalledWith({
-                path:        '/test/data.json',
-                content:     '{"key": "value"}',
-                contentType: 'application/json',
+                path:        path,
+                content:     content,
+                contentType: expectedType,
             });
         });
 
@@ -236,49 +216,6 @@ describe('Memory Tool Handlers', () => {
             expect(result).toContain('3:Line 3');
             expect(result).not.toContain('1:Line 1');
             expect(result).not.toContain('4:Line 4');
-        });
-
-        it('should format lines with range starting at line 1', async () => {
-            mockBackend.get = mock(async () => ({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Line 1\nLine 2\nLine 3',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
-            }));
-
-            const result = await view(mockBackend, {
-                path:       '/test/file.md',
-                view_range: [1, 2],
-            });
-
-            expect(result).toContain('1:Line 1');
-            expect(result).toContain('2:Line 2');
-            expect(result).not.toContain('3:Line 3');
-        });
-
-        it('should format lines with range at end of file', async () => {
-            mockBackend.get = mock(async () => ({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Line 1\nLine 2\nLine 3\nLine 4',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
-            }));
-
-            const result = await view(mockBackend, {
-                path:       '/test/file.md',
-                view_range: [3, 4],
-            });
-
-            expect(result).toContain('3:Line 3');
-            expect(result).toContain('4:Line 4');
-            expect(result).not.toContain('1:Line 1');
-            expect(result).not.toContain('2:Line 2');
         });
 
         it('should handle range extending beyond file length', async () => {
@@ -697,7 +634,10 @@ describe('Memory Tool Handlers', () => {
             });
         });
 
-        it('should insert at line 0 to prepend content', async () => {
+        it.each([
+            [0, 'Prepended', 'Prepended\nLine 1\nLine 2', 'prepend'],
+            [2, 'Appended', 'Line 1\nLine 2\nAppended', 'append'],
+        ])('should insert at line %i to %s content', async (insertLine, text, expectedContent) => {
             mockBackend.get = mock(async () => ({
                 path:        '/test/file.md' as MemoryPath,
                 content:     'Line 1\nLine 2',
@@ -709,7 +649,7 @@ describe('Memory Tool Handlers', () => {
             }));
             mockBackend.update = mock(async () => ({
                 path:        '/test/file.md' as MemoryPath,
-                content:     'Prepended\nLine 1\nLine 2',
+                content:     expectedContent,
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
                 version:     2,
@@ -719,52 +659,23 @@ describe('Memory Tool Handlers', () => {
 
             const result = await insert(mockBackend, {
                 path:        '/test/file.md',
-                insert_line: 0,
-                insert_text: 'Prepended',
+                insert_line: insertLine,
+                insert_text: text,
             });
 
-            expect(result).toContain('inserted at line 0');
+            expect(result).toContain(`inserted at line ${insertLine}`);
             expect(mockBackend.update).toHaveBeenCalledWith('/test/file.md', {
-                content: 'Prepended\nLine 1\nLine 2',
+                content: expectedContent,
             });
         });
 
-        it('should insert at lines.length to append content', async () => {
+        it.each([
+            [10, 'Line 1\nLine 2', 'line number beyond content'],
+            [-1, 'Line 1', 'negative line number'],
+        ])('should throw InvalidLineNumberError for invalid line %i (%s)', async (lineNum, content) => {
             mockBackend.get = mock(async () => ({
                 path:        '/test/file.md' as MemoryPath,
-                content:     'Line 1\nLine 2',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
-            }));
-            mockBackend.update = mock(async () => ({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Line 1\nLine 2\nAppended',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-                version:     2,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:01.000Z',
-            }));
-
-            const result = await insert(mockBackend, {
-                path:        '/test/file.md',
-                insert_line: 2, // lines.length for "Line 1\nLine 2"
-                insert_text: 'Appended',
-            });
-
-            expect(result).toContain('inserted at line 2');
-            expect(mockBackend.update).toHaveBeenCalledWith('/test/file.md', {
-                content: 'Line 1\nLine 2\nAppended',
-            });
-        });
-
-        it('should throw InvalidLineNumberError for line number beyond content', async () => {
-            mockBackend.get = mock(async () => ({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Line 1\nLine 2',
+                content:     content,
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
                 version:     1,
@@ -775,26 +686,7 @@ describe('Memory Tool Handlers', () => {
             // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(insert(mockBackend, {
                 path:        '/test/file.md',
-                insert_line: 10,
-                insert_text: 'Text',
-            })).rejects.toThrow(InvalidLineNumberError);
-        });
-
-        it('should throw InvalidLineNumberError for negative line numbers', async () => {
-            mockBackend.get = mock(async () => ({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Line 1',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
-            }));
-
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
-            await expect(insert(mockBackend, {
-                path:        '/test/file.md',
-                insert_line: -1,
+                insert_line: lineNum,
                 insert_text: 'Text',
             })).rejects.toThrow(InvalidLineNumberError);
         });

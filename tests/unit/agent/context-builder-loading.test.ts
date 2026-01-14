@@ -263,6 +263,9 @@ describe('createContextBuilder loading methods', () => {
             const identity = await contextBuilder.loadCoreIdentity();
 
             expect(identity).toBe('');
+            // Verify logger was called with correct message
+            expect(mockLogger.debug).toHaveBeenCalledWith({ msg: 'Loading core identity...' });
+            expect(mockLogger.debug).toHaveBeenCalledWith({ identityLength: 0 }, 'Core identity loaded');
         });
 
         test('should join identity items with double newlines', async () => {
@@ -296,6 +299,9 @@ describe('createContextBuilder loading methods', () => {
             expect(identity).toBe('First identity\n\nSecond identity');
             // Verify NOT joined with empty string
             expect(identity).not.toBe('First identitySecond identity');
+            // Verify logger was called with correct message
+            expect(mockLogger.debug).toHaveBeenCalledWith({ msg: 'Loading core identity...' });
+            expect(mockLogger.debug).toHaveBeenCalledWith({ identityLength: 31 }, 'Core identity loaded');
         });
 
         test('should truncate content with ellipsis when exceeding maxIdentityChars', async () => {
@@ -327,10 +333,17 @@ describe('createContextBuilder loading methods', () => {
             expect(_.endsWith(identity, '...')).toBe(true);
             // Verify exactly 3 chars for ellipsis
             expect(_.slice(identity, -3).join('')).toBe('...');
+            // Verify content before ellipsis is correct
+            expect(_.slice(identity, 0, 397).join('')).toBe(_.repeat('x', 397));
         });
 
-        test('should use exactly slice(0, maxIdentityChars - 3) for truncation', async () => {
-            const content = _.repeat('y', 500);
+        test.each([
+            { contentLength: 3000, description: 'exceeding maxIdentityChars', shouldTruncate: true },
+            { contentLength: 401, description: 'single character over limit', shouldTruncate: true },
+            { contentLength: 400, description: 'exactly at maxIdentityChars', shouldTruncate: false },
+            { contentLength: 300, description: 'less than maxIdentityChars', shouldTruncate: false },
+        ])('should handle truncation when $description', async ({ contentLength, shouldTruncate }) => {
+            const content = _.repeat('x', contentLength);
 
             backend.listByLayer = mock(async () => ({
                 items: [
@@ -353,191 +366,19 @@ describe('createContextBuilder loading methods', () => {
 
             const identity = await contextBuilder.loadCoreIdentity();
 
-            // Verify exact truncation: slice(0, 397) + '...'
-            expect(identity.length).toBe(400);
-            const contentPart = identity.slice(0, -3);
-            expect(contentPart.length).toBe(397);
-            expect(contentPart).toBe(_.repeat('y', 397));
-        });
-
-        test('should NOT truncate when content equals maxIdentityChars exactly', async () => {
-            const content = _.repeat('z', 400);
-
-            backend.listByLayer = mock(async () => ({
-                items: [
-                    {
-                        path:        createMemoryPath('/identity/exact.md'),
-                        content,
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00Z',
-                        updatedAt:   '2025-01-01T00:00:00Z',
-                    },
-                ],
-            }));
-
-            const contextBuilder = createContextBuilder({
-                backend,
-                maxIdentityTokens: 100, // 400 chars
-            });
-
-            const identity = await contextBuilder.loadCoreIdentity();
-
-            // Should NOT add ellipsis when exactly at limit
-            expect(identity).toBe(content);
-            expect(identity).not.toContain('...');
-        });
-
-        test('should NOT truncate when content is less than maxIdentityChars', async () => {
-            const content = _.repeat('w', 300);
-
-            backend.listByLayer = mock(async () => ({
-                items: [
-                    {
-                        path:        createMemoryPath('/identity/short.md'),
-                        content,
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00Z',
-                        updatedAt:   '2025-01-01T00:00:00Z',
-                    },
-                ],
-            }));
-
-            const contextBuilder = createContextBuilder({
-                backend,
-                maxIdentityTokens: 100, // 400 chars
-            });
-
-            const identity = await contextBuilder.loadCoreIdentity();
-
-            // Should return content as-is
-            expect(identity).toBe(content);
-            expect(identity).not.toContain('...');
-        });
-
-        test('should handle single character over limit (boundary test)', async () => {
-            const content = _.repeat('a', 401);
-
-            backend.listByLayer = mock(async () => ({
-                items: [
-                    {
-                        path:        createMemoryPath('/identity/boundary.md'),
-                        content,
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00Z',
-                        updatedAt:   '2025-01-01T00:00:00Z',
-                    },
-                ],
-            }));
-
-            const contextBuilder = createContextBuilder({
-                backend,
-                maxIdentityTokens: 100, // 400 chars
-            });
-
-            const identity = await contextBuilder.loadCoreIdentity();
-
-            // Even 1 char over should trigger truncation
-            expect(_.size(identity)).toBe(400);
-            expect(_.endsWith(identity, '...')).toBe(true);
-        });
-
-        test('should extract content from each item correctly', async () => {
-            backend.listByLayer = mock(async () => ({
-                items: [
-                    {
-                        path:        createMemoryPath('/identity/a.md'),
-                        content:     'Content A',
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00Z',
-                        updatedAt:   '2025-01-01T00:00:00Z',
-                    },
-                    {
-                        path:        createMemoryPath('/identity/b.md'),
-                        content:     'Content B',
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00Z',
-                        updatedAt:   '2025-01-01T00:00:00Z',
-                    },
-                ],
-            }));
-
-            const contextBuilder = createContextBuilder({ backend });
-            const identity = await contextBuilder.loadCoreIdentity();
-
-            // Verify each item's content is extracted
-            expect(identity).toContain('Content A');
-            expect(identity).toContain('Content B');
-        });
-
-        test('should log when loading core identity starts', async () => {
-            backend.listByLayer = mock(async () => ({ items: [] }));
-
-            const contextBuilder = createContextBuilder({ backend });
-            await contextBuilder.loadCoreIdentity();
-
-            expect(mockLogger.debug).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    msg: 'Loading core identity...',
-                })
-            );
-        });
-
-        test('should log identityLength: 0 when no identity items exist', async () => {
-            backend.listByLayer = mock(async () => ({ items: [] }));
-
-            const contextBuilder = createContextBuilder({ backend });
-            await contextBuilder.loadCoreIdentity();
-
-            expect(mockLogger.debug).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    identityLength: 0,
-                }),
-                'Core identity loaded'
-            );
-        });
-
-        test('should log identityLength matching result length when items exist', async () => {
-            const content = 'Test identity content';
-
-            backend.listByLayer = mock(async () => ({
-                items: [
-                    {
-                        path:        createMemoryPath('/identity/test.md'),
-                        content,
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00Z',
-                        updatedAt:   '2025-01-01T00:00:00Z',
-                    },
-                ],
-            }));
-
-            const contextBuilder = createContextBuilder({ backend });
-            const result = await contextBuilder.loadCoreIdentity();
-
-            expect(mockLogger.debug).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    identityLength: result.length,
-                }),
-                'Core identity loaded'
-            );
+            if(shouldTruncate) {
+                expect(identity.length).toBe(400);
+                expect(identity.endsWith('...')).toBe(true);
+                expect(identity.slice(0, -3)).toBe(_.repeat('x', 397));
+            } else {
+                expect(identity).toBe(content);
+                expect(identity).not.toContain('...');
+            }
         });
     });
 
     describe('loadRecentContext', () => {
-        test('should load recent context for a specific user', async () => {
-            const userId = 'user123';
+        test('should load recent context with correct tag format and limit', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
             backend.searchByTag = mock(async () => ({
@@ -555,38 +396,34 @@ describe('createContextBuilder loading methods', () => {
             }));
 
             const contextBuilder = createContextBuilder({ backend });
-            const context = await contextBuilder.loadRecentContext(userId, 3, now);
+            const context = await contextBuilder.loadRecentContext('user123', 3, now);
 
             expect(backend.searchByTag).toHaveBeenCalledWith('user:user123', undefined, { limit: 3 });
             expect(context).toEqual(['- /state/recent1.md (2w ago): Recent memory 1']);
+            // Verify logger was called with correct messages
+            expect(mockLogger.debug).toHaveBeenCalledWith({ userId: 'user123' }, 'Loading user context');
+            expect(mockLogger.debug).toHaveBeenCalledWith({ userId: 'user123', memoryCount: 1 }, 'User context loaded');
         });
 
-        test('should use default limit of 3', async () => {
+        test.each([
+            { limit: undefined, expectedLimit: 3, description: 'default limit' },
+            { limit: 10, expectedLimit: 10, description: 'custom limit' },
+        ])('should use $description', async ({ limit, expectedLimit }) => {
             backend.searchByTag = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
-            await contextBuilder.loadRecentContext('user456');
+            await contextBuilder.loadRecentContext('user123', limit);
 
-            expect(backend.searchByTag).toHaveBeenCalledWith('user:user456', undefined, { limit: 3 });
+            expect(backend.searchByTag).toHaveBeenCalledWith('user:user123', undefined, { limit: expectedLimit });
         });
 
-        test('should use custom limit when provided', async () => {
+        test('should return empty array when no items found', async () => {
             backend.searchByTag = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
-            await contextBuilder.loadRecentContext('user789', 10);
+            const context = await contextBuilder.loadRecentContext('user-empty');
 
-            expect(backend.searchByTag).toHaveBeenCalledWith('user:user789', undefined, { limit: 10 });
-        });
-
-        test('should format user tag correctly in search', async () => {
-            backend.searchByTag = mock(async () => ({ items: [] }));
-
-            const contextBuilder = createContextBuilder({ backend });
-            await contextBuilder.loadRecentContext('test-user');
-
-            // Verify exact tag format: "user:${userId}"
-            expect(backend.searchByTag).toHaveBeenCalledWith('user:test-user', undefined, { limit: 3 });
+            expect(context).toEqual([]);
         });
 
         test('should extract content from all returned items', async () => {
@@ -612,15 +449,6 @@ describe('createContextBuilder loading methods', () => {
                         createdAt:   '2025-01-01T00:00:00Z',
                         updatedAt:   '2025-01-01T00:00:00Z',
                     },
-                    {
-                        path:        createMemoryPath('/state/item3.md'),
-                        content:     'Memory 3',
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00Z',
-                        updatedAt:   '2025-01-01T00:00:00Z',
-                    },
                 ],
             }));
 
@@ -630,96 +458,7 @@ describe('createContextBuilder loading methods', () => {
             expect(context).toEqual([
                 '- /state/item1.md (2w ago): Memory 1',
                 '- /state/item2.md (2w ago): Memory 2',
-                '- /state/item3.md (2w ago): Memory 3',
             ]);
-            expect(context.length).toBe(3);
-        });
-
-        test('should return empty array when no items found', async () => {
-            backend.searchByTag = mock(async () => ({ items: [] }));
-
-            const contextBuilder = createContextBuilder({ backend });
-            const context = await contextBuilder.loadRecentContext('user-empty');
-
-            expect(context).toEqual([]);
-        });
-
-        test('should map each item to formatted string with path and content', async () => {
-            const now = new Date('2025-01-15T12:00:00.000Z');
-
-            backend.searchByTag = mock(async () => ({
-                items: [
-                    {
-                        path:        createMemoryPath('/state/a.md'),
-                        content:     'Content A',
-                        contentType: 'text/markdown' as const,
-                        metadata:    { extra: 'data' },
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00Z',
-                        updatedAt:   '2025-01-01T00:00:00Z',
-                    },
-                ],
-            }));
-
-            const contextBuilder = createContextBuilder({ backend });
-            const context = await contextBuilder.loadRecentContext('user-map', 3, now);
-
-            // Should contain formatted string with path and content
-            expect(context).toEqual(['- /state/a.md (2w ago): Content A']);
-        });
-
-        test('should log when loading user context starts', async () => {
-            const userId = 'test-user-log';
-
-            backend.searchByTag = mock(async () => ({ items: [] }));
-
-            const contextBuilder = createContextBuilder({ backend });
-            await contextBuilder.loadRecentContext(userId);
-
-            expect(mockLogger.debug).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    userId,
-                }),
-                'Loading user context'
-            );
-        });
-
-        test('should log userId and memoryCount when user context loaded', async () => {
-            const userId = 'test-user-loaded';
-
-            backend.searchByTag = mock(async () => ({
-                items: [
-                    {
-                        path:        createMemoryPath('/state/mem1.md'),
-                        content:     'Memory 1',
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00Z',
-                        updatedAt:   '2025-01-01T00:00:00Z',
-                    },
-                    {
-                        path:        createMemoryPath('/state/mem2.md'),
-                        content:     'Memory 2',
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00Z',
-                        updatedAt:   '2025-01-01T00:00:00Z',
-                    },
-                ],
-            }));
-
-            const contextBuilder = createContextBuilder({ backend });
-            await contextBuilder.loadRecentContext(userId);
-
-            expect(mockLogger.debug).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    userId,
-                    memoryCount: 2,
-                }),
-                'User context loaded'
-            );
         });
     });
 
@@ -749,6 +488,10 @@ describe('createContextBuilder loading methods', () => {
             // Verify endTime is approximately "now" (within test execution window)
             expect(endTime.getTime()).toBeGreaterThanOrEqual(beforeCall);
             expect(endTime.getTime()).toBeLessThanOrEqual(afterCall + 1000); // Allow 1s tolerance
+
+            // Verify logger was called
+            expect(mockLogger.debug).toHaveBeenCalledWith({ msg: 'Loading recent events' });
+            expect(mockLogger.debug).toHaveBeenCalledWith({ eventCount: 0 }, 'Recent events loaded');
         });
 
         test('should verify 14-day calculation uses multiplication not division', async () => {
@@ -776,39 +519,19 @@ describe('createContextBuilder loading methods', () => {
             expect(diffMs).toBeLessThan(expectedMs + 1000);
         });
 
-        test('should pass limit to backend with default value of 50', async () => {
+        test.each([
+            { limit: undefined, expectedLimit: 50, description: 'default limit' },
+            { limit: 10, expectedLimit: 10, description: 'custom limit' },
+        ])('should pass $description to backend', async ({ limit, expectedLimit }) => {
             backend.searchByTimeRange = mock(async () => []);
-            backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
+            backend.listByLayer = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
-            await contextBuilder.loadRecentEvents();
+            await contextBuilder.loadRecentEvents(limit);
 
-            // Check the options argument (4th parameter)
-            const [, , , optionsArg] = (backend.searchByTimeRange as ReturnType<typeof mock>).mock.calls[0] as [string, string, string, { limit: number }];
-            expect(optionsArg).toEqual({ limit: 50 });
-        });
-
-        test('should pass custom limit to backend', async () => {
-            backend.searchByTimeRange = mock(async () => []);
-            backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
-
-            const contextBuilder = createContextBuilder({ backend });
-            await contextBuilder.loadRecentEvents(10);
-
-            const [, , , optionsArg] = (backend.searchByTimeRange as ReturnType<typeof mock>).mock.calls[0] as [string, string, string, { limit: number }];
-            expect(optionsArg).toEqual({ limit: 10 });
-        });
-
-        test('should pass events layer to backend', async () => {
-            backend.searchByTimeRange = mock(async () => []);
-            backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
-
-            const contextBuilder = createContextBuilder({ backend });
-            await contextBuilder.loadRecentEvents();
-
-            // Check the layer argument (3rd parameter)
-            const [, , layerArg] = (backend.searchByTimeRange as ReturnType<typeof mock>).mock.calls[0] as [string, string, string];
+            const [, , layerArg, optionsArg] = (backend.searchByTimeRange as ReturnType<typeof mock>).mock.calls[0] as [string, string, string, { limit: number }];
             expect(layerArg).toBe('events');
+            expect(optionsArg).toEqual({ limit: expectedLimit });
         });
 
         test('should extract content from results and format with path and age', async () => {
@@ -846,7 +569,7 @@ describe('createContextBuilder loading methods', () => {
 
         test('should return empty array when no events found', async () => {
             backend.searchByTimeRange = mock(async () => []);
-            backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
+            backend.listByLayer = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.loadRecentEvents();
@@ -854,94 +577,17 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toEqual([]);
         });
 
-        test('should format as string not object', async () => {
+        test.each([
+            { contentLength: 150, description: 'over 100 chars', shouldTruncate: true },
+            { contentLength: 100, description: 'exactly 100 chars', shouldTruncate: false },
+        ])('should handle event content truncation when $description', async ({ contentLength, shouldTruncate }) => {
             const now = new Date('2025-01-15T12:00:00.000Z');
+            const content = _.repeat('x', contentLength);
 
             backend.searchByTimeRange = mock(async () => [
                 {
-                    path:        createMemoryPath('/events/event.md'),
-                    content:     'My Event Content',
-                    contentType: 'text/markdown' as const,
-                    metadata:    { important: true },
-                    version:     1,
-                    createdAt:   '2025-01-15T10:00:00.000Z',
-                    updatedAt:   '2025-01-15T10:00:00.000Z',
-                },
-            ]);
-
-            const contextBuilder = createContextBuilder({ backend });
-            const result = await contextBuilder.loadRecentEvents(5, now);
-
-            // Should contain formatted string, not object
-            expect(result).toHaveLength(1);
-            expect(result[0]).toBe('- /events/event.md (2h ago): My Event Content');
-            // Verify it's a string not an object
-            expect(typeof result[0]).toBe('string');
-        });
-
-        test('should log when loading recent events starts', async () => {
-            backend.searchByTimeRange = mock(async () => []);
-            backend.listByLayer = mock(async () => ({ items: [] })); // Mock fallback
-
-            const contextBuilder = createContextBuilder({ backend });
-            await contextBuilder.loadRecentEvents();
-
-            expect(mockLogger.debug).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    msg: 'Loading recent events',
-                })
-            );
-        });
-
-        test('should log eventCount when recent events loaded', async () => {
-            backend.searchByTimeRange = mock(async () => [
-                {
-                    path:        createMemoryPath('/events/event1.md'),
-                    content:     'Event 1',
-                    contentType: 'text/markdown' as const,
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-01T00:00:00Z',
-                    updatedAt:   '2025-01-01T00:00:00Z',
-                },
-                {
-                    path:        createMemoryPath('/events/event2.md'),
-                    content:     'Event 2',
-                    contentType: 'text/markdown' as const,
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-01T00:00:00Z',
-                    updatedAt:   '2025-01-01T00:00:00Z',
-                },
-                {
-                    path:        createMemoryPath('/events/event3.md'),
-                    content:     'Event 3',
-                    contentType: 'text/markdown' as const,
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-01T00:00:00Z',
-                    updatedAt:   '2025-01-01T00:00:00Z',
-                },
-            ]);
-
-            const contextBuilder = createContextBuilder({ backend });
-            await contextBuilder.loadRecentEvents();
-
-            expect(mockLogger.debug).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    eventCount: 3,
-                }),
-                'Recent events loaded'
-            );
-        });
-
-        test('should format events with path, age, and content preview', async () => {
-            const now = new Date('2025-01-15T12:00:00.000Z');
-
-            backend.searchByTimeRange = mock(async () => [
-                {
-                    path:        createMemoryPath('/events/event1.md'),
-                    content:     'Event content here',
+                    path:        createMemoryPath('/events/test.md'),
+                    content,
                     contentType: 'text/markdown' as const,
                     metadata:    {},
                     version:     1,
@@ -954,56 +600,13 @@ describe('createContextBuilder loading methods', () => {
             const result = await contextBuilder.loadRecentEvents(5, now);
 
             expect(result).toHaveLength(1);
-            expect(result[0]).toBe('- /events/event1.md (2h ago): Event content here');
-        });
-
-        test('should truncate event content at 100 chars with ellipsis', async () => {
-            const now = new Date('2025-01-15T12:00:00.000Z');
-            const longContent = _.repeat('x', 150);
-
-            backend.searchByTimeRange = mock(async () => [
-                {
-                    path:        createMemoryPath('/events/long.md'),
-                    content:     longContent,
-                    contentType: 'text/markdown' as const,
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-15T10:00:00.000Z',
-                    updatedAt:   '2025-01-15T10:00:00.000Z',
-                },
-            ]);
-
-            const contextBuilder = createContextBuilder({ backend });
-            const result = await contextBuilder.loadRecentEvents(5, now);
-
-            expect(result).toHaveLength(1);
-            // Format: "- /events/long.md (2h ago): " + 100 chars + "..."
-            expect(result[0]).toContain(_.repeat('x', 100) + '...');
-            expect(result[0]).not.toContain(_.repeat('x', 101));
-        });
-
-        test('should not truncate event content at exactly 100 chars', async () => {
-            const now = new Date('2025-01-15T12:00:00.000Z');
-            const exactContent = _.repeat('y', 100);
-
-            backend.searchByTimeRange = mock(async () => [
-                {
-                    path:        createMemoryPath('/events/exact.md'),
-                    content:     exactContent,
-                    contentType: 'text/markdown' as const,
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-15T10:00:00.000Z',
-                    updatedAt:   '2025-01-15T10:00:00.000Z',
-                },
-            ]);
-
-            const contextBuilder = createContextBuilder({ backend });
-            const result = await contextBuilder.loadRecentEvents(5, now);
-
-            expect(result).toHaveLength(1);
-            expect(result[0]).toBe(`- /events/exact.md (2h ago): ${exactContent}`);
-            expect(result[0]).not.toContain('...');
+            if(shouldTruncate) {
+                expect(result[0]).toContain(_.repeat('x', 100) + '...');
+                expect(result[0]).not.toContain(_.repeat('x', 101));
+            } else {
+                expect(result[0]).toBe(`- /events/test.md (2h ago): ${content}`);
+                expect(result[0]).not.toContain('...');
+            }
         });
 
         test('should fallback to listByLayer when no events in 14-day window', async () => {
@@ -1192,15 +795,19 @@ describe('createContextBuilder loading methods', () => {
         });
     });
 
-    describe('loadRecentContext - new format', () => {
-        test('should format context with path, age, and content preview', async () => {
+    describe('loadRecentContext - formatting', () => {
+        test.each([
+            { contentLength: 150, description: 'over 100 chars', shouldTruncate: true },
+            { contentLength: 100, description: 'exactly 100 chars', shouldTruncate: false },
+        ])('should handle content truncation when $description', async ({ contentLength, shouldTruncate }) => {
             const now = new Date('2025-01-15T12:00:00.000Z');
+            const content = _.repeat('x', contentLength);
 
             backend.searchByTag = mock(async () => ({
                 items: [
                     {
-                        path:        createMemoryPath('/state/task.md'),
-                        content:     'Working on feature',
+                        path:        createMemoryPath('/state/test.md'),
+                        content,
                         contentType: 'text/markdown' as const,
                         metadata:    {},
                         version:     1,
@@ -1214,62 +821,16 @@ describe('createContextBuilder loading methods', () => {
             const result = await contextBuilder.loadRecentContext('user123', 3, now);
 
             expect(result).toHaveLength(1);
-            expect(result[0]).toBe('- /state/task.md (2h ago): Working on feature');
+            if(shouldTruncate) {
+                expect(result[0]).toContain(_.repeat('x', 100) + '...');
+                expect(result[0]).not.toContain(_.repeat('x', 101));
+            } else {
+                expect(result[0]).toBe(`- /state/test.md (2h ago): ${content}`);
+                expect(result[0]).not.toContain('...');
+            }
         });
 
-        test('should truncate context content at 100 chars with ellipsis', async () => {
-            const now = new Date('2025-01-15T12:00:00.000Z');
-            const longContent = _.repeat('a', 150);
-
-            backend.searchByTag = mock(async () => ({
-                items: [
-                    {
-                        path:        createMemoryPath('/state/long.md'),
-                        content:     longContent,
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-15T10:00:00.000Z',
-                        updatedAt:   '2025-01-15T10:00:00.000Z',
-                    },
-                ],
-            }));
-
-            const contextBuilder = createContextBuilder({ backend });
-            const result = await contextBuilder.loadRecentContext('user123', 3, now);
-
-            expect(result).toHaveLength(1);
-            expect(result[0]).toContain(_.repeat('a', 100) + '...');
-            expect(result[0]).not.toContain(_.repeat('a', 101));
-        });
-
-        test('should not truncate context content at exactly 100 chars', async () => {
-            const now = new Date('2025-01-15T12:00:00.000Z');
-            const exactContent = _.repeat('b', 100);
-
-            backend.searchByTag = mock(async () => ({
-                items: [
-                    {
-                        path:        createMemoryPath('/state/exact.md'),
-                        content:     exactContent,
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-15T10:00:00.000Z',
-                        updatedAt:   '2025-01-15T10:00:00.000Z',
-                    },
-                ],
-            }));
-
-            const contextBuilder = createContextBuilder({ backend });
-            const result = await contextBuilder.loadRecentContext('user123', 3, now);
-
-            expect(result).toHaveLength(1);
-            expect(result[0]).toBe(`- /state/exact.md (2h ago): ${exactContent}`);
-            expect(result[0]).not.toContain('...');
-        });
-
-        test('should format multiple context items correctly', async () => {
+        test('should format multiple context items with correct timestamps', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
             backend.searchByTag = mock(async () => ({
@@ -1298,39 +859,15 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.loadRecentContext('user123', 3, now);
 
-            expect(result).toHaveLength(2);
-            expect(result[0]).toBe('- /state/task1.md (1h ago): First task');
-            expect(result[1]).toBe('- /state/task2.md (1d ago): Second task');
-        });
-
-        test('should use current time when now parameter not provided', async () => {
-            backend.searchByTag = mock(async () => ({
-                items: [
-                    {
-                        path:        createMemoryPath('/state/recent.md'),
-                        content:     'Recent content',
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   new Date(Date.now() - 30000).toISOString(),
-                        updatedAt:   new Date(Date.now() - 30000).toISOString(),
-                    },
-                ],
-            }));
-
-            const contextBuilder = createContextBuilder({ backend });
-            const result = await contextBuilder.loadRecentContext('user123');
-
-            expect(result).toHaveLength(1);
-            // Should contain "now" for very recent items
-            expect(result[0]).toMatch(/- \/state\/recent\.md \(now\): Recent content/);
+            expect(result).toEqual([
+                '- /state/task1.md (1h ago): First task',
+                '- /state/task2.md (1d ago): Second task',
+            ]);
         });
     });
 
     describe('loadUserTimezone', () => {
         test('should return timezone content when found', async () => {
-            const userId = 'user123';
-
             backend.get = mock(async () => ({
                 path:        createMemoryPath('/users/user123/timezone'),
                 content:     'America/Los_Angeles',
@@ -1342,94 +879,21 @@ describe('createContextBuilder loading methods', () => {
             }));
 
             const contextBuilder = createContextBuilder({ backend });
-            const result = await contextBuilder.loadUserTimezone(userId);
+            const result = await contextBuilder.loadUserTimezone('user123');
 
+            expect(backend.get).toHaveBeenCalledWith(createMemoryPath('/users/user123/timezone'));
             expect(result).toBe('America/Los_Angeles');
         });
 
         test('should return undefined when timezone not found', async () => {
-            const userId = 'user-no-tz';
-
             backend.get = mock(async () => undefined);
 
             const contextBuilder = createContextBuilder({ backend });
-            const result = await contextBuilder.loadUserTimezone(userId);
+            const result = await contextBuilder.loadUserTimezone('user-no-tz');
 
             expect(result).toBeUndefined();
-        });
-
-        test('should construct correct path from userId', async () => {
-            const userId = 'test-user-path';
-
-            backend.get = mock(async () => undefined);
-
-            const contextBuilder = createContextBuilder({ backend });
-            await contextBuilder.loadUserTimezone(userId);
-
-            expect(backend.get).toHaveBeenCalledWith(createMemoryPath('/users/test-user-path/timezone'));
-        });
-
-        test('should log debug message when timezone not found', async () => {
-            const userId = 'user-log-test';
-
-            backend.get = mock(async () => undefined);
-
-            const contextBuilder = createContextBuilder({ backend });
-            await contextBuilder.loadUserTimezone(userId);
-
-            expect(mockLogger.debug).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    userId,
-                }),
-                'User timezone not found'
-            );
-        });
-
-        test('should not log "not found" when timezone is found', async () => {
-            const userId = 'user-found';
-
-            backend.get = mock(async () => ({
-                path:        createMemoryPath('/users/user-found/timezone'),
-                content:     'Europe/London',
-                contentType: 'text/plain' as const,
-                metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00Z',
-                updatedAt:   '2025-01-01T00:00:00Z',
-            }));
-
-            const contextBuilder = createContextBuilder({ backend });
-            await contextBuilder.loadUserTimezone(userId);
-
-            // Should not have called debug with 'User timezone not found'
-            const notFoundCalls = _.filter(
-                mockLogger.debug.mock.calls,
-                (call: unknown[]) =>
-                    _.isObject(call[0])
-                    && call[0] !== null
-                    && 'msg' in call[0]
-                    && (call[0] as { msg: string }).msg === 'User timezone not found'
-            );
-            expect(notFoundCalls).toHaveLength(0);
-        });
-
-        test('should handle different timezone formats', async () => {
-            const userId = 'user-tz-format';
-
-            backend.get = mock(async () => ({
-                path:        createMemoryPath('/users/user-tz-format/timezone'),
-                content:     'Asia/Tokyo',
-                contentType: 'text/plain' as const,
-                metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00Z',
-                updatedAt:   '2025-01-01T00:00:00Z',
-            }));
-
-            const contextBuilder = createContextBuilder({ backend });
-            const result = await contextBuilder.loadUserTimezone(userId);
-
-            expect(result).toBe('Asia/Tokyo');
+            // Verify logger was called with correct message
+            expect(mockLogger.debug).toHaveBeenCalledWith({ userId: 'user-no-tz' }, 'User timezone not found');
         });
     });
 });

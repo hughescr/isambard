@@ -15,33 +15,14 @@ describe('Memory Tool Content Errors', () => {
         const testPath = '/memories/search/location';
         const testText = 'search query';
 
-        test('should be an instance of TextNotFoundError', () => {
+        test('should have correct error properties', () => {
             const error = new TextNotFoundError(testPath, testText);
+
             expect(error).toBeInstanceOf(TextNotFoundError);
-        });
-
-        test('should have correct name', () => {
-            const error = new TextNotFoundError(testPath, testText);
             expect(error.name).toBe('TextNotFoundError');
-        });
-
-        test('should have correct message format', () => {
-            const error = new TextNotFoundError(testPath, testText);
-            expect(error.message).toBe(`Text "${testText}" not found in memory at ${testPath}`);
-        });
-
-        test('should have correct code', () => {
-            const error = new TextNotFoundError(testPath, testText);
             expect(error.code).toBe('TEXT_NOT_FOUND');
-        });
-
-        test('should store path property', () => {
-            const error = new TextNotFoundError(testPath, testText);
+            expect(error.message).toBe(`Text "${testText}" not found in memory at ${testPath}`);
             expect(error.path).toBe(testPath);
-        });
-
-        test('should store text property', () => {
-            const error = new TextNotFoundError(testPath, testText);
             expect(error.text).toBe(testText);
         });
     });
@@ -50,54 +31,27 @@ describe('Memory Tool Content Errors', () => {
         const testPath = '/memories/large/content';
         const testSize = 400000;
 
-        test('should be an instance of ContentTooLargeError', () => {
+        test('should have correct error properties with default max size', () => {
             const error = new ContentTooLargeError(testPath, testSize);
+
             expect(error).toBeInstanceOf(ContentTooLargeError);
-        });
-
-        test('should have correct name', () => {
-            const error = new ContentTooLargeError(testPath, testSize);
             expect(error.name).toBe('ContentTooLargeError');
-        });
-
-        test('should have correct message format with default max size', () => {
-            const error = new ContentTooLargeError(testPath, testSize);
+            expect(error.code).toBe('CONTENT_TOO_LARGE');
             expect(error.message).toBe(
                 `Memory content at ${testPath} is too large: ${testSize} bytes (max: 350000 bytes)`
             );
-        });
-
-        test('should have correct message format with custom max size', () => {
-            const customMax = 300000;
-            const error = new ContentTooLargeError(testPath, testSize, customMax);
-            expect(error.message).toBe(
-                `Memory content at ${testPath} is too large: ${testSize} bytes (max: ${customMax} bytes)`
-            );
-        });
-
-        test('should have correct code', () => {
-            const error = new ContentTooLargeError(testPath, testSize);
-            expect(error.code).toBe('CONTENT_TOO_LARGE');
-        });
-
-        test('should store path property', () => {
-            const error = new ContentTooLargeError(testPath, testSize);
             expect(error.path).toBe(testPath);
-        });
-
-        test('should store size property', () => {
-            const error = new ContentTooLargeError(testPath, testSize);
             expect(error.size).toBe(testSize);
-        });
-
-        test('should store maxSize property with default value', () => {
-            const error = new ContentTooLargeError(testPath, testSize);
             expect(error.maxSize).toBe(350000);
         });
 
-        test('should store maxSize property with custom value', () => {
+        test('should handle custom max size', () => {
             const customMax = 300000;
             const error = new ContentTooLargeError(testPath, testSize, customMax);
+
+            expect(error.message).toBe(
+                `Memory content at ${testPath} is too large: ${testSize} bytes (max: ${customMax} bytes)`
+            );
             expect(error.maxSize).toBe(customMax);
         });
     });
@@ -105,125 +59,51 @@ describe('Memory Tool Content Errors', () => {
     describe.concurrent('TextNotUniqueError', () => {
         const testPath = '/memories/search/location';
         const testText = 'duplicate text';
-        const testCount = 3;
 
-        test('should be an instance of TextNotUniqueError', () => {
-            const error = new TextNotUniqueError(testPath, testText, testCount);
+        test.each([
+            { count: 2, description: 'count=2' },
+            { count: 5, description: 'count=5' },
+            { count: 10, description: 'count=10' },
+            { count: 100, description: 'count=100' }
+        ])('should have correct error properties with $description', ({ count }) => {
+            const error = new TextNotUniqueError(testPath, testText, count);
+
             expect(error).toBeInstanceOf(TextNotUniqueError);
-        });
-
-        test('should have correct name', () => {
-            const error = new TextNotUniqueError(testPath, testText, testCount);
             expect(error.name).toBe('TextNotUniqueError');
-        });
-
-        test('should have correct message format', () => {
-            const error = new TextNotUniqueError(testPath, testText, testCount);
-            expect(error.message).toBe(
-                `Text "${testText}" appears ${testCount} times in memory at ${testPath}, expected exactly once`
-            );
-        });
-
-        test('should have correct code', () => {
-            const error = new TextNotUniqueError(testPath, testText, testCount);
             expect(error.code).toBe('TEXT_NOT_UNIQUE');
-        });
-
-        test('should store path property', () => {
-            const error = new TextNotUniqueError(testPath, testText, testCount);
+            expect(error.message).toBe(
+                `Text "${testText}" appears ${count} times in memory at ${testPath}, expected exactly once`
+            );
             expect(error.path).toBe(testPath);
-        });
-
-        test('should store text property', () => {
-            const error = new TextNotUniqueError(testPath, testText, testCount);
             expect(error.text).toBe(testText);
-        });
-
-        test('should store count property', () => {
-            const error = new TextNotUniqueError(testPath, testText, testCount);
-            expect(error.count).toBe(testCount);
-        });
-
-        test('should handle different count values', () => {
-            const counts = [2, 5, 10, 100];
-
-            for(const count of counts) {
-                const error = new TextNotUniqueError(testPath, testText, count);
-                expect(error.count).toBe(count);
-                expect(error.message).toContain(`appears ${count} times`);
-            }
+            expect(error.count).toBe(count);
         });
     });
 
     describe.concurrent('InvalidLineNumberError', () => {
         const testPath = '/memories/line/location';
-        const testLineNumber = 150;
-        const testTotalLines = 100;
 
-        test('should be an instance of InvalidLineNumberError', () => {
-            const error = new InvalidLineNumberError(testPath, testLineNumber, testTotalLines);
+        test.each([
+            { lineNumber: 0, totalLines: 100, description: 'line number 0' },
+            { lineNumber: -5, totalLines: 100, description: 'negative line number' },
+            { lineNumber: 150, totalLines: 100, description: 'line exceeding total' },
+            { lineNumber: 999999, totalLines: 100, description: 'large line number' },
+            { lineNumber: 150, totalLines: 0, description: 'totalLines=0' },
+            { lineNumber: 150, totalLines: 1, description: 'totalLines=1' },
+            { lineNumber: 150, totalLines: 50, description: 'totalLines=50' },
+            { lineNumber: 150, totalLines: 1000, description: 'totalLines=1000' }
+        ])('should have correct error properties with $description', ({ lineNumber, totalLines }) => {
+            const error = new InvalidLineNumberError(testPath, lineNumber, totalLines);
+
             expect(error).toBeInstanceOf(InvalidLineNumberError);
-        });
-
-        test('should have correct name', () => {
-            const error = new InvalidLineNumberError(testPath, testLineNumber, testTotalLines);
             expect(error.name).toBe('InvalidLineNumberError');
-        });
-
-        test('should have correct message format', () => {
-            const error = new InvalidLineNumberError(testPath, testLineNumber, testTotalLines);
-            expect(error.message).toBe(
-                `Invalid line number ${testLineNumber} in memory at ${testPath} (total lines: ${testTotalLines})`
-            );
-        });
-
-        test('should have correct code', () => {
-            const error = new InvalidLineNumberError(testPath, testLineNumber, testTotalLines);
             expect(error.code).toBe('INVALID_LINE_NUMBER');
-        });
-
-        test('should store path property', () => {
-            const error = new InvalidLineNumberError(testPath, testLineNumber, testTotalLines);
+            expect(error.message).toBe(
+                `Invalid line number ${lineNumber} in memory at ${testPath} (total lines: ${totalLines})`
+            );
             expect(error.path).toBe(testPath);
-        });
-
-        test('should store lineNumber property', () => {
-            const error = new InvalidLineNumberError(testPath, testLineNumber, testTotalLines);
-            expect(error.lineNumber).toBe(testLineNumber);
-        });
-
-        test('should store totalLines property', () => {
-            const error = new InvalidLineNumberError(testPath, testLineNumber, testTotalLines);
-            expect(error.totalLines).toBe(testTotalLines);
-        });
-
-        test('should handle edge case: line number 0', () => {
-            const error = new InvalidLineNumberError(testPath, 0, testTotalLines);
-            expect(error.lineNumber).toBe(0);
-            expect(error.message).toContain('Invalid line number 0');
-        });
-
-        test('should handle edge case: negative line number', () => {
-            const error = new InvalidLineNumberError(testPath, -5, testTotalLines);
-            expect(error.lineNumber).toBe(-5);
-            expect(error.message).toContain('Invalid line number -5');
-        });
-
-        test('should handle edge case: large line numbers', () => {
-            const largeLineNumber = 999999;
-            const error = new InvalidLineNumberError(testPath, largeLineNumber, testTotalLines);
-            expect(error.lineNumber).toBe(largeLineNumber);
-            expect(error.message).toContain(`Invalid line number ${largeLineNumber}`);
-        });
-
-        test('should handle various totalLines values', () => {
-            const totalLinesCases = [0, 1, 50, 1000];
-
-            for(const total of totalLinesCases) {
-                const error = new InvalidLineNumberError(testPath, testLineNumber, total);
-                expect(error.totalLines).toBe(total);
-                expect(error.message).toContain(`total lines: ${total}`);
-            }
+            expect(error.lineNumber).toBe(lineNumber);
+            expect(error.totalLines).toBe(totalLines);
         });
     });
 

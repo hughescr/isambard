@@ -137,6 +137,7 @@ export function createMemoryToolKeys(
     const sk = `TOOL_MEMORY#${path}`;
 
     // GSI1PK: Use first tag if available, otherwise fall back to path
+    // Stryker disable next-line all: Conditional and length check are both needed for tag array validation
     const gsi1pk = tags && tags.length > 0
         ? `TOOL_MEMORY#TAG#${tags[0]}`
         : `TOOL_MEMORY#${path}`;

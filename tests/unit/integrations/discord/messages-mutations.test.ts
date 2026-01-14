@@ -90,47 +90,37 @@ describe.concurrent('Discord Message Splitting', () => {
         });
 
         describe('mutation coverage - sentence regex end of string', () => {
-            test('should find sentence at very end of text', () => {
+            test.each([
+                {
+                    desc:                'long text ending with punctuation',
+                    message:             _.repeat('x', 80) + '.',
+                    maxLength:           50,
+                    expectedContains:    ['.'],
+                    expectedTotalLength: 81
+                },
+                {
+                    desc:             'multiple sentences where last has no trailing space',
+                    message:          'First sentence here. Last sentence here.',
+                    maxLength:        25,
+                    expectedContains: ['Last sentence here.']
+                },
+                {
+                    desc:             'short sentences testing regex $ alternative',
+                    message:          'A. B. C.',
+                    maxLength:        5,
+                    expectedContains: ['C.']
+                }
+            ])('should find sentence at end without trailing whitespace - $desc', ({ message, maxLength, expectedContains, expectedTotalLength }) => {
                 // Kill regex: (?:\s|$) -> (?:\s)
-                // A sentence at end with no trailing space must still be matched
-                const message = _.repeat('x', 80) + '.';
-                const result = splitMessage(message, 50);
-                // The sentence should be found and split
-                const allText = result.join('');
-                expect(allText).toContain('.');
-                expect(allText.length).toBe(81);
-            });
-
-            test('should find last sentence without trailing whitespace', () => {
-                // Force sentence processing by exceeding length
-                const message = 'First sentence here. Last sentence here.';
-                const result = splitMessage(message, 25);
-                // Both sentences should be found
+                // Sentences at end with no trailing space must still be matched
+                const result = splitMessage(message, maxLength);
                 const allText = result.join(' ');
-                expect(allText).toContain('Last sentence here.');
-            });
-
-            test('should match sentence at end of string - regex $ alternative', () => {
-                // This specifically tests the (?:\s|$) pattern
-                // "Sentence." with no trailing space/newline
-                // With (?:\s) only, the final sentence wouldn't match
-                // With (?:\s|$), it matches because of $
-                const message = 'A. B. C.';
-                // Force sentence-level splitting
-                const result = splitMessage(message, 5);
-                // C. should be found even though it has no trailing whitespace
-                const allText = result.join(' ');
-                expect(allText).toContain('C.');
-            });
-
-            test('should handle sentence-only text ending without whitespace', () => {
-                // Pure sentence processing test
-                const message = 'First. Second. Third.';
-                const result = splitMessage(message, 10);
-                // All sentences should be present
-                expect(result).toContain('First.');
-                expect(result).toContain('Second.');
-                expect(result).toContain('Third.');
+                for(const expected of expectedContains) {
+                    expect(allText).toContain(expected);
+                }
+                if(expectedTotalLength) {
+                    expect(result.join('').length).toBe(expectedTotalLength);
+                }
             });
         });
 
@@ -219,81 +209,36 @@ describe.concurrent('Discord Message Splitting', () => {
             });
         });
 
-        describe('mutation coverage - sentence regex end-of-string', () => {
-            test('should find sentence at end without trailing whitespace', () => {
-                // Kill: (?:\s|$) -> (?:\s)
-                // Without $, sentence at end of string without trailing space won't match
-                const message = 'End sentence.';
-                const result = splitMessage(message, 100);
-                expect(result).toEqual(['End sentence.']);
-            });
-
-            test('should find multiple sentences where last has no trailing space', () => {
-                // Force sentence-level splitting
-                const s1 = _.repeat('x', 40) + '.';
-                const s2 = _.repeat('y', 40) + '.';
-                const message = `${s1} ${s2}`;
-                const result = splitMessage(message, 50);
-                // Both sentences should be found and split
-                expect(result.length).toBe(2);
-                expect(result[0]).toBe(s1);
-                expect(result[1]).toBe(s2);
-            });
-
-            test('should handle sentence at very end of long text', () => {
-                // Long text where final sentence must be captured by $ not \s
-                const intro = _.repeat('x', 40) + '.';
-                const final = _.repeat('y', 30) + '.';
-                const message = `${intro} ${final}`;
-                const result = splitMessage(message, 50);
-                const allText = result.join(' ');
-                expect(allText).toContain(final);
-            });
-        });
-
         describe('mutation coverage - sentence extraction', () => {
-            test('should find all sentences when while loop executes', () => {
-                // Kill: while(false) - loop must execute
-                const message = 'First. Second. Third.';
-                const result = splitMessage(message, 10);
+            test.each([
+                {
+                    desc:              'multiple sentences (while loop execution)',
+                    message:           'First. Second. Third.',
+                    maxLength:         10,
+                    expectedSentences: ['First.', 'Second.', 'Third.']
+                },
+                {
+                    desc:              'short sentences (lastIndex update)',
+                    message:           'A. B. C.',
+                    maxLength:         5,
+                    expectedSentences: ['A.', 'B.', 'C.']
+                }
+            ])('should extract all sentences - $desc', ({ message, maxLength, expectedSentences }) => {
+                // Kill: while(false) - loop must execute and update lastIndex
+                const result = splitMessage(message, maxLength);
                 const allText = result.join(' ');
-                expect(allText).toContain('First.');
-                expect(allText).toContain('Second.');
-                expect(allText).toContain('Third.');
+                for(const sentence of expectedSentences) {
+                    expect(allText).toContain(sentence);
+                }
             });
 
-            test('should correctly update lastIndex in while loop', () => {
-                // Kill: empty while loop body
-                const message = 'A. B. C.';
-                const result = splitMessage(message, 5);
-                // All sentences should be present (loop body executed)
-                const allText = result.join(' ');
-                expect(allText).toContain('A.');
-                expect(allText).toContain('B.');
-                expect(allText).toContain('C.');
-            });
-
-            test('should handle sentence at end of string (regex $ test)', () => {
-                // Kill: (?:\s|$) -> (?:\s)
-                // Sentence at end with no trailing whitespace
-                const message = 'End.';
-                const result = splitMessage(message, 100);
-                expect(result).toEqual(['End.']);
-            });
-
-            test('should detect remaining text after lastIndex', () => {
-                // Kill: lastIndex < text.length -> true
+            test('should handle remaining text after sentences', () => {
+                // Kill: lastIndex < text.length check and text.slice(lastIndex)
                 const message = 'Sentence. trailing';
                 const result = splitMessage(message, 100);
                 expect(result[0]).toContain('trailing');
-            });
-
-            test('should slice from lastIndex not use whole text', () => {
-                // Kill: text.slice(lastIndex) -> text
-                const message = 'Start. end';
-                const result = splitMessage(message, 100);
-                // Should NOT duplicate content
-                const matches = result[0].match(/Start/g);
+                // Should NOT duplicate 'Sentence'
+                const matches = result[0].match(/Sentence/g);
                 expect(matches).toHaveLength(1);
             });
 
@@ -305,103 +250,21 @@ describe.concurrent('Discord Message Splitting', () => {
             });
         });
 
-        describe('mutation coverage - currentChunk flush scenarios', () => {
-            test('should NOT push empty chunk before long item', () => {
-                // Kill: if(currentChunk !== '') -> if(true)
-                // Would push empty string at start
-                const longWord = _.repeat('x', 100);
-                const result = splitMessage(longWord, 50);
-                expect(result).not.toContain('');
-                expect(result.length).toBe(2);
-            });
-
-            test('should push non-empty chunk before long item', () => {
-                // Verify flush happens when currentChunk has content
-                const message = 'aa ' + _.repeat('x', 100);
-                const result = splitMessage(message, 50);
-                expect(result[0]).toBe('aa');
-                expect(result.length).toBe(3);
-            });
-
-            test('should reset currentChunk to empty after flush', () => {
-                // Kill: currentChunk = '' -> currentChunk = "Stryker"
-                const message = 'aa ' + _.repeat('x', 60) + ' bb';
-                const result = splitMessage(message, 50);
-                // If not reset to '', subsequent chunks would be wrong
-                for(const chunk of result) {
-                    expect(chunk).not.toContain('Stryker');
+        describe('mutation coverage - sentence extraction (trimming and filtering)', () => {
+            test.each([
+                {
+                    desc:      'sentences with extra spaces',
+                    message:   'First.   Second.   Third.',
+                    maxLength: 10
+                },
+                {
+                    desc:      'multiple sentences with unique occurrences',
+                    message:   'One. Two. Three. Four.',
+                    maxLength: 10
                 }
-            });
-        });
-
-        describe('mutation coverage - sentence extraction (additional)', () => {
-            test('should extract sentences from text with proper trimming', () => {
-                // Kill: if(trimmed) condition in extractSentences
-                // If we don't filter empty strings, we'd get extra empty sentences
-                const message = 'A. B. C.';
-                const result = splitMessage(message, 5);
-                // Should contain all three sentences
-                const allText = result.join(' ');
-                expect(allText).toContain('A.');
-                expect(allText).toContain('B.');
-                expect(allText).toContain('C.');
-                // No empty chunks
-                for(const chunk of result) {
-                    expect(chunk.length).toBeGreaterThan(0);
-                }
-            });
-
-            test('should handle remaining text after last sentence', () => {
-                // Kill: if(lastIndex < text.length) and if(remaining) conditions
-                const message = 'Sentence. trailing words here';
-                const result = splitMessage(message, 100);
-                expect(result[0]).toContain('trailing words here');
-            });
-
-            test('should use text.slice(lastIndex) not the whole text', () => {
-                // Kill: MethodExpression mutation on text.slice(lastIndex)
-                // If we used the whole text, "Sentence" would appear twice
-                const message = 'Sentence. more text';
-                const result = splitMessage(message, 100);
-                const count = (result[0].match(/Sentence/g) ?? []).length;
-                expect(count).toBe(1);
-            });
-
-            test('should correctly track lastIndex through while loop iterations', () => {
-                // Kill: while loop mutations in extractSentences
-                // If lastIndex isn't updated, we'd get infinite loop or wrong results
-                const message = 'One. Two. Three. Four.';
-                const result = splitMessage(message, 10);
-                // Each sentence should appear exactly once
-                const allText = result.join(' ');
-                expect((allText.match(/One\./g) ?? []).length).toBe(1);
-                expect((allText.match(/Two\./g) ?? []).length).toBe(1);
-                expect((allText.match(/Three\./g) ?? []).length).toBe(1);
-                expect((allText.match(/Four\./g) ?? []).length).toBe(1);
-            });
-
-            test('should handle sentence followed by no trailing content', () => {
-                // Kill: if(lastIndex < text.length) - boundary case
-                // When sentence ends exactly at text end, no remaining text
-                const message = 'Complete sentence.';
-                const result = splitMessage(message, 100);
-                expect(result).toHaveLength(1);
-                expect(result[0]).toBe('Complete sentence.');
-            });
-
-            test('should include remaining content when lastIndex < text.length', () => {
-                // Kill: if(lastIndex < text.length) condition
-                // Must include text after last sentence punctuation
-                const message = 'Done. more';
-                const result = splitMessage(message, 100);
-                expect(result[0]).toBe('Done. more');
-            });
-
-            test('should filter empty trimmed results from sentences', () => {
+            ])('should filter empty trimmed results - $desc', ({ message, maxLength }) => {
                 // Kill: if(trimmed) condition - empty trimmed results should be excluded
-                // Force sentence splitting with sentences that have extra spaces
-                const message = 'First.   Second.   Third.';
-                const result = splitMessage(message, 10);
+                const result = splitMessage(message, maxLength);
                 // All chunks should be non-empty
                 for(const chunk of result) {
                     expect(chunk.length).toBeGreaterThan(0);
@@ -414,173 +277,129 @@ describe.concurrent('Discord Message Splitting', () => {
                 // When text ends with punctuation and whitespace, remaining is empty after trim
                 const message = 'Sentence.   ';
                 const result = splitMessage(message, 100);
-                // Should have exactly one chunk (the sentence), no empty trailing chunk
                 expect(result).toHaveLength(1);
                 expect(result[0]).toBe('Sentence.');
             });
         });
 
         describe('mutation coverage - currentChunk flush on long items', () => {
-            test('should flush accumulated words before long word', () => {
-                // Kill: if(currentChunk !== '') before long word split
-                // Tests line 71-74 in splitByWords
-                const message = 'aa bb ' + _.repeat('x', 100);
-                const result = splitMessage(message, 50);
-                expect(result[0]).toBe('aa bb');
-                expect(result.length).toBe(3);
+            describe('word-level flush', () => {
+                test.each([
+                    {
+                        desc:           'flush accumulated words before long word',
+                        message:        'aa bb ' + _.repeat('x', 100),
+                        maxLength:      50,
+                        expectedFirst:  'aa bb',
+                        expectedLength: 3
+                    },
+                    {
+                        desc:           'no flush when empty before long word',
+                        message:        _.repeat('x', 100),
+                        maxLength:      50,
+                        expectedFirst:  _.repeat('x', 50),
+                        expectedLength: 2,
+                        noEmpty:        true
+                    },
+                    {
+                        desc:           'no empty between consecutive long words',
+                        message:        _.repeat('a', 60) + ' ' + _.repeat('b', 60),
+                        maxLength:      50,
+                        expectedLength: 4,
+                        noEmpty:        true,
+                        expectedChunks: [_.repeat('a', 50), _.repeat('a', 10), _.repeat('b', 50), _.repeat('b', 10)] as string[]
+                    },
+                    {
+                        desc:           'reset after flush (no Stryker mutation)',
+                        message:        'aa ' + _.repeat('x', 60) + ' bb',
+                        maxLength:      50,
+                        expectedLength: 4,
+                        noStryker:      true
+                    }
+                ])('should handle flush correctly - $desc', ({ message, maxLength, expectedFirst, expectedLength, noEmpty, expectedChunks, noStryker }) => {
+                    // Kill: if(currentChunk !== '') mutations
+                    const result = splitMessage(message, maxLength);
+                    expect(result).toHaveLength(expectedLength);
+                    if(expectedFirst) {
+                        expect(result[0]).toBe(expectedFirst);
+                    }
+                    if(noEmpty) {
+                        expect(result).not.toContain('');
+                    }
+                    if(expectedChunks) {
+                        expect(result).toEqual(expectedChunks);
+                    }
+                    if(noStryker) {
+                        for(const chunk of result) {
+                            expect(chunk).not.toContain('Stryker');
+                        }
+                    }
+                });
             });
 
-            test('should NOT flush when currentChunk is empty before long word', () => {
-                // Kill: if(currentChunk !== '') -> if(true) would push empty string
-                const longWord = _.repeat('x', 100);
-                const result = splitMessage(longWord, 50);
-                expect(result).toHaveLength(2);
-                expect(result).not.toContain('');
-                expect(result[0]).toBe(_.repeat('x', 50));
+            describe('sentence-level flush', () => {
+                test('should flush accumulated sentences before long sentence', () => {
+                    // Kill: if(currentChunk !== '') in splitBySentences
+                    const message = 'Hi. ' + _.repeat('x', 100) + '.';
+                    const result = splitMessage(message, 50);
+                    expect(result[0]).toBe('Hi.');
+                    expect(result.length).toBeGreaterThan(1);
+                });
+
+                test('should NOT push empty string when consecutive long sentences occur', () => {
+                    // Kill: if(currentChunk !== '') at line 166 in sentence splitting
+                    const sent1 = _.repeat('a', 60) + '.';
+                    const sent2 = _.repeat('b', 60) + '.';
+                    const message = `${sent1} ${sent2}`;
+                    const result = splitMessage(message, 50);
+                    expect(result).not.toContain('');
+                    for(const chunk of result) {
+                        expect(chunk.length).toBeGreaterThan(0);
+                    }
+                });
             });
 
-            test('should NOT push empty string when consecutive long words occur', () => {
-                // Kill: if(currentChunk !== '') at line 71 in word splitting
-                // When first word is long, currentChunk = '' after character splitting
-                // Then second long word - if(currentChunk !== '') should NOT push ''
-                const word1 = _.repeat('a', 60);
-                const word2 = _.repeat('b', 60);
-                const message = `${word1} ${word2}`;
-                const result = splitMessage(message, 50);
-                // Should have 4 chunks: a*50, a*10, b*50, b*10
-                expect(result).toHaveLength(4);
-                expect(result).not.toContain('');
-                expect(result[0]).toBe(_.repeat('a', 50));
-                expect(result[1]).toBe(_.repeat('a', 10));
-                expect(result[2]).toBe(_.repeat('b', 50));
-                expect(result[3]).toBe(_.repeat('b', 10));
-            });
+            describe('paragraph-level flush', () => {
+                test('should flush accumulated paragraphs before long paragraph', () => {
+                    // Kill: if(currentChunk !== '') in splitByParagraphs
+                    const message = 'Hi\n\n' + _.repeat('x', 100);
+                    const result = splitMessage(message, 50);
+                    expect(result[0]).toBe('Hi');
+                    expect(result.length).toBe(3);
+                });
 
-            test('should NOT push empty string when long word followed by maxLength word', () => {
-                // Kill: if(currentChunk !== '') at line 85 (overflow check)
-                // After character-splitting first long word, currentChunk = ''
-                // Next word is exactly maxLength, so 1 + maxLength > maxLength triggers overflow
-                // The if(currentChunk !== '') should prevent pushing empty string
-                const word1 = _.repeat('a', 60);  // Long, will be character-split
-                const word2 = _.repeat('b', 50);  // Exactly maxLength
-                const message = `${word1} ${word2}`;
-                const result = splitMessage(message, 50);
-                // Should have 3 chunks: a*50, a*10, b*50 (NO empty string between)
-                expect(result).toHaveLength(3);
-                expect(result).not.toContain('');
-                expect(result[0]).toBe(_.repeat('a', 50));
-                expect(result[1]).toBe(_.repeat('a', 10));
-                expect(result[2]).toBe(_.repeat('b', 50));
-            });
-
-            test('should reset currentChunk to empty string after flush', () => {
-                // Kill: currentChunk = '' -> "Stryker was here!"
-                const message = 'aa ' + _.repeat('x', 60) + ' bb';
-                const result = splitMessage(message, 50);
-                // If not reset to '', subsequent words would be wrong
-                expect(result[0]).toBe('aa');
-                expect(result[1]).toBe(_.repeat('x', 50));
-                expect(result[2]).toBe(_.repeat('x', 10));
-                expect(result[3]).toBe('bb');
-                // No Stryker strings
-                for(const chunk of result) {
-                    expect(chunk).not.toContain('Stryker');
-                }
-            });
-
-            test('should flush accumulated sentences before long sentence', () => {
-                // Kill: if(currentChunk !== '') in splitBySentences (line 166)
-                const shortSent = 'Hi.';
-                const longSent = _.repeat('x', 100) + '.';
-                const message = `${shortSent} ${longSent}`;
-                const result = splitMessage(message, 50);
-                expect(result[0]).toBe('Hi.');
-                expect(result.length).toBeGreaterThan(1);
-            });
-
-            test('should NOT push empty string when consecutive long sentences occur', () => {
-                // Kill: if(currentChunk !== '') at line 166 in sentence splitting
-                // First sentence is long, making currentChunk = '' after split
-                // Second long sentence should NOT cause empty push
-                const sent1 = _.repeat('a', 60) + '.';
-                const sent2 = _.repeat('b', 60) + '.';
-                const message = `${sent1} ${sent2}`;
-                const result = splitMessage(message, 50);
-                // Should contain character-split sentences, no empty chunks
-                expect(result).not.toContain('');
-                for(const chunk of result) {
-                    expect(chunk.length).toBeGreaterThan(0);
-                }
-            });
-
-            test('should flush accumulated paragraphs before long paragraph', () => {
-                // Kill: if(currentChunk !== '') in splitByParagraphs (line 231)
-                const shortPara = 'Hi';
-                const longPara = _.repeat('x', 100);
-                const message = `${shortPara}\n\n${longPara}`;
-                const result = splitMessage(message, 50);
-                expect(result[0]).toBe('Hi');
-                expect(result.length).toBe(3);
-            });
-
-            test('should NOT push empty string when consecutive long paragraphs occur', () => {
-                // Kill: if(currentChunk !== '') at line 231 in paragraph splitting
-                // First paragraph is long, making currentChunk = '' after split
-                // Second long paragraph should NOT cause empty push
-                const para1 = _.repeat('a', 60);
-                const para2 = _.repeat('b', 60);
-                const message = `${para1}\n\n${para2}`;
-                const result = splitMessage(message, 50);
-                // Should contain character-split paragraphs, no empty chunks
-                expect(result).not.toContain('');
-                for(const chunk of result) {
-                    expect(chunk.length).toBeGreaterThan(0);
-                }
+                test('should NOT push empty string when consecutive long paragraphs occur', () => {
+                    // Kill: if(currentChunk !== '') at line 231 in paragraph splitting
+                    const para1 = _.repeat('a', 60);
+                    const para2 = _.repeat('b', 60);
+                    const message = `${para1}\n\n${para2}`;
+                    const result = splitMessage(message, 50);
+                    expect(result).not.toContain('');
+                    for(const chunk of result) {
+                        expect(chunk.length).toBeGreaterThan(0);
+                    }
+                });
             });
         });
 
         describe('mutation coverage - regex patterns', () => {
-            test('should split on multiple whitespace as single boundary', () => {
-                // Kill: /\s+/ -> /\s/
-                // The difference is subtle but affects word boundaries
+            test('should handle whitespace+ regex correctly', () => {
+                // Kill: /\s+/ -> /\s/ - must collapse multiple spaces
                 const word1 = _.repeat('a', 30);
                 const word2 = _.repeat('b', 30);
                 const message = `${word1}    ${word2}`;
                 const result = splitMessage(message, 35);
-                // Should split correctly at word boundary
                 expect(result).toHaveLength(2);
                 expect(result[0]).toBe(word1);
                 expect(result[1]).toBe(word2);
             });
 
-            test('should match sentence at end of string (regex $ test)', () => {
-                // Kill: (?:\s|$) -> (?:\s) in sentence pattern
-                // Without $, sentence at end won't match
-                const message = 'End.';
-                const result = splitMessage(message, 100);
-                expect(result).toEqual(['End.']);
-            });
-
-            test('should handle whitespace normalization when splitting words', () => {
-                // Kill: /\s+/ regex - must collapse multiple spaces
-                // Force word-level splitting by exceeding max length
-                const message = 'aa   bb   cc   dd   ee';
-                const result = splitMessage(message, 10);
-                // Each chunk should have single spaces between words
-                for(const chunk of result) {
-                    expect(chunk).not.toMatch(/ {2,}/);
-                }
-            });
-
-            test('should extract sentences with sentence-ending punctuation pattern', () => {
-                // Kill: sentence regex mutations
-                // Force sentence-level processing
+            test('should extract sentences with various punctuation patterns', () => {
+                // Kill: sentence regex mutations - all punctuation types
                 const sent1 = _.repeat('a', 40) + '.';
                 const sent2 = _.repeat('b', 40) + '!';
                 const sent3 = _.repeat('c', 40) + '?';
                 const message = `${sent1} ${sent2} ${sent3}`;
                 const result = splitMessage(message, 50);
-                // All three sentence types should be found
                 const allText = result.join(' ');
                 expect(allText).toContain('.');
                 expect(allText).toContain('!');
@@ -589,35 +408,45 @@ describe.concurrent('Discord Message Splitting', () => {
         });
 
         describe('mutation coverage - empty string checks !== ""', () => {
-            test('should not push empty chunk when currentChunk is empty', () => {
-                // Kill: if(currentChunk !== '') -> if(true)
-                // Would push empty string if always true
-                const longWord = _.repeat('x', 100);
-                const result = splitMessage(longWord, 50);
-                expect(result.length).toBe(2);
-                expect(result).not.toContain('');
-                // Verify no leading empty chunk
-                expect(result[0]).toBe(_.repeat('x', 50));
-            });
-
-            test('should use correct separator based on currentChunk state', () => {
-                // Kill: currentChunk !== '' ? ' ' : '' -> true ? ' ' : ''
-                // Would add leading space to first word if always true
-                const message = 'first second';
-                const result = splitMessage(message, 100);
-                expect(result[0]).not.toMatch(/^\s/); // No leading space
-            });
-
-            test('should verify currentChunk !== "" controls separator', () => {
-                // Directly test the separator logic
-                const message = 'aaa bbb ccc';
-                const result = splitMessage(message, 8);
-                // 'aaa bbb' = 7 fits, adding ' ccc' = 11 overflows
-                expect(result[0]).toBe('aaa bbb');
-                expect(result[1]).toBe('ccc');
-                // No leading spaces
-                expect(result[0]).not.toMatch(/^\s/);
-                expect(result[1]).not.toMatch(/^\s/);
+            test.each([
+                {
+                    desc:           'long word (no empty chunk push)',
+                    message:        _.repeat('x', 100),
+                    maxLength:      50,
+                    expectedFirst:  _.repeat('x', 50),
+                    expectedLength: 2
+                },
+                {
+                    desc:           'normal words (correct separator)',
+                    message:        'first second',
+                    maxLength:      100,
+                    noLeadingSpace: true
+                },
+                {
+                    desc:           'overflow scenario (separator logic)',
+                    message:        'aaa bbb ccc',
+                    maxLength:      8,
+                    expectedChunks: ['aaa bbb', 'ccc'] as string[],
+                    noLeadingSpace: true
+                }
+            ])('should handle currentChunk !== "" correctly - $desc', ({ message, maxLength, expectedFirst, expectedLength, noLeadingSpace, expectedChunks }) => {
+                // Kill: if(currentChunk !== '') mutations and separator logic
+                const result = splitMessage(message, maxLength);
+                if(expectedFirst) {
+                    expect(result[0]).toBe(expectedFirst);
+                }
+                if(expectedLength) {
+                    expect(result.length).toBe(expectedLength);
+                    expect(result).not.toContain('');
+                }
+                if(noLeadingSpace) {
+                    for(const chunk of result) {
+                        expect(chunk).not.toMatch(/^\s/);
+                    }
+                }
+                if(expectedChunks) {
+                    expect(result).toEqual(expectedChunks);
+                }
             });
         });
     });

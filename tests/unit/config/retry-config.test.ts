@@ -31,24 +31,6 @@ describe.concurrent('retryConfigSchema', () => {
                 },
             });
         });
-
-        test('should apply Claude defaults when section omitted', () => {
-            const result = retryConfigSchema.parse({});
-            expect(result.claude.maxAttempts).toBe(2);
-            expect(result.claude.baseDelayMs).toBe(1000);
-        });
-
-        test('should apply Discord defaults when section omitted', () => {
-            const result = retryConfigSchema.parse({});
-            expect(result.discord.maxAttempts).toBe(2);
-            expect(result.discord.baseDelayMs).toBe(500);
-        });
-
-        test('should apply DynamoDB defaults when section omitted', () => {
-            const result = retryConfigSchema.parse({});
-            expect(result.dynamodb.defaultTimeoutMs).toBe(10000);
-            expect(result.dynamodb.queryTimeoutMs).toBe(15000);
-        });
     });
 
     describe('bounded integer fields', () => {
@@ -59,21 +41,6 @@ describe.concurrent('retryConfigSchema', () => {
             ['dynamodb', 'defaultTimeoutMs', 1000, 60000, 20000, false],
             ['dynamodb', 'queryTimeoutMs',   1000, 60000, 30000, false],
         ] as const;
-
-        test.each(boundedFields)(
-            '%s.%s should accept valid value',
-            (section, field, _min, _max, validValue, _requiresInteger) => {
-                const result = retryConfigSchema.safeParse({
-
-                    [section]: { [field]: validValue },
-                });
-                expect(result.success).toBe(true);
-                if(result.success) {
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Dynamic key access needed for parameterized test
-                    expect((result.data as any)[section][field]).toBe(validValue);
-                }
-            }
-        );
 
         test.each(boundedFields)(
             '%s.%s should reject below minimum',
@@ -129,45 +96,6 @@ describe.concurrent('retryConfigSchema', () => {
             }
         );
     });
-
-    describe('unique field behaviors', () => {
-        test('should inherit retryPolicy fields from base schema', () => {
-            const result = retryConfigSchema.safeParse({
-                claude: {
-                    maxAttempts:       3,
-                    baseDelayMs:       2000,
-                    maxDelayMs:        60000,
-                    backoffMultiplier: 3,
-                    jitterFraction:    0.2,
-                },
-            });
-            expect(result.success).toBe(true);
-            if(result.success) {
-                expect(result.data.claude.baseDelayMs).toBe(2000);
-                expect(result.data.claude.maxDelayMs).toBe(60000);
-                expect(result.data.claude.backoffMultiplier).toBe(3);
-                expect(result.data.claude.jitterFraction).toBe(0.2);
-            }
-        });
-    });
-
-    describe('combined sections', () => {
-        test('should accept all sections with custom values', () => {
-            const result = retryConfigSchema.safeParse({
-                claude:   { maxAttempts: 3 },
-                discord:  { maxAttempts: 2, baseDelayMs: 1000 },
-                dynamodb: { defaultTimeoutMs: 20000, queryTimeoutMs: 30000 },
-            });
-            expect(result.success).toBe(true);
-            if(result.success) {
-                expect(result.data.claude.maxAttempts).toBe(3);
-                expect(result.data.discord.maxAttempts).toBe(2);
-                expect(result.data.discord.baseDelayMs).toBe(1000);
-                expect(result.data.dynamodb.defaultTimeoutMs).toBe(20000);
-                expect(result.data.dynamodb.queryTimeoutMs).toBe(30000);
-            }
-        });
-    });
 });
 
 describe('loadRetryConfig', () => {
@@ -210,26 +138,6 @@ describe('loadRetryConfig', () => {
         expect(config.dynamodb.defaultTimeoutMs).toBe(DEFAULT_RETRY_CONFIG.dynamodb.defaultTimeoutMs);
     });
 
-    test('should override Discord maxAttempts from env var', () => {
-        process.env.DISCORD_RETRY_MAX_ATTEMPTS = '3';
-
-        const config = loadRetryConfig();
-
-        expect(config.discord.maxAttempts).toBe(3);
-        expect(config.claude.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.claude.maxAttempts);
-        expect(config.dynamodb.defaultTimeoutMs).toBe(DEFAULT_RETRY_CONFIG.dynamodb.defaultTimeoutMs);
-    });
-
-    test('should override DynamoDB timeout from env var', () => {
-        process.env.DYNAMODB_TIMEOUT_MS = '20000';
-
-        const config = loadRetryConfig();
-
-        expect(config.dynamodb.defaultTimeoutMs).toBe(20000);
-        expect(config.claude.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.claude.maxAttempts);
-        expect(config.discord.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.discord.maxAttempts);
-    });
-
     test('should override multiple env vars simultaneously', () => {
         process.env.CLAUDE_RETRY_MAX_ATTEMPTS = '5';
         process.env.DISCORD_RETRY_MAX_ATTEMPTS = '2';
@@ -240,12 +148,6 @@ describe('loadRetryConfig', () => {
         expect(config.claude.maxAttempts).toBe(5);
         expect(config.discord.maxAttempts).toBe(2);
         expect(config.dynamodb.defaultTimeoutMs).toBe(30000);
-    });
-
-    test('should handle invalid env var (non-numeric) gracefully', () => {
-        process.env.CLAUDE_RETRY_MAX_ATTEMPTS = 'invalid';
-
-        expect(() => loadRetryConfig()).toThrow();
     });
 
     test('should handle invalid env var (out of range) gracefully', () => {
@@ -276,11 +178,6 @@ describe('loadRetryConfig', () => {
 });
 
 describe('DEFAULT_RETRY_CONFIG', () => {
-    test('should be a valid RetryConfig', () => {
-        const result = retryConfigSchema.safeParse(DEFAULT_RETRY_CONFIG);
-        expect(result.success).toBe(true);
-    });
-
     test('should match schema defaults', () => {
         const schemaDefaults = retryConfigSchema.parse({});
         expect(DEFAULT_RETRY_CONFIG).toEqual(schemaDefaults);

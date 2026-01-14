@@ -7,48 +7,16 @@ import {
 import type { ChannelId, GuildId } from '@/integrations/discord/types';
 
 describe.concurrent('searchParamsSchema', () => {
-    // Using z.input type since SearchParams includes defaults that aren't in input
     const validParams = {
         channelId: '123456789012345678' as ChannelId,
     };
 
-    test('should accept minimal valid params with only channelId', () => {
+    test('should accept valid params and apply default limit of 10', () => {
         const result = searchParamsSchema.safeParse(validParams);
         expect(result.success).toBe(true);
-    });
-
-    test('should accept params with query', () => {
-        const result = searchParamsSchema.safeParse({
-            ...validParams,
-            query: 'search term',
-        });
-        expect(result.success).toBe(true);
-    });
-
-    test('should accept params with startTime', () => {
-        const startTime = new Date('2024-01-15T00:00:00.000Z');
-        const result = searchParamsSchema.safeParse({
-            ...validParams,
-            startTime,
-        });
-        expect(result.success).toBe(true);
-    });
-
-    test('should accept params with endTime', () => {
-        const endTime = new Date('2024-01-15T23:59:59.999Z');
-        const result = searchParamsSchema.safeParse({
-            ...validParams,
-            endTime,
-        });
-        expect(result.success).toBe(true);
-    });
-
-    test('should accept params with limit', () => {
-        const result = searchParamsSchema.safeParse({
-            ...validParams,
-            limit: 50,
-        });
-        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.limit).toBe(10);
+        }
     });
 
     test('should accept params with all optional fields', () => {
@@ -62,52 +30,22 @@ describe.concurrent('searchParamsSchema', () => {
         expect(result.success).toBe(true);
     });
 
-    test('should require channelId', () => {
-        const result = searchParamsSchema.safeParse({});
-        expect(result.success).toBe(false);
+    test.each([
+        ['missing channelId', {}, false],
+        ['empty channelId', { channelId: '' }, false],
+    ])('channelId validation: %s', (_desc, params, expected) => {
+        expect(searchParamsSchema.safeParse(params).success).toBe(expected);
     });
 
-    test('should reject empty channelId', () => {
-        const result = searchParamsSchema.safeParse({ channelId: '' });
-        expect(result.success).toBe(false);
-    });
-
-    test('should apply default limit of 10', () => {
-        const result = searchParamsSchema.safeParse(validParams);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data.limit).toBe(10);
-        }
-    });
-
-    test('should accept limit of 1', () => {
-        const result = searchParamsSchema.safeParse({ ...validParams, limit: 1 });
-        expect(result.success).toBe(true);
-    });
-
-    test('should reject limit of 0', () => {
-        const result = searchParamsSchema.safeParse({ ...validParams, limit: 0 });
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject negative limit', () => {
-        const result = searchParamsSchema.safeParse({ ...validParams, limit: -10 });
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject non-integer limit', () => {
-        const result = searchParamsSchema.safeParse({ ...validParams, limit: 10.5 });
-        expect(result.success).toBe(false);
-    });
-
-    test('should accept limit of 100', () => {
-        const result = searchParamsSchema.safeParse({ ...validParams, limit: 100 });
-        expect(result.success).toBe(true);
-    });
-
-    test('should reject limit over 100', () => {
-        const result = searchParamsSchema.safeParse({ ...validParams, limit: 101 });
-        expect(result.success).toBe(false);
+    test.each([
+        ['minimum valid (1)', 1, true],
+        ['maximum valid (100)', 100, true],
+        ['zero', 0, false],
+        ['negative', -10, false],
+        ['non-integer', 10.5, false],
+        ['over maximum (101)', 101, false],
+    ])('limit validation: %s', (_desc, limit, expected) => {
+        expect(searchParamsSchema.safeParse({ ...validParams, limit }).success).toBe(expected);
     });
 });
 
@@ -137,96 +75,29 @@ describe('cachedMessageSegmentSchema', () => {
         ttl:       1705320000, // Unix timestamp
     };
 
-    test('should accept valid cached message segment', () => {
-        const result = cachedMessageSegmentSchema.safeParse(validCache);
-        expect(result.success).toBe(true);
+    test('should accept valid cached segment with messages', () => {
+        expect(cachedMessageSegmentSchema.safeParse(validCache).success).toBe(true);
     });
 
     test('should accept empty messages array', () => {
-        const result = cachedMessageSegmentSchema.safeParse({
-            ...validCache,
-            messages: [],
-        });
-        expect(result.success).toBe(true);
+        expect(cachedMessageSegmentSchema.safeParse({ ...validCache, messages: [] }).success).toBe(true);
     });
 
-    test('should require channelId', () => {
-        const { channelId: _channelId, ...noChannelId } = validCache;
-        const result = cachedMessageSegmentSchema.safeParse(noChannelId);
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject empty channelId', () => {
-        const result = cachedMessageSegmentSchema.safeParse({ ...validCache, channelId: '' });
-        expect(result.success).toBe(false);
-    });
-
-    test('should require startSnowflake', () => {
-        const { startSnowflake: _startSnowflake, ...noStart } = validCache;
-        const result = cachedMessageSegmentSchema.safeParse(noStart);
-        expect(result.success).toBe(false);
-    });
-
-    test('should validate startSnowflake format', () => {
-        const result = cachedMessageSegmentSchema.safeParse({
-            ...validCache,
-            startSnowflake: 'not-a-snowflake',
-        });
-        expect(result.success).toBe(false);
-    });
-
-    test('should require endSnowflake', () => {
-        const { endSnowflake: _endSnowflake, ...noEnd } = validCache;
-        const result = cachedMessageSegmentSchema.safeParse(noEnd);
-        expect(result.success).toBe(false);
-    });
-
-    test('should validate endSnowflake format', () => {
-        const result = cachedMessageSegmentSchema.safeParse({
-            ...validCache,
-            endSnowflake: 'invalid',
-        });
-        expect(result.success).toBe(false);
-    });
-
-    test('should require messages', () => {
-        const { messages: _messages, ...noMessages } = validCache;
-        const result = cachedMessageSegmentSchema.safeParse(noMessages);
-        expect(result.success).toBe(false);
-    });
-
-    test('should require createdAt', () => {
-        const { createdAt: _createdAt, ...noCreatedAt } = validCache;
-        const result = cachedMessageSegmentSchema.safeParse(noCreatedAt);
-        expect(result.success).toBe(false);
-    });
-
-    test('should validate createdAt as ISO datetime', () => {
-        const result = cachedMessageSegmentSchema.safeParse({
-            ...validCache,
-            createdAt: 'not-a-date',
-        });
-        expect(result.success).toBe(false);
-    });
-
-    test('should require ttl', () => {
-        const { ttl: _ttl, ...noTtl } = validCache;
-        const result = cachedMessageSegmentSchema.safeParse(noTtl);
-        expect(result.success).toBe(false);
-    });
-
-    test('should require ttl to be positive integer', () => {
-        const result = cachedMessageSegmentSchema.safeParse({ ...validCache, ttl: 0 });
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject negative ttl', () => {
-        const result = cachedMessageSegmentSchema.safeParse({ ...validCache, ttl: -1 });
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject non-integer ttl', () => {
-        const result = cachedMessageSegmentSchema.safeParse({ ...validCache, ttl: 1705320000.5 });
-        expect(result.success).toBe(false);
+    test.each([
+        ['channelId missing', (c: CachedMessageSegment) => { const { channelId: _, ...rest } = c; return rest; }],
+        ['channelId empty', (c: CachedMessageSegment) => ({ ...c, channelId: '' })],
+        ['startSnowflake missing', (c: CachedMessageSegment) => { const { startSnowflake: _, ...rest } = c; return rest; }],
+        ['startSnowflake invalid format', (c: CachedMessageSegment) => ({ ...c, startSnowflake: 'not-a-snowflake' })],
+        ['endSnowflake missing', (c: CachedMessageSegment) => { const { endSnowflake: _, ...rest } = c; return rest; }],
+        ['endSnowflake invalid format', (c: CachedMessageSegment) => ({ ...c, endSnowflake: 'invalid' })],
+        ['messages missing', (c: CachedMessageSegment) => { const { messages: _, ...rest } = c; return rest; }],
+        ['createdAt missing', (c: CachedMessageSegment) => { const { createdAt: _, ...rest } = c; return rest; }],
+        ['createdAt invalid format', (c: CachedMessageSegment) => ({ ...c, createdAt: 'not-a-date' })],
+        ['ttl missing', (c: CachedMessageSegment) => { const { ttl: _, ...rest } = c; return rest; }],
+        ['ttl zero', (c: CachedMessageSegment) => ({ ...c, ttl: 0 })],
+        ['ttl negative', (c: CachedMessageSegment) => ({ ...c, ttl: -1 })],
+        ['ttl non-integer', (c: CachedMessageSegment) => ({ ...c, ttl: 1705320000.5 })],
+    ])('should reject invalid data: %s', (_desc, mutate) => {
+        expect(cachedMessageSegmentSchema.safeParse(mutate(validCache)).success).toBe(false);
     });
 });

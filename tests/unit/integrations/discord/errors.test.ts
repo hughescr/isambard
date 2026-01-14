@@ -98,150 +98,54 @@ describe.concurrent('Discord Integration Errors', () => {
     });
 
     describe('InvalidTokenError', () => {
-        test('should have correct default message', () => {
+        test('should have correct properties', () => {
             const error = new InvalidTokenError();
             expect(error.message).toBe('Discord bot token is invalid or expired');
-        });
-
-        test('should have correct code', () => {
-            const error = new InvalidTokenError();
             expect(error.code).toBe('INVALID_TOKEN');
+            expect(error.name).toBe('InvalidTokenError');
         });
     });
 
     describe('PermissionError', () => {
-        const testAction = 'send messages';
-
-        test('should have correct message format', () => {
-            const error = new PermissionError(testAction);
-            expect(error.message).toBe(`Bot lacks permission to ${testAction}`);
-        });
-
-        test('should have correct code', () => {
-            const error = new PermissionError(testAction);
+        test.each([
+            'send messages',
+            'read message history',
+            'manage roles',
+        ])('should have correct properties for action: %s', (action) => {
+            const error = new PermissionError(action);
+            expect(error.message).toBe(`Bot lacks permission to ${action}`);
             expect(error.code).toBe('PERMISSION_DENIED');
-        });
-
-        test('should store action property', () => {
-            const error = new PermissionError(testAction);
-            expect(error.action).toBe(testAction);
-        });
-
-        test('should handle different action descriptions', () => {
-            const actions = [
-                'send messages',
-                'read message history',
-                'manage roles',
-                'kick members',
-            ];
-
-            for(const action of actions) {
-                const error = new PermissionError(action);
-                expect(error.action).toBe(action);
-                expect(error.message).toContain(action);
-            }
+            expect(error.action).toBe(action);
+            expect(error.name).toBe('PermissionError');
         });
     });
 
     describe('ChannelNotFoundError', () => {
-        const testChannelId = '987654321098765432';
-
-        test('should have correct message format', () => {
-            const error = new ChannelNotFoundError(testChannelId);
-            expect(error.message).toBe(`Discord channel not found: ${testChannelId}`);
-        });
-
-        test('should have correct code', () => {
-            const error = new ChannelNotFoundError(testChannelId);
+        test.each([
+            '987654321098765432',
+            '111111111111111111',
+            '222222222222222222',
+        ])('should have correct properties for channelId: %s', (channelId) => {
+            const error = new ChannelNotFoundError(channelId);
+            expect(error.message).toBe(`Discord channel not found: ${channelId}`);
             expect(error.code).toBe('CHANNEL_NOT_FOUND');
-        });
-
-        test('should store channelId property', () => {
-            const error = new ChannelNotFoundError(testChannelId);
-            expect(error.channelId).toBe(testChannelId);
-        });
-
-        test('should handle different channel IDs', () => {
-            const channelIds = [
-                '111111111111111111',
-                '222222222222222222',
-                '333333333333333333',
-            ];
-
-            for(const channelId of channelIds) {
-                const error = new ChannelNotFoundError(channelId);
-                expect(error.channelId).toBe(channelId);
-                expect(error.message).toContain(channelId);
-            }
+            expect(error.channelId).toBe(channelId);
+            expect(error.name).toBe('ChannelNotFoundError');
         });
     });
 
     describe('RateLimitError', () => {
-        const testRetryAfter = 5000;
-
-        test('should have correct message format', () => {
-            const error = new RateLimitError(testRetryAfter);
-            expect(error.message).toBe(`Discord rate limit exceeded. Retry after ${testRetryAfter}ms`);
-        });
-
-        test('should have correct code', () => {
-            const error = new RateLimitError(testRetryAfter);
+        test.each([
+            0,
+            1000,
+            5000,
+            3600000, // 1 hour in ms
+        ])('should have correct properties for retryAfter: %d', (retryAfter) => {
+            const error = new RateLimitError(retryAfter);
+            expect(error.message).toBe(`Discord rate limit exceeded. Retry after ${retryAfter}ms`);
             expect(error.code).toBe('RATE_LIMIT_EXCEEDED');
-        });
-
-        test('should store retryAfter property', () => {
-            const error = new RateLimitError(testRetryAfter);
-            expect(error.retryAfter).toBe(testRetryAfter);
-        });
-
-        test('should handle different retry durations', () => {
-            const retryAfters = [1000, 3000, 10000, 60000];
-
-            for(const retryAfter of retryAfters) {
-                const error = new RateLimitError(retryAfter);
-                expect(error.retryAfter).toBe(retryAfter);
-                expect(error.message).toContain(`${retryAfter}ms`);
-            }
-        });
-
-        test('should handle zero retry duration', () => {
-            const error = new RateLimitError(0);
-            expect(error.retryAfter).toBe(0);
-            expect(error.message).toContain('0ms');
-        });
-
-        test('should handle very large retry durations', () => {
-            const largeRetryAfter = 3600000; // 1 hour in ms
-            const error = new RateLimitError(largeRetryAfter);
-            expect(error.retryAfter).toBe(largeRetryAfter);
-            expect(error.message).toContain(`${largeRetryAfter}ms`);
-        });
-    });
-
-    describe('Error class names', () => {
-        test('RateLimitError has correct name property', () => {
-            const error = new RateLimitError(1000);
+            expect(error.retryAfter).toBe(retryAfter);
             expect(error.name).toBe('RateLimitError');
-        });
-
-        test('DiscordIntegrationError has correct name property', () => {
-            const error = new DiscordIntegrationError('test', 'TEST_CODE');
-            expect(error.name).toBe('DiscordIntegrationError');
-        });
-
-        test('InvalidTokenError has correct name property', () => {
-            const error = new InvalidTokenError();
-            expect(error.name).toBe('InvalidTokenError');
-        });
-
-        test('PermissionError has correct name property', () => {
-            const error = new PermissionError('test action');
-            expect(error.name).toBe('PermissionError');
-        });
-
-        test('ChannelNotFoundError has correct name property', () => {
-            const error = new ChannelNotFoundError('123456789');
-            expect(error.name).toBe('ChannelNotFoundError');
         });
     });
 });

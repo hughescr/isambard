@@ -41,6 +41,7 @@ export function createDiscordMCPServer(searchService: MessageSearchService) {
                             query:     args.query,
                             startTime: args.startTime ? new Date(args.startTime) : undefined,
                             endTime:   args.endTime ? new Date(args.endTime) : undefined,
+                            // Stryker disable next-line LogicalOperator: ?? operator provides default value
                             limit:     args.limit ?? 10,
                         });
                         return {
@@ -69,6 +70,7 @@ export function createDiscordMCPServer(searchService: MessageSearchService) {
                     try {
                         const result = await searchService.getRecentMessages(
                             args.channelId,
+                            // Stryker disable next-line LogicalOperator: ?? operator provides default value, tested via integration
                             args.limit ?? 10
                         );
                         return {

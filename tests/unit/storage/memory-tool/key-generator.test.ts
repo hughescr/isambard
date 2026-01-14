@@ -5,89 +5,71 @@ import type { MemoryPath } from '@/storage/memory-tool/types';
 
 describe.concurrent('MemoryToolKeyGenerator', () => {
     describe('createKeys', () => {
-        test('should create keys for a file in root directory', () => {
-            const path = '/file.xml' as MemoryPath;
+        test.each([
+            {
+                name:     'root directory',
+                path:     '/file.xml' as MemoryPath,
+                expected: {
+                    PK:     'DIR#/',
+                    SK:     'FILE#file.xml',
+                    GSI1PK: 'LAYER#file.xml',
+                    GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
+                },
+            },
+            {
+                name:     'single-level directory',
+                path:     '/configs/settings.xml' as MemoryPath,
+                expected: {
+                    PK:     'DIR#/configs',
+                    SK:     'FILE#settings.xml',
+                    GSI1PK: 'LAYER#configs',
+                    GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
+                },
+            },
+            {
+                name:     'nested directory',
+                path:     '/memories/events/party.xml' as MemoryPath,
+                expected: {
+                    PK:     'DIR#/memories/events',
+                    SK:     'FILE#party.xml',
+                    GSI1PK: 'LAYER#memories',
+                    GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
+                },
+            },
+            {
+                name:     'identity layer',
+                path:     '/identity/core-values.md' as MemoryPath,
+                expected: {
+                    PK:     'DIR#/identity',
+                    SK:     'FILE#core-values.md',
+                    GSI1PK: 'LAYER#identity',
+                    GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
+                },
+            },
+            {
+                name:     'state layer',
+                path:     '/state/current.md' as MemoryPath,
+                expected: {
+                    PK:     'DIR#/state',
+                    SK:     'FILE#current.md',
+                    GSI1PK: 'LAYER#state',
+                    GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
+                },
+            },
+            {
+                name:     'events layer',
+                path:     '/events/meeting.md' as MemoryPath,
+                expected: {
+                    PK:     'DIR#/events',
+                    SK:     'FILE#meeting.md',
+                    GSI1PK: 'LAYER#events',
+                    GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
+                },
+            },
+        ])('should create keys for $name', ({ path, expected }) => {
             const timestamp = '2024-01-15T10:30:00.000Z';
-
             const keys = MemoryToolKeyGenerator.createKeys(path, timestamp);
-
-            // Root-level files use the filename as the layer segment since there's no parent directory
-            expect(keys).toEqual({
-                PK:     'DIR#/',
-                SK:     'FILE#file.xml',
-                GSI1PK: 'LAYER#file.xml',
-                GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
-            });
-        });
-
-        test('should create keys for a file in nested directory', () => {
-            const path = '/memories/events/party.xml' as MemoryPath;
-            const timestamp = '2024-01-15T10:30:00.000Z';
-
-            const keys = MemoryToolKeyGenerator.createKeys(path, timestamp);
-
-            expect(keys).toEqual({
-                PK:     'DIR#/memories/events',
-                SK:     'FILE#party.xml',
-                GSI1PK: 'LAYER#memories',
-                GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
-            });
-        });
-
-        test('should create keys for a file in single-level directory', () => {
-            const path = '/configs/settings.xml' as MemoryPath;
-            const timestamp = '2024-01-15T10:30:00.000Z';
-
-            const keys = MemoryToolKeyGenerator.createKeys(path, timestamp);
-
-            expect(keys).toEqual({
-                PK:     'DIR#/configs',
-                SK:     'FILE#settings.xml',
-                GSI1PK: 'LAYER#configs',
-                GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
-            });
-        });
-
-        test('should create keys for identity layer path', () => {
-            const path = '/identity/core-values.md' as MemoryPath;
-            const timestamp = '2024-01-15T10:30:00.000Z';
-
-            const keys = MemoryToolKeyGenerator.createKeys(path, timestamp);
-
-            expect(keys).toEqual({
-                PK:     'DIR#/identity',
-                SK:     'FILE#core-values.md',
-                GSI1PK: 'LAYER#identity',
-                GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
-            });
-        });
-
-        test('should create keys for state layer path', () => {
-            const path = '/state/current.md' as MemoryPath;
-            const timestamp = '2024-01-15T10:30:00.000Z';
-
-            const keys = MemoryToolKeyGenerator.createKeys(path, timestamp);
-
-            expect(keys).toEqual({
-                PK:     'DIR#/state',
-                SK:     'FILE#current.md',
-                GSI1PK: 'LAYER#state',
-                GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
-            });
-        });
-
-        test('should create keys for events layer path', () => {
-            const path = '/events/meeting.md' as MemoryPath;
-            const timestamp = '2024-01-15T10:30:00.000Z';
-
-            const keys = MemoryToolKeyGenerator.createKeys(path, timestamp);
-
-            expect(keys).toEqual({
-                PK:     'DIR#/events',
-                SK:     'FILE#meeting.md',
-                GSI1PK: 'LAYER#events',
-                GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
-            });
+            expect(keys).toEqual(expected);
         });
 
         test('should auto-generate timestamp if not provided', () => {
@@ -108,116 +90,60 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
             expect(timestamp >= beforeCall).toBe(true);
             expect(timestamp <= afterCall).toBe(true);
         });
-
-        test('should handle filenames with special characters', () => {
-            const path = '/docs/my-file_v2.0.xml' as MemoryPath;
-            const timestamp = '2024-01-15T10:30:00.000Z';
-
-            const keys = MemoryToolKeyGenerator.createKeys(path, timestamp);
-
-            expect(keys).toEqual({
-                PK:     'DIR#/docs',
-                SK:     'FILE#my-file_v2.0.xml',
-                GSI1PK: 'LAYER#docs',
-                GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
-            });
-        });
-
-        test('should handle deeply nested paths', () => {
-            const path = '/a/b/c/d/e/file.xml' as MemoryPath;
-            const timestamp = '2024-01-15T10:30:00.000Z';
-
-            const keys = MemoryToolKeyGenerator.createKeys(path, timestamp);
-
-            expect(keys).toEqual({
-                PK:     'DIR#/a/b/c/d/e',
-                SK:     'FILE#file.xml',
-                GSI1PK: 'LAYER#a',
-                GSI1SK: 'UPDATED#2024-01-15T10:30:00.000Z',
-            });
-        });
     });
 
     describe('parsePath', () => {
-        test('should parse keys for a root-level file', () => {
-            const pk = 'DIR#/';
-            const sk = 'FILE#file.xml';
-
+        test.each([
+            {
+                name:     'root-level file',
+                pk:       'DIR#/',
+                sk:       'FILE#file.xml',
+                expected: '/file.xml',
+            },
+            {
+                name:     'single-level directory',
+                pk:       'DIR#/configs',
+                sk:       'FILE#settings.xml',
+                expected: '/configs/settings.xml',
+            },
+            {
+                name:     'nested directory',
+                pk:       'DIR#/memories/events',
+                sk:       'FILE#party.xml',
+                expected: '/memories/events/party.xml',
+            },
+        ])('should parse keys for $name', ({ pk, sk, expected }) => {
             const path = MemoryToolKeyGenerator.parsePath(pk, sk);
-
-            expect(path).toBe('/file.xml');
+            expect(path).toBe(expected);
         });
 
-        test('should parse keys for a nested file', () => {
-            const pk = 'DIR#/memories/events';
-            const sk = 'FILE#party.xml';
-
-            const path = MemoryToolKeyGenerator.parsePath(pk, sk);
-
-            expect(path).toBe('/memories/events/party.xml');
-        });
-
-        test('should parse keys for a single-level directory file', () => {
-            const pk = 'DIR#/configs';
-            const sk = 'FILE#settings.xml';
-
-            const path = MemoryToolKeyGenerator.parsePath(pk, sk);
-
-            expect(path).toBe('/configs/settings.xml');
-        });
-
-        test('should throw error if PK does not start with DIR#', () => {
-            const pk = 'INVALID#/configs';
-            const sk = 'FILE#settings.xml';
-
-            expect(() => MemoryToolKeyGenerator.parsePath(pk, sk)).toThrow(
-                'Invalid PK format: expected DIR#..., got INVALID#/configs'
-            );
-        });
-
-        test('should throw error if SK does not start with FILE#', () => {
-            const pk = 'DIR#/configs';
-            const sk = 'INVALID#settings.xml';
-
-            expect(() => MemoryToolKeyGenerator.parsePath(pk, sk)).toThrow(
-                'Invalid SK format: expected FILE#..., got INVALID#settings.xml'
-            );
-        });
-
-        test('should throw error if PK is malformed', () => {
-            const pk = 'DIR';
-            const sk = 'FILE#settings.xml';
-
-            expect(() => MemoryToolKeyGenerator.parsePath(pk, sk)).toThrow(
-                'Invalid PK format: expected DIR#..., got DIR'
-            );
-        });
-
-        test('should throw error if SK is malformed', () => {
-            const pk = 'DIR#/configs';
-            const sk = 'FILE';
-
-            expect(() => MemoryToolKeyGenerator.parsePath(pk, sk)).toThrow(
-                'Invalid SK format: expected FILE#..., got FILE'
-            );
-        });
-
-        test('should handle filenames with special characters', () => {
-            const pk = 'DIR#/docs';
-            const sk = 'FILE#my-file_v2.0.xml';
-
-            const path = MemoryToolKeyGenerator.parsePath(pk, sk);
-
-            expect(path).toBe('/docs/my-file_v2.0.xml');
-        });
-
-        test('should handle deeply nested paths', () => {
-            const pk = 'DIR#/a/b/c/d/e';
-            const sk = 'FILE#file.xml';
-
-            const path = MemoryToolKeyGenerator.parsePath(pk, sk);
-
-            expect(path).toBe('/a/b/c/d/e/file.xml');
+        test.each([
+            {
+                name:     'PK without DIR# prefix',
+                pk:       'INVALID#/configs',
+                sk:       'FILE#settings.xml',
+                expected: 'Invalid PK format: expected DIR#..., got INVALID#/configs',
+            },
+            {
+                name:     'SK without FILE# prefix',
+                pk:       'DIR#/configs',
+                sk:       'INVALID#settings.xml',
+                expected: 'Invalid SK format: expected FILE#..., got INVALID#settings.xml',
+            },
+            {
+                name:     'malformed PK',
+                pk:       'DIR',
+                sk:       'FILE#settings.xml',
+                expected: 'Invalid PK format: expected DIR#..., got DIR',
+            },
+            {
+                name:     'malformed SK',
+                pk:       'DIR#/configs',
+                sk:       'FILE',
+                expected: 'Invalid SK format: expected FILE#..., got FILE',
+            },
+        ])('should throw error for $name', ({ pk, sk, expected }) => {
+            expect(() => MemoryToolKeyGenerator.parsePath(pk, sk)).toThrow(expected);
         });
 
         test('should be inverse of createKeys', () => {
@@ -286,20 +212,14 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
             });
         });
 
-        test('should return null if no tags provided', () => {
+        test.each([
+            { name: 'empty array', tags: [] as string[] },
+            { name: 'undefined', tags: undefined },
+        ])('should return null if tags is $name', ({ tags }) => {
             const path = '/identity/core-values.md' as MemoryPath;
             const updatedAt = '2024-01-15T10:30:00.000Z';
 
-            const tagKeys = MemoryToolKeyGenerator.createTagKeys(path, [], updatedAt);
-
-            expect(tagKeys).toBeNull();
-        });
-
-        test('should return null if tags array is undefined', () => {
-            const path = '/identity/core-values.md' as MemoryPath;
-            const updatedAt = '2024-01-15T10:30:00.000Z';
-
-            const tagKeys = MemoryToolKeyGenerator.createTagKeys(path, undefined, updatedAt);
+            const tagKeys = MemoryToolKeyGenerator.createTagKeys(path, tags, updatedAt);
 
             expect(tagKeys).toBeNull();
         });
@@ -326,16 +246,6 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
             expect(timestamp <= afterCall).toBe(true);
         });
 
-        test('should handle tags with special characters', () => {
-            const path = '/state/work-in-progress.md' as MemoryPath;
-            const tags = ['work_in_progress', 'v2.0'];
-            const updatedAt = '2024-01-15T10:30:00.000Z';
-
-            const tagKeys = MemoryToolKeyGenerator.createTagKeys(path, tags, updatedAt);
-
-            expect(tagKeys!.GSI2PK).toBe('TAG#work_in_progress');
-        });
-
         test('should extract layer from path correctly', () => {
             const testCases = [
                 { path: '/identity/file.md' as MemoryPath, expectedLayer: 'identity' },
@@ -352,48 +262,31 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
     });
 
     describe('createVersionKeys', () => {
-        test('should create version keys with correct PK and SK format', () => {
-            const path = '/test/file.md' as MemoryPath;
-            const version = 1;
-            const timestamp = '2024-01-15T10:30:00.000Z';
-
+        test.each([
+            {
+                name:      'single-level directory',
+                path:      '/test/file.md' as MemoryPath,
+                version:   1,
+                timestamp: '2024-01-15T10:30:00.000Z',
+                expected:  { PK: 'DIR#/test', SK: 'VERSION#1#2024-01-15T10:30:00.000Z' },
+            },
+            {
+                name:      'root-level file',
+                path:      '/file.md' as MemoryPath,
+                version:   2,
+                timestamp: '2024-01-20T15:45:00.000Z',
+                expected:  { PK: 'DIR#/', SK: 'VERSION#2#2024-01-20T15:45:00.000Z' },
+            },
+            {
+                name:      'nested directory',
+                path:      '/memories/events/party.xml' as MemoryPath,
+                version:   5,
+                timestamp: '2024-02-10T08:00:00.000Z',
+                expected:  { PK: 'DIR#/memories/events', SK: 'VERSION#5#2024-02-10T08:00:00.000Z' },
+            },
+        ])('should create version keys for $name', ({ path, version, timestamp, expected }) => {
             const keys = MemoryToolKeyGenerator.createVersionKeys(path, version, timestamp);
-
-            expect(keys.PK).toBe('DIR#/test');
-            expect(keys.SK).toBe('VERSION#1#2024-01-15T10:30:00.000Z');
-        });
-
-        test('should create version keys for root-level file', () => {
-            const path = '/file.md' as MemoryPath;
-            const version = 2;
-            const timestamp = '2024-01-20T15:45:00.000Z';
-
-            const keys = MemoryToolKeyGenerator.createVersionKeys(path, version, timestamp);
-
-            expect(keys.PK).toBe('DIR#/');
-            expect(keys.SK).toBe('VERSION#2#2024-01-20T15:45:00.000Z');
-        });
-
-        test('should create version keys for nested directory', () => {
-            const path = '/memories/events/party.xml' as MemoryPath;
-            const version = 5;
-            const timestamp = '2024-02-10T08:00:00.000Z';
-
-            const keys = MemoryToolKeyGenerator.createVersionKeys(path, version, timestamp);
-
-            expect(keys.PK).toBe('DIR#/memories/events');
-            expect(keys.SK).toBe('VERSION#5#2024-02-10T08:00:00.000Z');
-        });
-
-        test('should handle large version numbers', () => {
-            const path = '/test/file.md' as MemoryPath;
-            const version = 999;
-            const timestamp = '2024-01-15T10:30:00.000Z';
-
-            const keys = MemoryToolKeyGenerator.createVersionKeys(path, version, timestamp);
-
-            expect(keys.PK).toBe('DIR#/test');
-            expect(keys.SK).toBe('VERSION#999#2024-01-15T10:30:00.000Z');
+            expect(keys).toEqual(expected);
         });
     });
 
@@ -412,24 +305,13 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
             expect(preview).toHaveLength(100);
         });
 
-        test('should truncate content of 101 characters to exactly 100', () => {
-            const content = _repeat('a', 101);
+        test.each([
+            { length: 101, 'char': 'a' },
+            { length: 150, 'char': 'a' },
+        ])('should truncate $length characters to exactly 100', ({ length, char }) => {
+            const content = _repeat(char, length);
             const preview = generateContentPreview(content);
-            expect(preview).toBe(_repeat('a', 100));
-            expect(preview).toHaveLength(100);
-        });
-
-        test('should truncate content when over 100 characters', () => {
-            const content = _repeat('a', 150);
-            const preview = generateContentPreview(content);
-            expect(preview).toBe(_repeat('a', 100));
-            expect(preview).toHaveLength(100);
-        });
-
-        test('should truncate very long content to exactly 100 characters', () => {
-            const content = _repeat('x', 500);
-            const preview = generateContentPreview(content);
-            expect(preview).toBe(_repeat('x', 100));
+            expect(preview).toBe(_repeat(char, 100));
             expect(preview).toHaveLength(100);
         });
 

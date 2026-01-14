@@ -83,62 +83,42 @@ describe.concurrent('loadConfig', () => {
     });
 
     describe('Missing Resources', () => {
-        test('should throw descriptive error when NodeEnv is undefined', () => {
+        test.each([
+            { field: 'NodeEnv',              expectedPattern: /app\.nodeEnv/ },
+            { field: 'CaldavPassword',       expectedPattern: /caldav\.password|password/ },
+            { field: 'DiscordBotToken',      expectedPattern: /discord\.botToken|botToken/ },
+            { field: 'ClaudeCodeOAuthToken', expectedPattern: /agent\.oauthToken|oauthToken/ },
+            { field: 'BoxClientSecret',      expectedPattern: /box\.clientSecret|clientSecret/ },
+        ] as const)('should throw descriptive error when $field is undefined', ({ field, expectedPattern }) => {
             const resources = createMockResources({
-                NodeEnv: { value: undefined },
+                [field]: { value: undefined },
             });
 
-            expect(() => loadConfig(resources)).toThrow(/app\.nodeEnv/);
-        });
-
-        test('should throw descriptive error when required secrets are undefined', () => {
-            const resources = createMockResources({
-                CaldavPassword: { value: undefined },
-            });
-
-            expect(() => loadConfig(resources)).toThrow(/caldav\.password|password/);
-        });
-
-        test('should throw descriptive error when DiscordBotToken is undefined', () => {
-            const resources = createMockResources({
-                DiscordBotToken: { value: undefined },
-            });
-
-            expect(() => loadConfig(resources)).toThrow(/discord\.botToken|botToken/);
-        });
-
-        test('should throw descriptive error when ClaudeCodeOAuthToken is undefined', () => {
-            const resources = createMockResources({
-                ClaudeCodeOAuthToken: { value: undefined },
-            });
-
-            expect(() => loadConfig(resources)).toThrow(/agent\.oauthToken|oauthToken/);
-        });
-
-        test('should identify which field is missing in error message', () => {
-            const resources = createMockResources({
-                BoxClientSecret: { value: undefined },
-            });
-
-            expect(() => loadConfig(resources)).toThrow(/box\.clientSecret|clientSecret/);
+            expect(() => loadConfig(resources)).toThrow(expectedPattern);
         });
     });
 
     describe('Malformed Values', () => {
-        test('should throw error for invalid port (non-numeric string)', () => {
+        test.each([
+            { field: 'Port',     value: 'not-a-number', expectedPattern: /Expected number|Invalid/i },
+            { field: 'ImapPort', value: 'abc',          expectedPattern: /Expected number|Invalid/i },
+        ])('should throw error for invalid port: $field', ({ field, value, expectedPattern }) => {
             const resources = createMockResources({
-                Port: { value: 'not-a-number' },
+                [field]: { value },
             });
 
-            expect(() => loadConfig(resources)).toThrow(/Expected number|Invalid/i);
+            expect(() => loadConfig(resources)).toThrow(expectedPattern);
         });
 
-        test('should throw error for invalid IMAP port', () => {
+        test.each([
+            { field: 'SmtpPort', value: '99999', expectedPattern: /Too big|expected number to be <=/i },
+            { field: 'ImapPort', value: '-1',    expectedPattern: /Too small|expected number to be >=/i },
+        ])('should throw error for port out of range: $field = $value', ({ field, value, expectedPattern }) => {
             const resources = createMockResources({
-                ImapPort: { value: 'abc' },
+                [field]: { value },
             });
 
-            expect(() => loadConfig(resources)).toThrow(/Expected number|Invalid/i);
+            expect(() => loadConfig(resources)).toThrow(expectedPattern);
         });
 
         test('should throw error for invalid URL format', () => {
@@ -155,22 +135,6 @@ describe.concurrent('loadConfig', () => {
             });
 
             expect(() => loadConfig(resources)).toThrow(/Invalid option|expected one of/i);
-        });
-
-        test('should throw error for port out of valid range', () => {
-            const resources = createMockResources({
-                SmtpPort: { value: '99999' },
-            });
-
-            expect(() => loadConfig(resources)).toThrow(/Too big|expected number to be <=/i);
-        });
-
-        test('should throw error for negative port', () => {
-            const resources = createMockResources({
-                ImapPort: { value: '-1' },
-            });
-
-            expect(() => loadConfig(resources)).toThrow(/Too small|expected number to be >=/i);
         });
 
         test('should throw error for empty ClaudeCodeOAuthToken', () => {
@@ -198,9 +162,15 @@ describe.concurrent('loadConfig', () => {
             }
         });
 
-        test('should show [REDACTED] for password field errors (caldav.password)', () => {
+        test.each([
+            { field: 'CaldavPassword',       fieldPath: 'caldav.password' },
+            { field: 'EmailPassword',        fieldPath: 'email.password' },
+            { field: 'DiscordBotToken',      fieldPath: 'discord.botToken' },
+            { field: 'BoxClientSecret',      fieldPath: 'box.clientSecret' },
+            { field: 'ClaudeCodeOAuthToken', fieldPath: 'agent.oauthToken' },
+        ])('should show [REDACTED] for sensitive field errors: $fieldPath', ({ field, fieldPath }) => {
             const resources = createMockResources({
-                CaldavPassword: { value: '' }, // Empty password fails min(1) validation
+                [field]: { value: '' },
             });
 
             try {
@@ -209,13 +179,17 @@ describe.concurrent('loadConfig', () => {
             } catch (error: unknown) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 expect(errorMessage).toContain('[REDACTED]');
-                expect(errorMessage).toContain('caldav.password');
+                expect(errorMessage).toContain(fieldPath);
             }
         });
 
-        test('should show [REDACTED] for password field errors (email.password)', () => {
+        test.each([
+            { field: 'EmailPassword',   sensitiveWord: 'Password' },
+            { field: 'DiscordBotToken', sensitiveWord: 'Token' },
+            { field: 'BoxClientSecret', sensitiveWord: 'Secret' },
+        ])('should redact based on case-insensitive matching ($sensitiveWord)', ({ field }) => {
             const resources = createMockResources({
-                EmailPassword: { value: '' }, // Empty password should fail validation
+                [field]: { value: undefined },
             });
 
             try {
@@ -224,13 +198,16 @@ describe.concurrent('loadConfig', () => {
             } catch (error: unknown) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 expect(errorMessage).toContain('[REDACTED]');
-                expect(errorMessage).toContain('email.password');
             }
         });
 
-        test('should show [REDACTED] for token field errors (discord.botToken)', () => {
+        test.each([
+            { field: 'Port',           value: 'not-a-number',    fieldPath: 'app.port',         expectedPattern: /Expected number|Invalid/i },
+            { field: 'CaldavUrl',      value: 'not-a-valid-url', fieldPath: 'caldav.url',       expectedPattern: /Invalid url|url/i },
+            { field: 'CaldavUsername', value: '',                fieldPath: 'caldav.username',  expectedPattern: /.*/ },
+        ])('should NOT redact non-sensitive field errors: $fieldPath', ({ field, value, fieldPath, expectedPattern }) => {
             const resources = createMockResources({
-                DiscordBotToken: { value: '' }, // Empty token should fail
+                [field]: { value },
             });
 
             try {
@@ -238,134 +215,9 @@ describe.concurrent('loadConfig', () => {
                 expect.unreachable('Should have thrown an error');
             } catch (error: unknown) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
-                expect(errorMessage).toContain('[REDACTED]');
-                expect(errorMessage).toContain('discord.botToken');
-            }
-        });
-
-        test('should show [REDACTED] for secret field errors (box.clientSecret)', () => {
-            const resources = createMockResources({
-                BoxClientSecret: { value: '' },
-            });
-
-            try {
-                loadConfig(resources);
-                expect.unreachable('Should have thrown an error');
-            } catch (error: unknown) {
-                const errorMessage = _.isError(error) ? error.message : String(error);
-                expect(errorMessage).toContain('[REDACTED]');
-                expect(errorMessage).toContain('box.clientSecret');
-            }
-        });
-
-        test('should show [REDACTED] for token field errors (agent.oauthToken)', () => {
-            const resources = createMockResources({
-                ClaudeCodeOAuthToken: { value: '' },
-            });
-
-            try {
-                loadConfig(resources);
-                expect.unreachable('Should have thrown an error');
-            } catch (error: unknown) {
-                const errorMessage = _.isError(error) ? error.message : String(error);
-                expect(errorMessage).toContain('[REDACTED]');
-                expect(errorMessage).toContain('agent.oauthToken');
-            }
-        });
-
-        test('should redact based on case-insensitive matching (Password)', () => {
-            const resources = createMockResources({
-                EmailPassword: { value: undefined }, // Undefined password
-            });
-
-            try {
-                loadConfig(resources);
-                expect.unreachable('Should have thrown an error');
-            } catch (error: unknown) {
-                const errorMessage = _.isError(error) ? error.message : String(error);
-                // Field name contains "Password" (capital P) - should still redact
-                expect(errorMessage).toContain('[REDACTED]');
-            }
-        });
-
-        test('should redact based on case-insensitive matching (Token)', () => {
-            const resources = createMockResources({
-                DiscordBotToken: { value: undefined }, // Undefined token
-            });
-
-            try {
-                loadConfig(resources);
-                expect.unreachable('Should have thrown an error');
-            } catch (error: unknown) {
-                const errorMessage = _.isError(error) ? error.message : String(error);
-                // Field name contains "Token" (capital T) - should still redact
-                expect(errorMessage).toContain('[REDACTED]');
-            }
-        });
-
-        test('should redact based on case-insensitive matching (Secret)', () => {
-            const resources = createMockResources({
-                BoxClientSecret: { value: undefined }, // Undefined secret
-            });
-
-            try {
-                loadConfig(resources);
-                expect.unreachable('Should have thrown an error');
-            } catch (error: unknown) {
-                const errorMessage = _.isError(error) ? error.message : String(error);
-                // Field name contains "Secret" (capital S) - should still redact
-                expect(errorMessage).toContain('[REDACTED]');
-            }
-        });
-
-        test('should NOT redact non-sensitive field errors', () => {
-            const resources = createMockResources({
-                Port: { value: 'not-a-number' }, // Invalid port
-            });
-
-            try {
-                loadConfig(resources);
-                expect.unreachable('Should have thrown an error');
-            } catch (error: unknown) {
-                const errorMessage = _.isError(error) ? error.message : String(error);
-                // Non-sensitive field should show actual Zod error message
                 expect(errorMessage).not.toContain('[REDACTED]');
-                expect(errorMessage).toContain('app.port');
-                // Should contain actual validation error details
-                expect(errorMessage).toMatch(/Expected number|Invalid/i);
-            }
-        });
-
-        test('should NOT redact non-sensitive URL field errors', () => {
-            const resources = createMockResources({
-                CaldavUrl: { value: 'not-a-valid-url' }, // Invalid URL
-            });
-
-            try {
-                loadConfig(resources);
-                expect.unreachable('Should have thrown an error');
-            } catch (error: unknown) {
-                const errorMessage = _.isError(error) ? error.message : String(error);
-                // Non-sensitive field should show actual error
-                expect(errorMessage).not.toContain('[REDACTED]');
-                expect(errorMessage).toContain('caldav.url');
-                expect(errorMessage).toMatch(/Invalid url|url/i);
-            }
-        });
-
-        test('should NOT redact username field errors', () => {
-            const resources = createMockResources({
-                CaldavUsername: { value: '' }, // Empty username
-            });
-
-            try {
-                loadConfig(resources);
-                expect.unreachable('Should have thrown an error');
-            } catch (error: unknown) {
-                const errorMessage = _.isError(error) ? error.message : String(error);
-                // Username is not sensitive - should show actual error
-                expect(errorMessage).not.toContain('[REDACTED]');
-                expect(errorMessage).toContain('caldav.username');
+                expect(errorMessage).toContain(fieldPath);
+                expect(errorMessage).toMatch(expectedPattern);
             }
         });
 
@@ -443,74 +295,25 @@ describe.concurrent('loadConfig', () => {
     });
 
     describe('Presence Config Defaults', () => {
-        test('includes default presence config in discord config', () => {
+        test('includes default presence config in discord config with exact values', () => {
             const resources = createMockResources();
             const config = loadConfig(resources);
 
-            expect(config.discord.presence).toBeDefined();
-            expect(config.discord.presence?.updateThrottleMs).toBe(12000);
-            expect(config.discord.presence?.idleTimeoutMs).toBe(60000);
-            expect(config.discord.presence?.idleRefreshIntervalMs).toBe(300000);
-        });
-
-        test('presence config is explicitly set with all three required properties', () => {
-            const resources = createMockResources();
-            const config = loadConfig(resources);
-
-            // Verify presence is not undefined (catches mutant that removes the object literal)
-            expect(config.discord.presence).not.toBeUndefined();
-
-            // Verify it's a proper object with exactly the expected structure
+            // Verify presence object structure and exact values
             expect(config.discord.presence).toEqual({
                 updateThrottleMs:      12000,
                 idleTimeoutMs:         60000,
                 idleRefreshIntervalMs: 300000,
             });
-        });
 
-        test('presence object contains all default fields when loader provides defaults', () => {
-            const resources = createMockResources();
-            const config = loadConfig(resources);
-
-            // This test specifically catches mutants that modify or empty the presence object
-            // by checking the object has exactly the expected keys and values
-            const presence = config.discord.presence;
-            expect(presence).toBeTruthy();
-            expect(_.keys(presence!)).toHaveLength(3);
-            expect(_.keys(presence!)).toContain('updateThrottleMs');
-            expect(_.keys(presence!)).toContain('idleTimeoutMs');
-            expect(_.keys(presence!)).toContain('idleRefreshIntervalMs');
-        });
-
-        test('presence defaults from loader have exact numeric values not just truthy', () => {
-            // This test kills the ObjectLiteral mutant by verifying EXACT numeric values
-            // that cannot be satisfied by schema defaults or modified values
-            const resources = createMockResources();
-            const config = loadConfig(resources);
-
-            // Verify presence exists and is not undefined (kills removal mutant)
-            expect(config.discord.presence).toBeDefined();
-
-            // Verify exact values - these specific assertions kill mutations that:
-            // - Remove the object literal entirely (presence would be undefined)
-            // - Modify individual numeric values (e.g., 2000 -> 0 or empty)
-            // - Replace the object with an empty object
+            // Verify exact numeric values with range checks to catch mutations
             const presence = config.discord.presence!;
-
-            // Check updateThrottleMs is exactly 12000 (not 0, not falsy, not different number)
             expect(presence.updateThrottleMs).toBeGreaterThan(0);
             expect(presence.updateThrottleMs).toBeLessThanOrEqual(12000);
-            expect(presence.updateThrottleMs).toBe(12000);
-
-            // Check idleTimeoutMs is exactly 60000 (not 0, not falsy, not different number)
             expect(presence.idleTimeoutMs).toBeGreaterThan(0);
             expect(presence.idleTimeoutMs).toBeLessThan(120000);
-            expect(presence.idleTimeoutMs).toBe(60000);
-
-            // Check idleRefreshIntervalMs is exactly 300000 (not 0, not falsy, not different number)
             expect(presence.idleRefreshIntervalMs).toBeGreaterThan(0);
             expect(presence.idleRefreshIntervalMs).toBeLessThan(600000);
-            expect(presence.idleRefreshIntervalMs).toBe(300000);
         });
     });
 
@@ -532,32 +335,18 @@ describe.concurrent('loadConfig', () => {
             expect(typeof config.email.smtpPort).toBe('number');
         });
 
-        test('should handle numeric strings correctly', () => {
-            const resources = createMockResources({
-                Port: { value: '8080' },
-            });
-
-            const config = loadConfig(resources);
-            expect(config.app.port).toBe(8080);
-            expect(config.app.port).not.toBe('8080');
-        });
-
-        test('should apply default logLevel when not provided', () => {
-            const resources = createMockResources({
+        test('should apply default logLevel when not provided and accept valid values', () => {
+            const resourcesWithDefault = createMockResources({
                 LogLevel: { value: undefined },
             });
+            const configWithDefault = loadConfig(resourcesWithDefault);
+            expect(configWithDefault.app.logLevel).toBe('info');
 
-            const config = loadConfig(resources);
-            expect(config.app.logLevel).toBe('info');
-        });
-
-        test('should accept valid logLevel values', () => {
-            const resources = createMockResources({
+            const resourcesWithDebug = createMockResources({
                 LogLevel: { value: 'debug' },
             });
-
-            const config = loadConfig(resources);
-            expect(config.app.logLevel).toBe('debug');
+            const configWithDebug = loadConfig(resourcesWithDebug);
+            expect(configWithDebug.app.logLevel).toBe('debug');
         });
     });
 });

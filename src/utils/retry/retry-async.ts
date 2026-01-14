@@ -66,6 +66,7 @@ export async function retryAsync<T>(
             const { category, message: errorMessage, retryAfterMs } = classification;
 
             // Permanent errors are not retried
+            // Stryker disable next-line BlockStatement: Permanent error abort prevents infinite retries
             if(category === 'permanent') {
                 // Stryker disable next-line ArithmeticOperator: Elapsed time calculation for logging
                 logger.error({

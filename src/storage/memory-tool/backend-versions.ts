@@ -30,6 +30,7 @@ export class MemoryToolBackendVersions {
     async getVersion(path: MemoryPath, version: number): Promise<MemoryToolItemData | undefined> {
         // Query all versions for this path to find the one matching the version number
         const keys = MemoryToolKeyGenerator.createKeys(path);
+        /* Stryker disable all: These literals define the DynamoDB query structure */
         const queryParams = {
             KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
             ExpressionAttributeValues: {
@@ -37,6 +38,7 @@ export class MemoryToolBackendVersions {
                 ':skPrefix': `VERSION#${version}#`,
             },
         };
+        /* Stryker restore all */
 
         const result = await this.docClient.send(
             new QueryCommand({

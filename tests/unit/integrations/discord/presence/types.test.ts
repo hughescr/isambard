@@ -88,4 +88,71 @@ describe.concurrent('types.ts', () => {
             }
         });
     });
+
+    describe('ToolStatusMap string literal values', () => {
+        // Kill StringLiteral mutants on lines 85, 86, 87
+        test('should have non-empty string values for all memory tools', () => {
+            expect(ToolStatusMap.mcp__memory__storeUserMemory).toBe('Recording user memory...');
+            expect(ToolStatusMap.mcp__memory__storeUserMemory).not.toBe('');
+            expect(ToolStatusMap.mcp__memory__storeUserMemory.length).toBeGreaterThan(0);
+
+            expect(ToolStatusMap.mcp__memory__logEvent).toBe('Logging event...');
+            expect(ToolStatusMap.mcp__memory__logEvent).not.toBe('');
+            expect(ToolStatusMap.mcp__memory__logEvent.length).toBeGreaterThan(0);
+
+            expect(ToolStatusMap.mcp__memory__search).toBe('Searching memories...');
+            expect(ToolStatusMap.mcp__memory__search).not.toBe('');
+            expect(ToolStatusMap.mcp__memory__search.length).toBeGreaterThan(0);
+        });
+
+        test('should have distinct values for each tool (not all empty strings)', () => {
+            const values = [
+                ToolStatusMap.mcp__memory__storeUserMemory,
+                ToolStatusMap.mcp__memory__logEvent,
+                ToolStatusMap.mcp__memory__search
+            ];
+
+            // All should be non-empty
+            for(const value of values) {
+                expect(value).not.toBe('');
+            }
+
+            // All should be distinct
+            const uniqueValues = new Set(values);
+            expect(uniqueValues.size).toBe(values.length);
+        });
+
+        test('should provide meaningful status text in nullish coalescing chain (not empty string)', () => {
+            // Simulate how ToolStatusMap is used in status-generator-active.ts
+            // const statusText = phase.generatedStatus ?? ToolStatusMap[phase.toolName] ?? 'Working...';
+
+            // When generatedStatus is undefined, should use ToolStatusMap value
+            // Nullish coalescing (??) only checks for null/undefined, not falsy values
+            // So even empty string would be used if that's the value in the map
+            const generatedStatus: string | undefined = undefined;
+            const statusForStoreUserMemory = generatedStatus ?? ToolStatusMap.mcp__memory__storeUserMemory ?? 'Working...';
+            const statusForLogEvent = generatedStatus ?? ToolStatusMap.mcp__memory__logEvent ?? 'Working...';
+            const statusForSearch = generatedStatus ?? ToolStatusMap.mcp__memory__search ?? 'Working...';
+
+            // Verify the values are meaningful (not empty strings)
+            // These assertions kill the StringLiteral mutants on lines 85, 86, 87
+            expect(statusForStoreUserMemory).toBe('Recording user memory...');
+            expect(statusForLogEvent).toBe('Logging event...');
+            expect(statusForSearch).toBe('Searching memories...');
+
+            // If they were empty strings, they would still be used (not fall through to 'Working...')
+            // but that would be a bug - we want meaningful status text
+            expect(statusForStoreUserMemory).not.toBe('');
+            expect(statusForLogEvent).not.toBe('');
+            expect(statusForSearch).not.toBe('');
+
+            // Verify each character is correct (to catch partial mutations)
+            expect(statusForStoreUserMemory[0]).toBe('R');
+            expect(statusForStoreUserMemory[statusForStoreUserMemory.length - 1]).toBe('.');
+            expect(statusForLogEvent[0]).toBe('L');
+            expect(statusForLogEvent[statusForLogEvent.length - 1]).toBe('.');
+            expect(statusForSearch[0]).toBe('S');
+            expect(statusForSearch[statusForSearch.length - 1]).toBe('.');
+        });
+    });
 });

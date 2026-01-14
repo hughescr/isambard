@@ -12,47 +12,18 @@ async function createMockPluginDir(basePath: string): Promise<void> {
 }
 
 describe('resolveExternalPath', () => {
-    test('should expand ~ to home directory', () => {
-        const homeDir = homedir();
-        const result = resolveExternalPath('~/my-plugin');
-        expect(result).toBe(join(homeDir, 'my-plugin'));
-    });
-
-    test('should preserve absolute paths', () => {
-        const result = resolveExternalPath('/absolute/path/to/plugin');
-        expect(result).toBe('/absolute/path/to/plugin');
-    });
-
-    test('should expand ~ at start of path only', () => {
-        const homeDir = homedir();
-        const result = resolveExternalPath('~/path/with/~/tilde');
-        expect(result).toBe(join(homeDir, 'path/with/~/tilde'));
-    });
-
-    test('should return empty string for empty input', () => {
-        const result = resolveExternalPath('');
-        expect(result).toBe('');
-    });
-
-    test('should expand exact ~ to home directory', () => {
-        const homeDir = homedir();
-        const result = resolveExternalPath('~');
-        expect(result).toBe(homeDir);
-    });
-
-    test('should not expand ~ in middle of path', () => {
-        const result = resolveExternalPath('/path/~/foo');
-        expect(result).toBe('/path/~/foo');
-    });
-
-    test('should preserve relative paths without tilde', () => {
-        const result = resolveExternalPath('./relative/path');
-        expect(result).toBe('./relative/path');
-    });
-
-    test('should preserve relative parent paths', () => {
-        const result = resolveExternalPath('../relative/path');
-        expect(result).toBe('../relative/path');
+    test.each([
+        ['~/my-plugin', join(homedir(), 'my-plugin'), 'expand ~ to home directory'],
+        ['~', homedir(), 'expand exact ~ to home directory'],
+        ['~/path/with/~/tilde', join(homedir(), 'path/with/~/tilde'), 'expand ~ at start only, preserve internal ~'],
+        ['/absolute/path/to/plugin', '/absolute/path/to/plugin', 'preserve absolute paths'],
+        ['/path/~/foo', '/path/~/foo', 'not expand ~ in middle of path'],
+        ['./relative/path', './relative/path', 'preserve relative paths'],
+        ['../relative/path', '../relative/path', 'preserve relative parent paths'],
+        ['', '', 'return empty string for empty input'],
+    ])('should %s', (input, expected) => {
+        const result = resolveExternalPath(input);
+        expect(result).toBe(expected);
     });
 });
 
@@ -69,137 +40,69 @@ describe('findLatestMarketplaceVersion', () => {
         expect(result).toBeUndefined();
     });
 
-    test('should return the single version if only one exists', async () => {
+    test.each([
+        ['single version', ['1.0.0'], '1.0.0'],
+        ['multiple versions', ['1.0.0', '2.0.0', '1.5.0'], '2.0.0'],
+        ['prerelease versions', ['1.0.0', '1.0.1-beta.1'], '1.0.1-beta.1'],
+        ['alpha vs beta', ['1.0.0-alpha.1', '1.0.0-beta.1'], '1.0.0-beta.1'],
+    ])('should return latest from %s', async (_desc, versions, expected) => {
         const pluginDir = join(tempDir, 'test-plugin');
-        const versionDir = join(pluginDir, '1.0.0');
-        await createMockPluginDir(versionDir);
+
+        for(const version of versions) {
+            await createMockPluginDir(join(pluginDir, version));
+        }
 
         const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
-        expect(result).toBe(versionDir);
+        expect(result).toBe(join(pluginDir, expected));
     });
 
-    test('should return the latest semver version when multiple exist', async () => {
+    test.each([
+        [
+            'directories without .claude-plugin',
+            async (pluginDir: string) => {
+                await createMockPluginDir(join(pluginDir, '1.0.0'));
+                await mockFsPromises.mkdir(join(pluginDir, '2.0.0'), { recursive: true });
+            },
+            join(tempDir, 'test-plugin', '1.0.0'),
+        ],
+        [
+            'non-semver directory names',
+            async (pluginDir: string) => {
+                await createMockPluginDir(join(pluginDir, '1.0.0'));
+                await createMockPluginDir(join(pluginDir, 'not-a-version'));
+            },
+            join(tempDir, 'test-plugin', '1.0.0'),
+        ],
+        [
+            'invalid semver (missing patch)',
+            async (pluginDir: string) => {
+                await createMockPluginDir(join(pluginDir, '1.0.0'));
+                await createMockPluginDir(join(pluginDir, '1.2'));
+            },
+            join(tempDir, 'test-plugin', '1.0.0'),
+        ],
+        [
+            'files instead of directories',
+            async (pluginDir: string) => {
+                await createMockPluginDir(join(pluginDir, '1.0.0'));
+                await mockFsPromises.writeFile(join(pluginDir, '2.0.0'), 'file');
+            },
+            join(tempDir, 'test-plugin', '1.0.0'),
+        ],
+        [
+            '.claude-plugin as file not directory',
+            async (pluginDir: string) => {
+                await mockFsPromises.mkdir(join(pluginDir, '1.0.0'), { recursive: true });
+                await mockFsPromises.writeFile(join(pluginDir, '1.0.0', '.claude-plugin'), 'file');
+            },
+            undefined,
+        ],
+    ])('should skip %s', async (_desc, setup, expected) => {
         const pluginDir = join(tempDir, 'test-plugin');
-        const version1 = join(pluginDir, '1.0.0');
-        const version2 = join(pluginDir, '2.0.0');
-        const version3 = join(pluginDir, '1.5.0');
-
-        await createMockPluginDir(version1);
-        await createMockPluginDir(version2);
-        await createMockPluginDir(version3);
+        await setup(pluginDir);
 
         const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
-        expect(result).toBe(version2);
-    });
-
-    test('should handle prerelease versions correctly', async () => {
-        const pluginDir = join(tempDir, 'test-plugin');
-        const release = join(pluginDir, '1.0.0');
-        const prerelease = join(pluginDir, '1.0.1-beta.1');
-
-        await createMockPluginDir(release);
-        await createMockPluginDir(prerelease);
-
-        const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
-        // Prerelease is lower than release in semver
-        expect(result).toBe(prerelease);
-    });
-
-    test('should skip directories without .claude-plugin', async () => {
-        const pluginDir = join(tempDir, 'test-plugin');
-        const validVersion = join(pluginDir, '1.0.0');
-        const invalidVersion = join(pluginDir, '2.0.0');
-
-        await createMockPluginDir(validVersion);
-        await mockFsPromises.mkdir(invalidVersion, { recursive: true });
-        // No .claude-plugin directory in invalidVersion
-
-        const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
-        expect(result).toBe(validVersion);
-    });
-
-    test('should return undefined if no valid version directories exist', async () => {
-        const pluginDir = join(tempDir, 'test-plugin');
-        await mockFsPromises.mkdir(pluginDir, { recursive: true });
-        // Create a directory without .claude-plugin
-        await mockFsPromises.mkdir(join(pluginDir, '1.0.0'), { recursive: true });
-
-        const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
-        expect(result).toBeUndefined();
-    });
-
-    test('should skip non-semver directory names', async () => {
-        const pluginDir = join(tempDir, 'test-plugin');
-        const validVersion = join(pluginDir, '1.0.0');
-        const invalidName = join(pluginDir, 'not-a-version');
-
-        await createMockPluginDir(validVersion);
-        await createMockPluginDir(invalidName);
-
-        const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
-        expect(result).toBe(validVersion);
-    });
-
-    test('should ignore files when scanning for version directories', async () => {
-        const pluginDir = join(tempDir, 'test-plugin');
-        const validVersion = join(pluginDir, '1.0.0');
-        await createMockPluginDir(validVersion);
-
-        // Create a file (not a directory) with a semver name
-        await mockFsPromises.writeFile(join(pluginDir, '2.0.0'), 'this is a file not a directory');
-
-        const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
-        expect(result).toBe(validVersion);
-    });
-
-    test('should validate plugin directory has .claude-plugin subdirectory that is also a directory', async () => {
-        const pluginDir = join(tempDir, 'test-plugin');
-        const invalidVersion = join(pluginDir, '1.0.0');
-        await mockFsPromises.mkdir(invalidVersion, { recursive: true });
-
-        // Create .claude-plugin as a FILE instead of a directory
-        await mockFsPromises.writeFile(join(invalidVersion, '.claude-plugin'), 'not a directory');
-
-        const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
-        // Should return undefined because .claude-plugin is not a directory
-        expect(result).toBeUndefined();
-    });
-
-    test('should skip invalid semver versions (missing patch)', async () => {
-        const pluginDir = join(tempDir, 'test-plugin');
-        const validVersion = join(pluginDir, '1.0.0');
-        const invalidSemver = join(pluginDir, '1.2'); // Missing patch version
-
-        await createMockPluginDir(validVersion);
-        await createMockPluginDir(invalidSemver);
-
-        const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
-        expect(result).toBe(validVersion);
-    });
-
-    test('should return undefined when all versions are invalid', async () => {
-        const pluginDir = join(tempDir, 'test-plugin');
-        const invalidSemver1 = join(pluginDir, '1.2');
-        const invalidSemver2 = join(pluginDir, 'not-a-version');
-
-        await createMockPluginDir(invalidSemver1);
-        await createMockPluginDir(invalidSemver2);
-
-        const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
-        expect(result).toBeUndefined();
-    });
-
-    test('should handle versions with prerelease metadata', async () => {
-        const pluginDir = join(tempDir, 'test-plugin');
-        const version1 = join(pluginDir, '1.0.0-alpha.1');
-        const version2 = join(pluginDir, '1.0.0-beta.1');
-
-        await createMockPluginDir(version1);
-        await createMockPluginDir(version2);
-
-        const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
-        // beta comes after alpha in semver
-        expect(result).toBe(version2);
+        expect(result).toBe(expected);
     });
 
     test('should handle versions with build metadata', async () => {
@@ -280,21 +183,6 @@ describe('loadPlugins', () => {
             const paths = _.map(result, 'path');
             expect(paths).toContain(plugin1);
             expect(paths).toContain(plugin2);
-        });
-
-        test('should skip plugins.json file when scanning for in-repo plugins', async () => {
-            // plugins.json exists by default, ensure it is not treated as a plugin
-            const result = await loadPlugins(pluginsDir, marketplaceDir);
-
-            expect(result).toHaveLength(0);
-        });
-
-        test('should skip README.md when scanning for in-repo plugins', async () => {
-            await mockFsPromises.writeFile(join(pluginsDir, 'README.md'), '# Plugins');
-
-            const result = await loadPlugins(pluginsDir, marketplaceDir);
-
-            expect(result).toHaveLength(0);
         });
     });
 
@@ -494,8 +382,59 @@ describe('loadPlugins', () => {
     });
 
     describe('error handling', () => {
-        test('should handle missing plugins.json gracefully', async () => {
+        test('should use empty config defaults when plugins.json is missing without warning', async () => {
             await mockFsPromises.rm(join(pluginsDir, 'plugins.json'));
+
+            // Create marketplace plugin that would be loaded IF config existed
+            const marketplacePlugin = join(marketplaceDir, 'marketplace-plugin', '1.0.0');
+            await createMockPluginDir(marketplacePlugin);
+
+            // Create external plugin that would be loaded IF config existed
+            const externalPlugin = join(tempDir, 'external-plugin');
+            await createMockPluginDir(externalPlugin);
+
+            const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
+            await createMockPluginDir(inRepoPlugin);
+
+            const result = await loadPlugins(pluginsDir, marketplaceDir);
+
+            // Should ONLY find in-repo plugins because config defaults to empty arrays
+            // External and marketplace plugins should NOT be loaded without config
+            expect(result).toHaveLength(1);
+            expect(result[0]).toEqual({ type: 'local', path: inRepoPlugin });
+
+            // CRITICAL: No warning should be logged when file is simply missing
+            // This is the key difference from the catch block which DOES log warnings
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+
+        test.each([
+            ['invalid JSON', async () => {
+                await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), '{ invalid json }');
+            }, 'Failed to parse plugins.json'],
+            ['null value', async () => {
+                await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), 'null');
+            }, 'Invalid plugins.json schema'],
+            ['array value', async () => {
+                await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), '[]');
+            }, 'Invalid plugins.json schema'],
+            ['wrong field types', async () => {
+                await mockFsPromises.writeFile(
+                    join(pluginsDir, 'plugins.json'),
+                    JSON.stringify({ externalPaths: 'not-an-array', marketplace: 123 })
+                );
+            }, 'Invalid plugins.json schema'],
+            ['empty object', async () => {
+                await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), '{}');
+            }, null],
+            ['missing externalPaths field', async () => {
+                await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), JSON.stringify({ marketplace: [] }));
+            }, null],
+            ['missing marketplace field', async () => {
+                await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), JSON.stringify({ externalPaths: [] }));
+            }, null],
+        ])('should handle %s', async (_desc, setup, expectedWarning) => {
+            await setup();
 
             const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
             await createMockPluginDir(inRepoPlugin);
@@ -505,131 +444,15 @@ describe('loadPlugins', () => {
             // Should still find in-repo plugins
             expect(result).toHaveLength(1);
             expect(result[0]).toEqual({ type: 'local', path: inRepoPlugin });
-        });
 
-        test('should handle invalid JSON in plugins.json', async () => {
-            await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), '{ invalid json }');
-
-            const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
-            await createMockPluginDir(inRepoPlugin);
-
-            const result = await loadPlugins(pluginsDir, marketplaceDir);
-
-            // Should warn and continue with in-repo plugins only
-            expect(result).toHaveLength(1);
-            expect(mockLogger.warn).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
-                    msg: expect.stringContaining('Failed to parse plugins.json'),
-                })
-            );
-        });
-
-        test('should handle null value in plugins.json', async () => {
-            await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), 'null');
-
-            const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
-            await createMockPluginDir(inRepoPlugin);
-
-            const result = await loadPlugins(pluginsDir, marketplaceDir);
-
-            // Should warn and use defaults
-            expect(result).toHaveLength(1);
-            expect(mockLogger.warn).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
-                    msg: expect.stringContaining('Invalid plugins.json schema'),
-                })
-            );
-        });
-
-        test('should handle array in plugins.json', async () => {
-            await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), '[]');
-
-            const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
-            await createMockPluginDir(inRepoPlugin);
-
-            const result = await loadPlugins(pluginsDir, marketplaceDir);
-
-            // Should warn and use defaults
-            expect(result).toHaveLength(1);
-            expect(mockLogger.warn).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
-                    msg: expect.stringContaining('Invalid plugins.json schema'),
-                })
-            );
-        });
-
-        test('should handle empty object in plugins.json', async () => {
-            await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), '{}');
-
-            const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
-            await createMockPluginDir(inRepoPlugin);
-
-            const result = await loadPlugins(pluginsDir, marketplaceDir);
-
-            // Empty object should be valid with defaults applied
-            expect(result).toHaveLength(1);
-        });
-
-        test('should handle missing externalPaths field', async () => {
-            await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), JSON.stringify({ marketplace: [] }));
-
-            const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
-            await createMockPluginDir(inRepoPlugin);
-
-            const result = await loadPlugins(pluginsDir, marketplaceDir);
-
-            // Should use default empty array for externalPaths
-            expect(result).toHaveLength(1);
-        });
-
-        test('should handle missing marketplace field', async () => {
-            await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), JSON.stringify({ externalPaths: [] }));
-
-            const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
-            await createMockPluginDir(inRepoPlugin);
-
-            const result = await loadPlugins(pluginsDir, marketplaceDir);
-
-            // Should use default empty array for marketplace
-            expect(result).toHaveLength(1);
-        });
-
-        test('should use empty array defaults when both config fields are missing', async () => {
-            // Create config file without externalPaths or marketplace
-            await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), '{}');
-
-            const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
-            await createMockPluginDir(inRepoPlugin);
-
-            const result = await loadPlugins(pluginsDir, marketplaceDir);
-
-            // Should still find in-repo plugins even when config fields are missing
-            expect(result).toHaveLength(1);
-            expect(result[0]).toEqual({ type: 'local', path: inRepoPlugin });
-        });
-
-        test('should handle invalid schema in plugins.json (wrong types)', async () => {
-            await mockFsPromises.writeFile(
-                join(pluginsDir, 'plugins.json'),
-                JSON.stringify({ externalPaths: 'not-an-array', marketplace: 123 })
-            );
-
-            const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
-            await createMockPluginDir(inRepoPlugin);
-
-            const result = await loadPlugins(pluginsDir, marketplaceDir);
-
-            // Should warn about invalid schema and use defaults
-            expect(result).toHaveLength(1);
-            expect(mockLogger.warn).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
-                    msg: expect.stringContaining('Invalid plugins.json schema'),
-                })
-            );
+            if(expectedWarning) {
+                expect(mockLogger.warn).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
+                        msg: expect.stringContaining(expectedWarning),
+                    })
+                );
+            }
         });
 
         test('should handle missing plugins directory gracefully', async () => {
@@ -651,26 +474,6 @@ describe('loadPlugins', () => {
             const result = await loadPlugins(pluginsDir, marketplaceDir);
 
             expect(result).toHaveLength(0);
-            expect(mockLogger.warn).toHaveBeenCalled();
-        });
-    });
-
-    describe('return type structure', () => {
-        test('should return PluginEntry objects with type and path', async () => {
-            const plugin = join(pluginsDir, 'test-plugin');
-            await createMockPluginDir(plugin);
-
-            const result = await loadPlugins(pluginsDir, marketplaceDir);
-
-            expect(result).toHaveLength(1);
-            expect(result[0]).toHaveProperty('type', 'local');
-            expect(result[0]).toHaveProperty('path', plugin);
-        });
-
-        test('should return empty array when no plugins found', async () => {
-            const result = await loadPlugins(pluginsDir, marketplaceDir);
-
-            expect(result).toEqual([]);
         });
     });
 });

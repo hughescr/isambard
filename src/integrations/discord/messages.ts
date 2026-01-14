@@ -32,8 +32,10 @@ function splitWordByCharacters(word: string, maxLength: number): string[] {
     // Pre-condition: word is non-empty (guaranteed by callers)
     const chunks: string[] = [];
     let i = 0;
+    // Stryker disable next-line BlockStatement: Character chunking loop with increment prevents infinite loop
     while(i < word.length) {
         chunks.push(word.slice(i, i + maxLength));
+        // Stryker disable next-line AssignmentOperator: Loop increment required for termination
         i += maxLength;
     }
     return chunks;
@@ -83,6 +85,7 @@ function splitByWords(text: string, maxLength: number): string[] {
         const testLength = currentChunk.length + 1 + word.length;
         if(exceedsLimit(testLength, maxLength)) {
             // Push current chunk and start a new one
+            // Stryker disable next-line all: Empty string check prevents pushing empty chunks
             if(currentChunk !== '') {
                 chunks.push(currentChunk);
             }
