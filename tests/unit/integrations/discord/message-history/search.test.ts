@@ -491,7 +491,7 @@ describe.concurrent('createMessageSearchService', () => {
                     ],
                 },
             ])('should NOT filter messages $description - all messages returned unfiltered', async ({ query, messages }) => {
-                const cachedMessages = messages.map(m => createMockCachedMessage(m));
+                const cachedMessages = _.map(messages, m => createMockCachedMessage(m));
 
                 (mockCache.getMessagesInRange as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
@@ -508,6 +508,7 @@ describe.concurrent('createMessageSearchService', () => {
                 });
 
                 expect(result.messages).toHaveLength(messages.length);
+                // eslint-disable-next-line lodash/prefer-lodash-method -- _.forEach breaks TypeScript inference with test.each union types
                 messages.forEach((msg, idx) => {
                     expect(result.messages[idx].content).toBe(msg.content);
                 });

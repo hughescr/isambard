@@ -447,7 +447,7 @@ describe('cleanupSession', () => {
         notFoundError.code = 'ENOENT';
 
         let callCount = 0;
-        mockAccess.mockImplementation((path: string) => {
+        mockAccess.mockImplementation((_path: string) => {
             callCount++;
             // First call is sub-agent directory check - fail it
             if(callCount === 1) {
@@ -479,7 +479,7 @@ describe('cleanupSession', () => {
         notFoundError.code = 'ENOENT';
 
         let callCount = 0;
-        mockAccess.mockImplementation((path: string) => {
+        mockAccess.mockImplementation((_path: string) => {
             callCount++;
             // First call: sub-agent directory check - succeeds
             if(callCount === 1) {

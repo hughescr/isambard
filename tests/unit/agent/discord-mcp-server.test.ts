@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- Handler return values are typed as any in tests */
-import { constant as _constant, isArray as _isArray } from 'lodash';
+import { constant as _constant, isArray as _isArray, forEach as _forEach } from 'lodash';
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { createDiscordMCPServer } from '../../../src/agent/discord-mcp-server';
 import type { MessageSearchService } from '../../../src/integrations/discord/message-history/search';
@@ -62,7 +62,7 @@ describe.concurrent('createDiscordMCPServer', () => {
             ['name', (server: ReturnType<typeof createDiscordMCPServer>) => server.name, 'discord'],
             ['instance', (server: ReturnType<typeof createDiscordMCPServer>) => server.instance, expect.anything()],
             ['type', (server: ReturnType<typeof createDiscordMCPServer>) => server.type, 'sdk'],
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing server version
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Accessing server version and mock return value
             ['version', (server: ReturnType<typeof createDiscordMCPServer>) => (server.instance as any).server._serverInfo.version, '1.0.0'],
         ])('should create MCP server with correct %s', (_name, accessor, expected) => {
             const server = createDiscordMCPServer(mockSearchService);
@@ -93,7 +93,7 @@ describe.concurrent('createDiscordMCPServer', () => {
             expect(tool.inputSchema).toBeDefined();
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema properties
             expect(tool.inputSchema.shape).toBeDefined();
-            expectedFields.forEach((field) => {
+            _forEach(expectedFields, (field) => {
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema field
                 expect(tool.inputSchema.shape[field]).toBeDefined();
             });

@@ -1,4 +1,5 @@
 import { describe, test, expect } from 'bun:test';
+import { keys as _keys } from 'lodash';
 import {
     discordSearchResultSchema,
     overflowSummarySchema,
@@ -69,7 +70,7 @@ describe.concurrent('discordSearchResultSchema', () => {
         ['embeds', { embeds: undefined }],
         ['reactions', { reactions: undefined }],
     ])('should require %s field', (_fieldName, override) => {
-        const key = Object.keys(override)[0] as keyof typeof validSearchResult;
+        const key = _keys(override)[0] as keyof typeof validSearchResult;
         const { [key]: _removed, ...incomplete } = validSearchResult;
         const result = discordSearchResultSchema.safeParse(incomplete);
         expect(result.success).toBe(false);
@@ -109,7 +110,7 @@ describe('overflowSummarySchema', () => {
         ['author', { author: undefined }],
         ['synopsis', { synopsis: undefined }],
     ])('should require %s field', (_fieldName, override) => {
-        const key = Object.keys(override)[0] as keyof typeof validOverflow;
+        const key = _keys(override)[0] as keyof typeof validOverflow;
         const { [key]: _removed, ...incomplete } = validOverflow;
         const result = overflowSummarySchema.safeParse(incomplete);
         expect(result.success).toBe(false);
@@ -193,7 +194,7 @@ describe('searchResponseSchema', () => {
         ['messages', { messages: undefined }],
         ['metadata', { metadata: undefined }],
     ])('should require %s field', (_fieldName, override) => {
-        const key = Object.keys(override)[0] as keyof typeof validSearchResponse;
+        const key = _keys(override)[0] as keyof typeof validSearchResponse;
         const { [key]: _removed, ...incomplete } = validSearchResponse;
         const result = searchResponseSchema.safeParse(incomplete);
         expect(result.success).toBe(false);

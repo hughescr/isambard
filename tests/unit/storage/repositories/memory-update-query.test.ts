@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
-import { assign as _assign } from 'lodash';
+import { assign as _assign, keys as _keys } from 'lodash';
 import {
     DynamoDBDocumentClient,
     GetCommand,
@@ -143,7 +143,7 @@ describe.concurrent('MemoryRepository', () => {
                 expect(result.content).toBe(expected.content);
                 expect(result.metadata).toEqual(expected.metadata);
                 expect(result.TTL).toBe(expected.TTL);
-                if(Object.keys(updateData).length > 0) {
+                if(_keys(updateData).length > 0) {
                     expect(result.version).toBe(1); // version always increments on update
                 }
             });
@@ -158,7 +158,7 @@ describe.concurrent('MemoryRepository', () => {
 
                 const result = await repository.update(testId, 'identity', updateData);
 
-                const field = Object.keys(updateData)[0] as 'content' | 'metadata' | 'TTL';
+                const field = _keys(updateData)[0] as 'content' | 'metadata' | 'TTL';
 
                 const actualValue = result[field];
                 expect(actualValue).toEqual(expectedValue);

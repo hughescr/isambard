@@ -3,6 +3,7 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
 /* eslint-disable lodash/prefer-constant -- Test callbacks */
 import { describe, test, expect, afterEach, mock, spyOn } from 'bun:test';
+import { filter as _filter } from 'lodash';
 import type { Client } from 'discord.js';
 import { createDiscordBot } from '@/integrations/discord/bot';
 import type { DiscordConfig } from '@/config/schemas';
@@ -11,18 +12,16 @@ import * as clientModule from '@/integrations/discord/client';
 import * as presenceModule from '@/integrations/discord/presence';
 
 describe.concurrent('createDiscordBot', () => {
-    let mockConfig: DiscordConfig;
-    let mockOnMessage: (context: DiscordMessageContext) => Promise<string | null>;
     const spies: ReturnType<typeof spyOn>[] = [];
 
     // Setup common mocks
-    mockConfig = {
+    const mockConfig: DiscordConfig = {
         botToken:            'test-bot-token',
         applicationId:       'test-app-id',
         monitoredChannelIds: ['123456789' as ChannelId, '987654321' as ChannelId],
     };
 
-    mockOnMessage = mock(async (_context: DiscordMessageContext) => null);
+    const mockOnMessage = mock(async (_context: DiscordMessageContext) => null);
 
     afterEach(() => {
         for(const spy of spies) {
@@ -200,7 +199,7 @@ describe.concurrent('createDiscordBot', () => {
             // Simulate clientReady event (find the SECOND clientReady handler)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
             const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
-            const readyHandlers = calls.filter(([event]) => event === 'clientReady');
+            const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[1]?.[1]; // Second handler is for message setup
             if(messageSetupHandler) {
                 messageSetupHandler(mockClient);
@@ -241,7 +240,7 @@ describe.concurrent('createDiscordBot', () => {
             // Simulate clientReady event (find the SECOND clientReady handler)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
             const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
-            const readyHandlers = calls.filter(([event]) => event === 'clientReady');
+            const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[1]?.[1]; // Second handler is for message setup
             if(messageSetupHandler) {
                 messageSetupHandler(mockClient);
@@ -295,7 +294,7 @@ describe.concurrent('createDiscordBot', () => {
             // Simulate clientReady event to create presenceManager (find the SECOND clientReady handler)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
             const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
-            const readyHandlers = calls.filter(([event]) => event === 'clientReady');
+            const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[1]?.[1]; // Second handler is for message setup
             if(messageSetupHandler) {
                 messageSetupHandler(mockClient);
@@ -354,7 +353,7 @@ describe.concurrent('createDiscordBot', () => {
             // Simulate clientReady event to create presenceManager (find the SECOND clientReady handler)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
             const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
-            const readyHandlers = calls.filter(([event]) => event === 'clientReady');
+            const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[1]?.[1]; // Second handler is for message setup
             if(messageSetupHandler) {
                 messageSetupHandler(mockClient);

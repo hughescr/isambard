@@ -5,7 +5,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return -- Test mocks */
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { ActivityType } from 'discord.js';
-import { constant as _constant, keys as _keys, repeat as _repeat, size as _size } from 'lodash';
+import { constant as _constant, keys as _keys, repeat as _repeat, size as _size, isString as _isString } from 'lodash';
 import { createIdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
 import { mockGenerateTextWithSystemPrompt } from '../../../../setup';
 
@@ -78,7 +78,7 @@ describe('IdleStatusGenerator', () => {
         });
 
         test.each([
-            { property: 'name', check: (val: any) => typeof val === 'string' && val.length > 0 },
+            { property: 'name', check: (val: any) => _isString(val) && val.length > 0 },
             { property: 'type', check: (val: any) => val !== undefined },
         ])('should return object with $property property (kills ObjectLiteral mutant)', async ({ property, check }) => {
             mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve('Deep in thought')));

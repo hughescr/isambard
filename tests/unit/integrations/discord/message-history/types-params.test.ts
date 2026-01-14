@@ -84,16 +84,34 @@ describe('cachedMessageSegmentSchema', () => {
     });
 
     test.each([
-        ['channelId missing', (c: CachedMessageSegment) => { const { channelId: _, ...rest } = c; return rest; }],
+        ['channelId missing', (c: CachedMessageSegment) => {
+            const { channelId: _, ...rest } = c;
+            return rest;
+        }],
         ['channelId empty', (c: CachedMessageSegment) => ({ ...c, channelId: '' })],
-        ['startSnowflake missing', (c: CachedMessageSegment) => { const { startSnowflake: _, ...rest } = c; return rest; }],
+        ['startSnowflake missing', (c: CachedMessageSegment) => {
+            const { startSnowflake: _, ...rest } = c;
+            return rest;
+        }],
         ['startSnowflake invalid format', (c: CachedMessageSegment) => ({ ...c, startSnowflake: 'not-a-snowflake' })],
-        ['endSnowflake missing', (c: CachedMessageSegment) => { const { endSnowflake: _, ...rest } = c; return rest; }],
+        ['endSnowflake missing', (c: CachedMessageSegment) => {
+            const { endSnowflake: _, ...rest } = c;
+            return rest;
+        }],
         ['endSnowflake invalid format', (c: CachedMessageSegment) => ({ ...c, endSnowflake: 'invalid' })],
-        ['messages missing', (c: CachedMessageSegment) => { const { messages: _, ...rest } = c; return rest; }],
-        ['createdAt missing', (c: CachedMessageSegment) => { const { createdAt: _, ...rest } = c; return rest; }],
+        ['messages missing', (c: CachedMessageSegment) => {
+            const { messages: _, ...rest } = c;
+            return rest;
+        }],
+        ['createdAt missing', (c: CachedMessageSegment) => {
+            const { createdAt: _, ...rest } = c;
+            return rest;
+        }],
         ['createdAt invalid format', (c: CachedMessageSegment) => ({ ...c, createdAt: 'not-a-date' })],
-        ['ttl missing', (c: CachedMessageSegment) => { const { ttl: _, ...rest } = c; return rest; }],
+        ['ttl missing', (c: CachedMessageSegment) => {
+            const { ttl: _, ...rest } = c;
+            return rest;
+        }],
         ['ttl zero', (c: CachedMessageSegment) => ({ ...c, ttl: 0 })],
         ['ttl negative', (c: CachedMessageSegment) => ({ ...c, ttl: -1 })],
         ['ttl non-integer', (c: CachedMessageSegment) => ({ ...c, ttl: 1705320000.5 })],

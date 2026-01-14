@@ -356,6 +356,7 @@ describe('createClaudeAgent', () => {
             await agent.chat(mockMessageContext);
 
             expect(querySpy).toHaveBeenCalledTimes(1);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.model).toBe('sonnet');
             // Verify model is not an empty string (kills StringLiteral mutant on line 14)
@@ -366,7 +367,9 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);
 
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const tools = queryParams.options.tools;
 
             // Verify exact array contents (order matters for mutation testing)
@@ -390,7 +393,9 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);
 
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const tools = queryParams.options.tools;
 
             // Verify each tool individually (kills StringLiteral mutants on lines 24-41)
@@ -408,18 +413,20 @@ describe('createClaudeAgent', () => {
             expect(tools).toContain('ExitPlanMode');
 
             // Verify none are empty strings
-            expect(tools.every((tool: string) => tool !== '')).toBe(true);
+            expect(_.every(tools, (tool: string) => tool !== '')).toBe(true);
         });
 
         test('should define EXPLICIT_AGENTS with correct structure', async () => {
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);
 
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const agents = queryParams.options.agents;
 
             // Verify exact agent structure
-            expect(Object.keys(agents).sort()).toEqual(['Explore', 'Plan', 'general-purpose'].sort());
+            expect(_.keys(agents).sort()).toEqual(['Explore', 'Plan', 'general-purpose'].sort());
 
             // Verify general-purpose agent with exact values
             expect(agents['general-purpose']).toEqual({
@@ -449,11 +456,13 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);
 
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const agents = queryParams.options.agents;
 
             // Verify agents object is not empty (kills ObjectLiteral mutant on line 49)
-            expect(Object.keys(agents).length).toBeGreaterThan(0);
+            expect(_.keys(agents).length).toBeGreaterThan(0);
             expect(agents).not.toEqual({});
         });
 
@@ -461,7 +470,9 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);
 
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const exploreTools = queryParams.options.agents.Explore.tools;
 
             // Verify Explore agent tools array is not empty (kills ArrayDeclaration mutant on line 62)
@@ -477,14 +488,16 @@ describe('createClaudeAgent', () => {
             expect(exploreTools).toEqual(['Read', 'Glob', 'Grep']);
 
             // Verify none are empty strings
-            expect(exploreTools.every((tool: string) => tool !== '')).toBe(true);
+            expect(_.every(exploreTools, (tool: string) => tool !== '')).toBe(true);
         });
 
         test('should include exact tools array for Plan agent', async () => {
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);
 
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const planTools = queryParams.options.agents.Plan.tools;
 
             // Verify Plan agent tools array is defined
@@ -502,7 +515,7 @@ describe('createClaudeAgent', () => {
             expect(planTools).toEqual(['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch']);
 
             // Verify none are empty strings
-            expect(planTools.every((tool: string) => tool !== '')).toBe(true);
+            expect(_.every(planTools, (tool: string) => tool !== '')).toBe(true);
         });
     });
 
@@ -511,6 +524,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);
 
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.mcpServers).toBeUndefined();
         });
@@ -520,6 +534,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ memoryMcpServer: mockMemoryServer });
             await agent.chat(mockMessageContext);
 
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.mcpServers).toBeDefined();
             expect(queryParams.options.mcpServers.memory).toEqual(mockMemoryServer);
@@ -530,6 +545,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ discordMcpServer: mockDiscordServer });
             await agent.chat(mockMessageContext);
 
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.mcpServers).toBeDefined();
             expect(queryParams.options.mcpServers.discord).toEqual(mockDiscordServer);
@@ -544,6 +560,7 @@ describe('createClaudeAgent', () => {
             });
             await agent.chat(mockMessageContext);
 
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.mcpServers).toBeDefined();
             expect(queryParams.options.mcpServers.memory).toEqual(mockMemoryServer);
@@ -556,7 +573,9 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             await agent.chat(mockMessageContext);
 
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const allowedTools = queryParams.options.allowedTools;
 
             // Verify exact array contents (order matters for mutation testing)
@@ -585,7 +604,9 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ discordMcpServer: mockDiscordServer });
             await agent.chat(mockMessageContext);
 
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const allowedTools = queryParams.options.allowedTools;
 
             // Verify exact array contents with Discord tools included
@@ -616,6 +637,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ plugins: [] });
             await agent.chat(mockMessageContext);
 
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             // Verify plugins is undefined when empty array provided (kills ConditionalExpression mutant on line 565)
             expect(queryParams.options.plugins).toBeUndefined();
@@ -625,6 +647,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ plugins: undefined });
             await agent.chat(mockMessageContext);
 
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.plugins).toBeUndefined();
         });
@@ -634,6 +657,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ plugins: mockPlugins });
             await agent.chat(mockMessageContext);
 
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             // Verify plugins is passed through when non-empty (kills ConditionalExpression mutant on line 565)
             expect(queryParams.options.plugins).toEqual(mockPlugins);

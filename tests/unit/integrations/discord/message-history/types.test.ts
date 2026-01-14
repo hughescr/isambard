@@ -1,4 +1,5 @@
 import { describe, test, expect } from 'bun:test';
+import { keys as _keys, values as _values } from 'lodash';
 import {
     discordAuthorSchema,
     discordAttachmentSchema,
@@ -27,7 +28,7 @@ describe.concurrent('discordAuthorSchema', () => {
         ['username', { username: undefined }],
         ['displayName', { displayName: undefined }],
     ])('should require non-empty %s field', (_fieldName, override) => {
-        const key = Object.keys(override)[0] as keyof typeof validAuthor;
+        const key = _keys(override)[0] as keyof typeof validAuthor;
         const { [key]: _removed, ...incomplete } = validAuthor;
         const result = discordAuthorSchema.safeParse(incomplete);
         expect(result.success).toBe(false);
@@ -69,7 +70,7 @@ describe('discordAttachmentSchema', () => {
         ['filename missing', { filename: undefined }, false],
         ['filename empty', { filename: '' }, false],
     ])('should validate %s', (_label, override, _shouldPass) => {
-        const key = Object.keys(override)[0] as keyof typeof validAttachment;
+        const key = _keys(override)[0] as keyof typeof validAttachment;
         const { [key]: _removed, ...base } = validAttachment;
         const testData = key === 'url' && 'url' in override && override.url !== undefined
             ? { ...validAttachment, ...override }
@@ -123,10 +124,10 @@ describe('discordReactionSchema', () => {
         ['count non-integer', { count: 1.5 }],
     ])('should reject %s', (_label, override) => {
         // For undefined values, omit the field; otherwise merge the override
-        const overrideValue = Object.values(override)[0];
+        const overrideValue = _values(override)[0];
         let testData: Record<string, unknown>;
         if(overrideValue === undefined) {
-            const key = Object.keys(override)[0];
+            const key = _keys(override)[0];
             const { [key]: _removed, ...base } = validReaction as Record<string, unknown>;
             testData = base;
         } else {

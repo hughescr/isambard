@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { isString as _isString } from 'lodash';
 import {
     timeContextSchema,
     timeOfDaySchema,
@@ -90,13 +91,13 @@ describe('relative time formatting boundary conditions', () => {
             expectedShort: '1y ago'
         }
     ])('should format $desc', ({ date, now, expectedLong, expectedShort }) => {
-        if(typeof expectedLong === 'string') {
+        if(_isString(expectedLong)) {
             expect(formatRelativeTime(date, now)).toBe(expectedLong);
         } else {
             expect(formatRelativeTime(date, now)).toMatch(expectedLong);
         }
 
-        if(typeof expectedShort === 'string') {
+        if(_isString(expectedShort)) {
             expect(formatShortRelativeTime(date, now)).toBe(expectedShort);
         } else {
             expect(formatShortRelativeTime(date, now)).toMatch(expectedShort);

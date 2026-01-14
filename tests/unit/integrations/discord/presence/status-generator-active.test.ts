@@ -84,16 +84,22 @@ describe('ActiveStatusGenerator', () => {
             generator.generate(phase);
 
             // Kill ObjectLiteral mutant on line 71 col 26 - verify first arg is object with phase property
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing mock logger methods for test assertions
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({ phase }),
                 expect.any(String)
             );
 
             // Kill StringLiteral mutant on line 71 col 37 - verify second arg is the specific string
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing mock.calls array from test mock
             const debugCalls = mockLogger.debug.mock.calls;
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing length property of mock calls array
             expect(debugCalls.length).toBeGreaterThan(0);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing array element of mock calls
             const lastCall = debugCalls[debugCalls.length - 1];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing mock call arguments array
             expect(lastCall[1]).toBe('Generating active status');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing mock call arguments array
             expect(lastCall[1]).not.toBe('');
         });
 
@@ -108,10 +114,15 @@ describe('ActiveStatusGenerator', () => {
             generator.generate(idlePhase);
 
             // Kill StringLiteral mutant on line 76 col 33 - verify arg is the specific string
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing mock.calls array from test mock
             const warnCalls = mockLogger.warn.mock.calls;
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing length property of mock calls array
             expect(warnCalls.length).toBeGreaterThan(0);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing array element of mock calls
             const lastCall = warnCalls[warnCalls.length - 1];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing mock call arguments array
             expect(lastCall[0]).toBe('Active status generator called for idle phase');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing mock call arguments array
             expect(lastCall[0]).not.toBe('');
         });
 
@@ -126,16 +137,22 @@ describe('ActiveStatusGenerator', () => {
             generator.generate(unknownPhase);
 
             // Kill ObjectLiteral mutant on line 93 col 34 - verify first arg is object with phase property
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing mock logger methods for test assertions
             expect(mockLogger.error).toHaveBeenCalledWith(
                 expect.objectContaining({ phase: expect.anything() }),
                 expect.any(String)
             );
 
             // Kill StringLiteral mutant on line 93 col 58 - verify second arg is the specific string
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing mock.calls array from test mock
             const errorCalls = mockLogger.error.mock.calls;
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing length property of mock calls array
             expect(errorCalls.length).toBeGreaterThan(0);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing array element of mock calls
             const lastCall = errorCalls[errorCalls.length - 1];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing mock call arguments array
             expect(lastCall[1]).toBe('Unknown presence phase');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing mock call arguments array
             expect(lastCall[1]).not.toBe('');
         });
     });

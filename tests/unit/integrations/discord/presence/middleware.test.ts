@@ -688,7 +688,7 @@ describe('StatusMiddleware', () => {
             expect(lastThinkingContext?.recentToolCalls).not.toEqual(['Stryker was here']);
 
             // Verify second tool call has both tools in history
-            const grepContext = _find(capturedContexts, ctx => ctx.phase === 'using_tool' && ctx.toolName === 'Grep');
+            const grepContext = _find(capturedContexts, { phase: 'using_tool', toolName: 'Grep' });
             expect(grepContext?.recentToolCalls).toBeDefined();
             expect(grepContext?.recentToolCalls).toEqual(['Read']);
         });
@@ -752,9 +752,7 @@ describe('StatusMiddleware', () => {
 
             // Kill StringLiteral mutant on line 124 col 64 - verify second arg is the specific string
             const debugCalls = localMockLogger.debug.mock.calls as any[];
-            const typingStartCall = _find(debugCalls, (call: any[]) =>
-                call[1] === 'Started typing indicator'
-            ) as any[] | undefined;
+            const typingStartCall = _find(debugCalls, ['1', 'Started typing indicator']) as any[] | undefined;
 
             expect(typingStartCall).toBeDefined();
             if(typingStartCall) {

@@ -1,4 +1,5 @@
 import { describe, test, expect } from 'bun:test';
+import { repeat as _repeat, startsWith as _startsWith } from 'lodash';
 import {
     DISCORD_MAX_LENGTH,
     DISCORD_SAFE_LENGTH,
@@ -63,8 +64,8 @@ describe.concurrent('splitMessage sentence splitting', () => {
             // because adding ' ' to empty string would create incorrect leading space
 
             // Create a message that will be split into sentences
-            const sentence1 = 'A'.repeat(100); // Short sentence
-            const sentence2 = 'B'.repeat(100); // Short sentence
+            const sentence1 = _repeat('A', 100); // Short sentence
+            const sentence2 = _repeat('B', 100); // Short sentence
             const message = `${sentence1}. ${sentence2}.`;
 
             const chunks = splitMessage(message, 150);
@@ -76,8 +77,8 @@ describe.concurrent('splitMessage sentence splitting', () => {
             // Second chunk should be exactly sentence2 + '.' (no leading space)
             expect(chunks[1]).toBe(`${sentence2}.`);
             // Critical: verify no leading spaces (this would indicate incorrect ternary evaluation)
-            expect(chunks[0].startsWith(' ')).toBe(false);
-            expect(chunks[1].startsWith(' ')).toBe(false);
+            expect(_startsWith(chunks[0], ' ')).toBe(false);
+            expect(_startsWith(chunks[1], ' ')).toBe(false);
         });
 
         test('should add space separator when appending sentence to non-empty chunk', () => {
@@ -113,7 +114,7 @@ describe.concurrent('splitMessage sentence splitting', () => {
             // - sentence2: 'BBBB' (4 chars) + '.' = 5 chars total
             // currentChunk starts empty, gets sentence1 -> 94 chars
             // testLength for adding sentence2 = 94 + 1 + 5 = 100 (exactly at limit, should NOT exceed)
-            const sentence1 = 'A'.repeat(93); // 93 chars + '.' = 94 chars sentence
+            const sentence1 = _repeat('A', 93); // 93 chars + '.' = 94 chars sentence
             const sentence2 = 'BBBB'; // 4 chars + '.' = 5 chars sentence
             const message = `${sentence1}. ${sentence2}.`;
 
@@ -129,7 +130,7 @@ describe.concurrent('splitMessage sentence splitting', () => {
             // sentence1: 'AAA...' (94 chars) + '.' = 95 chars total
             // sentence2: 'BBBB' (4 chars) + '.' = 5 chars total
             // testLength = 95 + 1 + 5 = 101 (exceeds 100, should split)
-            const sentence1 = 'A'.repeat(94); // 94 chars + '.' = 95 chars sentence
+            const sentence1 = _repeat('A', 94); // 94 chars + '.' = 95 chars sentence
             const sentence2 = 'BBBB'; // 4 chars + '.' = 5 chars sentence
             const message = `${sentence1}. ${sentence2}.`;
 

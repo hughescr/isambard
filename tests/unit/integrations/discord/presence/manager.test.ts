@@ -310,6 +310,7 @@ describe('PresenceManager', () => {
 
             // Should have been called exactly 1 time (no retries for permanent errors)
             expect(callCount).toBe(1);
+            // eslint-disable-next-line @typescript-eslint/unbound-method -- Test mock method reference
             expect(retryClient.user!.setActivity).toHaveBeenCalledTimes(1);
 
             // Should have logged error

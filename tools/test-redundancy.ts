@@ -482,6 +482,7 @@ async function main(): Promise<void> {
 }
 
 // Only run main() when executed directly, not when imported by tests
+// eslint-disable-next-line n/no-unsupported-features/node-builtins -- import.meta.main is required for Bun
 if(import.meta.main) {
     main().catch((error) => {
         if(error instanceof CliError) {

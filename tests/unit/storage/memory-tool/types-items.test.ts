@@ -94,10 +94,18 @@ describe.concurrent('createMemoryToolKeys', () => {
         },
     ])('$name', ({ path, tags, updatedAt, expectedPK, expectedSK, expectedGSI1PK, expectedGSI1SK }) => {
         const keys = createMemoryToolKeys(path, tags, updatedAt);
-        if(expectedPK) { expect(keys.PK).toBe(expectedPK); }
-        if(expectedSK) { expect(keys.SK).toBe(expectedSK); }
-        if(expectedGSI1PK !== undefined) { expect(keys.GSI1PK).toBe(expectedGSI1PK); }
-        if(expectedGSI1SK !== undefined) { expect(keys.GSI1SK).toBe(expectedGSI1SK); }
+        if(expectedPK) {
+            expect(keys.PK).toBe(expectedPK);
+        }
+        if(expectedSK) {
+            expect(keys.SK).toBe(expectedSK);
+        }
+        if(expectedGSI1PK !== undefined) {
+            expect(keys.GSI1PK).toBe(expectedGSI1PK);
+        }
+        if(expectedGSI1SK !== undefined) {
+            expect(keys.GSI1SK).toBe(expectedGSI1SK);
+        }
     });
 });
 

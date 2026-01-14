@@ -368,7 +368,7 @@ describe('createContextBuilder loading methods', () => {
 
             if(shouldTruncate) {
                 expect(identity.length).toBe(400);
-                expect(identity.endsWith('...')).toBe(true);
+                expect(_.endsWith(identity, '...')).toBe(true);
                 expect(identity.slice(0, -3)).toBe(_.repeat('x', 397));
             } else {
                 expect(identity).toBe(content);
