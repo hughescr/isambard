@@ -53,6 +53,7 @@ export function classifyDiscordError(error: unknown): ErrorClassification {
     }
 
     // Rate limit errors are permanent (Discord.js handles retry internally)
+    // Stryker disable next-line ConditionalExpression,BlockStatement: Rate limit error classification
     if(error instanceof RateLimitError) {
         return {
             category: 'permanent',

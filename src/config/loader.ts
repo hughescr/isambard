@@ -64,6 +64,7 @@ export function loadConfig(resources: ResourceProvider = Resource as unknown as 
                 : undefined,
             // Discord presence configuration controls how bot status updates are displayed.
             // These values balance responsiveness with API rate limit compliance.
+            // Stryker disable next-line ObjectLiteral: Default config values tested via integration
             presence: {
                 updateDebounceMs:      2000,        // Debounce rapid phase changes to avoid flickering
                 idleTimeoutMs:         60000,       // Transition to idle after 1 minute of inactivity

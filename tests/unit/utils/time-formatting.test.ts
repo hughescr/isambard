@@ -97,6 +97,13 @@ describe.concurrent('formatRelativeTime', () => {
             const date = new Date('2024-12-18T12:00:00.000Z'); // 28 days before Jan 15
             expect(formatRelativeTime(date, baseDate)).toBe('4 weeks ago');
         });
+
+        test('should return "1 month ago" for exactly 5 weeks (35 days)', () => {
+            // 35 days = 5 weeks = WEEKS_THRESHOLD, should transition to months
+            // This tests the boundary condition: weeks < WEEKS_THRESHOLD (5)
+            const date = new Date('2024-12-11T12:00:00.000Z'); // 35 days before Jan 15
+            expect(formatRelativeTime(date, baseDate)).toBe('1 month ago');
+        });
     });
 
     describe('months (1-11 months)', () => {
@@ -238,6 +245,13 @@ describe('formatShortRelativeTime', () => {
             // 28 days = 4 weeks, just before the 30-day month boundary
             const date = new Date('2024-12-18T12:00:00.000Z'); // 28 days before Jan 15
             expect(formatShortRelativeTime(date, baseDate)).toBe('4w ago');
+        });
+
+        test('should return "1mo ago" for exactly 5 weeks (35 days)', () => {
+            // 35 days = 5 weeks = WEEKS_THRESHOLD, should transition to months
+            // This tests the boundary condition: weeks < WEEKS_THRESHOLD (5)
+            const date = new Date('2024-12-11T12:00:00.000Z'); // 35 days before Jan 15
+            expect(formatShortRelativeTime(date, baseDate)).toBe('1mo ago');
         });
     });
 

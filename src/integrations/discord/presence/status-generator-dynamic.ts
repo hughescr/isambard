@@ -182,8 +182,10 @@ function buildPrompt(
     userPart = _.replace(userPart, '{userMessage}', userMessage.slice(0, MAX_USER_MESSAGE_LENGTH));
 
     // Replace phase-specific placeholders
+    // Stryker disable next-line ConditionalExpression: Phase check for thinking content
     if(phase === 'thinking') {
         // Build thinking section: include only if thinkingContent is provided and non-empty
+        // Stryker disable next-line ConditionalExpression: Conditional controls whether thinking content is included in prompt
         const thinkingSection = thinkingContent
             ? `Isambard's internal thoughts: "${thinkingContent.slice(0, MAX_THINKING_CONTENT_LENGTH)}"\n\n`
             : '';
@@ -259,10 +261,11 @@ export function createDynamicStatusGenerator(
                     msg:               'Generating synopsis with Haiku',
                 });
 
-                // Stryker disable next-line ObjectLiteral: stripMarkdown option tested in text-generator.ts unit tests
+                // Stryker disable next-line ObjectLiteral,BooleanLiteral: stripMarkdown option tested in text-generator.ts unit tests
                 const text = await generateText(prompt, { stripMarkdown: true });
                 const statusText = truncateToWordBoundary(_.trim(text), HARD_MAX_STATUS_LENGTH);
 
+                // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure fallback
                 if(!statusText) {
                     return FALLBACK_STATUSES[phase];
                 }

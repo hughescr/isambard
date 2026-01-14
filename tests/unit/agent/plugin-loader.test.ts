@@ -152,6 +152,19 @@ describe('findLatestMarketplaceVersion', () => {
         expect(result).toBe(validVersion);
     });
 
+    test('should validate plugin directory has .claude-plugin subdirectory that is also a directory', async () => {
+        const pluginDir = join(tempDir, 'test-plugin');
+        const invalidVersion = join(pluginDir, '1.0.0');
+        await mockFsPromises.mkdir(invalidVersion, { recursive: true });
+
+        // Create .claude-plugin as a FILE instead of a directory
+        await mockFsPromises.writeFile(join(invalidVersion, '.claude-plugin'), 'not a directory');
+
+        const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
+        // Should return undefined because .claude-plugin is not a directory
+        expect(result).toBeUndefined();
+    });
+
     test('should skip invalid semver versions (missing patch)', async () => {
         const pluginDir = join(tempDir, 'test-plugin');
         const validVersion = join(pluginDir, '1.0.0');
@@ -582,6 +595,20 @@ describe('loadPlugins', () => {
 
             // Should use default empty array for marketplace
             expect(result).toHaveLength(1);
+        });
+
+        test('should use empty array defaults when both config fields are missing', async () => {
+            // Create config file without externalPaths or marketplace
+            await mockFsPromises.writeFile(join(pluginsDir, 'plugins.json'), '{}');
+
+            const inRepoPlugin = join(pluginsDir, 'in-repo-plugin');
+            await createMockPluginDir(inRepoPlugin);
+
+            const result = await loadPlugins(pluginsDir, marketplaceDir);
+
+            // Should still find in-repo plugins even when config fields are missing
+            expect(result).toHaveLength(1);
+            expect(result[0]).toEqual({ type: 'local', path: inRepoPlugin });
         });
 
         test('should handle invalid schema in plugins.json (wrong types)', async () => {

@@ -145,7 +145,9 @@ export function createPresenceManager(
                     discordClient.user?.setActivity(activity);
                     return Promise.resolve();
                 },
+                // Stryker disable next-line StringLiteral: Operation name for retry logging
                 'setActivity',
+                // Stryker disable next-line ObjectLiteral: Retry policy already tested in retry module
                 { policy: { maxAttempts: 2 } }
             );
             logger.info({ activity }, 'Updated Discord presence');

@@ -1109,6 +1109,52 @@ describe.concurrent('createMessageFetcher', () => {
         });
 
         describe('pagination loop conditionals', () => {
+            test('should calculate remaining messages correctly when paginating', async () => {
+                // This test kills mutants on lines 255 and 263:
+                // - Line 255: Math.min(100, Math.max(1, maxMessages - allMessages.length))
+                // - Line 263: maxMessages - allMessages.length
+                // These arithmetic operations must be correct for proper pagination
+                const messages: Message[] = [];
+                for(let i = 0; i < 150; i++) {
+                    messages.push(createMockMessage({
+                        id:      (100000000000000000n + BigInt(i)).toString(),
+                        content: `Message ${i}`,
+                    }));
+                }
+
+                const fetchCalls: { limit: number }[] = [];
+                const channel = createMockChannel('123456789012345678', messages, (options) => {
+                    fetchCalls.push({ limit: options.limit ?? 100 });
+                    const limit = options.limit ?? 100;
+                    let result = [...messages];
+
+                    if(options.before) {
+                        result = _.filter(messages, m => BigInt(m.id) < BigInt(options.before!));
+                    }
+
+                    return result.slice(-limit).reverse();
+                });
+
+                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+                const client = createMockClient(channels);
+
+                const fetcher = createMessageFetcher(client);
+                // Request 125 messages to test Math.min calculation
+                const result = await fetcher.fetchMessages({
+                    channelId: '123456789012345678',
+                    limit:     125,
+                });
+
+                // Should have fetched 125 messages total
+                expect(result.messages).toHaveLength(125);
+
+                // First fetch should request Math.min(100, Math.max(1, 125 - 0)) = 100
+                expect(fetchCalls[0].limit).toBe(100);
+
+                // Second fetch should request Math.min(100, Math.max(1, 125 - 100)) = 25
+                expect(fetchCalls[1].limit).toBe(25);
+            });
+
             test('should NOT include before parameter on first fetch when cursor is undefined', async () => {
                 const messages = [
                     createMockMessage({ id: '100000000000000000', content: 'First' }),

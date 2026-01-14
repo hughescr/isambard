@@ -217,4 +217,31 @@ describe.concurrent('Discord Integration Errors', () => {
             expect(error.message).toContain(`${largeRetryAfter}ms`);
         });
     });
+
+    describe('Error class names', () => {
+        test('RateLimitError has correct name property', () => {
+            const error = new RateLimitError(1000);
+            expect(error.name).toBe('RateLimitError');
+        });
+
+        test('DiscordIntegrationError has correct name property', () => {
+            const error = new DiscordIntegrationError('test', 'TEST_CODE');
+            expect(error.name).toBe('DiscordIntegrationError');
+        });
+
+        test('InvalidTokenError has correct name property', () => {
+            const error = new InvalidTokenError();
+            expect(error.name).toBe('InvalidTokenError');
+        });
+
+        test('PermissionError has correct name property', () => {
+            const error = new PermissionError('test action');
+            expect(error.name).toBe('PermissionError');
+        });
+
+        test('ChannelNotFoundError has correct name property', () => {
+            const error = new ChannelNotFoundError('123456789');
+            expect(error.name).toBe('ChannelNotFoundError');
+        });
+    });
 });

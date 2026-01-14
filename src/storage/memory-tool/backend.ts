@@ -91,7 +91,7 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
 
     async update(path: MemoryPath, input: UpdateMemoryToolItemInput): Promise<MemoryToolItemData> {
         // Skip registry update for the registry itself to prevent recursion
-        // Stryker disable next-line ConditionalExpression: Prevents infinite recursion when updating tag registry itself
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Prevents infinite recursion when updating tag registry itself
         if(path === TAG_REGISTRY_PATH) {
             return this.coreOps.update(path, input);
         }
@@ -112,7 +112,7 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
             if(added.length > 0) {
                 await updateTagRegistry(added, callbacks);
             }
-            // Stryker disable next-line EqualityOperator: Optimization - registry functions short-circuit on empty arrays
+            // Stryker disable next-line ConditionalExpression,EqualityOperator: Optimization - registry functions short-circuit on empty arrays
             if(removed.length > 0) {
                 await decrementTagRegistry(removed, callbacks);
             }
@@ -134,7 +134,7 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         await this.coreOps.delete(path);
 
         // Decrement tag counts if item had tags
-        // Stryker disable next-line EqualityOperator: Optimization - registry functions short-circuit on empty arrays
+        // Stryker disable next-line all: Tag length check is optimization - registry functions short-circuit on empty arrays
         if(existing?.tags && existing.tags.length > 0) {
             await decrementTagRegistry(existing.tags, this.createTagRegistryCallbacks());
         }

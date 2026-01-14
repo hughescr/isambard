@@ -47,6 +47,17 @@ describe('getSessionFilePath', () => {
         expect(result).toContain(sessionId);
         expect(result).toEndWith('.jsonl');
     });
+
+    test('should convert slashes to dashes in project path', () => {
+        // The path should convert cwd slashes to dashes
+        // e.g., /Users/foo/bar -> -Users-foo-bar
+        const result = getSessionFilePath('test-session');
+
+        // Current working directory should be converted to dash-separated format
+        const cwd = process.cwd();
+        const expectedProjectPath = _.replace(cwd, /\//g, '-');
+        expect(result).toContain(expectedProjectPath);
+    });
 });
 
 describe('extractSessionId', () => {
@@ -145,6 +156,42 @@ describe('extractSessionId', () => {
         const result = extractSessionId(event);
 
         expect(result).toBeUndefined();
+    });
+
+    test('should return undefined when type is not system but subtype is init', () => {
+        const event = {
+            type:       'user',
+            subtype:    'init',
+            session_id: 'should-not-extract',
+        };
+
+        const result = extractSessionId(event);
+
+        expect(result).toBeUndefined();
+    });
+
+    test('should return undefined when type is system but subtype is not init', () => {
+        const event = {
+            type:       'system',
+            subtype:    'message',
+            session_id: 'should-not-extract',
+        };
+
+        const result = extractSessionId(event);
+
+        expect(result).toBeUndefined();
+    });
+
+    test('should return session_id only when both type is system AND subtype is init', () => {
+        const event: SystemEvent = {
+            type:       'system',
+            subtype:    'init',
+            session_id: 'valid-session-id',
+        };
+
+        const result = extractSessionId(event);
+
+        expect(result).toBe('valid-session-id');
     });
 });
 
@@ -517,6 +564,43 @@ describe('cleanupSession', () => {
         expect(_.some(unlinkCalls, path => path.includes('agent-empty.jsonl'))).toBe(false);
     });
 
+    test('should skip agent file with only newline characters', async () => {
+        const sessionId = 'newline-only';
+        const agentFiles = ['agent-newlines.jsonl'];
+
+        mockReaddir.mockImplementation(() => Promise.resolve(agentFiles));
+        // File with only newlines - first line will be empty after split
+        mockReadFile.mockImplementation(() => Promise.resolve('\n\n\n'));
+
+        await cleanupSession(sessionId);
+
+        // File should not be deleted since firstLine is empty/falsy
+        const unlinkCalls = _.map(mockUnlink.mock.calls, 0);
+        expect(_.some(unlinkCalls, path => path.includes('agent-newlines.jsonl'))).toBe(false);
+    });
+
+    test('should continue processing other files when one has empty first line', async () => {
+        const sessionId = 'mixed-files';
+        const agentFiles = ['agent-empty.jsonl', 'agent-valid.jsonl'];
+
+        mockReaddir.mockImplementation(() => Promise.resolve(agentFiles));
+        mockReadFile.mockImplementation((path: string) => {
+            if(path.includes('agent-empty.jsonl')) {
+                // Empty first line - should be skipped
+                return Promise.resolve('\n{"parentUuid":"wrong"}\n');
+            }
+            // Valid file with matching parentUuid
+            return Promise.resolve('{"parentUuid":"mixed-files"}\n');
+        });
+
+        await cleanupSession(sessionId);
+
+        // Only valid file should be deleted
+        const unlinkCalls = _.map(mockUnlink.mock.calls, 0);
+        expect(_.some(unlinkCalls, path => path.includes('agent-empty.jsonl'))).toBe(false);
+        expect(_.some(unlinkCalls, path => path.includes('agent-valid.jsonl'))).toBe(true);
+    });
+
     test('should handle whitespace-only session ID', async () => {
         const sessionId = '   ';
 
@@ -526,5 +610,139 @@ describe('cleanupSession', () => {
         // The function validates with !sessionId which will be false for whitespace
         // So it should proceed with cleanup
         expect(mockAccess).toHaveBeenCalled();
+    });
+
+    test('should handle missing projects directory during sub-agent cleanup gracefully', async () => {
+        const sessionId = 'test-missing-dir';
+
+        // Mock access to fail on sub-agent directory check (first access call)
+        // This simulates the case where the SDK projects directory doesn't exist
+        const notFoundError = new Error('ENOENT') as NodeJS.ErrnoException;
+        notFoundError.code = 'ENOENT';
+
+        let callCount = 0;
+        mockAccess.mockImplementation((path: string) => {
+            callCount++;
+            // First call is sub-agent directory check - fail it
+            if(callCount === 1) {
+                return Promise.reject(notFoundError);
+            }
+            // Other calls succeed
+            return Promise.resolve();
+        });
+
+        await cleanupSession(sessionId);
+
+        // Should log a warning about missing SDK directory
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({
+                sessionId,
+                msg: expect.stringContaining('SDK projects directory not found'),
+            })
+        );
+    });
+
+    test('should continue with session cleanup even if sub-agent directory is missing', async () => {
+        const sessionId = 'test-continue-after-missing';
+
+        // Mock access to fail on sub-agent directory check
+        const notFoundError = new Error('ENOENT') as NodeJS.ErrnoException;
+        notFoundError.code = 'ENOENT';
+
+        let callCount = 0;
+        mockAccess.mockImplementation(() => {
+            callCount++;
+            // First call (sub-agent directory check) fails
+            if(callCount === 1) {
+                return Promise.reject(notFoundError);
+            }
+            // Other calls succeed
+            return Promise.resolve();
+        });
+
+        await cleanupSession(sessionId);
+
+        // Should still attempt to clean up the main session file
+        expect(mockUnlink).toHaveBeenCalled();
+    });
+
+    test('should warn when SDK projects base directory does not exist', async () => {
+        const sessionId = 'test-no-base-dir';
+
+        // Mock access to fail for both session file AND projects base directory
+        const notFoundError = new Error('ENOENT') as NodeJS.ErrnoException;
+        notFoundError.code = 'ENOENT';
+
+        let callCount = 0;
+        mockAccess.mockImplementation((path: string) => {
+            callCount++;
+            // First call: sub-agent directory check - succeeds
+            if(callCount === 1) {
+                return Promise.resolve();
+            }
+            // Second call: session file check - fails with ENOENT
+            if(callCount === 2) {
+                return Promise.reject(notFoundError);
+            }
+            // Third call: projects base directory check - also fails
+            if(callCount === 3) {
+                return Promise.reject(notFoundError);
+            }
+            return Promise.resolve();
+        });
+
+        await cleanupSession(sessionId);
+
+        // Should warn about SDK projects directory not found
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({
+                sessionId,
+                msg: expect.stringContaining('SDK projects directory not found'),
+            })
+        );
+    });
+
+    test('should debug log when session file missing but projects directory exists', async () => {
+        const sessionId = 'test-normal-missing';
+
+        // Mock access to fail for session file but succeed for projects base directory
+        const notFoundError = new Error('ENOENT') as NodeJS.ErrnoException;
+        notFoundError.code = 'ENOENT';
+
+        let callCount = 0;
+        mockAccess.mockImplementation(() => {
+            callCount++;
+            // First call: sub-agent directory check - succeeds
+            if(callCount === 1) {
+                return Promise.resolve();
+            }
+            // Second call: session file check - fails with ENOENT
+            if(callCount === 2) {
+                return Promise.reject(notFoundError);
+            }
+            // Third call: projects base directory check - succeeds (normal case)
+            if(callCount === 3) {
+                return Promise.resolve();
+            }
+            return Promise.resolve();
+        });
+
+        await cleanupSession(sessionId);
+
+        // Should debug log about file not found (normal case)
+        expect(mockLogger.debug).toHaveBeenCalledWith(
+            expect.objectContaining({
+                sessionId,
+                msg: expect.stringContaining('not found'),
+            })
+        );
+
+        // Should NOT warn about SDK changes
+        const warnCalls = mockLogger.warn.mock.calls;
+        const sdkWarnings = _.filter(warnCalls, (call: unknown[]) => {
+            const logObj = call[0] as { msg?: string };
+            return logObj.msg?.includes('SDK projects directory not found');
+        });
+        expect(sdkWarnings.length).toBe(0);
     });
 });

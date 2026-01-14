@@ -251,10 +251,11 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                         };
                         const layer = layerPaths[dirPath];
 
-                        // Stryker disable next-line StringLiteral,ObjectLiteral: Logger debug objects are observational, not behavioral
+                        // Stryker disable all: Logger debug objects in ternary are observational
                         const results = layer
                             ? (logger.debug({ layer, dirPath, msg: 'Using GSI1 listByLayer for layer path' }), await backend.listByLayer(layer, options))
                             : (logger.debug({ dirPath, msg: 'Using directory list for non-layer path' }), await backend.list(dirPath, options));
+                        // Stryker restore all
 
                         if(results.items.length === 0) {
                             return {

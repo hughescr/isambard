@@ -132,11 +132,11 @@ describe('formatRelativeTime boundary conditions', () => {
         expect(formatRelativeTime(date, now)).toBe('4 weeks ago');
     });
 
-    test('should format exactly 30 days as months (days >= 30 transition)', () => {
+    test('should format exactly 30 days as weeks (not months yet)', () => {
         const now = new Date('2024-01-31T12:00:00Z');
         const date = new Date('2024-01-01T12:00:00Z'); // 30 days ago
-        // At exactly 30 days, differenceInMonths returns 0
-        expect(formatRelativeTime(date, now)).toBe('0 months ago');
+        // At exactly 30 days, differenceInMonths returns 0, so show weeks instead
+        expect(formatRelativeTime(date, now)).toBe('4 weeks ago');
     });
 
     test('should format 364 days as months (days < 365 boundary)', () => {
@@ -159,11 +159,11 @@ describe('formatShortRelativeTime boundary conditions', () => {
         expect(formatShortRelativeTime(date, now)).toBe('4w ago');
     });
 
-    test('should format exactly 30 days as months (days >= 30 transition)', () => {
+    test('should format exactly 30 days as weeks (not months yet)', () => {
         const now = new Date('2024-01-31T12:00:00Z');
         const date = new Date('2024-01-01T12:00:00Z'); // 30 days ago
-        // At exactly 30 days, differenceInMonths returns 0
-        expect(formatShortRelativeTime(date, now)).toBe('0mo ago');
+        // At exactly 30 days, differenceInMonths returns 0, so show weeks instead
+        expect(formatShortRelativeTime(date, now)).toBe('4w ago');
     });
 
     test('should format 364 days as months (days < 365 boundary)', () => {

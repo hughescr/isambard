@@ -404,9 +404,10 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
             expect(preview).toBe('Short content');
         });
 
-        test('should return full content when exactly 100 characters', () => {
+        test('should return full content when exactly 100 characters (kills >= 100 mutation)', () => {
             const content = _repeat('a', 100);
             const preview = generateContentPreview(content);
+            // CRITICAL: 100 chars should NOT be truncated (condition is > 100, not >= 100)
             expect(preview).toBe(content);
             expect(preview).toHaveLength(100);
         });

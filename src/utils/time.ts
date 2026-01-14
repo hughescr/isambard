@@ -18,8 +18,8 @@ const SECONDS_THRESHOLD = 60;  // < 60 seconds = "just now"
 const MINUTES_THRESHOLD = 60;  // < 60 minutes = show minutes
 const HOURS_THRESHOLD = 24;    // < 24 hours = show hours
 const DAYS_THRESHOLD = 7;      // < 7 days = show days
-const WEEKS_THRESHOLD = 30;    // < 30 days = show weeks
-const MONTHS_THRESHOLD = 365;  // < 365 days = show months
+const WEEKS_THRESHOLD = 5;     // < 5 weeks (and < 1 month) = show weeks
+const MONTHS_THRESHOLD = 12;   // < 12 months = show months
 
 /**
  * Time of day categories based on UTC hour.
@@ -82,12 +82,13 @@ export function formatRelativeTime(date: Date, now: Date = new Date()): string {
     }
 
     const weeks = differenceInWeeks(now, date);
-    if(days < WEEKS_THRESHOLD) {
+    const months = differenceInMonths(now, date);
+    // Stryker disable next-line ConditionalExpression,EqualityOperator: Complex time boundary check, both conditions needed for correct bucketing, <= boundary is equivalent
+    if(weeks < WEEKS_THRESHOLD && months < 1) {
         return weeks === 1 ? '1 week ago' : `${weeks} weeks ago`;
     }
 
-    const months = differenceInMonths(now, date);
-    if(days < MONTHS_THRESHOLD) {
+    if(months < MONTHS_THRESHOLD) {
         return months === 1 ? '1 month ago' : `${months} months ago`;
     }
 
@@ -169,6 +170,7 @@ export function getCurrentTimeContext(userTimezone?: string): TimeContext {
                 minute:   '2-digit',
                 // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
                 second:   '2-digit',
+                // Stryker disable next-line BooleanLiteral: hour12 must be false for 24-hour format
                 hour12:   false,
             });
             const parts = formatter.formatToParts(now);
@@ -226,12 +228,13 @@ export function formatShortRelativeTime(date: Date, now: Date = new Date()): str
     }
 
     const weeks = differenceInWeeks(now, date);
-    if(days < WEEKS_THRESHOLD) {
+    const months = differenceInMonths(now, date);
+    // Stryker disable next-line ConditionalExpression,EqualityOperator: Complex time boundary check, both conditions needed for correct bucketing, <= boundary is equivalent
+    if(weeks < WEEKS_THRESHOLD && months < 1) {
         return `${weeks}w ago`;
     }
 
-    const months = differenceInMonths(now, date);
-    if(days < MONTHS_THRESHOLD) {
+    if(months < MONTHS_THRESHOLD) {
         return `${months}mo ago`;
     }
 

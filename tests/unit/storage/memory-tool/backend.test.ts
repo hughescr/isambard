@@ -803,6 +803,38 @@ describe('MemoryToolBackend', () => {
             const putCalls = ddbMock.commandCalls(PutCommand);
             expect(putCalls).toHaveLength(0);
         });
+
+        test('update TAG_REGISTRY_PATH should use coreOps directly without triggering registry update', async () => {
+            const registryItem: MemoryToolItem = {
+                PK:          'DIR#/state',
+                SK:          'FILE#tag-registry',
+                GSI1PK:      'LAYER#state',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        TAG_REGISTRY_PATH,
+                content:     JSON.stringify({ tag1: 1 }),
+                contentType: 'application/json',
+                metadata:    {},
+                version:     1,
+                createdAt:   '2024-01-01T00:00:00.000Z',
+                updatedAt:   '2024-01-01T00:00:00.000Z',
+            };
+
+            ddbMock.on(GetCommand).resolves({ Item: registryItem });
+            ddbMock.on(PutCommand).resolves({});
+
+            const result = await backend.update(TAG_REGISTRY_PATH, {
+                content: JSON.stringify({ tag1: 2, tag2: 1 }),
+            });
+
+            // Should succeed without recursive registry update
+            expect(result).toBeDefined();
+            expect(JSON.parse(result.content)).toEqual({ tag1: 2, tag2: 1 });
+
+            // Should have exactly 2 Put calls: version snapshot + main item update
+            // NO additional registry update calls
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls).toHaveLength(2);
+        });
     });
 
     describe('listByLayer with undefined options', () => {
@@ -1118,6 +1150,44 @@ describe('MemoryToolBackend', () => {
             });
         });
 
+        describe('update: line 116 - removed.length > 0 guard', () => {
+            test('should NOT call decrementTagRegistry when removed array is empty (kills >= 0 mutation)', async () => {
+                const existingWithTags: MemoryToolItem = {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#unchanged-tags',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/state/unchanged-tags' as MemoryPath,
+                    content:     'Content',
+                    contentType: 'text/plain',
+                    metadata:    {},
+                    tags:        ['tag1', 'tag2'],
+                    version:     1,
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                };
+
+                ddbMock.on(GetCommand).resolves({ Item: existingWithTags });
+                ddbMock.on(PutCommand).resolves({});
+
+                // Update with same tags - no changes (removed.length === 0)
+                await backend.update('/state/unchanged-tags' as MemoryPath, {
+                    tags: ['tag1', 'tag2'], // Exact same tags
+                });
+
+                const putCalls = ddbMock.commandCalls(PutCommand);
+                // Should have exactly 2: version snapshot + main item
+                // If mutant survives (> 0 becomes >= 0), it would call decrementTagRegistry even with empty removed array
+                expect(putCalls).toHaveLength(2);
+
+                // Verify no registry calls
+                const registryPuts = _filter(putCalls, call =>
+                    call.args[0].input.Item?.path === TAG_REGISTRY_PATH
+                );
+                expect(_size(registryPuts)).toBe(0);
+            });
+        });
+
         describe('update: line 111 - removed.length > 0 branch', () => {
             test('should call decrementTagRegistry when tags are removed (kills >= 0 mutant)', async () => {
                 const existingWithTags: MemoryToolItem = {
@@ -1209,6 +1279,34 @@ describe('MemoryToolBackend', () => {
                 // even when removed is empty array (length = 0)
                 // The decrement function has its own guard, but the call shouldn't happen
                 // We verify by checking the expected number of calls
+            });
+        });
+
+        describe('delete: line 138 - existing?.tags check', () => {
+            test('should NOT decrement registry when deleting item without tags field', async () => {
+                const existingNoTags: MemoryToolItem = {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#no-tags-field',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/state/no-tags-field' as MemoryPath,
+                    content:     'Content',
+                    contentType: 'text/plain',
+                    metadata:    {},
+                    // tags field is undefined - NOT present
+                    version:     1,
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                };
+
+                ddbMock.on(GetCommand).resolves({ Item: existingNoTags });
+                ddbMock.on(DeleteCommand).resolves({});
+
+                await backend.delete('/state/no-tags-field' as MemoryPath);
+
+                // Should NOT call decrementTagRegistry
+                const putCalls = ddbMock.commandCalls(PutCommand);
+                expect(putCalls).toHaveLength(0);
             });
         });
 

@@ -114,8 +114,12 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     client.on('error', createErrorHandler());
 
     // Register rate limit handler for logging (if rest client is available)
+    // Stryker disable next-line ConditionalExpression,BlockStatement: client.rest always exists on Discord.js Client; rate limit logging is observational
     if(client.rest) {
+        // Stryker disable all: Rate limit logging is observational only
+        // Stryker disable next-line StringLiteral: Event name constant
         client.rest.on('rateLimited', (info) => {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Logger warn object for observability
             logger.warn({
                 route:      info.route,
                 limit:      info.limit,
@@ -124,6 +128,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 msg:        'Discord rate limit hit, auto-retrying',
             });
         });
+        // Stryker restore all
     }
 
     // Register clientReady handler for logging

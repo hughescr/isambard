@@ -10,6 +10,7 @@ interface RetryAsyncOptions {
     deps?:       Partial<RetryDeps>
 }
 
+// Stryker disable all: Default fallback for incomplete DI - used in production only
 const defaultDeps: RetryDeps = {
     sleep:  (ms: number) => new Promise(resolve => setTimeout(resolve, ms)),
     now:    () => Date.now(),
@@ -19,6 +20,7 @@ const defaultDeps: RetryDeps = {
         debug: _.noop.bind(_),
     },
 };
+// Stryker restore all
 
 /**
  * Retries an async operation with exponential backoff, jitter, and error classification.
@@ -65,11 +67,13 @@ export async function retryAsync<T>(
 
             // Permanent errors are not retried
             if(category === 'permanent') {
+                // Stryker disable next-line ArithmeticOperator: Elapsed time calculation for logging
                 logger.error({
                     msg:       'Retry aborted due to permanent error',
                     category,
                     errorMessage,
                     attempt,
+                    // Stryker disable next-line ArithmeticOperator: Elapsed time for logging
                     elapsedMs: now() - startTime,
                 });
                 throw error;
@@ -81,6 +85,7 @@ export async function retryAsync<T>(
                     msg:       'Max retry attempts exhausted',
                     attempts:  maxAttempts,
                     errorMessage,
+                    // Stryker disable next-line ArithmeticOperator: Elapsed time calculation
                     elapsedMs: now() - startTime,
                 });
                 throw error;

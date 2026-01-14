@@ -125,9 +125,11 @@ export function createStatusMiddleware(
 
                 // Refresh typing every 8 seconds (Discord timeout is ~10s)
                 typingInterval = setInterval(() => {
+                    // Stryker disable all: Error logging for typing indicator failure - observational only
                     void channel.sendTyping().catch((error: unknown) => {
                         logger.error({ error, messageId: context.messageId, msg: 'Failed to send typing indicator' });
                     });
+                    // Stryker restore all
                 }, 8000);
             }
 
@@ -186,6 +188,7 @@ export function createStatusMiddleware(
                 const handleToolPhaseTransition = (toolName: string): boolean => {
                     // Check if this is a new tool transition
                     if(currentPhase === 'using_tool' && toolName === lastToolName) {
+                        // Stryker disable next-line BooleanLiteral: Return false to skip redundant phase update
                         return false;
                     }
 

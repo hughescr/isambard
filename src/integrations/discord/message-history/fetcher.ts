@@ -260,6 +260,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
 
                 const batch = await withDiscordRetry(
                     () => channel.messages.fetch(fetchOptions),
+                    // Stryker disable next-line StringLiteral: Operation name for retry logging
                     'fetchMessages'
                 );
 
@@ -283,12 +284,9 @@ export function createMessageFetcher(client: Client): MessageFetcher {
                 }
 
                 // Get the oldest message in this batch for pagination
-                const lastMessage = [...batch.values()].pop();
-                if(lastMessage) {
-                    cursor = lastMessage.id;
-                } else {
-                    break;
-                }
+                // batch is guaranteed non-empty here due to guards at lines 268 and 282
+                const lastMessage = [...batch.values()].pop()!;
+                cursor = lastMessage.id;
             }
         } catch (error) {
             if(error instanceof ChannelNotAccessibleError) {
@@ -320,6 +318,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
         try {
             const message = await withDiscordRetry(
                 () => channel.messages.fetch(messageId),
+                // Stryker disable next-line StringLiteral: Operation name for retry logging
                 'fetchMessageById'
             );
             return transformMessage(message);
@@ -334,7 +333,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
      * Returns only the messages that were successfully fetched.
      */
     async function fetchByIds(channelId: string, messageIds: string[]): Promise<DiscordSearchResult[]> {
-        // Stryker disable next-line BlockStatement: Early return for empty array avoids unnecessary channel fetch
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Early return for empty array avoids unnecessary channel fetch
         if(messageIds.length === 0) {
             return [];
         }
@@ -347,6 +346,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
             try {
                 const message = await withDiscordRetry(
                     () => channel.messages.fetch(messageId),
+                    // Stryker disable next-line StringLiteral: Operation name for retry logging
                     'fetchMessageById'
                 );
                 results.push(transformMessage(message));

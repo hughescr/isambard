@@ -953,6 +953,224 @@ describe('retryAsyncGenerator', () => {
             expect((errorLog as { elapsedMs: number }).elapsedMs).toBeGreaterThanOrEqual(0);
         });
     });
+
+    describe('Mutation testing: elapsed time tracking', () => {
+        it('should track increasing elapsed time across retries (kills now() + startTime)', async () => {
+            async function* generator() {
+                throw new Error('transient');
+            }
+
+            const generatorFactory = mock(generator);
+            const classifier = mock(() => ({ category: 'transient', message: 'transient' } as ErrorClassification));
+
+            await expect(async () => {
+                for await (const _ of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
+                    // Never gets here
+                }
+            }).toThrow();
+
+            const firstWarnLog = (mockLogger.warn as ReturnType<typeof mock>).mock.calls[0][0];
+            const secondWarnLog = (mockLogger.warn as ReturnType<typeof mock>).mock.calls[1][0];
+            const errorLog = (mockLogger.error as ReturnType<typeof mock>).mock.calls[0][0];
+
+            const firstElapsed = (firstWarnLog as { elapsedMs: number }).elapsedMs;
+            const secondElapsed = (secondWarnLog as { elapsedMs: number }).elapsedMs;
+            const finalElapsed = (errorLog as { elapsedMs: number }).elapsedMs;
+
+            // CRITICAL: Elapsed time must strictly increase over time
+            // With subtraction (now() - startTime), later calls have larger elapsed
+            expect(secondElapsed).toBeGreaterThan(firstElapsed);
+            expect(finalElapsed).toBeGreaterThanOrEqual(secondElapsed);
+
+            // All must be non-negative
+            expect(firstElapsed).toBeGreaterThanOrEqual(0);
+            expect(secondElapsed).toBeGreaterThanOrEqual(0);
+            expect(finalElapsed).toBeGreaterThanOrEqual(0);
+        });
+    });
+
+    describe('Mutation testing: attempt counting', () => {
+        it('should make exactly maxAttempts attempts before giving up', async () => {
+            async function* generator() {
+                throw new Error('always fails');
+            }
+
+            const generatorFactory = mock(generator);
+            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+
+            await expect(async () => {
+                for await (const _ of retryAsyncGenerator(generatorFactory, {
+                    policy: { ...defaultPolicy, maxAttempts: 3 },
+                    classifier,
+                    deps,
+                })) {
+                    // Never gets here
+                }
+            }).toThrow();
+
+            // Exactly 3 attempts, not 2 or 4 (kills attempt++ vs attempt-- mutations)
+            expect(generatorFactory).toHaveBeenCalledTimes(3);
+        });
+
+        it('should make exactly maxAttempts attempts with different maxAttempts value', async () => {
+            async function* generator() {
+                throw new Error('always fails');
+            }
+
+            const generatorFactory = mock(generator);
+            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+
+            await expect(async () => {
+                for await (const _ of retryAsyncGenerator(generatorFactory, {
+                    policy: { ...defaultPolicy, maxAttempts: 5 },
+                    classifier,
+                    deps,
+                })) {
+                    // Never gets here
+                }
+            }).toThrow();
+
+            // Exactly 5 attempts (verifies loop boundary)
+            expect(generatorFactory).toHaveBeenCalledTimes(5);
+        });
+
+        it('should log correct attempt numbers in sequence', async () => {
+            let callCount = 0;
+
+            async function* generator() {
+                callCount++;
+                if(callCount < 3) {
+                    throw new Error('transient');
+                }
+                yield 1;
+            }
+
+            const generatorFactory = mock(generator);
+            const classifier = mock(() => ({ category: 'transient', message: 'transient' } as ErrorClassification));
+
+            const results: number[] = [];
+            for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
+                results.push(value);
+            }
+
+            expect(results).toEqual([1]);
+
+            // Verify attempt numbers are sequential and correct
+            expect(mockLogger.warn).toHaveBeenCalledTimes(2);
+
+            const firstWarnLog = (mockLogger.warn as ReturnType<typeof mock>).mock.calls[0][0];
+            const secondWarnLog = (mockLogger.warn as ReturnType<typeof mock>).mock.calls[1][0];
+
+            expect(firstWarnLog).toHaveProperty('attempt', 1);
+            expect(secondWarnLog).toHaveProperty('attempt', 2);
+        });
+    });
+
+    describe('Mutation testing: loop boundary conditions', () => {
+        it('should respect loop boundary exactly at maxAttempts', async () => {
+            async function* generator() {
+                throw new Error('always fails');
+            }
+
+            const generatorFactory = mock(generator);
+            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+
+            // Test with maxAttempts = 1 (boundary case)
+            await expect(async () => {
+                for await (const _ of retryAsyncGenerator(generatorFactory, {
+                    policy: { ...defaultPolicy, maxAttempts: 1 },
+                    classifier,
+                    deps,
+                })) {
+                    // Never gets here
+                }
+            }).toThrow();
+
+            expect(generatorFactory).toHaveBeenCalledTimes(1);
+
+            // Reset for next test
+            generatorFactory.mockClear();
+
+            // Test with maxAttempts = 2 (verifies < vs <= boundary)
+            await expect(async () => {
+                for await (const _ of retryAsyncGenerator(generatorFactory, {
+                    policy: { ...defaultPolicy, maxAttempts: 2 },
+                    classifier,
+                    deps,
+                })) {
+                    // Never gets here
+                }
+            }).toThrow();
+
+            expect(generatorFactory).toHaveBeenCalledTimes(2);
+        });
+
+        it('should stop exactly at maxAttempts and not continue', async () => {
+            let callCount = 0;
+
+            async function* generator() {
+                callCount++;
+                throw new Error('always fails');
+            }
+
+            const generatorFactory = mock(generator);
+            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+
+            await expect(async () => {
+                for await (const _ of retryAsyncGenerator(generatorFactory, {
+                    policy: { ...defaultPolicy, maxAttempts: 4 },
+                    classifier,
+                    deps,
+                })) {
+                    // Never gets here
+                }
+            }).toThrow();
+
+            // Exactly 4, not 3 or 5 (kills < vs <= mutations)
+            expect(generatorFactory).toHaveBeenCalledTimes(4);
+            expect(callCount).toBe(4);
+        });
+
+        it('should not call generator more than maxAttempts times (kills attempt <= maxAttempts)', async () => {
+            // This test specifically targets the `attempt < maxAttempts` vs `attempt <= maxAttempts` boundary
+            // If mutated to `<=`, it would run maxAttempts + 1 times
+            let callCount = 0;
+
+            async function* generator() {
+                callCount++;
+                throw new Error('always fails');
+            }
+
+            const generatorFactory = mock(generator);
+            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+
+            // Use maxAttempts = 3 to make it clear
+            await expect(async () => {
+                for await (const _ of retryAsyncGenerator(generatorFactory, {
+                    policy: { ...defaultPolicy, maxAttempts: 3 },
+                    classifier,
+                    deps,
+                })) {
+                    // Never gets here
+                }
+            }).toThrow();
+
+            // Must be exactly 3, not 4 (which would happen with <= mutation)
+            expect(generatorFactory).toHaveBeenCalledTimes(3);
+            expect(callCount).toBe(3);
+
+            // Verify sleep was called maxAttempts - 1 times (between retries)
+            expect(sleepMock).toHaveBeenCalledTimes(2);
+
+            // Verify warn logs were called maxAttempts - 1 times
+            expect(mockLogger.warn).toHaveBeenCalledTimes(2);
+
+            // Verify error log was called once (final failure)
+            expect(mockLogger.error).toHaveBeenCalledTimes(1);
+            const errorLog = (mockLogger.error as ReturnType<typeof mock>).mock.calls[0][0];
+            expect(errorLog).toHaveProperty('attempts', 3); // Not 4
+        });
+    });
 });
 
 // Separate test suite for real timers

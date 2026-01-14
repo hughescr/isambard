@@ -131,6 +131,7 @@ export class MemoryToolBackendCore {
         await this.putItem(versionSnapshot as unknown as Record<string, unknown>);
 
         // Build updated data with new content preview if content changed
+        // Stryker disable next-line ConditionalExpression: Conditional prevents regenerating preview when content unchanged
         const newContentPreview = input.content !== undefined
             ? generateContentPreview(input.content)
             : existing.contentPreview;
@@ -140,6 +141,7 @@ export class MemoryToolBackendCore {
             ...(input.content !== undefined && { content: input.content }),
             ...(input.metadata !== undefined && { metadata: input.metadata }),
             ...(input.tags !== undefined && { tags: input.tags }),
+            // Stryker disable next-line ConditionalExpression: Spread operator conditional - undefined values should not override existing contentPreview
             ...(newContentPreview !== undefined && { contentPreview: newContentPreview }),
             version:   existing.version + 1,
             updatedAt: new Date().toISOString(),

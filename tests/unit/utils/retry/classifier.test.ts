@@ -85,6 +85,16 @@ describe.concurrent('defaultClassifier', () => {
 
 describe.concurrent('createHttpStatusClassifier', () => {
     describe('Rate limited responses (429)', () => {
+        it('should classify 429 as rate_limited (kills status === 429 condition)', () => {
+            const error = { status: 429 };
+            const classifier = createHttpStatusClassifier();
+            const result = classifier(error);
+
+            // CRITICAL: Must be rate_limited, not transient or permanent
+            expect(result.category).toBe('rate_limited');
+            expect(result.message).toContain('429');
+        });
+
         it('should classify 429 as rate_limited with retryAfter', () => {
             const error = { status: 429, retryAfter: 5000 };
             const classifier = createHttpStatusClassifier();
@@ -114,14 +124,26 @@ describe.concurrent('createHttpStatusClassifier', () => {
             expect(result.retryAfterMs).toBe(1000);
             expect(result.message).toBe('Too many requests');
         });
+
+        // Stryker disable next-line ConditionalExpression, BlockStatement: Testing rate limit check boundary - 429 without retryAfter property
+        it('should classify 429 as rate_limited even without retryAfter property in error object', () => {
+            const error = { status: 429, message: 'Rate limit exceeded' };
+            const classifier = createHttpStatusClassifier();
+            const result = classifier(error);
+
+            expect(result.category).toBe('rate_limited');
+            expect(result.retryAfterMs).toBeUndefined();
+            expect(result.message).toBe('Rate limit exceeded');
+        });
     });
 
     describe('Transient HTTP errors (5xx)', () => {
-        it('should classify 500 as transient', () => {
+        it('should classify 500 as transient (lower boundary, kills >= 500 mutant)', () => {
             const error = { status: 500 };
             const classifier = createHttpStatusClassifier();
             const result = classifier(error);
 
+            // CRITICAL: 500 must be transient (>= 500), not permanent
             expect(result.category).toBe('transient');
             expect(result.retryAfterMs).toBeUndefined();
             expect(result.message).toContain('500');
@@ -154,6 +176,27 @@ describe.concurrent('createHttpStatusClassifier', () => {
             expect(result.message).toContain('504');
         });
 
+        it('should classify 599 as transient (upper boundary)', () => {
+            const error = { status: 599 };
+            const classifier = createHttpStatusClassifier();
+            const result = classifier(error);
+
+            expect(result.category).toBe('transient');
+            expect(result.retryAfterMs).toBeUndefined();
+            expect(result.message).toContain('599');
+        });
+
+        // Stryker disable next-line ConditionalExpression: Testing upper boundary - 600 is outside 5xx range
+        it('should NOT classify 600 as transient (outside 5xx range)', () => {
+            const error = { status: 600, message: 'Invalid status' };
+            const classifier = createHttpStatusClassifier();
+            const result = classifier(error);
+
+            // 600 is outside the 500-599 range, should fall back to defaultClassifier (transient, "Unknown error")
+            expect(result.category).toBe('transient');
+            expect(result.message).toBe('Unknown error');
+        });
+
         it('should include custom message in 5xx classification', () => {
             const error = { status: 500, message: 'Internal server error' };
             const classifier = createHttpStatusClassifier();
@@ -165,7 +208,7 @@ describe.concurrent('createHttpStatusClassifier', () => {
     });
 
     describe('Permanent HTTP errors (4xx except 429)', () => {
-        it('should classify 400 as permanent', () => {
+        it('should classify 400 as permanent (lower boundary)', () => {
             const error = { status: 400 };
             const classifier = createHttpStatusClassifier();
             const result = classifier(error);
@@ -202,6 +245,16 @@ describe.concurrent('createHttpStatusClassifier', () => {
             expect(result.message).toContain('404');
         });
 
+        it('should classify 499 as permanent (upper boundary)', () => {
+            const error = { status: 499 };
+            const classifier = createHttpStatusClassifier();
+            const result = classifier(error);
+
+            expect(result.category).toBe('permanent');
+            expect(result.retryAfterMs).toBeUndefined();
+            expect(result.message).toContain('499');
+        });
+
         it('should include custom message in 4xx classification', () => {
             const error = { status: 404, message: 'Resource not found' };
             const classifier = createHttpStatusClassifier();
@@ -231,11 +284,12 @@ describe.concurrent('createHttpStatusClassifier', () => {
             expect(result.message).toBe('Connection reset');
         });
 
-        it('should classify ECONNREFUSED as transient', () => {
+        it('should classify ECONNREFUSED as transient (kills network error check)', () => {
             const error = { code: 'ECONNREFUSED', message: 'Connection refused' };
             const classifier = createHttpStatusClassifier();
             const result = classifier(error);
 
+            // CRITICAL: Must be transient for network errors
             expect(result.category).toBe('transient');
             expect(result.message).toBe('Connection refused');
         });
@@ -245,6 +299,17 @@ describe.concurrent('createHttpStatusClassifier', () => {
             const classifier = createHttpStatusClassifier();
             const result = classifier(error);
 
+            expect(result.category).toBe('transient');
+            expect(result.message).toBe('Unknown error');
+        });
+
+        // Stryker disable next-line ConditionalExpression, BlockStatement: Testing network error check without code property
+        it('should fall back to default classifier when error has no code property', () => {
+            const error = { message: 'Some error without code' };
+            const classifier = createHttpStatusClassifier();
+            const result = classifier(error);
+
+            // defaultClassifier only extracts messages from Error instances, not plain objects
             expect(result.category).toBe('transient');
             expect(result.message).toBe('Unknown error');
         });

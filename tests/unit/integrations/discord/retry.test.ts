@@ -36,12 +36,13 @@ describe('classifyDiscordError', () => {
         expect(result.message).toBe('Connection timed out');
     });
 
-    test('classifies ECONNREFUSED as transient', () => {
+    test('classifies ECONNREFUSED as transient (kills network error conditional)', () => {
         const error = new Error('Connection refused');
         (error as NodeJS.ErrnoException).code = 'ECONNREFUSED';
 
         const result = classifyDiscordError(error);
 
+        // CRITICAL: Must be transient for network errors
         expect(result.category).toBe('transient');
         expect(result.message).toBe('Connection refused');
     });
@@ -79,6 +80,17 @@ describe('classifyDiscordError', () => {
         const result = classifyDiscordError(error);
 
         expect(result.category).toBe('transient');
+        expect(result.message).toBe('Unknown error');
+    });
+
+    // Stryker disable next-line ConditionalExpression, BlockStatement: Testing error without code property
+    test('classifies error without code property as permanent', () => {
+        const error = { message: 'Some error without code' };
+
+        const result = classifyDiscordError(error);
+
+        // Plain objects without Error type result in 'Unknown error' message
+        expect(result.category).toBe('permanent');
         expect(result.message).toBe('Unknown error');
     });
 });

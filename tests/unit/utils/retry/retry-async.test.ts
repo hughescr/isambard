@@ -405,6 +405,135 @@ describe('retryAsync', () => {
         });
     });
 
+    describe('Mutation testing: elapsed time tracking', () => {
+        it('should track increasing elapsed time across retries (kills now() + startTime)', async () => {
+            const operation = mock(() => Promise.reject(new Error('transient')));
+            const classifier = mock(() => ({ category: 'transient', message: 'transient' } as ErrorClassification));
+
+            await expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow();
+
+            const firstWarnLog = (mockLogger.warn as ReturnType<typeof mock>).mock.calls[0][0];
+            const secondWarnLog = (mockLogger.warn as ReturnType<typeof mock>).mock.calls[1][0];
+            const errorLog = (mockLogger.error as ReturnType<typeof mock>).mock.calls[0][0];
+
+            const firstElapsed = (firstWarnLog as { elapsedMs: number }).elapsedMs;
+            const secondElapsed = (secondWarnLog as { elapsedMs: number }).elapsedMs;
+            const finalElapsed = (errorLog as { elapsedMs: number }).elapsedMs;
+
+            // CRITICAL: Elapsed time must strictly increase over time
+            // With subtraction (now() - startTime), later calls have larger elapsed
+            expect(secondElapsed).toBeGreaterThan(firstElapsed);
+            expect(finalElapsed).toBeGreaterThanOrEqual(secondElapsed);
+
+            // All must be non-negative
+            expect(firstElapsed).toBeGreaterThanOrEqual(0);
+            expect(secondElapsed).toBeGreaterThanOrEqual(0);
+            expect(finalElapsed).toBeGreaterThanOrEqual(0);
+        });
+    });
+
+    describe('Mutation testing: attempt counting', () => {
+        it('should make exactly maxAttempts attempts before giving up', async () => {
+            const operation = mock(() => Promise.reject(new Error('always fails')));
+            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+
+            await expect(retryAsync(operation, {
+                policy: { ...defaultPolicy, maxAttempts: 3 },
+                classifier,
+                deps,
+            })).rejects.toThrow();
+
+            // Exactly 3 attempts, not 2 or 4 (kills attempt++ vs attempt-- mutations)
+            expect(operation).toHaveBeenCalledTimes(3);
+        });
+
+        it('should make exactly maxAttempts attempts with different maxAttempts value', async () => {
+            const operation = mock(() => Promise.reject(new Error('always fails')));
+            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+
+            await expect(retryAsync(operation, {
+                policy: { ...defaultPolicy, maxAttempts: 5 },
+                classifier,
+                deps,
+            })).rejects.toThrow();
+
+            // Exactly 5 attempts (verifies loop boundary)
+            expect(operation).toHaveBeenCalledTimes(5);
+        });
+
+        it('should log correct attempt numbers in sequence', async () => {
+            let callCount = 0;
+            const operation = mock(() => {
+                callCount++;
+                if(callCount < 3) {
+                    return Promise.reject(new Error('transient'));
+                }
+                return Promise.resolve('success');
+            });
+
+            const classifier = mock(() => ({ category: 'transient', message: 'transient' } as ErrorClassification));
+
+            await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
+
+            // Verify attempt numbers are sequential and correct
+            expect(mockLogger.warn).toHaveBeenCalledTimes(2);
+
+            const firstWarnLog = (mockLogger.warn as ReturnType<typeof mock>).mock.calls[0][0];
+            const secondWarnLog = (mockLogger.warn as ReturnType<typeof mock>).mock.calls[1][0];
+
+            expect(firstWarnLog).toHaveProperty('attempt', 1);
+            expect(secondWarnLog).toHaveProperty('attempt', 2);
+        });
+    });
+
+    describe('Mutation testing: loop boundary conditions', () => {
+        it('should respect loop boundary exactly at maxAttempts', async () => {
+            const operation = mock(() => Promise.reject(new Error('always fails')));
+            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+
+            // Test with maxAttempts = 1 (boundary case)
+            await expect(retryAsync(operation, {
+                policy: { ...defaultPolicy, maxAttempts: 1 },
+                classifier,
+                deps,
+            })).rejects.toThrow();
+
+            expect(operation).toHaveBeenCalledTimes(1);
+
+            // Reset for next test
+            operation.mockClear();
+
+            // Test with maxAttempts = 2 (verifies <= vs < boundary)
+            await expect(retryAsync(operation, {
+                policy: { ...defaultPolicy, maxAttempts: 2 },
+                classifier,
+                deps,
+            })).rejects.toThrow();
+
+            expect(operation).toHaveBeenCalledTimes(2);
+        });
+
+        it('should stop exactly at maxAttempts and not continue', async () => {
+            let callCount = 0;
+            const operation = mock(() => {
+                callCount++;
+                return Promise.reject(new Error('always fails'));
+            });
+
+            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+
+            await expect(retryAsync(operation, {
+                policy: { ...defaultPolicy, maxAttempts: 4 },
+                classifier,
+                deps,
+            })).rejects.toThrow();
+
+            // Exactly 4, not 3 or 5 (kills <= vs < mutations)
+            expect(operation).toHaveBeenCalledTimes(4);
+            expect(callCount).toBe(4);
+        });
+    });
+
     describe('Default behavior', () => {
         it('should use default policy when not provided', async () => {
             const operation = mock(() => Promise.resolve('success'));

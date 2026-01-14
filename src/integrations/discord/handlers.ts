@@ -143,6 +143,7 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         : null;
 
     // Create rate limiter for Discord message sending
+    // Stryker disable next-line ObjectLiteral: Logger debug object
     const rateLimiter = createDiscordRateLimiter({
         globalConcurrency: 5,
         logger,
@@ -195,15 +196,18 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
                     // First chunk uses reply() to thread the response (with retry and rate limiting)
                     await withDiscordRetry(
                         () => rateLimiter.replyToMessage(message, chunks[0]),
+                        // Stryker disable next-line StringLiteral: Operation name for logging only
                         'replyToMessage'
                     );
                     logger.info({ messageId: message.id, chunkIndex: 0, totalChunks: chunks.length, msg: 'Reply sent successfully' });
 
                     // Subsequent chunks use channel.send() to continue the conversation (with retry and rate limiting)
                     const channel = message.channel as TextChannel;
+                    // Stryker disable next-line EqualityOperator: Loop starts at 1 to skip already-sent first chunk
                     for(let i = 1; i < chunks.length; i++) {
                         await withDiscordRetry(
                             () => rateLimiter.sendToChannel(channel, chunks[i]),
+                            // Stryker disable next-line StringLiteral: Operation name for logging
                             'sendToChannel'
                         );
                         logger.info({ messageId: message.id, chunkIndex: i, totalChunks: chunks.length, msg: 'Continuation sent successfully' });
