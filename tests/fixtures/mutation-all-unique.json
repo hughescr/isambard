@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "1.0",
+  "thresholds": {
+    "high": 80,
+    "low": 60,
+    "break": 0
+  },
+  "files": {
+    "src/example.ts": {
+      "language": "typescript",
+      "mutants": [
+        {
+          "id": "0",
+          "mutatorName": "StringLiteral",
+          "replacement": "\"\"",
+          "status": "Killed",
+          "killedBy": ["1"],
+          "location": {"start": {"line": 1, "column": 1}, "end": {"line": 1, "column": 10}}
+        },
+        {
+          "id": "1",
+          "mutatorName": "ArithmeticOperator",
+          "replacement": "-",
+          "status": "Killed",
+          "killedBy": ["2"],
+          "location": {"start": {"line": 2, "column": 1}, "end": {"line": 2, "column": 2}}
+        },
+        {
+          "id": "2",
+          "mutatorName": "BooleanLiteral",
+          "replacement": "false",
+          "status": "Killed",
+          "killedBy": ["3"],
+          "location": {"start": {"line": 3, "column": 1}, "end": {"line": 3, "column": 5}}
+        }
+      ],
+      "source": "// example code"
+    }
+  },
+  "testFiles": {
+    "tests/example.test.ts": {
+      "tests": [
+        {
+          "id": "1",
+          "name": "test A - unique killer",
+          "location": {"start": {"line": 1, "column": 1}, "end": {"line": 5, "column": 1}}
+        },
+        {
+          "id": "2",
+          "name": "test B - unique killer",
+          "location": {"start": {"line": 7, "column": 1}, "end": {"line": 11, "column": 1}}
+        },
+        {
+          "id": "3",
+          "name": "test C - unique killer",
+          "location": {"start": {"line": 13, "column": 1}, "end": {"line": 17, "column": 1}}
+        }
+      ]
+    }
+  }
+}
