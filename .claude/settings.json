@@ -20,12 +20,7 @@
       "Bash(ls:*)",
       "Bash(sort:*)",
       "Bash(test:*)",
-      "Skill(feature-dev:feature-dev)",
-      "Skill(commit-commands:commit)",
-      "Skill(codex:codex)",
-      "Skill(typescript:typescript-standards)",
       "Bash(cut:*)",
-      "Skill(codex-cli-reference)",
       "mcp__plugin_generic-dev_DevTools__*",
       "mcp__plugin_javascript_nodejs-packages__*"
     ]
