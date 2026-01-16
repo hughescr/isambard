@@ -20,6 +20,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Install Bun PR 25986 for Stryker subprocess
+        run: bunx bun-pr 25986
+
+      - name: Verify bun-25986 is in PATH
+        run: which bun-25986 && bun-25986 --version
+
       - name: Run tests
         run: bun run test
 
