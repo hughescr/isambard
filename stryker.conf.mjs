@@ -7,12 +7,12 @@ export default {
     incremental:      !isCI, // Fast incremental runs locally, full runs in CI
     reporters:        isCI ? ['clear-text', 'progress', 'dashboard'] : ['progress', 'json', 'html'],
     testRunner:       'bun',
-    bun:              { bunPath: 'bun-25986' },
+    bun:              { bunPath: 'bun-25986', inspectorTimeout: isCI ? 30000 : 5000 },
     plugins:          ['@hughescr/stryker-bun-runner', '@stryker-mutator/typescript-checker'],
     coverageAnalysis: 'perTest',
     disableBail:      true, // Do not stop with first failing test, so we can get complete map of mutant:killer-tests
     mutate:           ['src/**/*.ts', '!src/index.ts'],
     thresholds:       { high: 100, low: 100, 'break': 100 },
-    concurrency:      24,
+    concurrency:      isCI ? 4 : 24,
     tempDirName:      '.stryker-tmp',
 };
