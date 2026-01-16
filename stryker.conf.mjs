@@ -15,11 +15,4 @@ export default {
     thresholds:       { high: 100, low: 100, 'break': 100 },
     concurrency:      24,
     tempDirName:      '.stryker-tmp',
-    ...(isCI && {
-        dashboard: {
-            project: 'hughescr/isambard',
-            module:  'default',
-            version: process.env.GITHUB_SHA,
-        },
-    }),
 };

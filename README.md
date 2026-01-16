@@ -1,6 +1,6 @@
 # Isambard
 
-[![Mutation testing badge](https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fhughescr%2Fisambard%2Fdevelop)](https://dashboard.stryker-mutator.io/reports/github.com/hughescr/isambard/develop)
+[![Mutation testing badge](https://img.shields.io/endpoint?url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fhughescr%2Fisambard%2Fdevelop)](https://dashboard.stryker-mutator.io/reports/github.com/hughescr/isambard/develop)
 
 A self-improving agentic thought partner built with the Claude Agent SDK.
 
