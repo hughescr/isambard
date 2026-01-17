@@ -16,6 +16,7 @@ import * as dynamoClient from '@/storage/client';
 import type { DiscordConfig, DynamoDBConfig, AgentConfig } from '@/config/schemas';
 import type { DiscordBot } from '@/integrations/discord/bot';
 import type { ClaudeAgent } from '@/agent/agent';
+import type { StreamTracker } from '@/agent/stream-tracker';
 import type { ContextBuilder } from '@/agent/context-builder';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -72,7 +73,13 @@ describe('Bot Lifecycle Integration', () => {
 
         // Mock Claude Agent
         mockClaudeAgent = {
-            chat: mock(async () => 'Test response'),
+            chat:      mock(async () => 'Test response'),
+            chatBatch: mock(async () => ({
+                response:       'Test response',
+                sessionId:      undefined,
+                wasInterrupted: false,
+                streamTracker:  {} as StreamTracker,
+            })),
         };
     });
 
@@ -395,7 +402,13 @@ describe('Bot Lifecycle Integration', () => {
 
         it('should handle null response from agent.chat', async () => {
             const mockAgentWithNull: ClaudeAgent = {
-                chat: mock(async () => null),
+                chat:      mock(async () => null),
+                chatBatch: mock(async () => ({
+                    response:       null,
+                    sessionId:      undefined,
+                    wasInterrupted: false,
+                    streamTracker:  {} as StreamTracker,
+                })),
             };
 
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({

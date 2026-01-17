@@ -10,6 +10,10 @@ import { cleanupSession, extractSessionId } from './session-cleanup';
 import type { AgentStreamEvent } from './types';
 import { createRetryableQuery } from './claude-retry';
 import { loadRetryConfig } from '../config/retry-config';
+import type { StreamTracker } from './stream-tracker';
+import type { ResumeContext } from './resume-prompt-builder';
+import { createStreamTracker } from './stream-tracker';
+import { buildResumePrompt } from './resume-prompt-builder';
 
 const CLAUDE_MODEL = 'sonnet';
 
@@ -287,6 +291,30 @@ export interface ClaudeAgentOptions {
     plugins?:          SdkPluginConfig[]
 }
 
+/** Options for chatBatch processing */
+export interface ChatBatchOptions {
+    /** Session ID to resume (for SDK session continuity) */
+    sessionId?:       string
+    /** Resume context from interrupted processing */
+    resumeContext?:   ResumeContext
+    /** AbortController for cancellation */
+    abortController?: AbortController
+    /** Callback for stream events */
+    onStreamEvent?:   (event: AgentStreamEvent) => void
+}
+
+/** Result from chatBatch processing */
+export interface ChatBatchResult {
+    /** Final response text (null if interrupted or error) */
+    response:       string | null
+    /** Session ID for resuming */
+    sessionId?:     string
+    /** Whether processing was interrupted */
+    wasInterrupted: boolean
+    /** Stream tracker with captured progress */
+    streamTracker:  StreamTracker
+}
+
 export interface ClaudeAgent {
     /**
      * Process a Discord message and generate a response.
@@ -296,6 +324,18 @@ export interface ClaudeAgent {
      * @returns Claude's response text, or null if an error occurred
      */
     chat: (context: DiscordMessageContext, onStreamEvent?: (event: AgentStreamEvent) => void) => Promise<string | null>
+
+    /**
+     * Process multiple messages in batch with interruption support.
+     *
+     * @param contexts Array of Discord message contexts to process
+     * @param options Optional configuration for batch processing
+     * @returns Result with final response, interruption status, and stream tracker
+     */
+    chatBatch: (
+        contexts: DiscordMessageContext[],
+        options?: ChatBatchOptions
+    ) => Promise<ChatBatchResult>
 }
 
 /**
@@ -518,6 +558,111 @@ export function logStreamEvent(message: AgentStreamEvent): void {
 }
 // Stryker restore all
 
+/**
+ * Build user message for batch processing.
+ * Handles both resume context and normal message formatting.
+ * @param contexts Array of Discord message contexts
+ * @param contextBuilder Context builder for loading memories
+ * @param resumeContext Optional resume context from interruption
+ * @returns Formatted user message string
+ */
+async function buildUserMessageForBatch(
+    contexts: DiscordMessageContext[],
+    contextBuilder: ContextBuilder | undefined,
+    resumeContext?: ResumeContext
+): Promise<string> {
+    if(resumeContext) {
+        // Use resume prompt when resuming after interruption
+        return buildResumePrompt(resumeContext);
+    }
+
+    // Build context prefix from memories and events
+    const contextPrefix = contextBuilder
+        ? await buildContextPrefix(contextBuilder, contexts[0])
+        : '';
+
+    // Format multiple messages
+    const messageBlocks = _.map(contexts, ctx =>
+        `User @${ctx.userId} in #${ctx.channelId} at ${ctx.timestamp}: ${ctx.content}`
+    );
+
+    return contextPrefix + messageBlocks.join('\n\n');
+}
+
+/**
+ * Process stream events from Agent SDK response.
+ * Handles session ID extraction, tracker updates, logging, callbacks, and abort checking.
+ * @param response Async iterable stream from Agent SDK
+ * @param tracker Stream tracker to update with progress
+ * @param options Optional batch processing options
+ * @returns Object with last assistant text and whether processing was interrupted
+ */
+async function processStreamEvents(
+    response: AsyncIterable<unknown>,
+    tracker: StreamTracker,
+    options?: ChatBatchOptions
+): Promise<{ lastAssistantText: string, wasInterrupted: boolean, capturedSessionId?: string }> {
+    let lastAssistantText = '';
+    let wasInterrupted = false;
+    let capturedSessionId: string | undefined;
+
+    try {
+        for await (const message of response) {
+            // Capture session ID from system init event
+            const extractedSessionId = extractSessionId(message);
+            if(extractedSessionId) {
+                capturedSessionId = extractedSessionId;
+            }
+
+            // Update tracker with stream progress
+            tracker.update(message as AgentStreamEvent);
+
+            // Log descriptive stream events
+            logStreamEvent(message as AgentStreamEvent);
+
+            // Log errors from stream events
+            logResultErrors(message as { type: string, is_error?: boolean, subtype?: string, errors?: unknown[] });
+            logAssistantErrors(message as { type: string, error?: unknown });
+            logToolUsage(message as { type: string, message?: { content?: unknown } });
+
+            // Invoke stream event callback if provided
+            if(options?.onStreamEvent) {
+                options.onStreamEvent(message as AgentStreamEvent);
+            }
+
+            // Check for abort signal
+            if(options?.abortController?.signal.aborted) {
+                wasInterrupted = true;
+                logger.info({
+                    sessionId: capturedSessionId,
+                    msg:       'Batch processing interrupted by abort signal',
+                });
+                break;
+            }
+
+            const text = extractAssistantText(message as { type: string, message?: { content?: unknown } });
+            // Stryker disable next-line ConditionalExpression: Empty text assignment produces same result due to || null coercion in return
+            if(text) {
+                lastAssistantText = text;
+            }
+        }
+    } catch (error) {
+        // Check if this was an abort error
+        if(_.isError(error) && error.name === 'AbortError') {
+            wasInterrupted = true;
+            logger.info({
+                sessionId: capturedSessionId,
+                msg:       'Batch processing interrupted by abort error',
+            });
+        } else {
+            // Re-throw other errors
+            throw error;
+        }
+    }
+
+    return { lastAssistantText, wasInterrupted, capturedSessionId };
+}
+
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     const { contextBuilder, memoryMcpServer, discordMcpServer, plugins } = options;
 
@@ -531,6 +676,90 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     });
 
     return {
+        chatBatch: async (
+            contexts: DiscordMessageContext[],
+            options?: ChatBatchOptions
+        ): Promise<ChatBatchResult> => {
+            const tracker = createStreamTracker();
+            let capturedSessionId: string | undefined;
+
+            try {
+                // 1. Build system prompt with core identity
+                const systemPrompt = await buildSystemPrompt(contextBuilder);
+
+                // 2. Build user message (resume prompt or normal context)
+                const userMessage = await buildUserMessageForBatch(contexts, contextBuilder, options?.resumeContext);
+
+                // 3. Log start of processing
+                logger.info({
+                    contextCount: contexts.length,
+                    messageIds:   _.map(contexts, 'messageId'),
+                    msg:          'Agent starting batch processing',
+                });
+
+                // 4. Query with MCP servers, plugins, and sandboxed execution (with retry)
+                const response = retryableQuery({
+                    prompt:  userMessage,
+                    options: {
+                        model:             CLAUDE_MODEL,
+                        systemPrompt,
+                        tools:             EXPLICIT_TOOLS,
+                        agents:            EXPLICIT_AGENTS,
+                        mcpServers:        buildMcpServers(memoryMcpServer, discordMcpServer),
+                        plugins:           plugins && plugins.length > 0 ? plugins : undefined,
+                        permissionMode:    'acceptEdits',
+                        allowedTools:      buildAllowedTools(discordMcpServer),
+                        maxThinkingTokens: 10000,
+                        settingSources:    [],
+                        abortController:   options?.abortController,
+                        ...(options?.sessionId && { resume: options.sessionId }),
+                        // Stryker disable all: Observability - stderr logging doesn't affect behavior
+                        stderr:            (data: string) => {
+                            logger.error({ stderr: data }, 'Agent SDK stderr');
+                        },
+                        // Stryker restore all
+                    },
+                });
+
+                // 5. Process stream events and track progress
+                const { lastAssistantText, wasInterrupted, capturedSessionId: sessionId }
+                    = await processStreamEvents(response, tracker, options);
+                capturedSessionId = sessionId;
+
+                // 6. Clean up session only on completion (not on interrupt)
+                // Stryker disable next-line all: Cleanup is fire-and-forget, not observable in tests
+                if(!wasInterrupted && capturedSessionId) {
+                    // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Fire-and-forget cleanup
+                    cleanupSession(capturedSessionId);
+                }
+
+                // 7. Log completion
+                logger.info({
+                    contextCount:   contexts.length,
+                    wasInterrupted,
+                    responseLength: lastAssistantText.length,
+                    msg:            `Batch processing ${wasInterrupted ? 'interrupted' : 'completed'} (${lastAssistantText.length} chars)`,
+                });
+
+                // 8. Return result
+                return {
+                    response:      wasInterrupted ? null : (lastAssistantText || null),
+                    sessionId:     capturedSessionId,
+                    wasInterrupted,
+                    streamTracker: tracker,
+                };
+            } catch (error) {
+                const errorMessage = _.isError(error) ? error.message : String(error);
+                logger.error({ error, contextCount: contexts.length }, `Failed to process batch: ${errorMessage}`);
+                return {
+                    response:       null,
+                    sessionId:      capturedSessionId,
+                    wasInterrupted: false,
+                    streamTracker:  tracker,
+                };
+            }
+        },
+
         chat: async (context: DiscordMessageContext, onStreamEvent?: (event: AgentStreamEvent) => void): Promise<string | null> => {
             try {
                 // 1. Build system prompt with core identity

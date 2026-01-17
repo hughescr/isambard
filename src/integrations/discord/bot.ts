@@ -1,5 +1,6 @@
-import type { Client } from 'discord.js';
+import type { Client, TextChannel } from 'discord.js';
 import { ActivityType } from 'discord.js';
+import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { DiscordConfig } from '@/config/schemas';
 import type { DiscordMessageContext, UserId, ChannelId } from './types';
@@ -13,6 +14,10 @@ import {
     createPresenceManager,
     type PresenceManager
 } from './presence';
+import { createMessageCoordinator, type MessageCoordinator } from './message-coordinator';
+import { splitMessage } from './messages';
+import { createDiscordRateLimiter } from './rate-limiter';
+import { withDiscordRetry } from './retry';
 
 /**
  * Options for configuring the Discord bot.
@@ -109,6 +114,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     const { config, onMessage, identityContext, agent, client: providedClient } = options;
     const client: Client = providedClient ?? createDiscordClient(config);
     let presenceManager: PresenceManager | undefined;
+    let coordinator: MessageCoordinator | undefined;
 
     // Register error handler for Discord client errors
     // Stryker disable next-line StringLiteral: Discord.js event name
@@ -151,6 +157,65 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 recentMessages.shift();
             }
         };
+
+        // Create rate limiter for Discord message sending
+        const rateLimiter = createDiscordRateLimiter({
+            globalConcurrency: 5,
+            logger,
+        });
+
+        // Create message coordinator if agent is provided
+        if(agent) {
+            coordinator = createMessageCoordinator({
+                debounceMs: 250,
+                onResponse: async (result, discordMessage) => {
+                    // Only send response if we have both a response and a message to reply to
+                    if(result.response && discordMessage) {
+                        const chunks = splitMessage(result.response);
+
+                        try {
+                            // First chunk uses reply() to thread the response
+                            await withDiscordRetry(
+                                () => rateLimiter.replyToMessage(discordMessage, chunks[0]),
+                                'replyToMessage'
+                            );
+                            logger.info({ messageId: discordMessage.id, chunkIndex: 0, totalChunks: chunks.length, msg: 'Reply sent successfully' });
+
+                            // Subsequent chunks use channel.send() to continue the conversation
+                            const channel = discordMessage.channel as TextChannel;
+                            for(let i = 1; i < chunks.length; i++) {
+                                await withDiscordRetry(
+                                    () => rateLimiter.sendToChannel(channel, chunks[i]),
+                                    'sendToChannel'
+                                );
+                                logger.info({ messageId: discordMessage.id, chunkIndex: i, totalChunks: chunks.length, msg: 'Continuation sent successfully' });
+                            }
+                        } catch (replyError) {
+                            const err = _.isError(replyError) ? replyError : new Error(String(replyError));
+                            logger.error({ error: err, messageId: discordMessage.id, msg: `Failed to reply to message ${discordMessage.id}: ${err.message}` });
+                        }
+                    }
+                },
+            });
+
+            // Set the processor to call agent.chatBatch
+            coordinator.setProcessor(async (contexts, resumeContext, sessionId, abortSignal) => {
+                // Create abort controller from signal
+                const abortController = new AbortController();
+                // Connect the signals
+                abortSignal.addEventListener('abort', () => abortController.abort());
+
+                // Call chatBatch
+                const result = await agent.chatBatch(contexts, {
+                    sessionId,
+                    resumeContext: resumeContext ?? undefined,
+                    abortController,
+                    onStreamEvent: () => undefined,
+                });
+
+                return result;
+            });
+        }
 
         // Create presence manager if optional deps provided
         if(identityContext && config.presence) {
@@ -196,6 +261,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             agent,
             dynamicStatusGenerator,
             addRecentMessage,
+            coordinator,
         }));
     });
 
@@ -206,6 +272,10 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         },
 
         async stop(): Promise<void> {
+            // Stop coordinator if it exists
+            if(coordinator) {
+                coordinator.stop();
+            }
             // Stop presence manager if it exists
             if(presenceManager) {
                 presenceManager.stop();

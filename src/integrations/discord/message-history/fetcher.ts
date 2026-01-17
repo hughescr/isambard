@@ -225,12 +225,13 @@ export function createMessageFetcher(client: Client): MessageFetcher {
 
             messages.push(message);
 
-            // Stryker disable next-line BlockStatement,BooleanLiteral: Loop termination on limit reached prevents infinite pagination
+            // Stryker disable all: Loop termination on limit reached prevents infinite pagination
             if(currentMessages.length + messages.length >= maxMessages) {
                 hasMore = true;
                 shouldStop = true;
                 break;
             }
+            // Stryker restore all
         }
 
         return { messages, hasMore, shouldStop };

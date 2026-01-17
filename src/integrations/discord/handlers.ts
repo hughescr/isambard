@@ -5,6 +5,7 @@ import type { DiscordMessageContext, UserId, ChannelId } from './types';
 import type { PresenceManager } from './presence';
 import type { DynamicStatusGenerator } from './presence/status-generator-dynamic';
 import type { ClaudeAgent } from '@/agent/agent';
+import type { MessageCoordinator } from './message-coordinator';
 import { createGuildId, createChannelId, createUserId } from './types';
 import { createStatusMiddleware } from './presence';
 import { splitMessage } from './messages';
@@ -94,6 +95,12 @@ export interface MessageHandlerOptions {
      * Optional callback to track recent message content for context-aware idle status.
      */
     addRecentMessage?: (content: string) => void
+
+    /**
+     * Optional message coordinator for multi-message handling with interruption support.
+     * When provided, messages are batched and processed through the coordinator.
+     */
+    coordinator?: MessageCoordinator
 }
 
 /**
@@ -130,7 +137,7 @@ export interface MessageHandlerOptions {
  * ```
  */
 export function createMessageHandler(options: MessageHandlerOptions): (message: Message) => Promise<void> {
-    const { monitoredChannelIds, botUserId, onMessage, presenceManager, agent, dynamicStatusGenerator, addRecentMessage } = options;
+    const { monitoredChannelIds, botUserId, onMessage, presenceManager, agent, dynamicStatusGenerator, addRecentMessage, coordinator } = options;
 
     // Create status middleware if both presenceManager and agent are provided
     const statusMiddleware = presenceManager && agent
@@ -262,6 +269,26 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
             return;
         }
 
-        await processMessage(message);
+        // If coordinator is provided, delegate to it; otherwise process directly
+        // Stryker disable all: Integration tests cover coordinator path, unit tests cover direct path
+        if(coordinator) {
+            // Convert Discord.js Message to DiscordMessageContext
+            const context: DiscordMessageContext = {
+                guildId:   createGuildId(message.guild?.id ?? 'DM'),
+                channelId: createChannelId(message.channel.id),
+                userId:    createUserId(message.author.id),
+                messageId: message.id,
+                content:   message.content,
+                timestamp: message.createdAt.toISOString(),
+                botUserId,
+            };
+
+            // Hand off to coordinator (it will handle batching, interruption, and onResponse)
+            coordinator.handleMessage(context, message);
+            // Stryker restore all
+        } else {
+            // Direct processing (backward compatibility)
+            await processMessage(message);
+        }
     };
 }

@@ -664,4 +664,548 @@ describe('createClaudeAgent', () => {
             expect(queryParams.options.plugins).not.toBeUndefined();
         });
     });
+
+    describe('chatBatch', () => {
+        test('should return response for single message', async () => {
+            const agent = createClaudeAgent({});
+            const result = await agent.chatBatch([mockMessageContext]);
+
+            expect(result.response).toBe('Hello! This is a test response.');
+            expect(result.wasInterrupted).toBe(false);
+            expect(result.sessionId).toBeUndefined();
+            expect(result.streamTracker).toBeDefined();
+        });
+
+        test('should build user message with empty contextPrefix when no contextBuilder', async () => {
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            const prompt = querySpy.mock.calls[0][0].prompt as string;
+
+            // Should NOT have a contextPrefix when contextBuilder is undefined
+            expect(prompt).not.toContain('## Current Time');
+            expect(prompt).not.toContain('[About this user]');
+            // Kills mutant #1: contextPrefix should be empty string, not "Stryker was here!"
+            expect(prompt).toMatch(/^User @/);
+        });
+
+        test('should join multiple messages with double newlines', async () => {
+            const agent = createClaudeAgent({});
+            const message1 = { ...mockMessageContext, messageId: 'msg_1', content: 'First message' };
+            const message2 = { ...mockMessageContext, messageId: 'msg_2', content: 'Second message' };
+
+            await agent.chatBatch([message1, message2]);
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            const prompt = querySpy.mock.calls[0][0].prompt as string;
+
+            // Kills mutant #2: messages should be joined with '\n\n', not empty string
+            expect(prompt).toContain('First message\n\nUser @');
+            expect(prompt).toContain('Second message');
+            // Verify double newline exists between messages
+            const lines = _.split(prompt, '\n');
+            const firstIndex = _.findIndex(lines, l => l.includes('First message'));
+            expect(lines[firstIndex + 1]).toBe('');
+        });
+
+        test('should initialize lastAssistantText as empty string', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                { type: 'text' as const, text: '' }, // Empty text
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const result = await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutant #3: lastAssistantText starts as '', not "Stryker was here!"
+            // If it started as "Stryker was here!", we'd get that back instead of null
+            expect(result.response).toBeNull();
+        });
+
+        test('should not assign empty text to lastAssistantText', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                { type: 'text' as const, text: '' }, // Empty text should NOT be assigned
+                            ],
+                        },
+                    };
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                { type: 'text' as const, text: 'Valid response' },
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const result = await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutant #4: if (text) check ensures empty text is not assigned
+            expect(result.response).toBe('Valid response');
+        });
+
+        test('should catch and return null for non-AbortError exceptions', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                // Use a regular async iterable that throws, not a generator
+                return {
+                    [Symbol.asyncIterator]: () => ({
+                        next: async () => {
+                            const error = new Error('Network failure');
+                            error.name = 'NetworkError';
+                            throw error;
+                        },
+                    }),
+                };
+            });
+
+            const agent = createClaudeAgent({});
+
+            // Kills mutant #5 & #6: non-AbortError should be caught by outer try-catch
+            // and return null, not be treated as an AbortError
+            const result = await agent.chatBatch([mockMessageContext]);
+            expect(result.response).toBeNull();
+            expect(result.wasInterrupted).toBe(false); // Should NOT be marked as interrupted
+        });
+
+        test('should log abort error with correct structure', async () => {
+            // Clear mock before test to avoid interference from other tests
+            mockLogger.info.mockClear();
+
+            const abortController = new AbortController();
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:       'system' as const,
+                        subtype:    'init' as const,
+                        session_id: 'test-session-abort',
+                    };
+                    abortController.abort();
+                    const error = new Error('This operation was aborted');
+                    error.name = 'AbortError';
+                    throw error;
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext], { abortController });
+
+            // Kills mutant #7: verify log structure on abort error
+            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const abortLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort error')) as unknown[] | undefined;
+            expect(abortLog).toBeDefined();
+            const abortLogData = abortLog![0] as { sessionId?: string, msg?: string };
+            // Verify log has sessionId property (even if undefined)
+            expect(abortLogData).toHaveProperty('sessionId');
+            expect(abortLogData).toHaveProperty('msg');
+            // The actual sessionId should be captured
+            expect(abortLogData.sessionId).toBe('test-session-abort');
+        });
+
+        test('should log batch start with messageIds property', async () => {
+            // Clear mock before test
+            mockLogger.info.mockClear();
+
+            const message1 = { ...mockMessageContext, messageId: 'msg_1' };
+            const message2 = { ...mockMessageContext, messageId: 'msg_2' };
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([message1, message2]);
+
+            // Kills mutant #8: verify log includes 'messageIds' property
+            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const startLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('starting batch processing')) as unknown[] | undefined;
+            expect(startLog).toBeDefined();
+            const startLogData = startLog![0] as { messageIds?: string[], msg?: string };
+            expect(startLogData).toHaveProperty('messageIds');
+            expect(startLogData.messageIds).toEqual(['msg_1', 'msg_2']);
+        });
+
+        test('should log batch start with correct structure', async () => {
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutant #9: verify log object is not empty
+            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const startLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('starting batch processing')) as unknown[] | undefined;
+            expect(startLog).toBeDefined();
+            const startLogData = startLog![0] as Record<string, unknown>;
+            expect(startLogData).toHaveProperty('contextCount');
+            expect(startLogData).toHaveProperty('messageIds');
+            expect(startLogData).toHaveProperty('msg');
+            expect(_.keys(startLogData).length).toBeGreaterThan(0);
+        });
+
+        test('should log batch start with specific message', async () => {
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutant #10: verify specific log message
+            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const startLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg === 'Agent starting batch processing');
+            expect(startLog).toBeDefined();
+            const startLogData = startLog![0] as { msg: string };
+            expect(startLogData.msg).toBe('Agent starting batch processing');
+            expect(startLogData.msg).not.toBe('');
+        });
+
+        test('should pass plugins when array is non-empty', async () => {
+            const mockPlugins = [{ type: 'local' as const, name: 'test-plugin', path: '/path/to/plugin' }];
+            const agent = createClaudeAgent({ plugins: mockPlugins });
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutant #11: verify plugins are passed when present
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            expect(queryParams.options.plugins).toEqual(mockPlugins);
+            expect(queryParams.options.plugins).not.toBeUndefined();
+        });
+
+        test('should format multiple messages correctly', async () => {
+            const agent = createClaudeAgent({});
+            const message1 = { ...mockMessageContext, messageId: 'msg_1', content: 'First message', timestamp: '2025-01-15T12:00:00Z' };
+            const message2 = { ...mockMessageContext, messageId: 'msg_2', content: 'Second message', timestamp: '2025-01-15T12:01:00Z' };
+
+            await agent.chatBatch([message1, message2]);
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            const prompt = querySpy.mock.calls[0][0].prompt as string;
+
+            // Should format as multiple messages
+            expect(prompt).toContain('User @111222333 in #987654321');
+            expect(prompt).toContain('First message');
+            expect(prompt).toContain('Second message');
+        });
+
+        test('should use resume prompt when resumeContext provided', async () => {
+            const agent = createClaudeAgent({});
+            const resumeContext = {
+                partialWork: {
+                    thinking:       'I was thinking...',
+                    text:           'I was writing...',
+                    pendingToolUse: null,
+                    sessionId:      undefined,
+                },
+                newEvents:   ['Event 1', 'Event 2'],
+                newMessages: [mockMessageContext],
+            };
+
+            await agent.chatBatch([mockMessageContext], { resumeContext });
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            const prompt = querySpy.mock.calls[0][0].prompt as string;
+
+            // Should use resume prompt format
+            expect(prompt).toContain('[CONTEXT UPDATE]');
+            expect(prompt).toContain('[Your thinking at the point of interruption:]');
+            expect(prompt).toContain('I was thinking...');
+        });
+
+        test('should return wasInterrupted=true when aborted', async () => {
+            const abortController = new AbortController();
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [{ type: 'text' as const, text: 'Partial response' }],
+                        },
+                    };
+                    // Simulate the SDK behavior: abort the controller and throw an AbortError
+                    abortController.abort();
+                    const error = new Error('This operation was aborted');
+                    error.name = 'AbortError';
+                    throw error;
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const result = await agent.chatBatch([mockMessageContext], { abortController });
+
+            expect(result.wasInterrupted).toBe(true);
+            expect(result.response).toBeNull();
+        });
+
+        test('should return streamTracker with captured progress', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                { type: 'thinking' as const, text: 'Thinking content' },
+                                { type: 'text' as const, text: 'Response text' },
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const result = await agent.chatBatch([mockMessageContext]);
+
+            expect(result.streamTracker).toBeDefined();
+            const progress = result.streamTracker.getProgress();
+            expect(progress.thinking).toBe('Thinking content');
+            expect(progress.text).toBe('Response text');
+        });
+
+        test('should pass sessionId to SDK for resume', async () => {
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext], { sessionId: 'test-session-id' });
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            expect(queryParams.options.resume).toBe('test-session-id');
+        });
+
+        test('should call onStreamEvent callback', async () => {
+            let callbackInvoked = false;
+            const onStreamEvent = (_event: any) => {
+                callbackInvoked = true;
+            };
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext], { onStreamEvent });
+
+            expect(callbackInvoked).toBe(true);
+        });
+
+        test('should not cleanup session on interrupt', async () => {
+            const abortController = new AbortController();
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:       'system' as const,
+                        subtype:    'init' as const,
+                        session_id: 'test-session',
+                    };
+                    // Simulate the SDK behavior: abort the controller and throw an AbortError
+                    abortController.abort();
+                    const error = new Error('This operation was aborted');
+                    error.name = 'AbortError';
+                    throw error;
+                }
+                return mockGenerator();
+            });
+
+            // Spy on cleanupSession (it's a fire-and-forget call)
+            const cleanupSessionModule = await import('../../../src/agent/session-cleanup');
+            const cleanupSpy = spyOn(cleanupSessionModule, 'cleanupSession');
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext], { abortController });
+
+            // Session cleanup should NOT be called on interrupt
+            expect(cleanupSpy).not.toHaveBeenCalled();
+
+            cleanupSpy.mockRestore();
+        });
+
+        test('should cleanup session on completion', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:       'system' as const,
+                        subtype:    'init' as const,
+                        session_id: 'test-session',
+                    };
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [{ type: 'text' as const, text: 'Done' }],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            // Spy on cleanupSession (it's a fire-and-forget call)
+            const cleanupSessionModule = await import('../../../src/agent/session-cleanup');
+            const cleanupSpy = spyOn(cleanupSessionModule, 'cleanupSession');
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Session cleanup should be called on completion
+            // Use a small delay to allow fire-and-forget to trigger
+            await new Promise(resolve => setTimeout(resolve, 10));
+            expect(cleanupSpy).toHaveBeenCalledWith('test-session');
+
+            cleanupSpy.mockRestore();
+        });
+
+        test('should detect abort signal mid-stream (Mutant #303)', async () => {
+            const abortController = new AbortController();
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:       'system' as const,
+                        subtype:    'init' as const,
+                        session_id: 'test-session-interrupt',
+                    };
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [{ type: 'text' as const, text: 'First message' }],
+                        },
+                    };
+                    // Abort mid-stream
+                    abortController.abort();
+                    // Add a small delay to simulate async processing
+                    await new Promise(resolve => setTimeout(resolve, 5));
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [{ type: 'text' as const, text: 'Second message that should not be processed' }],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            // Clear mock before test
+            mockLogger.info.mockClear();
+
+            const agent = createClaudeAgent({});
+            const result = await agent.chatBatch([mockMessageContext], { abortController });
+
+            // Kills mutant #303: abort signal check (line 634)
+            expect(result.wasInterrupted).toBe(true);
+            expect(result.response).toBeNull(); // No response when interrupted mid-stream
+            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const abortLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort signal')) as unknown[] | undefined;
+            expect(abortLog).toBeDefined();
+        });
+
+        test('should return null when only empty text is yielded (Mutant #310)', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                { type: 'text' as const, text: '' }, // ONLY empty text, no valid text after
+                            ],
+                        },
+                    };
+                    // Stream ends here - no more messages
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const result = await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutant #310: empty text check (line 644)
+            // If the mutant changes "if(text)" to "if(true)", empty string would be assigned
+            expect(result.response).toBeNull();
+            expect(result.response).not.toBe('');
+        });
+
+        test('should re-throw non-AbortError exceptions (Mutant #324)', async () => {
+            // Clear mock before test
+            mockLogger.error.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                return {
+                    [Symbol.asyncIterator]: () => ({
+                        next: async () => {
+                            const error = new Error('Database connection failed');
+                            error.name = 'DatabaseError';
+                            throw error;
+                        },
+                    }),
+                };
+            });
+
+            const agent = createClaudeAgent({});
+
+            // Kills mutant #324: re-throw non-AbortError (lines 656-659)
+            // The error is re-thrown to the outer try-catch in chatBatch, which logs it
+            // If the mutant removes "throw error", the error would be silently swallowed
+            const result = await agent.chatBatch([mockMessageContext]);
+
+            // Error should be logged by outer try-catch
+            const errorLogCalls = mockLogger.error.mock.calls as unknown[][];
+            const errorLog = _.find(errorLogCalls, (call: unknown[]) => {
+                const logData = call[0] as { error?: Error };
+                return logData?.error?.message === 'Database connection failed';
+            });
+            expect(errorLog).toBeDefined();
+
+            // Result should be null
+            expect(result.response).toBeNull();
+            expect(result.wasInterrupted).toBe(false);
+        });
+
+        test('should pass undefined plugins when array is empty (Mutant #337)', async () => {
+            const agent = createClaudeAgent({ plugins: [] });
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutant #337: plugins conditional - empty array check (line 708)
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            expect(queryParams.options.plugins).toBeUndefined();
+            expect(queryParams.options.plugins).not.toEqual([]);
+        });
+
+        test('should pass undefined plugins when plugins is null-like (Mutant #340)', async () => {
+            // Test the "plugins &&" part of the conditional
+            const agent = createClaudeAgent({ plugins: undefined });
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutant #340: plugins && check (line 708)
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            expect(queryParams.options.plugins).toBeUndefined();
+        });
+
+        test('should verify both plugins conditions are checked (Mutant #341)', async () => {
+            // Test with plugins = [] to ensure length check matters
+            const agent = createClaudeAgent({ plugins: [] });
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutant #341: plugins.length > 0 check (line 708)
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            // Empty array should result in undefined, not the array itself
+            expect(queryParams.options.plugins).toBeUndefined();
+
+            // Also verify non-empty array passes through
+            querySpy.mockClear();
+            const mockPlugins = [{ type: 'local' as const, name: 'test', path: '/test' }];
+            const agent2 = createClaudeAgent({ plugins: mockPlugins });
+            await agent2.chatBatch([mockMessageContext]);
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams2 = querySpy.mock.calls[0][0];
+            expect(queryParams2.options.plugins).toEqual(mockPlugins);
+        });
+    });
 });

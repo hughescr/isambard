@@ -15,6 +15,7 @@ import { createPresenceManager } from '@/integrations/discord/presence/manager';
 import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
 import { createMessageHandler } from '@/integrations/discord/handlers';
 import type { ClaudeAgent } from '@/agent/agent';
+import type { StreamTracker } from '@/agent/stream-tracker';
 import type { DiscordMessageContext, ChannelId, UserId, GuildId } from '@/integrations/discord/types';
 import type { AgentStreamEvent } from '@/agent/types';
 // Import shared mocks from setup.ts (already registered via mock.module in preload)
@@ -100,6 +101,12 @@ describe('Discord Presence Flow (Integration)', () => {
         // Create mock agent that simulates stream events
         const streamCallbacks: ((event: AgentStreamEvent) => void)[] = [];
         mockAgent = {
+            chatBatch: mock(async () => ({
+                response:       'Test response',
+                sessionId:      undefined,
+                wasInterrupted: false,
+                streamTracker:  {} as StreamTracker,
+            })),
             chat: mock(async (_context: DiscordMessageContext, onStreamEvent?: (event: AgentStreamEvent) => void) => {
                 if(onStreamEvent) {
                     streamCallbacks.push(onStreamEvent);
@@ -200,6 +207,12 @@ describe('Discord Presence Flow (Integration)', () => {
             chat: mock(async () => {
                 throw new Error('Agent processing failed');
             }),
+            chatBatch: mock(async () => ({
+                response:       null,
+                sessionId:      undefined,
+                wasInterrupted: false,
+                streamTracker:  {} as StreamTracker,
+            })),
         } as ClaudeAgent;
 
         // Create status middleware
