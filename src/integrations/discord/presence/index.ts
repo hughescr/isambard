@@ -12,3 +12,4 @@ export { createDynamicStatusGenerator, resetDebounceState } from './status-gener
 export { createIdleStatusGenerator, type IdleStatusGeneratorDeps } from './status-generator-idle.js';
 export { createPresenceManager, type PresenceManager } from './manager.js';
 export { createStatusMiddleware } from './middleware.js';
+export { createStreamEventHandler, type StreamEventHandler, type StreamEventHandlerDeps } from './stream-event-handler.js';

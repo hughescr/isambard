@@ -13,6 +13,7 @@ import {
     createDynamicStatusGenerator,
     createIdleStatusGenerator,
     createPresenceManager,
+    createStreamEventHandler,
     type PresenceManager
 } from './presence';
 import { createMessageCoordinator, type MessageCoordinator } from './message-coordinator';
@@ -196,6 +197,12 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             presenceManager.start();
         }
 
+        // Create dynamic status generator if identityContext is provided
+        // IMPORTANT: Must create before coordinator.setProcessor so it's available in onStreamEvent
+        const dynamicStatusGenerator = identityContext
+            ? createDynamicStatusGenerator({ identityContext })
+            : undefined;
+
         // Create message coordinator if agent is provided
         if(agent) {
             coordinator = createMessageCoordinator({
@@ -237,60 +244,39 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 // Connect the signals
                 abortSignal.addEventListener('abort', () => abortController.abort());
 
+                // Extract user message from first context for synopsis generation
+                const userMessage = contexts[0]?.content ?? '';
+
+                // Create stream event handler for presence updates if presenceManager available
+                let streamEventHandler: ReturnType<typeof createStreamEventHandler> | undefined;
+                let onStreamEvent: ((event: AgentStreamEvent) => void) | undefined;
+
+                if(presenceManager) {
+                    streamEventHandler = createStreamEventHandler({
+                        presenceManager,
+                        dynamicStatusGenerator,
+                        logger,
+                        userMessage,
+                    });
+                    onStreamEvent = streamEventHandler.onStreamEvent;
+                }
+
                 // Call chatBatch with presence updates
                 const result = await agent.chatBatch(contexts, {
                     sessionId,
                     resumeContext: resumeContext ?? undefined,
                     abortController,
-                    onStreamEvent: (event: AgentStreamEvent) => {
-                        if(!presenceManager) {
-                            return;
-                        }
-
-                        // On completion, go idle
-                        if(event.type === 'result') {
-                            void presenceManager.updatePhase({ type: 'idle', since: new Date() });
-                            return;
-                        }
-
-                        // Tool progress -> using_tool phase
-                        if(event.type === 'tool_progress') {
-                            void presenceManager.updatePhase({
-                                type:      'using_tool',
-                                toolName:  event.tool_name ?? 'unknown',
-                                startedAt: new Date(),
-                            });
-                            return;
-                        }
-
-                        // Assistant event handling
-                        if(event.type === 'assistant') {
-                            // Content being generated -> responding phase
-                            if(event.delta?.text) {
-                                void presenceManager.updatePhase({
-                                    type:      'responding',
-                                    startedAt: new Date(),
-                                });
-                                return;
-                            }
-
-                            // Assistant event without text delta -> thinking
-                            void presenceManager.updatePhase({
-                                type:      'thinking',
-                                startedAt: new Date(),
-                            });
-                        }
-                    },
+                    onStreamEvent,
                 });
+
+                // Transition to idle after completion
+                if(streamEventHandler) {
+                    streamEventHandler.complete();
+                }
 
                 return result;
             });
         }
-
-        // Create dynamic status generator if identityContext is provided
-        const dynamicStatusGenerator = identityContext
-            ? createDynamicStatusGenerator({ identityContext })
-            : undefined;
 
         // eslint-disable-next-line @typescript-eslint/no-misused-promises -- messageCreate handler is async
         client.on('messageCreate', createMessageHandler({
