@@ -101,12 +101,12 @@ describe('MessageCoordinator', () => {
             expect(callArgs[3]).toBeDefined(); // abortSignal
         });
 
-        it('should pass sessionId to processor on subsequent calls', async () => {
-            // First message - processor returns sessionId
+        it('should pass sessionId to processor on subsequent calls after interruption', async () => {
+            // First message - processor returns sessionId AND is interrupted
             processorMock.mockResolvedValueOnce({
-                response:       'First response',
+                response:       null,
                 sessionId:      'session-abc',
-                wasInterrupted: false,
+                wasInterrupted: true,
                 streamTracker:  createStreamTracker(),
             });
 
@@ -114,7 +114,7 @@ describe('MessageCoordinator', () => {
             jest.advanceTimersByTime(50);
             await Promise.resolve();
 
-            // Second message - should receive sessionId
+            // Second message - should receive sessionId from interrupted first call
             const secondContext = { ...mockContext, messageId: 'msg-002', content: 'Second message' };
             const secondMessage = { ...mockMessage, id: 'msg-002', content: 'Second message' } as unknown as Message;
 
@@ -124,7 +124,7 @@ describe('MessageCoordinator', () => {
 
             expect(processorMock).toHaveBeenCalledTimes(2);
             const secondCallArgs = processorMock.mock.calls[1] as unknown[];
-            expect(secondCallArgs[2]).toBe('session-abc'); // sessionId parameter
+            expect(secondCallArgs[2]).toBe('session-abc'); // sessionId parameter (kept from interrupted call)
         });
     });
 
@@ -137,7 +137,7 @@ describe('MessageCoordinator', () => {
         it('should interrupt active processing only after debounce timer expires', async () => {
             // Make processor run slowly so we can interrupt it
             let abortSignalReceived: AbortSignal | null = null;
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 abortSignalReceived = abortSignal;
                 await new Promise(resolve => setTimeout(resolve, 200));
                 return {
@@ -182,7 +182,7 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            const progressProcessor: MessageProcessor = async (_contexts, resumeContext, _sessionId, abortSignal) => {
+            const progressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
                     // First call - simulate slow processing (longer than debounce so it will be interrupted)
@@ -224,7 +224,7 @@ describe('MessageCoordinator', () => {
         it('should process pending messages without interruption if active query finishes before debounce', async () => {
             let callCount = 0;
             let firstCallInterrupted = false;
-            const fastProcessor: MessageProcessor = async (_contexts, resumeContext, _sessionId, abortSignal) => {
+            const fastProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
                     // First call - completes quickly (before debounce expires)
@@ -272,7 +272,7 @@ describe('MessageCoordinator', () => {
 
         it('should batch rapid messages within debounce window', async () => {
             // Make processor slow enough to allow interruption
-            const slowBatchProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const slowBatchProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 await new Promise(resolve => setTimeout(resolve, 150));
                 return {
                     response:       'Response',
@@ -311,7 +311,7 @@ describe('MessageCoordinator', () => {
 
         it('should reset debounce timer when new message arrives during debounce', async () => {
             // Make processor slow to allow interruption
-            const slowDebounceProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const slowDebounceProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 await new Promise(resolve => setTimeout(resolve, 150));
                 return {
                     response:       'Response',
@@ -364,7 +364,7 @@ describe('MessageCoordinator', () => {
             });
 
             let resumeContextReceived: ResumeContext | null = null;
-            const contextProcessor: MessageProcessor = async (_contexts, resumeContext, _sessionId, abortSignal) => {
+            const contextProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 resumeContextReceived = resumeContext;
                 await new Promise(resolve => setTimeout(resolve, 150));
                 return {
@@ -456,7 +456,7 @@ describe('MessageCoordinator', () => {
             });
 
             // Make processor slow to allow interruption
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 await new Promise(resolve => setTimeout(resolve, 150));
                 return {
                     response:       'Batch response',
@@ -495,7 +495,7 @@ describe('MessageCoordinator', () => {
             });
 
             // Make processor slow to allow interruption
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 await new Promise(resolve => setTimeout(resolve, 200));
                 return {
                     response:       'Response',
@@ -541,7 +541,7 @@ describe('MessageCoordinator', () => {
             });
 
             // Make processor slow to allow interruption
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 await new Promise(resolve => setTimeout(resolve, 150));
                 return {
                     response:       'Response',
@@ -578,7 +578,7 @@ describe('MessageCoordinator', () => {
             coordinator = createMessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
 
-            const cleanupProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const cleanupProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 await new Promise(resolve => setTimeout(resolve, 200));
                 return {
                     response:       'Response',
@@ -612,7 +612,7 @@ describe('MessageCoordinator', () => {
             coordinator.setProcessor(processorMock);
 
             let abortSignalReceived: AbortSignal | null = null;
-            const abortTestProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const abortTestProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 abortSignalReceived = abortSignal;
                 await new Promise(resolve => setTimeout(resolve, 200));
                 return {
@@ -648,7 +648,7 @@ describe('MessageCoordinator', () => {
             let resumeContextReceived: ResumeContext | null = null;
             let callCount = 0;
 
-            const notInterruptedProcessor: MessageProcessor = async (_contexts, resumeContext, _sessionId, _abortSignal) => {
+            const notInterruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, _abortSignal: AbortSignal) => {
                 callCount++;
                 resumeContextReceived = resumeContext;
 
@@ -698,7 +698,7 @@ describe('MessageCoordinator', () => {
             let resumeContextReceived: ResumeContext | null = null;
             let callCount = 0;
 
-            const interruptedProcessor: MessageProcessor = async (_contexts, resumeContext, _sessionId, abortSignal) => {
+            const interruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 callCount++;
                 resumeContextReceived = resumeContext;
 
@@ -740,11 +740,11 @@ describe('MessageCoordinator', () => {
             expect(resumeContextReceived!.partialWork.text).toBe('Partial text');
         });
 
-        it('should NOT update sessionId when wasInterrupted is true (startProcessing)', async () => {
+        it('should UPDATE sessionId when wasInterrupted is true (startProcessing)', async () => {
             let callCount = 0;
             let sessionIdReceived: string | undefined;
 
-            const interruptedSessionProcessor: MessageProcessor = async (_contexts, _resumeContext, sessionId, _abortSignal) => {
+            const interruptedSessionProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, _abortSignal: AbortSignal) => {
                 callCount++;
                 sessionIdReceived = sessionId;
 
@@ -757,7 +757,7 @@ describe('MessageCoordinator', () => {
                         streamTracker:  createStreamTracker(),
                     };
                 } else {
-                    // Second call - should NOT have the sessionId from interrupted call
+                    // Second call - SHOULD have the sessionId from interrupted call (for resume)
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -782,15 +782,15 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(2);
-            // Second call should not have sessionId because first call was interrupted
-            expect(sessionIdReceived).toBeUndefined();
+            // Second call should have sessionId because first call was interrupted (session kept for resume)
+            expect(sessionIdReceived).toBe('session-interrupted');
         });
 
-        it('should update sessionId ONLY when wasInterrupted is false and sessionId present (startProcessing)', async () => {
+        it('should CLEAR sessionId when wasInterrupted is false (startProcessing)', async () => {
             let callCount = 0;
             let sessionIdReceived: string | undefined;
 
-            const completeSessionProcessor: MessageProcessor = async (_contexts, _resumeContext, sessionId, _abortSignal) => {
+            const completeSessionProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, _abortSignal: AbortSignal) => {
                 callCount++;
                 sessionIdReceived = sessionId;
 
@@ -803,7 +803,7 @@ describe('MessageCoordinator', () => {
                         streamTracker:  createStreamTracker(),
                     };
                 } else {
-                    // Second call - should have sessionId from first call
+                    // Second call - should NOT have sessionId (first call completed, session cleaned up)
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -828,8 +828,8 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(2);
-            // Second call should have sessionId from first completed call
-            expect(sessionIdReceived).toBe('session-complete');
+            // Second call should NOT have sessionId (first completed, session was cleaned up in agent.ts)
+            expect(sessionIdReceived).toBeUndefined();
         });
     });
 
@@ -862,7 +862,7 @@ describe('MessageCoordinator', () => {
             let resumeContextInCall2: ResumeContext | null = 'NOT_SET' as unknown as ResumeContext | null;
             let resumeContextInCall3: ResumeContext | null = 'NOT_SET' as unknown as ResumeContext | null;
 
-            const resumeNotInterruptedProcessor: MessageProcessor = async (_contexts, resumeContext, _sessionId, abortSignal) => {
+            const resumeNotInterruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 2) {
@@ -951,7 +951,7 @@ describe('MessageCoordinator', () => {
             let callCount = 0;
             let resumeContextInThirdCall: ResumeContext | null = null;
 
-            const resumeInterruptedProcessor: MessageProcessor = async (_contexts, resumeContext, _sessionId, abortSignal) => {
+            const resumeInterruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 1) {
@@ -1008,7 +1008,7 @@ describe('MessageCoordinator', () => {
             expect(resumeContextInThirdCall!.partialWork.text).toBe('Resume partial');
         });
 
-        it('should NOT update sessionId when wasInterrupted is true (processWithResume)', async () => {
+        it('should UPDATE sessionId when wasInterrupted is true (processWithResume)', async () => {
             let callCount = 0;
             let sessionIdInThirdCall: string | undefined;
 
@@ -1036,7 +1036,7 @@ describe('MessageCoordinator', () => {
                         streamTracker:  createStreamTracker(),
                     };
                 } else {
-                    // Third call - should NOT have sessionId from interrupted second call
+                    // Third call - SHOULD have sessionId from interrupted second call (for resume)
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -1067,11 +1067,11 @@ describe('MessageCoordinator', () => {
             jest.advanceTimersByTime(500);
 
             expect(callCount).toBe(3);
-            // Third call should not have sessionId from interrupted second call
-            expect(sessionIdInThirdCall).toBeUndefined();
+            // Third call should have sessionId from interrupted second call (session kept for resume)
+            expect(sessionIdInThirdCall).toBe('session-interrupted-resume');
         });
 
-        it('should update sessionId ONLY when wasInterrupted is false and sessionId present (processWithResume)', async () => {
+        it('should CLEAR sessionId when wasInterrupted is false (processWithResume)', async () => {
             let callCount = 0;
             let sessionIdInThirdCall: string | undefined;
 
@@ -1096,7 +1096,7 @@ describe('MessageCoordinator', () => {
                         streamTracker:  createStreamTracker(),
                     };
                 } else {
-                    // Third call - should have sessionId from completed second call
+                    // Third call - should NOT have sessionId (second completed, session cleaned up)
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -1120,14 +1120,14 @@ describe('MessageCoordinator', () => {
 
             expect(callCount).toBe(2);
 
-            // Third message - should have sessionId from completed resume
+            // Third message - should NOT have sessionId (second completed, session was cleaned up)
             const msg3Context = { ...mockContext, messageId: 'msg-003' };
             const msg3 = { ...mockMessage, id: 'msg-003' } as unknown as Message;
             coordinator.handleMessage(msg3Context, msg3);
             jest.advanceTimersByTime(50);
 
             expect(callCount).toBe(3);
-            expect(sessionIdInThirdCall).toBe('session-resume-complete');
+            expect(sessionIdInThirdCall).toBeUndefined();
         });
     });
 
@@ -1141,7 +1141,7 @@ describe('MessageCoordinator', () => {
             let receivedContexts: DiscordMessageContext[] = [];
             let resumeContextReceived: ResumeContext | null = null;
 
-            const filteringProcessor: MessageProcessor = async (contexts, resumeContext, _sessionId, abortSignal) => {
+            const filteringProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 receivedContexts = contexts;
                 resumeContextReceived = resumeContext;
                 await new Promise(resolve => setTimeout(resolve, 150));
@@ -1178,7 +1178,7 @@ describe('MessageCoordinator', () => {
         it('should correctly build contexts from lodash map operations', async () => {
             let receivedContexts: DiscordMessageContext[] = [];
 
-            const mapTestProcessor: MessageProcessor = async (contexts, _resumeContext, _sessionId, abortSignal) => {
+            const mapTestProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 // Capture the contexts from each call
                 receivedContexts = contexts;
                 await new Promise(resolve => setTimeout(resolve, 200));
@@ -1219,7 +1219,7 @@ describe('MessageCoordinator', () => {
         });
 
         it('should handle empty original messages array in processWithResume', async () => {
-            const emptyOriginalsProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, _abortSignal) => {
+            const emptyOriginalsProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, _abortSignal: AbortSignal) => {
                 return {
                     response:       'Response',
                     wasInterrupted: false,
@@ -1272,15 +1272,15 @@ describe('MessageCoordinator', () => {
             coordinator.setProcessor(processorMock);
         });
 
-        it('should NOT update sessionId when result.sessionId is undefined (startProcessing) - Mutant #1763', async () => {
-            // This test kills Mutant #1763 which changes `if(result.sessionId)` to `if(true)` at line 153
-            // Strategy: First call sets sessionId, second call returns undefined (should NOT overwrite),
-            // third call should still receive the value from first call (proving second didn't overwrite).
+        it('should NOT update sessionId when result.sessionId is undefined on interruption (startProcessing) - Mutant #1763', async () => {
+            // This test kills Mutant #1763 which changes `if(result.sessionId)` to `if(true)` at line 151
+            // Strategy: First call is interrupted with sessionId, second call is interrupted with undefined (should NOT overwrite),
+            // third call should still receive the value from first call (proving second didn't overwrite with undefined).
 
             let callCount = 0;
             let sessionIdReceivedOnThirdCall: string | undefined;
 
-            const undefinedSessionProcessor: MessageProcessor = async (_contexts, _resumeContext, sessionId, _abortSignal) => {
+            const undefinedSessionProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, _abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 3) {
@@ -1288,19 +1288,19 @@ describe('MessageCoordinator', () => {
                 }
 
                 if(callCount === 1) {
-                    // First call - returns a sessionId (SETS the state)
+                    // First call - interrupted with sessionId (SETS the state)
                     return {
-                        response:       'Response 1',
+                        response:       null,
                         sessionId:      'previously-set-session',  // KEY: Sets state.sessionId
-                        wasInterrupted: false,
+                        wasInterrupted: true,
                         streamTracker:  createStreamTracker(),
                     };
                 } else if(callCount === 2) {
-                    // Second call - returns undefined sessionId (should NOT overwrite)
+                    // Second call - interrupted with undefined sessionId (should NOT overwrite)
                     return {
-                        response:       'Response 2',
+                        response:       null,
                         sessionId:      undefined,  // Should NOT update state.sessionId
-                        wasInterrupted: false,
+                        wasInterrupted: true,
                         streamTracker:  createStreamTracker(),
                     };
                 } else {
@@ -1314,14 +1314,14 @@ describe('MessageCoordinator', () => {
             };
             processorMock.mockImplementation(undefinedSessionProcessor);
 
-            // First message - sets state.sessionId = 'previously-set-session'
+            // First message - sets state.sessionId = 'previously-set-session' (interrupted)
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(50);
             await Promise.resolve();
 
             expect(callCount).toBe(1);
 
-            // Second message - returns undefined, should NOT overwrite state.sessionId
+            // Second message - interrupted with undefined, should NOT overwrite state.sessionId
             const msg2Context = { ...mockContext, messageId: 'msg-002' };
             const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
             coordinator.handleMessage(msg2Context, msg2);
@@ -1339,22 +1339,21 @@ describe('MessageCoordinator', () => {
 
             expect(callCount).toBe(3);
             // Critical: If mutant changes if(result.sessionId) to if(true),
-            // state.sessionId would be set to undefined in second call
+            // state.sessionId would be set to undefined in second call (interrupted path)
             // and third call would receive undefined instead of 'previously-set-session'
             expect(sessionIdReceivedOnThirdCall).toBe('previously-set-session');
         });
 
-        it('should NOT update sessionId when result.sessionId is undefined (processWithResume) - Mutant #1805', async () => {
-            // This test kills Mutant #1805 which changes `if(result.sessionId)` to `if(true)` at line 240
-            // Strategy: First call completes fast and sets sessionId (via startProcessing).
-            // Second call happens fast enough that it interrupts and resumes (processWithResume path).
-            // Second call returns undefined sessionId (should NOT overwrite).
+        it('should NOT update sessionId when result.sessionId is undefined on interruption (processWithResume) - Mutant #1805', async () => {
+            // This test kills Mutant #1805 which changes `if(result.sessionId)` to `if(true)` at line 238
+            // Strategy: First call is interrupted with sessionId.
+            // Second call (resume) is interrupted with undefined sessionId (should NOT overwrite).
             // Third call should still receive the value from first call.
 
             let callCount = 0;
             let sessionIdReceivedInCall3: string | undefined = 'NOT_SET';
 
-            const undefinedResumeSessionProcessor: MessageProcessor = async (_contexts, _resumeContext, sessionId, abortSignal) => {
+            const undefinedResumeSessionProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, _abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 3) {
@@ -1362,22 +1361,22 @@ describe('MessageCoordinator', () => {
                 }
 
                 if(callCount === 1) {
-                    // First call (startProcessing) - completes fast, sets sessionId
+                    // First call (startProcessing) - interrupted with sessionId
                     await new Promise(resolve => setTimeout(resolve, 50));
                     return {
-                        response:       'First response',
+                        response:       null,
                         sessionId:      'previously-set-session',  // KEY: Sets state.sessionId
-                        wasInterrupted: abortSignal.aborted,  // Will be false (completes)
+                        wasInterrupted: true,
                         streamTracker:  createStreamTracker(),
                     };
                 } else if(callCount === 2) {
-                    // Second call (processWithResume because message arrived during first processing)
-                    // This exercises line 240: if(result.sessionId) in processWithResume
+                    // Second call (processWithResume) - interrupted with undefined sessionId
+                    // This exercises line 238: if(result.sessionId) in processWithResume
                     await new Promise(resolve => setTimeout(resolve, 50));
                     return {
-                        response:       'Resume response',
+                        response:       null,
                         sessionId:      undefined,  // Should NOT update state.sessionId
-                        wasInterrupted: false,
+                        wasInterrupted: true,
                         streamTracker:  createStreamTracker(),
                     };
                 } else {
@@ -1391,31 +1390,106 @@ describe('MessageCoordinator', () => {
             };
             processorMock.mockImplementation(undefinedResumeSessionProcessor);
 
-            // First message - starts processing
+            // First message - starts processing, gets interrupted with sessionId
             coordinator.handleMessage(mockContext, mockMessage);
-            jest.advanceTimersByTime(10);
+            jest.advanceTimersByTime(50);
 
-            // Second message during first processing - starts debounce
+            // Second message - resume processing, gets interrupted with undefined
             const msg2Context = { ...mockContext, messageId: 'msg-002' };
             const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
             coordinator.handleMessage(msg2Context, msg2);
-
-            // Wait for first processing (50ms) + debounce (100ms) + second processing (50ms)
-            jest.advanceTimersByTime(250);
+            jest.advanceTimersByTime(50);
 
             expect(callCount).toBe(2);
 
-            // Third message
+            // Third message - should still have 'previously-set-session'
             const msg3Context = { ...mockContext, messageId: 'msg-003' };
             const msg3 = { ...mockMessage, id: 'msg-003' } as unknown as Message;
             coordinator.handleMessage(msg3Context, msg3);
             jest.advanceTimersByTime(50);
 
             expect(callCount).toBe(3);
-            // Critical: If mutant changes if(result.sessionId) to if(true) at line 240,
-            // state.sessionId would be set to undefined in second call (via resume path)
+            // Critical: If mutant changes if(result.sessionId) to if(true) at line 238,
+            // state.sessionId would be set to undefined in second call (interrupted path)
             // and third call would receive undefined instead of 'previously-set-session'
             expect(sessionIdReceivedInCall3).toBe('previously-set-session');
+        });
+
+        it('should preserve existing sessionId when interrupted result has undefined sessionId (processWithResume)', async () => {
+            // This test targets line 238 specifically by ensuring:
+            // 1. First call returns sessionId and gets interrupted
+            // 2. Second call (resume) runs long enough to be interrupted
+            // 3. Second call (resume) gets interrupted with sessionId: undefined
+            // 4. Third call should still receive the preserved sessionId from first call
+            // If mutant changes if(result.sessionId) to if(true), state.sessionId would be overwritten with undefined
+
+            let callCount = 0;
+            let sessionIdInCall3: string | undefined;
+
+            const preserveSessionProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, abortSignal: AbortSignal) => {
+                callCount++;
+
+                if(callCount === 3) {
+                    sessionIdInCall3 = sessionId;
+                }
+
+                if(callCount === 1) {
+                    // First call - interrupted with sessionId
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                    return {
+                        response:       null,
+                        sessionId:      'original-session-id',
+                        wasInterrupted: abortSignal.aborted,  // Will be true
+                        streamTracker:  createStreamTracker(),
+                    };
+                } else if(callCount === 2) {
+                    // Second call (processWithResume) - runs long enough to be interrupted
+                    // Returns undefined sessionId when interrupted
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                    return {
+                        response:       null,
+                        sessionId:      undefined,  // KEY: Should NOT overwrite state.sessionId
+                        wasInterrupted: abortSignal.aborted,  // Will be true
+                        streamTracker:  createStreamTracker(),
+                    };
+                } else {
+                    // Third call - should still have 'original-session-id'
+                    return {
+                        response:       'Final response',
+                        wasInterrupted: false,
+                        streamTracker:  createStreamTracker(),
+                    };
+                }
+            };
+            processorMock.mockImplementation(preserveSessionProcessor);
+
+            // First message
+            coordinator.handleMessage(mockContext, mockMessage);
+            jest.advanceTimersByTime(10);
+
+            // Second message during first processing (starts debounce)
+            const msg2Context = { ...mockContext, messageId: 'msg-002' };
+            const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
+            coordinator.handleMessage(msg2Context, msg2);
+
+            // Wait for debounce (100ms) + first processing (200ms) to complete
+            jest.advanceTimersByTime(250);
+
+            expect(callCount).toBe(2);
+
+            // Third message during second processing (starts new debounce)
+            const msg3Context = { ...mockContext, messageId: 'msg-003' };
+            const msg3 = { ...mockMessage, id: 'msg-003' } as unknown as Message;
+            coordinator.handleMessage(msg3Context, msg3);
+
+            // Wait for second debounce (100ms) + second processing (300ms) + third processing
+            jest.advanceTimersByTime(500);
+
+            expect(callCount).toBe(3);
+            // If mutant at line 238 changes if(result.sessionId) to if(true),
+            // state.sessionId would be set to undefined in call 2,
+            // and call 3 would receive undefined instead of 'original-session-id'
+            expect(sessionIdInCall3).toBe('original-session-id');
         });
     });
 
@@ -1433,7 +1507,7 @@ describe('MessageCoordinator', () => {
 
             let callCount = 0;
 
-            const optionalChainingProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const optionalChainingProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 1) {
@@ -1482,7 +1556,7 @@ describe('MessageCoordinator', () => {
         it('should verify newEvents is actually empty array (not ["Stryker was here"])', async () => {
             let resumeContextReceived: ResumeContext | null = null;
 
-            const verifyNewEventsProcessor: MessageProcessor = async (_contexts, resumeContext, _sessionId, abortSignal) => {
+            const verifyNewEventsProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 resumeContextReceived = resumeContext;
                 await new Promise(resolve => setTimeout(resolve, 150));
                 return {
@@ -1606,7 +1680,7 @@ describe('MessageCoordinator', () => {
             };
             global.setTimeout = setTimeoutSpy as unknown as typeof setTimeout;
 
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 await new Promise(resolve => setTimeout(resolve, 200));
                 return {
                     response:       'Response',
@@ -1643,7 +1717,7 @@ describe('MessageCoordinator', () => {
             };
             global.setTimeout = setTimeoutSpy as unknown as typeof setTimeout;
 
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 await new Promise(resolve => setTimeout(resolve, 200));
                 return {
                     response:       'Response',
@@ -1694,7 +1768,7 @@ describe('MessageCoordinator', () => {
             };
             global.clearTimeout = clearTimeoutSpy as unknown as typeof clearTimeout;
 
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 await new Promise(resolve => setTimeout(resolve, 200));
                 return {
                     response:       'Response',
@@ -1733,7 +1807,7 @@ describe('MessageCoordinator', () => {
             };
             global.clearTimeout = clearTimeoutSpy as unknown as typeof clearTimeout;
 
-            const fastProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, _abortSignal) => {
+            const fastProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, _abortSignal: AbortSignal) => {
                 // Fast processor that completes before debounce expires
                 await new Promise(resolve => setTimeout(resolve, 50));
                 return {
@@ -1781,7 +1855,7 @@ describe('MessageCoordinator', () => {
             };
             global.clearTimeout = clearTimeoutSpy as unknown as typeof clearTimeout;
 
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 await new Promise(resolve => setTimeout(resolve, 200));
                 return {
                     response:       'Response',

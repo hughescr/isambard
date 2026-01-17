@@ -145,17 +145,15 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
                     abortController.signal
                 );
 
-                // If interrupted, capture partial work from stream tracker
+                // If interrupted, capture partial work AND sessionId for resume
                 if(result.wasInterrupted) {
                     state.partialWork = result.streamTracker.getProgress();
-                }
-
-                // If not interrupted, update sessionId and invoke onResponse
-                if(!result.wasInterrupted) {
                     if(result.sessionId) {
                         state.sessionId = result.sessionId;
                     }
-                    // Invoke onResponse callback if provided
+                } else {
+                    // Completed - clear sessionId (session was cleaned up), invoke callback
+                    state.sessionId = undefined;
                     if(onResponse) {
                         await onResponse(result, firstDiscordMessage);
                     }
@@ -234,17 +232,15 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
                     abortController.signal
                 );
 
-                // If interrupted, capture partial work from stream tracker
+                // If interrupted, capture partial work AND sessionId for resume
                 if(result.wasInterrupted) {
                     state.partialWork = result.streamTracker.getProgress();
-                }
-
-                // If not interrupted, update sessionId and invoke onResponse
-                if(!result.wasInterrupted) {
                     if(result.sessionId) {
                         state.sessionId = result.sessionId;
                     }
-                    // Invoke onResponse callback if provided
+                } else {
+                    // Completed - clear sessionId (session was cleaned up), invoke callback
+                    state.sessionId = undefined;
                     if(onResponse) {
                         await onResponse(result, firstDiscordMessage);
                     }

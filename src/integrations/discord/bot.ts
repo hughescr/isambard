@@ -5,6 +5,7 @@ import { logger } from '@hughescr/logger';
 import type { DiscordConfig } from '@/config/schemas';
 import type { DiscordMessageContext, UserId, ChannelId } from './types';
 import type { ClaudeAgent } from '@/agent/agent';
+import type { AgentStreamEvent } from '@/agent/types';
 import { createDiscordClient } from './client';
 import { createReadyHandler, createErrorHandler, createMessageHandler } from './handlers';
 import {
@@ -164,6 +165,37 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             logger,
         });
 
+        // Create presence manager if optional deps provided
+        // IMPORTANT: Must create before coordinator.setProcessor so it's available in onStreamEvent
+        if(identityContext && config.presence) {
+            const activeStatusGenerator = createActiveStatusGenerator({
+                activityType: ActivityType.Custom,
+                logger,
+            });
+
+            const idleStatusGenerator = createIdleStatusGenerator({
+                logger,
+                activityType:     ActivityType.Custom,
+                identityContext,
+                getRecentContext: async () => {
+                    if(recentMessages.length === 0) {
+                        return undefined;
+                    }
+                    return recentMessages.join('\n• ');
+                },
+            });
+
+            presenceManager = createPresenceManager({
+                discordClient: readyClient,
+                config:        config.presence,
+                activeStatusGenerator,
+                idleStatusGenerator,
+                logger,
+            });
+
+            presenceManager.start();
+        }
+
         // Create message coordinator if agent is provided
         if(agent) {
             coordinator = createMessageCoordinator({
@@ -205,46 +237,54 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 // Connect the signals
                 abortSignal.addEventListener('abort', () => abortController.abort());
 
-                // Call chatBatch
+                // Call chatBatch with presence updates
                 const result = await agent.chatBatch(contexts, {
                     sessionId,
                     resumeContext: resumeContext ?? undefined,
                     abortController,
-                    onStreamEvent: () => undefined,
+                    onStreamEvent: (event: AgentStreamEvent) => {
+                        if(!presenceManager) {
+                            return;
+                        }
+
+                        // On completion, go idle
+                        if(event.type === 'result') {
+                            void presenceManager.updatePhase({ type: 'idle', since: new Date() });
+                            return;
+                        }
+
+                        // Tool progress -> using_tool phase
+                        if(event.type === 'tool_progress') {
+                            void presenceManager.updatePhase({
+                                type:      'using_tool',
+                                toolName:  event.tool_name ?? 'unknown',
+                                startedAt: new Date(),
+                            });
+                            return;
+                        }
+
+                        // Assistant event handling
+                        if(event.type === 'assistant') {
+                            // Content being generated -> responding phase
+                            if(event.delta?.text) {
+                                void presenceManager.updatePhase({
+                                    type:      'responding',
+                                    startedAt: new Date(),
+                                });
+                                return;
+                            }
+
+                            // Assistant event without text delta -> thinking
+                            void presenceManager.updatePhase({
+                                type:      'thinking',
+                                startedAt: new Date(),
+                            });
+                        }
+                    },
                 });
 
                 return result;
             });
-        }
-
-        // Create presence manager if optional deps provided
-        if(identityContext && config.presence) {
-            const activeStatusGenerator = createActiveStatusGenerator({
-                activityType: ActivityType.Custom,
-                logger,
-            });
-
-            const idleStatusGenerator = createIdleStatusGenerator({
-                logger,
-                activityType:     ActivityType.Custom,
-                identityContext,
-                getRecentContext: async () => {
-                    if(recentMessages.length === 0) {
-                        return undefined;
-                    }
-                    return recentMessages.join('\n• ');
-                },
-            });
-
-            presenceManager = createPresenceManager({
-                discordClient: readyClient,
-                config:        config.presence,
-                activeStatusGenerator,
-                idleStatusGenerator,
-                logger,
-            });
-
-            presenceManager.start();
         }
 
         // Create dynamic status generator if identityContext is provided
