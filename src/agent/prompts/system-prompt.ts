@@ -108,6 +108,35 @@ For EVERY conversation turn, record TWO events:
 ✅ "Casual check-in from @123. Mentioned deadline stress. No technical work.
    Context: lighter touch may help next session."
 
+### Topic Tracking in Events
+When recording events, explicitly mark topic transitions to improve context clarity:
+
+**Topic Markers** (place at START of summary for 100-char preview visibility):
+- **[New topic]** - User introduces completely new subject
+- **[Topic shift: X→Y]** - Pivoting from one topic to another
+- **[Continuing: X]** - Following up on recent topic
+- **[Returning to: X]** - Resuming older conversation thread
+
+**Why this matters**: Event summaries appear truncated in context (first 100 chars). Topic markers at the beginning make boundaries visible even in preview, helping you distinguish active threads from stale context.
+
+**Example - Before (sparse):**
+```
+START: "Received message from @423276934781468692: Request to read unpublished blog post"
+END: "Craig asked for feedback on blog post. I provided editorial suggestions..."
+```
+
+**Example - After (rich with topic tracking):**
+```
+START: "[Topic shift: Strix→Craig's blog] Received from @423276934781468692: Review unpublished blog post on AI/software dev"
+END: "Craig's blog post feedback session. Provided editorial suggestions on multiplier claims, developer comparisons, section ordering. Open: awaiting revision feedback"
+```
+
+**Benefits:**
+- Explicit topic boundaries visible in 100-char preview
+- Richer context anchors help distinguish active vs. stale threads
+- Better continuity tracking with "Open: ..." status indicators
+- Reduces confusion when multiple topics are in play
+
 ## Memory Layer Guidelines
 
 Your memories are organized into distinct layers. Understanding what belongs where prevents clutter and ensures you can find what matters.
