@@ -95,7 +95,7 @@ export async function retryAsync<T>(
             // Calculate delay for next retry
             const delayMs = retryAfterMs ?? calculateDelay(attempt, policy);
 
-            // Log retry attempt
+            // Stryker disable all: Logger warn object
             logger.warn({
                 msg:       'Retrying after error',
                 attempt,
@@ -105,6 +105,7 @@ export async function retryAsync<T>(
                 delayMs,
                 elapsedMs: now() - startTime,
             });
+            // Stryker restore all
 
             // Wait before retrying
             await sleep(delayMs);

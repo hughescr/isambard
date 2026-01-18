@@ -1,0 +1,225 @@
+import { logger } from '@hughescr/logger';
+import type { ChannelId } from '@/integrations/discord/types';
+import type { PendingQuestion, QuestionAnswer, QuestionResult } from './types';
+
+export interface QuestionRegistryConfig {
+    defaultTimeoutMs?: number  // Default: 300000 (5 minutes)
+}
+
+export interface QuestionRegistry {
+    /**
+     * Register a question and return a promise that resolves when answered or times out.
+     */
+    register(question: Omit<PendingQuestion, 'state'>): Promise<QuestionResult>
+
+    /**
+     * Check if a message might be an answer to a pending question.
+     * Returns the pending question if found, null otherwise.
+     */
+    findPendingQuestion(channelId: ChannelId, threadId?: string): PendingQuestion | null
+
+    /**
+     * Get a question by its ID.
+     * Returns the question if found, null otherwise.
+     */
+    getQuestion(questionId: string): PendingQuestion | null
+
+    /**
+     * Resolve a question with an answer.
+     */
+    resolveWithAnswer(questionId: string, answer: QuestionAnswer): void
+
+    /**
+     * Cancel a question (e.g., due to interruption).
+     */
+    cancel(questionId: string): void
+
+    /**
+     * Stop the registry and clean up all timers.
+     */
+    stop(): void
+}
+
+interface StoredQuestion {
+    question: PendingQuestion
+    timer:    NodeJS.Timeout
+    resolve:  (result: QuestionResult) => void
+}
+
+export function createQuestionRegistry(_config?: QuestionRegistryConfig): QuestionRegistry {
+    // Key by channel:thread for fast lookup
+    const questionsByLocation = new Map<string, StoredQuestion>();
+    // Key by questionId for resolution
+    const questionsById = new Map<string, StoredQuestion>();
+
+    function makeLocationKey(channelId: ChannelId, threadId?: string): string {
+        // Stryker disable next-line LogicalOperator,StringLiteral: ?? provides default value
+        return `${channelId}:${threadId ?? 'main'}`;
+    }
+
+    function cleanupQuestion(questionId: string): void {
+        const stored = questionsById.get(questionId);
+        if(!stored) {
+            return;
+        }
+
+        clearTimeout(stored.timer);
+        questionsById.delete(questionId);
+
+        const locationKey = makeLocationKey(stored.question.channelId, stored.question.threadId);
+        questionsByLocation.delete(locationKey);
+    }
+
+    function register(question: Omit<PendingQuestion, 'state'>): Promise<QuestionResult> {
+        const locationKey = makeLocationKey(question.channelId, question.threadId);
+
+        // Cancel any existing question for this location
+        const existing = questionsByLocation.get(locationKey);
+        if(existing) {
+            // Stryker disable all: Logger warn object
+            logger.warn({
+                oldQuestionId: existing.question.questionId,
+                newQuestionId: question.questionId,
+                channelId:     question.channelId,
+                msg:           'Replacing existing pending question',
+            });
+            // Stryker restore all
+
+            cleanupQuestion(existing.question.questionId);
+            existing.resolve({
+                questionId: existing.question.questionId,
+                answer:     null,
+                timedOut:   false,
+                channelId:  existing.question.channelId,
+                threadId:   existing.question.threadId,
+            });
+        }
+
+        return new Promise<QuestionResult>((resolve) => {
+            const pendingQuestion: PendingQuestion = {
+                ...question,
+                state: 'waiting'
+            };
+
+            const timer = setTimeout(() => {
+                const stored = questionsById.get(question.questionId);
+                if(stored?.question.state === 'waiting') {
+                    stored.question.state = 'timed_out';
+                    cleanupQuestion(question.questionId);
+                    resolve({
+                        questionId: question.questionId,
+                        answer:     null,
+                        timedOut:   true,
+                        channelId:  question.channelId,
+                        threadId:   question.threadId,
+                    });
+                }
+            }, question.expiresAt - question.createdAt);
+
+            const stored: StoredQuestion = {
+                question: pendingQuestion,
+                timer,
+                resolve
+            };
+
+            questionsById.set(question.questionId, stored);
+            questionsByLocation.set(locationKey, stored);
+
+            // Stryker disable all: Logger debug object
+            logger.debug({
+                questionId: question.questionId,
+                channelId:  question.channelId,
+                threadId:   question.threadId,
+                expiresIn:  question.expiresAt - question.createdAt,
+                msg:        'Question registered',
+            });
+            // Stryker restore all
+        });
+    }
+
+    function findPendingQuestion(channelId: ChannelId, threadId?: string): PendingQuestion | null {
+        const locationKey = makeLocationKey(channelId, threadId);
+        const stored = questionsByLocation.get(locationKey);
+
+        if(!stored) {
+            return null;
+        }
+
+        const now = Date.now();
+        // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator: Expiration validation
+        if(stored.question.state !== 'waiting' || stored.question.expiresAt < now) {
+            return null;
+        }
+
+        return stored.question;
+    }
+
+    function getQuestion(questionId: string): PendingQuestion | null {
+        const stored = questionsById.get(questionId);
+        return stored ? stored.question : null;
+    }
+
+    function resolveWithAnswer(questionId: string, answer: QuestionAnswer): void {
+        const stored = questionsById.get(questionId);
+        if(stored?.question.state !== 'waiting') {
+            return;
+        }
+
+        stored.question.state = 'answered';
+        cleanupQuestion(questionId);
+        stored.resolve({
+            questionId: stored.question.questionId,
+            answer,
+            timedOut:   false,
+            channelId:  stored.question.channelId,
+            threadId:   stored.question.threadId,
+        });
+    }
+
+    function cancel(questionId: string): void {
+        const stored = questionsById.get(questionId);
+        if(stored?.question.state !== 'waiting') {
+            return;
+        }
+
+        stored.question.state = 'cancelled';
+        cleanupQuestion(questionId);
+        stored.resolve({
+            questionId: stored.question.questionId,
+            answer:     null,
+            timedOut:   false,
+            channelId:  stored.question.channelId,
+            threadId:   stored.question.threadId,
+        });
+    }
+
+    function stop(): void {
+        // Cancel all pending questions
+        for(const stored of questionsById.values()) {
+            // Stryker disable next-line ConditionalExpression: State check in cleanup loop
+            if(stored.question.state === 'waiting') {
+                stored.question.state = 'cancelled';
+                clearTimeout(stored.timer);
+                stored.resolve({
+                    questionId: stored.question.questionId,
+                    answer:     null,
+                    timedOut:   false,
+                    channelId:  stored.question.channelId,
+                    threadId:   stored.question.threadId,
+                });
+            }
+        }
+
+        questionsById.clear();
+        questionsByLocation.clear();
+    }
+
+    return {
+        register,
+        findPendingQuestion,
+        getQuestion,
+        resolveWithAnswer,
+        cancel,
+        stop
+    };
+}

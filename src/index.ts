@@ -13,6 +13,7 @@ import { createMemoryMCPServer } from './agent/memory-mcp-server';
 import { createDiscordMCPServer } from './agent/discord-mcp-server';
 import { createClaudeAgent } from './agent/agent';
 import { loadPlugins } from './agent/plugin-loader';
+import { createQuestionRegistry } from './agent/question-registry';
 import { createDiscordBot } from './integrations/discord/bot';
 import type { DiscordBot } from './integrations/discord/bot';
 import { createDiscordClient } from './integrations/discord/client';
@@ -58,6 +59,9 @@ export async function createApp(): Promise<App> {
     // Set OAuth token for Agent SDK
     process.env.CLAUDE_CODE_OAUTH_TOKEN = config.agent.oauthToken;
 
+    // Create question registry for interactive questions (shared between MCP and bot)
+    const questionRegistry = createQuestionRegistry();
+
     // Try to create memory system and Discord MCP (optional - requires DynamoDB)
     let contextBuilder;
     let memoryMcpServer: McpServerConfig | undefined;
@@ -96,7 +100,7 @@ export async function createApp(): Promise<App> {
         });
 
         // Create Discord MCP server
-        discordMcpServer = createDiscordMCPServer(messageSearchService);
+        discordMcpServer = createDiscordMCPServer(messageSearchService, discordClient, questionRegistry);
 
         logger.info('Discord message history enabled');
     } catch (error) {
@@ -144,6 +148,7 @@ export async function createApp(): Promise<App> {
         identityContext,
         agent,
         client: discordClient,
+        questionRegistry,
     });
 
     return {

@@ -6,6 +6,7 @@ import type { DiscordConfig } from '@/config/schemas';
 import type { DiscordMessageContext, UserId, ChannelId } from './types';
 import type { ClaudeAgent } from '@/agent/agent';
 import type { AgentStreamEvent } from '@/agent/types';
+import { setConversationContext, clearConversationContext } from '@/agent';
 import { createDiscordClient } from './client';
 import { createReadyHandler, createErrorHandler, createMessageHandler } from './handlers';
 import {
@@ -20,6 +21,9 @@ import { createMessageCoordinator, type MessageCoordinator } from './message-coo
 import { splitMessage } from './messages';
 import { createDiscordRateLimiter } from './rate-limiter';
 import { withDiscordRetry } from './retry';
+import { createQuestionRegistry, type QuestionRegistry } from '@/agent/question-registry';
+import { createAnswerClassifier, classifyWithHaiku } from '@/agent/answer-classifier';
+import { createInteractionHandler } from './interactions';
 
 /**
  * Options for configuring the Discord bot.
@@ -53,6 +57,13 @@ export interface DiscordBotOptions {
      * Useful when the client needs to be shared with other components.
      */
     client?: Client
+
+    /**
+     * Optional question registry for interactive question/answer flows.
+     * If not provided, a new registry will be created internally.
+     * Pass this to share the registry with the Discord MCP server.
+     */
+    questionRegistry?: QuestionRegistry
 }
 
 /**
@@ -117,6 +128,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     const client: Client = providedClient ?? createDiscordClient(config);
     let presenceManager: PresenceManager | undefined;
     let coordinator: MessageCoordinator | undefined;
+    // Use provided registry or create a new one
+    const questionRegistry: QuestionRegistry = options.questionRegistry ?? createQuestionRegistry();
 
     // Register error handler for Discord client errors
     // Stryker disable next-line StringLiteral: Discord.js event name
@@ -164,6 +177,24 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         const rateLimiter = createDiscordRateLimiter({
             globalConcurrency: 5,
             logger,
+        });
+
+        // Create answer classifier with Haiku for ambiguous messages
+        const answerClassifier = createAnswerClassifier({
+            classifyWithLLM: classifyWithHaiku,
+        });
+
+        // Create interaction handler for button clicks
+        const interactionHandler = createInteractionHandler({
+            questionRegistry,
+        });
+
+        // Register interaction handler for button clicks
+        // eslint-disable-next-line @typescript-eslint/no-misused-promises -- interactionCreate handler is async
+        client.on('interactionCreate', async (interaction) => {
+            if(interaction.isButton()) {
+                await interactionHandler.handleButtonInteraction(interaction);
+            }
         });
 
         // Create presence manager if optional deps provided
@@ -239,42 +270,53 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
             // Set the processor to call agent.chatBatch
             coordinator.setProcessor(async (contexts, resumeContext, sessionId, abortSignal) => {
-                // Create abort controller from signal
-                const abortController = new AbortController();
-                // Connect the signals
-                abortSignal.addEventListener('abort', () => abortController.abort());
-
-                // Extract user message from first context for synopsis generation
-                const userMessage = contexts[0]?.content ?? '';
-
-                // Create stream event handler for presence updates if presenceManager available
-                let streamEventHandler: ReturnType<typeof createStreamEventHandler> | undefined;
-                let onStreamEvent: ((event: AgentStreamEvent) => void) | undefined;
-
-                if(presenceManager) {
-                    streamEventHandler = createStreamEventHandler({
-                        presenceManager,
-                        dynamicStatusGenerator,
-                        logger,
-                        userMessage,
-                    });
-                    onStreamEvent = streamEventHandler.onStreamEvent;
-                }
-
-                // Call chatBatch with presence updates
-                const result = await agent.chatBatch(contexts, {
-                    sessionId,
-                    resumeContext: resumeContext ?? undefined,
-                    abortController,
-                    onStreamEvent,
+                // Set conversation context for MCP tools
+                setConversationContext({
+                    currentUserId:    contexts[0]?.userId,
+                    currentChannelId: contexts[0]?.channelId,
                 });
 
-                // Transition to idle after completion
-                if(streamEventHandler) {
-                    streamEventHandler.complete();
-                }
+                try {
+                    // Create abort controller from signal
+                    const abortController = new AbortController();
+                    // Connect the signals
+                    abortSignal.addEventListener('abort', () => abortController.abort());
 
-                return result;
+                    // Extract user message from first context for synopsis generation
+                    const userMessage = contexts[0]?.content ?? '';
+
+                    // Create stream event handler for presence updates if presenceManager available
+                    let streamEventHandler: ReturnType<typeof createStreamEventHandler> | undefined;
+                    let onStreamEvent: ((event: AgentStreamEvent) => void) | undefined;
+
+                    if(presenceManager) {
+                        streamEventHandler = createStreamEventHandler({
+                            presenceManager,
+                            dynamicStatusGenerator,
+                            logger,
+                            userMessage,
+                        });
+                        onStreamEvent = streamEventHandler.onStreamEvent;
+                    }
+
+                    // Call chatBatch with presence updates
+                    const result = await agent.chatBatch(contexts, {
+                        sessionId,
+                        resumeContext: resumeContext ?? undefined,
+                        abortController,
+                        onStreamEvent,
+                    });
+
+                    // Transition to idle after completion
+                    if(streamEventHandler) {
+                        streamEventHandler.complete();
+                    }
+
+                    return result;
+                } finally {
+                    // Clear context after processing
+                    clearConversationContext();
+                }
             });
         }
 
@@ -288,6 +330,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             dynamicStatusGenerator,
             addRecentMessage,
             coordinator,
+            questionRegistry,
+            answerClassifier,
         }));
     });
 
@@ -302,6 +346,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             if(coordinator) {
                 coordinator.stop();
             }
+            // Stop question registry (always exists now)
+            questionRegistry.stop();
             // Stop presence manager if it exists
             if(presenceManager) {
                 presenceManager.stop();

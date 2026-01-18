@@ -11,6 +11,8 @@ import { createStatusMiddleware } from './presence';
 import { splitMessage } from './messages';
 import { createDiscordRateLimiter } from './rate-limiter';
 import { withDiscordRetry } from './retry';
+import type { QuestionRegistry } from '@/agent/question-registry';
+import type { AnswerClassifier } from '@/agent/answer-classifier';
 
 /**
  * Creates a handler for the Discord 'clientReady' event.
@@ -101,6 +103,16 @@ export interface MessageHandlerOptions {
      * When provided, messages are batched and processed through the coordinator.
      */
     coordinator?: MessageCoordinator
+
+    /**
+     * Optional question registry for answer correlation.
+     */
+    questionRegistry?: QuestionRegistry
+
+    /**
+     * Optional answer classifier for message classification.
+     */
+    answerClassifier?: AnswerClassifier
 }
 
 /**
@@ -136,8 +148,120 @@ export interface MessageHandlerOptions {
  * }));
  * ```
  */
+/**
+ * Helper function to check for pending questions and handle answers/interruptions/unrelated.
+ * Returns true if message was handled (early return), false to continue normal processing.
+ */
+async function handlePendingQuestion(
+    message: Message,
+    questionRegistry: QuestionRegistry,
+    answerClassifier: AnswerClassifier,
+    isMention: boolean
+): Promise<boolean> {
+    // For threads, use parent channel ID for lookup; for regular channels, use the channel ID
+    let lookupChannelId: ChannelId;
+    let lookupThreadId: string | undefined;
+
+    if(message.channel.isThread()) {
+        // Thread messages: parent channel + thread ID
+        lookupChannelId = createChannelId(message.channel.parentId ?? message.channel.id);
+        lookupThreadId = message.channel.id;
+    } else {
+        // Regular channel messages: just channel ID, no thread
+        lookupChannelId = createChannelId(message.channel.id);
+        lookupThreadId = undefined;
+    }
+
+    const pendingQuestion = questionRegistry.findPendingQuestion(
+        lookupChannelId,
+        lookupThreadId
+    );
+
+    if(!pendingQuestion) {
+        return false;
+    }
+
+    const classification = await answerClassifier.classify(pendingQuestion, {
+        content:             message.content,
+        authorId:            message.author.id,
+        channelId:           message.channel.id,
+        threadId:            lookupThreadId,
+        referencedMessageId: message.reference?.messageId,
+        isBotMentioned:      isMention,
+        targetUserId:        pendingQuestion.targetUserId,
+    });
+
+    // Stryker disable all: Logger debug object
+    logger.debug({
+        questionId: pendingQuestion.questionId,
+        channelId:  lookupChannelId,
+        threadId:   lookupThreadId,
+        classification,
+        msg:        `Message classified as ${classification}`,
+    });
+    // Stryker restore all
+
+    if(classification === 'answer') {
+        // Stryker disable all: Logger info object
+        logger.info({
+            questionId:  pendingQuestion.questionId,
+            responderId: message.author.id,
+            messageId:   message.id,
+            msg:         'Question resolved with text answer',
+        });
+        // Stryker restore all
+
+        // Resolve the question - don't send to coordinator
+        questionRegistry.resolveWithAnswer(pendingQuestion.questionId, {
+            content:     message.content,
+            responderId: createUserId(message.author.id),
+            messageId:   message.id,
+            channelId:   lookupChannelId,
+            threadId:    lookupThreadId,
+        });
+        return true; // Early return
+    }
+
+    if(classification === 'interruption') {
+        // Stryker disable all: Logger info object
+        logger.info({
+            questionId: pendingQuestion.questionId,
+            msg:        'Question cancelled due to interruption',
+        });
+        // Stryker restore all
+
+        // Cancel pending question and continue to normal processing
+        questionRegistry.cancel(pendingQuestion.questionId);
+        return false;
+    }
+
+    // If unrelated, send polite reply and keep question pending
+    // Stryker disable next-line ConditionalExpression: Exhaustive branch - always true here since answer/interruption returned above
+    if(classification === 'unrelated') {
+        // Stryker disable all: Logger debug object
+        logger.debug({
+            questionId: pendingQuestion.questionId,
+            msg:        'Message classified as unrelated, question still pending',
+        });
+        // Stryker restore all
+        await withDiscordRetry(
+            async () => {
+                await message.reply({
+                    content: "I'm not sure if this message is for me. If you'd like my help, please @mention me!",
+                });
+            },
+            // Stryker disable next-line StringLiteral: Operation name for logging only
+            'replyToUnrelatedMessage'
+        );
+        return true; // Early return - don't continue processing
+    }
+
+    // Stryker disable next-line BooleanLiteral: TypeScript requires return but logically unreachable
+    return false;
+}
+
 export function createMessageHandler(options: MessageHandlerOptions): (message: Message) => Promise<void> {
-    const { monitoredChannelIds, botUserId, onMessage, presenceManager, agent, dynamicStatusGenerator, addRecentMessage, coordinator } = options;
+    const { monitoredChannelIds, botUserId, onMessage, presenceManager, agent, dynamicStatusGenerator, addRecentMessage, coordinator, questionRegistry, answerClassifier } = options;
 
     // Create status middleware if both presenceManager and agent are provided
     const statusMiddleware = presenceManager && agent
@@ -250,11 +374,21 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
             return;
         }
 
-        // Determine if we should respond to this message
+        // Determine mention status early (needed for pending question check)
         const isDM = !message.guild; // DM channels have no guild
         const isMention = message.content.includes(`<@${botUserId}>`) || message.content.includes(`<@!${botUserId}>`);
-        const isMonitoredChannel = monitoredChannelIds.includes(message.channel.id as ChannelId);
 
+        // FIRST: Check for pending questions BEFORE shouldRespond filtering
+        // This allows answers in unmonitored channels or without mentions
+        if(questionRegistry && answerClassifier) {
+            const handled = await handlePendingQuestion(message, questionRegistry, answerClassifier, isMention);
+            if(handled) {
+                return;
+            }
+        }
+
+        // THEN: Normal shouldRespond check for non-pending-question messages
+        const isMonitoredChannel = monitoredChannelIds.includes(message.channel.id as ChannelId);
         const shouldRespond = isDM || isMention || isMonitoredChannel;
 
         logger.debug({

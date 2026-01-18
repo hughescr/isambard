@@ -9,6 +9,10 @@ import type { Message, User, Guild, TextChannel, DMChannel } from 'discord.js';
 import { mockLogger } from '../../../setup';
 import { createMessageHandler } from '@/integrations/discord/handlers';
 import type { DiscordMessageContext, UserId, ChannelId } from '@/integrations/discord/types';
+import type { QuestionRegistry } from '@/agent/question-registry';
+import type { PendingQuestion } from '@/agent/question-registry/types';
+import type { AnswerClassifier } from '@/agent/answer-classifier';
+import type { ClassificationResult } from '@/agent/answer-classifier/types';
 
 describe('Discord Event Handlers', () => {
     beforeEach(() => {
@@ -40,12 +44,14 @@ describe('Discord Event Handlers', () => {
                 id:         '333333333333333333',
                 type:       0, // GuildText
                 sendTyping: mock(async () => undefined),
+                isThread:   mock(() => false),
             } as unknown as TextChannel;
 
             mockDMChannel = {
-                id:   '444444444444444444',
-                type: 1, // DM
-            } as DMChannel;
+                id:       '444444444444444444',
+                type:     1, // DM
+                isThread: mock(() => false),
+            } as unknown as DMChannel;
 
             mockMessage = {
                 id:        '555555555555555555',
@@ -1165,6 +1171,326 @@ describe('Discord Event Handlers', () => {
 
                 // Should be ignored by the second check (author.id === botUserId)
                 expect(onMessageMock).not.toHaveBeenCalled();
+            });
+        });
+
+        describe('question registry integration', () => {
+            let mockQuestionRegistry: QuestionRegistry;
+            let mockAnswerClassifier: AnswerClassifier;
+            let mockPendingQuestion: PendingQuestion;
+
+            beforeEach(() => {
+                mockPendingQuestion = {
+                    questionId:      'q123',
+                    questionText:    'What color do you prefer?',
+                    channelId:       '333333333333333333' as ChannelId,
+                    threadId:        undefined,
+                    triggerUserId:   '999999999999999999' as UserId,
+                    originMessageId: '777777777777777777',
+                    createdAt:       Date.now(),
+                    expiresAt:       Date.now() + 300000,
+                    state:           'waiting',
+                    options:         [{ label: 'Red', value: 'red' }, { label: 'Blue', value: 'blue' }],
+                };
+
+                mockQuestionRegistry = {
+                    register: mock(async () => ({
+                        questionId: 'q1',
+                        answer:     null,
+                        timedOut:   false,
+                        channelId:  '123456' as ChannelId,
+                    })),
+                    findPendingQuestion: mock((_channelId: ChannelId, _threadId?: string) => mockPendingQuestion),
+                    getQuestion:         mock((_questionId: string) => mockPendingQuestion),
+                    resolveWithAnswer:   mock(() => undefined),
+                    cancel:              mock(() => undefined),
+                    stop:                mock(() => undefined),
+                };
+
+                mockAnswerClassifier = {
+                    classify: mock(async (_question: PendingQuestion, _message) => 'answer' as ClassificationResult),
+                };
+            });
+
+            it('should resolve pending question when message is classified as answer', async () => {
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                    questionRegistry:    mockQuestionRegistry,
+                    answerClassifier:    mockAnswerClassifier,
+                });
+
+                await handler(mockMessage);
+
+                // Should find the pending question
+                expect(mockQuestionRegistry.findPendingQuestion).toHaveBeenCalledWith('333333333333333333', undefined);
+
+                // Should classify the message
+                expect(mockAnswerClassifier.classify).toHaveBeenCalledWith(mockPendingQuestion, {
+                    content:             'Test message',
+                    authorId:            '111111111111111111',
+                    channelId:           '333333333333333333',
+                    threadId:            undefined,
+                    referencedMessageId: undefined,
+                    isBotMentioned:      false,
+                });
+
+                // Should resolve the question with the answer
+                expect(mockQuestionRegistry.resolveWithAnswer).toHaveBeenCalledWith('q123', {
+                    content:     'Test message',
+                    responderId: '111111111111111111',
+                    messageId:   '555555555555555555',
+                    channelId:   '333333333333333333',
+                    threadId:    undefined,
+                });
+
+                // Should NOT call onMessage (early return after resolving)
+                expect(mockOnMessage).not.toHaveBeenCalled();
+
+                // Should NOT send polite reply (this is an answer, not unrelated)
+                expect(mockMessage.reply).not.toHaveBeenCalled();
+            });
+
+            it('should cancel pending question when message is classified as interruption', async () => {
+                (mockAnswerClassifier.classify as ReturnType<typeof mock>).mockImplementation(
+                    async () => 'interruption' as ClassificationResult
+                );
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                    questionRegistry:    mockQuestionRegistry,
+                    answerClassifier:    mockAnswerClassifier,
+                });
+
+                await handler(mockMessage);
+
+                // Should cancel the pending question
+                expect(mockQuestionRegistry.cancel).toHaveBeenCalledWith('q123');
+
+                // Should continue normal processing (call onMessage)
+                expect(mockOnMessage).toHaveBeenCalled();
+
+                // Should NOT send polite reply (this is an interruption, not unrelated)
+                expect(mockMessage.reply).not.toHaveBeenCalled();
+            });
+
+            it('should send polite reply when message is classified as unrelated', async () => {
+                (mockAnswerClassifier.classify as ReturnType<typeof mock>).mockImplementation(
+                    async () => 'unrelated' as ClassificationResult
+                );
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                    questionRegistry:    mockQuestionRegistry,
+                    answerClassifier:    mockAnswerClassifier,
+                });
+
+                await handler(mockMessage);
+
+                // Should NOT cancel or resolve the question (question remains pending)
+                expect(mockQuestionRegistry.cancel).not.toHaveBeenCalled();
+                expect(mockQuestionRegistry.resolveWithAnswer).not.toHaveBeenCalled();
+
+                // Should send polite reply asking for @mention
+                expect(mockMessage.reply).toHaveBeenCalledWith({
+                    content: "I'm not sure if this message is for me. If you'd like my help, please @mention me!",
+                });
+
+                // Should NOT continue normal processing (early return after polite reply)
+                expect(mockOnMessage).not.toHaveBeenCalled();
+            });
+
+            it('should return early after sending polite reply for unrelated message', async () => {
+                // This test specifically verifies the early return behavior (return true)
+                // by ensuring no downstream processing happens after the unrelated classification
+                (mockAnswerClassifier.classify as ReturnType<typeof mock>).mockImplementation(
+                    async () => 'unrelated' as ClassificationResult
+                );
+
+                // Mock the reply to throw after being called - if early return doesn't work,
+                // downstream code would fail
+                const replySpy = mock(async (_options: unknown) => ({ id: 'reply-msg-id' } as Message));
+                mockMessage.reply = replySpy as typeof mockMessage.reply;
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                    questionRegistry:    mockQuestionRegistry,
+                    answerClassifier:    mockAnswerClassifier,
+                });
+
+                await handler(mockMessage);
+
+                // Should have called reply exactly once
+                expect(replySpy).toHaveBeenCalledTimes(1);
+
+                // Should NOT proceed to onMessage (verifies early return)
+                expect(mockOnMessage).not.toHaveBeenCalled();
+            });
+
+            it('should retry reply when Discord network error occurs for unrelated message', async () => {
+                (mockAnswerClassifier.classify as ReturnType<typeof mock>).mockImplementation(
+                    async () => 'unrelated' as ClassificationResult
+                );
+
+                // Mock reply to fail once with network error then succeed
+                let callCount = 0;
+                const replySpy = mock(async (_options: unknown) => {
+                    callCount++;
+                    if(callCount === 1) {
+                        // Create a network error (transient - will be retried)
+                        const error = new Error('Connection reset') as Error & { code: string };
+                        error.code = 'ECONNRESET';
+                        throw error;
+                    }
+                    return { id: 'reply-msg-id' } as Message;
+                });
+                mockMessage.reply = replySpy as typeof mockMessage.reply;
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                    questionRegistry:    mockQuestionRegistry,
+                    answerClassifier:    mockAnswerClassifier,
+                });
+
+                await handler(mockMessage);
+
+                // Should have retried and eventually succeeded (called twice: fail + success)
+                expect(callCount).toBe(2);
+                expect(replySpy).toHaveBeenCalledTimes(2);
+                // Even with retry, should NOT call onMessage (early return)
+                expect(mockOnMessage).not.toHaveBeenCalled();
+            });
+
+            it('should proceed normally when no pending question exists', async () => {
+                (mockQuestionRegistry.findPendingQuestion as ReturnType<typeof mock>).mockReturnValue(null);
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                    questionRegistry:    mockQuestionRegistry,
+                    answerClassifier:    mockAnswerClassifier,
+                });
+
+                await handler(mockMessage);
+
+                // Should NOT call classifier
+                expect(mockAnswerClassifier.classify).not.toHaveBeenCalled();
+
+                // Should proceed normally (call onMessage)
+                expect(mockOnMessage).toHaveBeenCalled();
+            });
+
+            it('should proceed normally when question registry is not configured', async () => {
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                    // No questionRegistry or answerClassifier
+                });
+
+                await handler(mockMessage);
+
+                // Should proceed normally (call onMessage)
+                expect(mockOnMessage).toHaveBeenCalled();
+            });
+
+            it('should include threadId when message is in a thread', async () => {
+                const threadChannel = {
+                    ...mockTextChannel,
+                    id:       '888888888888888888',
+                    parentId: '333333333333333333', // Thread's parent channel ID
+                    isThread: mock(() => true),
+                } as unknown as TextChannel;
+
+                const threadMessage = {
+                    ...mockMessage,
+                    channel: threadChannel,
+                } as unknown as Message;
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId, '888888888888888888' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                    questionRegistry:    mockQuestionRegistry,
+                    answerClassifier:    mockAnswerClassifier,
+                });
+
+                await handler(threadMessage);
+
+                // Should find pending question using parent channel ID + thread ID
+                expect(mockQuestionRegistry.findPendingQuestion).toHaveBeenCalledWith(
+                    '333333333333333333', // Parent channel ID
+                    '888888888888888888'  // Thread ID
+                );
+
+                // Should pass threadId to classifier
+                expect(mockAnswerClassifier.classify).toHaveBeenCalledWith(
+                    mockPendingQuestion,
+                    expect.objectContaining({
+                        threadId: '888888888888888888',
+                    })
+                );
+            });
+
+            it('should use channel ID directly for regular channels (not threads)', async () => {
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                    questionRegistry:    mockQuestionRegistry,
+                    answerClassifier:    mockAnswerClassifier,
+                });
+
+                await handler(mockMessage);
+
+                // Should find pending question using channel ID with no thread ID
+                expect(mockQuestionRegistry.findPendingQuestion).toHaveBeenCalledWith(
+                    '333333333333333333', // Channel ID
+                    undefined             // No thread ID
+                );
+
+                // Should pass undefined threadId to classifier
+                expect(mockAnswerClassifier.classify).toHaveBeenCalledWith(
+                    mockPendingQuestion,
+                    expect.objectContaining({
+                        threadId: undefined,
+                    })
+                );
+            });
+
+            it('should include referencedMessageId when message is a reply', async () => {
+                const replyMessage = {
+                    ...mockMessage,
+                    reference: { messageId: '666666666666666666' },
+                } as unknown as Message;
+
+                const handler = createMessageHandler({
+                    monitoredChannelIds: ['333333333333333333' as ChannelId],
+                    botUserId:           '999999999999999999' as UserId,
+                    onMessage:           mockOnMessage,
+                    questionRegistry:    mockQuestionRegistry,
+                    answerClassifier:    mockAnswerClassifier,
+                });
+
+                await handler(replyMessage);
+
+                // Should pass referencedMessageId to classifier
+                expect(mockAnswerClassifier.classify).toHaveBeenCalledWith(
+                    mockPendingQuestion,
+                    expect.objectContaining({
+                        referencedMessageId: '666666666666666666',
+                    })
+                );
             });
         });
     });

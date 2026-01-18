@@ -197,10 +197,19 @@ describe('Bot Lifecycle Integration', () => {
 
             expect(createDiscordBotSpy).toHaveBeenCalled();
             expect(createDiscordBotSpy).toHaveBeenCalledWith({
-                config:          mockDiscordConfig,
-                onMessage:       expect.any(Function),
-                identityContext: expect.any(String),
-                agent:           mockClaudeAgent,
+                config:           mockDiscordConfig,
+                onMessage:        expect.any(Function),
+                identityContext:  expect.any(String),
+                agent:            mockClaudeAgent,
+                client:           undefined,
+                questionRegistry: expect.objectContaining({
+                    register:            expect.any(Function),
+                    resolveWithAnswer:   expect.any(Function),
+                    findPendingQuestion: expect.any(Function),
+                    getQuestion:         expect.any(Function),
+                    cancel:              expect.any(Function),
+                    stop:                expect.any(Function),
+                }),
             });
         });
     });
