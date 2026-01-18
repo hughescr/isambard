@@ -1361,6 +1361,7 @@ describe('Discord Event Handlers', () => {
                     answerClassifier:    mockAnswerClassifier,
                 });
 
+                // Wait for handler to complete (retry will happen automatically)
                 await handler(mockMessage);
 
                 // Should have retried and eventually succeeded (called twice: fail + success)
