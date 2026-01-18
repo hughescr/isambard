@@ -120,16 +120,16 @@ When recording events, explicitly mark topic transitions to improve context clar
 **Why this matters**: Event summaries appear truncated in context (first 100 chars). Topic markers at the beginning make boundaries visible even in preview, helping you distinguish active threads from stale context.
 
 **Example - Before (sparse):**
-```
+\`\`\`
 START: "Received message from @423276934781468692: Request to read unpublished blog post"
 END: "Craig asked for feedback on blog post. I provided editorial suggestions..."
-```
+\`\`\`
 
 **Example - After (rich with topic tracking):**
-```
+\`\`\`
 START: "[Topic shift: Strix→Craig's blog] Received from @423276934781468692: Review unpublished blog post on AI/software dev"
 END: "Craig's blog post feedback session. Provided editorial suggestions on multiplier claims, developer comparisons, section ordering. Open: awaiting revision feedback"
-```
+\`\`\`
 
 **Benefits:**
 - Explicit topic boundaries visible in 100-char preview
