@@ -173,6 +173,37 @@ mock.module('@/agent/text-generator', () => ({
     generateTextWithSystemPrompt: mockGenerateTextWithSystemPrompt,
 }));
 
+// Mock Discord retry module to allow tests to control retry behavior
+// Import real implementations first
+import * as realDiscordRetry from '@/integrations/discord/retry';
+
+// Capture original functions before mock.module
+const originalWithDiscordRetry = realDiscordRetry.withDiscordRetry;
+const originalClassifyDiscordError = realDiscordRetry.classifyDiscordError;
+const originalDiscordErrorClassifier = realDiscordRetry.discordErrorClassifier;
+
+// Export original for tests that need real behavior
+export { originalWithDiscordRetry, originalClassifyDiscordError };
+
+// Create controllable mock that DEFAULTS to executing immediately without retry delays
+// For handler tests: operations run without delays
+// For retry.test.ts: they can use the real function via deps injection anyway
+export const mockWithDiscordRetry = mock(async <T>(
+    operation: () => Promise<T>,
+    _operationName: string,
+    _options?: unknown
+): Promise<T> => {
+    // By default, just execute the operation once without any retry logic
+    return operation();
+});
+
+// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
+mock.module('@/integrations/discord/retry', () => ({
+    withDiscordRetry:       mockWithDiscordRetry,
+    classifyDiscordError:   originalClassifyDiscordError,
+    discordErrorClassifier: originalDiscordErrorClassifier,
+}));
+
 // Mock node:fs/promises to avoid filesystem I/O cold-start cost
 // Returns in-memory fake filesystem without calling real FS APIs
 const mockFs = new Map<string, { type: 'file' | 'dir', content?: string }>();

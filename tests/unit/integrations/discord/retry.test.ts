@@ -11,7 +11,7 @@
 /* eslint-disable @typescript-eslint/await-thenable -- expect().rejects returns a promise */
 
 import { describe, expect, test, mock } from 'bun:test';
-import { classifyDiscordError, withDiscordRetry } from '@/integrations/discord/retry';
+import { originalWithDiscordRetry as withDiscordRetry, originalClassifyDiscordError as classifyDiscordError } from '../../../setup';
 import { RateLimitError } from '@/integrations/discord/errors';
 import type { RetryDeps } from '@/utils/retry/types';
 

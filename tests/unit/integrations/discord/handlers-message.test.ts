@@ -6,7 +6,7 @@
 import _ from 'lodash';
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import type { Message, User, Guild, TextChannel, DMChannel } from 'discord.js';
-import { mockLogger } from '../../../setup';
+import { mockLogger, mockWithDiscordRetry } from '../../../setup';
 import { createMessageHandler } from '@/integrations/discord/handlers';
 import type { DiscordMessageContext, UserId, ChannelId } from '@/integrations/discord/types';
 import type { QuestionRegistry } from '@/agent/question-registry';
@@ -20,6 +20,16 @@ describe('Discord Event Handlers', () => {
         mockLogger.error.mockClear();
         mockLogger.debug.mockClear();
         mockLogger.warn.mockClear();
+        // Reset the retry mock to default behavior (execute once, no retry delays)
+        mockWithDiscordRetry.mockReset();
+        mockWithDiscordRetry.mockImplementation(async <T>(
+            operation: () => Promise<T>,
+            _operationName: string,
+            _options?: unknown
+        ): Promise<T> => {
+            // By default, just execute the operation once without any retry logic
+            return operation();
+        });
     });
 
     describe('createMessageHandler', () => {
@@ -1352,6 +1362,27 @@ describe('Discord Event Handlers', () => {
                     return { id: 'reply-msg-id' } as Message;
                 });
                 mockMessage.reply = replySpy as typeof mockMessage.reply;
+
+                // Configure withDiscordRetry mock to actually retry on transient errors (but without delays)
+                mockWithDiscordRetry.mockImplementation(async <T>(
+                    operation: () => Promise<T>,
+                    _operationName: string,
+                    _options?: unknown
+                ): Promise<T> => {
+                    try {
+                        return await operation();
+                    } catch (error) {
+                        // Check if it's a transient network error
+                        if(_.isObject(error) && 'code' in error) {
+                            const code = (error as { code: string }).code;
+                            if(_.includes(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED'], code)) {
+                                // Retry immediately without delay
+                                return await operation();
+                            }
+                        }
+                        throw error;
+                    }
+                });
 
                 const handler = createMessageHandler({
                     monitoredChannelIds: ['333333333333333333' as ChannelId],
