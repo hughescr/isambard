@@ -11,6 +11,7 @@ import { questionOptionSchema } from './question-registry';
 import { buildQuestionButtons } from '../integrations/discord/button-builder';
 import { createChannelId, createUserId, type UserId, type ChannelId } from '../integrations/discord/types';
 import { withDiscordRetry } from '../integrations/discord/retry';
+import { splitMessage } from '../integrations/discord/messages';
 
 /**
  * Context for the current Discord conversation.
@@ -50,21 +51,6 @@ export function setConversationContext(context: DiscordMCPServerContext): void {
  */
 export function clearConversationContext(): void {
     conversationContext = {};
-}
-
-/**
- * Helper: Validates message content length for Discord.
- * Returns error result if content exceeds 2000 characters, null otherwise.
- */
-function validateMessageContent(content: string): CallToolResult | null {
-    // Stryker disable next-line EqualityOperator: 2000 chars is valid max
-    if(content.length > 2000) {
-        return {
-            content: [{ type: 'text' as const, text: 'Error: Content too long (max 2000 characters)' }],
-            isError: true,
-        };
-    }
-    return null;
 }
 
 /**
@@ -567,11 +553,6 @@ export function createDiscordMCPServer(
                 async (args): Promise<CallToolResult> => {
                     try {
                         // Validate inputs
-                        const contentError = validateMessageContent(args.content);
-                        if(contentError) {
-                            return contentError;
-                        }
-
                         const threadError = validateThreadCreation(args.createThread, args.threadName);
                         if(threadError) {
                             return threadError;
@@ -583,24 +564,36 @@ export function createDiscordMCPServer(
                             return channelResult.error;
                         }
 
-                        // Send message
-                        const sentMessage = await sendMessage(
+                        // Split message into chunks
+                        const chunks = splitMessage(args.content);
+                        const sentMessages: Message[] = [];
+
+                        // Send first chunk (with reply if specified)
+                        const firstMessage = await sendMessage(
                             channelResult.channel,
-                            args.content,
+                            chunks[0],
                             args.replyToMessageId
                         );
+                        sentMessages.push(firstMessage);
 
-                        // Create thread if requested
+                        // Send remaining chunks (no reply reference)
+                        for(let i = 1; i < chunks.length; i++) {
+                            const msg = await sendMessage(channelResult.channel, chunks[i]);
+                            sentMessages.push(msg);
+                        }
+
+                        // Create thread if requested (on first message only)
                         const threadId = await createThreadIfRequested(
                             channelResult.channel,
-                            sentMessage,
+                            firstMessage,
                             args.createThread,
                             args.threadName
                         );
 
                         const result = {
-                            success:   true,
-                            messageId: sentMessage.id,
+                            success:     true,
+                            messageIds:  _.map(sentMessages, 'id'),
+                            chunksCount: chunks.length,
                             ...(threadId && { threadId }),
                         };
 

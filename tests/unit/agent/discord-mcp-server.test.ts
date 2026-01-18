@@ -2,9 +2,9 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- Handler return values are typed as any in tests */
 /* eslint-disable @typescript-eslint/no-unsafe-argument -- Mock objects used throughout tests */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Mock object access in tests */
-import { constant as _constant, isArray as _isArray, forEach as _forEach } from 'lodash';
+import { constant as _constant, isArray as _isArray, forEach as _forEach, repeat as _repeat, isString as _isString } from 'lodash';
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import type { Client } from 'discord.js';
+import type { Client, MessageCreateOptions } from 'discord.js';
 import { createDiscordMCPServer, setConversationContext, clearConversationContext } from '../../../src/agent/discord-mcp-server';
 import type { MessageSearchService } from '../../../src/integrations/discord/message-history/search';
 import type { SearchResponse, DiscordSearchResult } from '../../../src/integrations/discord/message-history/types';
@@ -625,18 +625,36 @@ describe.concurrent('createDiscordMCPServer', () => {
 
             expect(result.content[0].type).toBe('text');
 
-            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageId: string };
+            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], chunksCount: number };
             expect(parsed.success).toBe(true);
-            expect(parsed.messageId).toBe('sent-message-id');
+            expect(parsed.messageIds).toEqual(['sent-message-id']);
+            expect(parsed.chunksCount).toBe(1);
             expect(mockChannel.send).toHaveBeenCalledWith('Test message');
         });
 
-        test('should return error when content too long', async () => {
+        test('should split and send long messages in multiple chunks', async () => {
+            const sentMessages: { content: string, reference?: string }[] = [];
+            const mockChannel = {
+                isTextBased: _constant(true),
+                send:        mock(async (options: MessageCreateOptions | string) => {
+                    const msg = {
+                        id:      `msg-${sentMessages.length + 1}`,
+                        content: _isString(options) ? options : options.content,
+                    };
+                    sentMessages.push({
+                        content:   msg.content!,
+                        reference: !_isString(options) && options.reply ? String((options.reply as { messageReference: string }).messageReference) : undefined,
+                    });
+                    return msg;
+                }),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
             const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
-            // eslint-disable-next-line lodash/prefer-lodash-method -- Simple repeat for test data
-            const longContent = 'a'.repeat(2001);
+            // Create content just over 2000 chars (will be split into 2 chunks)
+            const longContent = _repeat('a', 2001);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             const result = await handler({
@@ -644,9 +662,93 @@ describe.concurrent('createDiscordMCPServer', () => {
                 content:   longContent,
             });
 
-            expect(result.isError).toBe(true);
+            // Should succeed, not error
+            expect(result.isError).toBeUndefined();
 
-            expect(result.content[0].text).toContain('Content too long');
+            // Parse response
+            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], chunksCount: number };
+            expect(parsed.success).toBe(true);
+            expect(parsed.messageIds).toBeInstanceOf(Array);
+            expect(parsed.messageIds.length).toBe(2);
+            expect(parsed.chunksCount).toBe(2);
+
+            // Verify multiple sends occurred
+            expect(sentMessages.length).toBe(2);
+        });
+
+        test('should only apply reply to first chunk when splitting', async () => {
+            const sentMessages: { content: string, hasReply: boolean }[] = [];
+            const mockMessage = {
+                id:    'original-msg-id',
+                reply: mock(async (content: string) => {
+                    const msg = {
+                        id: `msg-${sentMessages.length + 1}`,
+                        content,
+                    };
+                    sentMessages.push({
+                        content:  msg.content,
+                        hasReply: true,
+                    });
+                    return msg;
+                }),
+            };
+            const mockChannel = {
+                isTextBased: _constant(true),
+                messages:    {
+                    fetch: mock(async () => mockMessage),
+                },
+                send: mock(async (options: MessageCreateOptions | string) => {
+                    const msg = {
+                        id:      `msg-${sentMessages.length + 1}`,
+                        content: _isString(options) ? options : options.content,
+                    };
+                    sentMessages.push({
+                        content:  msg.content!,
+                        hasReply: false,
+                    });
+                    return msg;
+                }),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const handler = getToolHandler(server, 'sendDiscordMessage');
+
+            const longContent = _repeat('a', 2001);
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({
+                channelId:        '123456789012345678',
+                content:          longContent,
+                replyToMessageId: 'original-msg-id',
+            });
+
+            // First message should have reply
+            expect(sentMessages[0].hasReply).toBe(true);
+            // Second message should NOT have reply
+            expect(sentMessages[1].hasReply).toBe(false);
+        });
+
+        test('should return messageIds array even for single chunk', async () => {
+            const mockChannel = {
+                isTextBased: _constant(true),
+                send:        mock(async () => ({ id: 'msg-1' })),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const handler = getToolHandler(server, 'sendDiscordMessage');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                content:   'Short message',
+            });
+
+            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], chunksCount: number };
+            expect(parsed.success).toBe(true);
+            expect(parsed.messageIds).toEqual(['msg-1']);
+            expect(parsed.chunksCount).toBe(1);
         });
 
         test('should return error when channel not found', async () => {
@@ -724,9 +826,10 @@ describe.concurrent('createDiscordMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
 
-            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageId: string, threadId?: string };
+            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], chunksCount: number, threadId?: string };
             expect(parsed.success).toBe(true);
-            expect(parsed.messageId).toBe('sent-message-id');
+            expect(parsed.messageIds).toEqual(['sent-message-id']);
+            expect(parsed.chunksCount).toBe(1);
             expect(parsed.threadId).toBeUndefined();
             expect(mockChannel.send).toHaveBeenCalledWith('Test message');
         });
@@ -755,9 +858,10 @@ describe.concurrent('createDiscordMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
 
-            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageId: string, threadId?: string };
+            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], chunksCount: number, threadId?: string };
             expect(parsed.success).toBe(true);
-            expect(parsed.messageId).toBe('sent-message-id');
+            expect(parsed.messageIds).toEqual(['sent-message-id']);
+            expect(parsed.chunksCount).toBe(1);
             expect(parsed.threadId).toBeUndefined();
             expect(mockChannel.send).toHaveBeenCalledWith('Test message');
         });
@@ -807,9 +911,10 @@ describe.concurrent('createDiscordMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
 
-            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageId: string };
+            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], chunksCount: number };
             expect(parsed.success).toBe(true);
-            expect(parsed.messageId).toBe('reply-message-id');
+            expect(parsed.messageIds).toEqual(['reply-message-id']);
+            expect(parsed.chunksCount).toBe(1);
             expect(mockMessage.reply).toHaveBeenCalledWith('Reply message');
         });
 
@@ -842,9 +947,10 @@ describe.concurrent('createDiscordMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
 
-            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageId: string, threadId: string };
+            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], chunksCount: number, threadId: string };
             expect(parsed.success).toBe(true);
-            expect(parsed.messageId).toBe('sent-message-id');
+            expect(parsed.messageIds).toEqual(['sent-message-id']);
+            expect(parsed.chunksCount).toBe(1);
             expect(parsed.threadId).toBe('thread-id');
             expect(mockSentMessage.startThread).toHaveBeenCalledWith({ name: 'Test Thread' });
         });

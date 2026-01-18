@@ -2087,8 +2087,10 @@ describe('MessageCoordinator', () => {
 
         it('should handle errors in typing indicator refresh gracefully', async () => {
             // Spy on _.noop to verify it's called in the catch handler
-            const noopSpy = mock(_.noop);
+            // eslint-disable-next-line @typescript-eslint/unbound-method -- Storing function reference for mock restoration
             const originalNoop = _.noop;
+            // eslint-disable-next-line lodash/prefer-noop -- Intentionally mocking noop itself
+            const noopSpy = mock(() => { /* intentionally empty - mocking noop */ });
             _.noop = noopSpy;
 
             try {
@@ -2142,8 +2144,10 @@ describe('MessageCoordinator', () => {
 
         it('should handle errors in initial typing indicator gracefully', async () => {
             // Spy on _.noop to verify it's called in the catch handler
-            const noopSpy = mock(_.noop);
+            // eslint-disable-next-line @typescript-eslint/unbound-method -- Storing function reference for mock restoration
             const originalNoop = _.noop;
+            // eslint-disable-next-line lodash/prefer-noop -- Intentionally mocking noop itself
+            const noopSpy = mock(() => { /* intentionally empty - mocking noop */ });
             _.noop = noopSpy;
 
             try {
@@ -2183,7 +2187,7 @@ describe('MessageCoordinator', () => {
                 if(id === undefined) {
                     throw new Error('clearInterval should not be called with undefined');
                 }
-                originalClearInterval(id as ReturnType<typeof setInterval>);
+                originalClearInterval(id);
             });
             global.clearInterval = clearIntervalSpy as typeof clearInterval;
 
