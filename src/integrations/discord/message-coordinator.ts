@@ -48,9 +48,14 @@ export interface MessageCoordinatorConfig {
     onResponse?: (result: ProcessResult, discordMessage: Message | null) => Promise<void>
 }
 
+/** Discord channel interface for typing indicator */
+export interface TypingChannel {
+    sendTyping(): Promise<void>
+}
+
 export interface MessageCoordinator {
     /** Handle an incoming message */
-    handleMessage(context: DiscordMessageContext, discordMessage: Message): void
+    handleMessage(context: DiscordMessageContext, discordMessage: Message, channel?: TypingChannel): void
 
     /** Set the processor function (called to process messages) */
     setProcessor(processor: MessageProcessor): void
@@ -84,6 +89,9 @@ interface ChannelState {
     partialWork?:             StreamProgress
     // First Discord message from interrupted query (for onResponse callback)
     interruptedFirstMessage?: Message | null
+    // Typing indicator support
+    typingChannel?:           TypingChannel
+    typingInterval?:          ReturnType<typeof setInterval>
 }
 
 /**
@@ -116,6 +124,33 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
     }
 
     /**
+     * Start typing indicator and set up refresh interval.
+     */
+    function startTypingIndicator(state: ChannelState): void {
+        if(!state.typingChannel) {
+            return;
+        }
+
+        // Send initial typing indicator
+        void state.typingChannel.sendTyping().catch(() => _.noop());
+
+        // Set up refresh interval (Discord typing lasts ~10 seconds, refresh every 8s)
+        state.typingInterval = setInterval(() => {
+            void state.typingChannel?.sendTyping().catch(() => _.noop());
+        }, 8000);
+    }
+
+    /**
+     * Stop typing indicator and clear refresh interval.
+     */
+    function stopTypingIndicator(state: ChannelState): void {
+        if(state.typingInterval) {
+            clearInterval(state.typingInterval);
+            state.typingInterval = undefined;
+        }
+    }
+
+    /**
      * Start processing messages immediately.
      */
     function startProcessing(
@@ -130,6 +165,9 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
         // Stryker restore all
 
         const state = getOrCreateState(channelId);
+
+        // Start typing indicator
+        startTypingIndicator(state);
 
         // Create abort controller for this query
         const abortController = new AbortController();
@@ -159,6 +197,8 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
                     }
                 }
             } finally {
+                // Stop typing indicator
+                stopTypingIndicator(state);
                 // Clear active query
                 state.activeQuery = undefined;
             }
@@ -218,6 +258,9 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
         state.partialWork = undefined;
         state.interruptedFirstMessage = undefined;
 
+        // Start typing indicator
+        startTypingIndicator(state);
+
         // Create abort controller for this query
         const abortController = new AbortController();
 
@@ -246,6 +289,8 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
                     }
                 }
             } finally {
+                // Stop typing indicator
+                stopTypingIndicator(state);
                 // Clear active query
                 state.activeQuery = undefined;
             }
@@ -263,13 +308,18 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
     /**
      * Handle an incoming message.
      */
-    function handleMessage(context: DiscordMessageContext, discordMessage: Message): void {
+    function handleMessage(context: DiscordMessageContext, discordMessage: Message, channel?: TypingChannel): void {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Redundant with checks in startProcessing (line 126) and processWithResume (line 180)
         if(!processor) {
             throw new Error('Processor not set. Call setProcessor() before handling messages.');
         }
 
         const state = getOrCreateState(context.channelId);
+
+        // Store the channel reference for typing indicator
+        if(channel) {
+            state.typingChannel = channel;
+        }
 
         // Case 1: Active query in progress
         if(state.activeQuery) {
@@ -354,13 +404,16 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
      * Stop the coordinator and cleanup.
      */
     function stop(): void {
-        // Clear all debounce timers
+        // Clear all debounce timers and typing intervals
         for(const state of channelStates.values()) {
             // Stryker disable next-line ConditionalExpression: clearTimeout(undefined) is a no-op
             if(state.debounceTimer) {
                 clearTimeout(state.debounceTimer);
                 state.debounceTimer = undefined;
             }
+
+            // Stop typing indicators
+            stopTypingIndicator(state);
 
             // Abort any active queries
             if(state.activeQuery) {

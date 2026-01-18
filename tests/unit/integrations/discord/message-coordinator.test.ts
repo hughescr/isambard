@@ -1883,4 +1883,395 @@ describe('MessageCoordinator', () => {
             global.clearTimeout = originalClearTimeout;
         });
     });
+
+    describe('Typing Indicator Support', () => {
+        let mockChannel: { sendTyping: ReturnType<typeof mock> };
+
+        beforeEach(() => {
+            coordinator = createMessageCoordinator();
+            mockChannel = {
+                sendTyping: mock(async () => {
+                    // Intentionally empty - just needs to be async
+                    return;
+                }),
+            };
+        });
+
+        it('should call sendTyping when processing starts', async () => {
+            coordinator.setProcessor(processorMock);
+            coordinator.handleMessage(mockContext, mockMessage, mockChannel);
+
+            // Wait for processing to start
+            jest.advanceTimersByTime(10);
+
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
+        });
+
+        it('should refresh typing indicator every 8 seconds during processing', async () => {
+            // Slow processor that takes 20 seconds
+            const slowProcessor: MessageProcessor = async () => {
+                await new Promise(resolve => setTimeout(resolve, 20000));
+                return {
+                    response:       'Response',
+                    wasInterrupted: false,
+                    streamTracker:  createStreamTracker(),
+                };
+            };
+            processorMock.mockImplementation(slowProcessor);
+            coordinator.setProcessor(processorMock);
+
+            coordinator.handleMessage(mockContext, mockMessage, mockChannel);
+            jest.advanceTimersByTime(10);
+
+            // Initial typing call
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
+
+            // After 8 seconds, should refresh
+            jest.advanceTimersByTime(8000);
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(2);
+
+            // After another 8 seconds, should refresh again
+            jest.advanceTimersByTime(8000);
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(3);
+
+            // Complete processing
+            jest.advanceTimersByTime(4000);
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(3); // No more refreshes
+        });
+
+        it('should stop typing indicator when processing completes', async () => {
+            let intervalCleared = false;
+            const originalClearInterval = clearInterval;
+            const clearIntervalSpy = (intervalId: ReturnType<typeof setInterval>) => {
+                intervalCleared = true;
+                originalClearInterval(intervalId);
+            };
+            global.clearInterval = clearIntervalSpy as unknown as typeof clearInterval;
+
+            coordinator.setProcessor(processorMock);
+            coordinator.handleMessage(mockContext, mockMessage, mockChannel);
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+
+            // Wait for processing to complete
+            jest.advanceTimersByTime(100);
+            await Promise.resolve();
+
+            expect(intervalCleared).toBe(true);
+
+            global.clearInterval = originalClearInterval;
+        });
+
+        it('should stop typing indicator when processing is interrupted', async () => {
+            let intervalCleared = false;
+            const originalClearInterval = clearInterval;
+            const clearIntervalSpy = (intervalId: ReturnType<typeof setInterval>) => {
+                intervalCleared = true;
+                originalClearInterval(intervalId);
+            };
+            global.clearInterval = clearIntervalSpy as unknown as typeof clearInterval;
+
+            // Slow processor
+            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                return {
+                    response:       'Response',
+                    wasInterrupted: abortSignal.aborted,
+                    streamTracker:  createStreamTracker(),
+                };
+            };
+            processorMock.mockImplementation(slowProcessor);
+            coordinator.setProcessor(processorMock);
+
+            coordinator.handleMessage(mockContext, mockMessage, mockChannel);
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+
+            // Interrupt with second message
+            const msg2Context = { ...mockContext, messageId: 'msg-002' };
+            const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
+            coordinator.handleMessage(msg2Context, msg2, mockChannel);
+
+            // Expire debounce to trigger interrupt
+            jest.advanceTimersByTime(2000);
+            await Promise.resolve();
+
+            // Complete the interrupted query
+            jest.advanceTimersByTime(5100);
+            await Promise.resolve();
+
+            expect(intervalCleared).toBe(true);
+
+            global.clearInterval = originalClearInterval;
+        });
+
+        it('should handle sendTyping errors gracefully', async () => {
+            // Make sendTyping fail
+            mockChannel.sendTyping.mockRejectedValue(new Error('Missing Access'));
+
+            coordinator.setProcessor(processorMock);
+
+            // Should not throw
+            expect(() => coordinator.handleMessage(mockContext, mockMessage, mockChannel)).not.toThrow();
+
+            jest.advanceTimersByTime(10);
+
+            // Processing should continue despite typing error
+            expect(processorMock).toHaveBeenCalledTimes(1);
+        });
+
+        it('should continue typing across batched messages', async () => {
+            // Slow processor
+            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+                await new Promise(resolve => setTimeout(resolve, 10000));
+                return {
+                    response:       'Response',
+                    wasInterrupted: abortSignal.aborted,
+                    streamTracker:  createStreamTracker(),
+                };
+            };
+            processorMock.mockImplementation(slowProcessor);
+            coordinator.setProcessor(processorMock);
+
+            // First message
+            coordinator.handleMessage(mockContext, mockMessage, mockChannel);
+            jest.advanceTimersByTime(10);
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
+
+            // Second message during processing
+            const msg2Context = { ...mockContext, messageId: 'msg-002' };
+            const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
+            coordinator.handleMessage(msg2Context, msg2, mockChannel);
+
+            // Typing should continue during debounce
+            jest.advanceTimersByTime(8000);
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(2);
+        });
+
+        it('should start typing when resuming after interruption', async () => {
+            // Slow processor that gets interrupted
+            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                return {
+                    response:       'Response',
+                    sessionId:      'session-123',
+                    wasInterrupted: abortSignal.aborted,
+                    streamTracker:  createStreamTracker(),
+                };
+            };
+            processorMock.mockImplementation(slowProcessor);
+            coordinator.setProcessor(processorMock);
+
+            coordinator.handleMessage(mockContext, mockMessage, mockChannel);
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+
+            const initialCallCount = mockChannel.sendTyping.mock.calls.length;
+
+            // Interrupt with second message
+            const msg2Context = { ...mockContext, messageId: 'msg-002' };
+            const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
+            coordinator.handleMessage(msg2Context, msg2, mockChannel);
+
+            // Expire debounce to trigger interrupt
+            jest.advanceTimersByTime(2000);
+            await Promise.resolve();
+
+            // Complete the interrupted query
+            jest.advanceTimersByTime(5100);
+            await Promise.resolve();
+
+            // Should have called sendTyping again when resuming
+            expect(mockChannel.sendTyping.mock.calls.length).toBeGreaterThan(initialCallCount);
+        });
+
+        it('should handle errors in typing indicator refresh gracefully', async () => {
+            // Spy on _.noop to verify it's called in the catch handler
+            const noopSpy = mock(_.noop);
+            const originalNoop = _.noop;
+            _.noop = noopSpy;
+
+            try {
+                // Mock sendTyping to succeed first time, throw on second
+                let callCount = 0;
+                mockChannel.sendTyping = mock(async () => {
+                    callCount++;
+                    if(callCount >= 2) {
+                        throw new Error('Rate limited');
+                    }
+                });
+
+                // Set up slow processor that takes time
+                const slowProcessor: MessageProcessor = async () => {
+                    await new Promise(resolve => setTimeout(resolve, 20000));
+                    return {
+                        response:       'Done',
+                        wasInterrupted: false,
+                        streamTracker:  createStreamTracker(),
+                    };
+                };
+                processorMock.mockImplementation(slowProcessor);
+                coordinator.setProcessor(processorMock);
+
+                coordinator.handleMessage(mockContext, mockMessage, mockChannel);
+
+                // Initial typing call
+                jest.advanceTimersByTime(10);
+                expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
+
+                // Advance past the 8-second refresh interval - this call will throw
+                jest.advanceTimersByTime(8000);
+                await Promise.resolve();
+
+                // The error should be caught, processing should continue
+                expect(mockChannel.sendTyping).toHaveBeenCalledTimes(2);
+
+                // Verify _.noop was called in the catch handler (kills ArrowFunction mutant at line 139)
+                expect(noopSpy).toHaveBeenCalled();
+
+                // Complete processing
+                jest.advanceTimersByTime(12000);
+                await Promise.resolve();
+
+                // Verify processor completed successfully despite typing error
+                expect(processorMock).toHaveBeenCalledTimes(1);
+            } finally {
+                _.noop = originalNoop;
+            }
+        });
+
+        it('should handle errors in initial typing indicator gracefully', async () => {
+            // Spy on _.noop to verify it's called in the catch handler
+            const noopSpy = mock(_.noop);
+            const originalNoop = _.noop;
+            _.noop = noopSpy;
+
+            try {
+                // Mock sendTyping to throw immediately on first call
+                mockChannel.sendTyping = mock(async () => {
+                    throw new Error('Rate limited on initial typing');
+                });
+
+                processorMock.mockImplementation(async () => ({
+                    response:       'Done',
+                    wasInterrupted: false,
+                    streamTracker:  createStreamTracker(),
+                }));
+                coordinator.setProcessor(processorMock);
+
+                // This should not crash even though initial typing indicator fails
+                coordinator.handleMessage(mockContext, mockMessage, mockChannel);
+
+                jest.advanceTimersByTime(10);
+                await Promise.resolve();
+
+                // sendTyping was called but threw - processing should continue
+                expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
+                expect(processorMock).toHaveBeenCalledTimes(1);
+
+                // Verify _.noop was called in the catch handler (kills ArrowFunction mutant at line 135)
+                expect(noopSpy).toHaveBeenCalled();
+            } finally {
+                _.noop = originalNoop;
+            }
+        });
+
+        it('should not crash when stopping typing indicator that was never started', async () => {
+            // Spy on clearInterval to ensure it's not called with undefined
+            const originalClearInterval = clearInterval;
+            const clearIntervalSpy = mock((id?: ReturnType<typeof setInterval>) => {
+                if(id === undefined) {
+                    throw new Error('clearInterval should not be called with undefined');
+                }
+                originalClearInterval(id as ReturnType<typeof setInterval>);
+            });
+            global.clearInterval = clearIntervalSpy as typeof clearInterval;
+
+            try {
+                // Don't provide a channel - no typing indicator will be created
+                processorMock.mockImplementation(async () => ({
+                    response:       'Done',
+                    wasInterrupted: false,
+                    streamTracker:  createStreamTracker(),
+                }));
+                coordinator.setProcessor(processorMock);
+
+                // Call handleMessage without channel parameter
+                coordinator.handleMessage(mockContext, mockMessage);
+
+                jest.advanceTimersByTime(10);
+                await Promise.resolve();
+
+                // Processing should complete without error
+                expect(processorMock).toHaveBeenCalledTimes(1);
+                // clearInterval should NOT have been called at all (no interval to clear)
+                expect(clearIntervalSpy).not.toHaveBeenCalled();
+            } finally {
+                global.clearInterval = originalClearInterval;
+            }
+        });
+
+        it('should not set typing channel when channel parameter is undefined', async () => {
+            // This test kills mutant that replaces `if(channel)` with `if(true)` at line 320
+            // If that mutant survives, state.typingChannel would be overwritten with undefined
+            // when a message arrives without a channel, breaking typing for subsequent messages.
+
+            let callCount = 0;
+            processorMock.mockImplementation(async () => {
+                callCount++;
+                // Make processing slow so we can send second message while first is running
+                await new Promise(resolve => setTimeout(resolve, 100));
+                return {
+                    response:       `Response ${callCount}`,
+                    wasInterrupted: false,
+                    streamTracker:  createStreamTracker(),
+                };
+            });
+            coordinator.setProcessor(processorMock);
+
+            // First message: WITH a channel - this sets state.typingChannel = mockChannel
+            coordinator.handleMessage(mockContext, mockMessage, mockChannel);
+
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+
+            // Verify typing started for first message
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
+
+            // Second message arrives while first is processing: WITHOUT a channel
+            // With correct code: state.typingChannel should NOT be modified (stays as mockChannel)
+            // With mutant: state.typingChannel would be set to undefined, breaking typing
+            const msg2Context = { ...mockContext, messageId: 'msg-002' };
+            const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
+            coordinator.handleMessage(msg2Context, msg2, undefined);
+
+            // Complete first message processing
+            jest.advanceTimersByTime(150);
+            await Promise.resolve();
+
+            // Trigger debounce for second message
+            jest.advanceTimersByTime(2000);
+            await Promise.resolve();
+
+            // Advance to allow typing indicator for resumed processing
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+
+            // If mutant survived, sendTyping would NOT be called again (state.typingChannel was overwritten with undefined)
+            // With correct code, sendTyping should be called again for the resumed processing
+            expect(mockChannel.sendTyping.mock.calls.length).toBeGreaterThan(1);
+        });
+
+        it('should work when channel parameter is not provided (backward compatibility)', async () => {
+            coordinator.setProcessor(processorMock);
+
+            // Should not throw when channel is undefined
+            expect(() => coordinator.handleMessage(mockContext, mockMessage)).not.toThrow();
+
+            jest.advanceTimersByTime(10);
+
+            // Processing should work normally
+            expect(processorMock).toHaveBeenCalledTimes(1);
+        });
+    });
 });

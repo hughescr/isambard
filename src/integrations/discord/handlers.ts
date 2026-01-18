@@ -418,7 +418,9 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
             };
 
             // Hand off to coordinator (it will handle batching, interruption, and onResponse)
-            coordinator.handleMessage(context, message);
+            // Only pass channel if it has sendTyping method (some channel types don't)
+            const channel = 'sendTyping' in message.channel ? message.channel : undefined;
+            coordinator.handleMessage(context, message, channel);
             // Stryker restore all
         } else {
             // Direct processing (backward compatibility)
