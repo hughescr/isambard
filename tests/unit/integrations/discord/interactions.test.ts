@@ -1,6 +1,6 @@
-/* eslint-disable @typescript-eslint/unbound-method -- vitest mocks don't preserve 'this' binding */
+/* eslint-disable @typescript-eslint/unbound-method -- test mocks don't preserve 'this' binding */
 import { constant as _constant } from 'lodash';
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { createInteractionHandler } from '@/integrations/discord/interactions';
 import { createQuestionRegistry } from '@/agent/question-registry/registry';
 import type { QuestionRegistry, PendingQuestion } from '@/agent/question-registry';
@@ -13,14 +13,14 @@ describe('createInteractionHandler', () => {
     let handler: ReturnType<typeof createInteractionHandler>;
 
     beforeEach(() => {
-        vi.useFakeTimers();
+        jest.useFakeTimers();
         registry = createQuestionRegistry({ defaultTimeoutMs: 5000 });
         handler = createInteractionHandler({ questionRegistry: registry });
     });
 
     afterEach(() => {
         registry.stop();
-        vi.useRealTimers();
+        jest.useRealTimers();
     });
 
     function createMockButtonInteraction(customId: string, userId: string, messageId: string): ButtonInteraction {
@@ -30,7 +30,7 @@ describe('createInteractionHandler', () => {
 
         const mockMessage = {
             id:   messageId,
-            edit: vi.fn().mockResolvedValue({}),
+            edit: mock().mockResolvedValue({}),
         } as unknown as Message;
 
         const mockInteraction = {
@@ -41,8 +41,8 @@ describe('createInteractionHandler', () => {
             channel:   {
                 isThread: _constant(false),
             },
-            reply:  vi.fn().mockResolvedValue({} as InteractionResponse),
-            update: vi.fn().mockResolvedValue({} as InteractionResponse),
+            reply:  mock().mockResolvedValue({} as InteractionResponse),
+            update: mock().mockResolvedValue({} as InteractionResponse),
         } as unknown as ButtonInteraction;
 
         return mockInteraction;
@@ -122,8 +122,8 @@ describe('createInteractionHandler', () => {
         const baseTime = new Date('2024-01-01T12:00:00Z').getTime();
 
         // Re-initialize timers with specific now value for this test
-        vi.useRealTimers();
-        vi.useFakeTimers({ now: baseTime });
+        jest.useRealTimers();
+        jest.useFakeTimers({ now: baseTime });
 
         // Create question that expires in the past relative to current system time
         const question: Omit<PendingQuestion, 'state'> = {
@@ -237,7 +237,7 @@ describe('createInteractionHandler', () => {
             selectedOption: 'blue',
             responderId:    createUserId('user3'),
             messageId:      'msg-xyz',
-            channelId:      'ch1',
+            channelId:      'ch1' as ChannelId,
             threadId:       undefined,
         });
     });
@@ -264,7 +264,7 @@ describe('createInteractionHandler', () => {
         const mockUser = { id: 'user2' } as User;
         const mockMessage = {
             id:   'msg-thread',
-            edit: vi.fn().mockResolvedValue({}),
+            edit: mock().mockResolvedValue({}),
         } as unknown as Message;
 
         const mockInteraction = {
@@ -276,8 +276,8 @@ describe('createInteractionHandler', () => {
                 isThread: _constant(true),
                 parentId: 'parent-ch', // Parent channel ID
             },
-            reply:  vi.fn().mockResolvedValue({} as InteractionResponse),
-            update: vi.fn().mockResolvedValue({} as InteractionResponse),
+            reply:  mock().mockResolvedValue({} as InteractionResponse),
+            update: mock().mockResolvedValue({} as InteractionResponse),
         } as unknown as ButtonInteraction;
 
         await handler.handleButtonInteraction(mockInteraction);

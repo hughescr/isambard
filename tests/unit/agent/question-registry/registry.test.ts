@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, jest } from 'bun:test';
 import { createQuestionRegistry } from '@/agent/question-registry/registry';
 import type { QuestionRegistry, PendingQuestion, QuestionAnswer } from '@/agent/question-registry';
 import type { ChannelId, UserId } from '@/integrations/discord/types';
@@ -7,13 +7,13 @@ describe('QuestionRegistry', () => {
     let registry: QuestionRegistry;
 
     beforeEach(() => {
-        vi.useFakeTimers();
+        jest.useFakeTimers();
         registry = createQuestionRegistry({ defaultTimeoutMs: 5000 });
     });
 
     afterEach(() => {
         registry.stop();
-        vi.useRealTimers();
+        jest.useRealTimers();
     });
 
     describe('register', () => {
@@ -66,7 +66,7 @@ describe('QuestionRegistry', () => {
 
             const result = await resultPromise;
             expect(result.questionId).toBe('q1');
-            expect(result.channelId).toBe('ch1');
+            expect(result.channelId).toBe('ch1' as ChannelId);
             expect(result.threadId).toBeUndefined();
             expect(result.answer).toEqual(answer);
             expect(result.timedOut).toBe(false);
@@ -87,11 +87,11 @@ describe('QuestionRegistry', () => {
             const resultPromise = registry.register(question);
 
             // Advance time past expiry
-            vi.advanceTimersByTime(5000);
+            jest.advanceTimersByTime(5000);
 
             const result = await resultPromise;
             expect(result.questionId).toBe('q1');
-            expect(result.channelId).toBe('ch1');
+            expect(result.channelId).toBe('ch1' as ChannelId);
             expect(result.threadId).toBeUndefined();
             expect(result.answer).toBeNull();
             expect(result.timedOut).toBe(true);
@@ -126,7 +126,7 @@ describe('QuestionRegistry', () => {
             // First promise should resolve with null (cancelled)
             const result1 = await resultPromise1;
             expect(result1.questionId).toBe('q1');
-            expect(result1.channelId).toBe('ch1');
+            expect(result1.channelId).toBe('ch1' as ChannelId);
             expect(result1.answer).toBeNull();
             expect(result1.timedOut).toBe(false);
 
@@ -181,7 +181,7 @@ describe('QuestionRegistry', () => {
             void registry.register(question);
 
             // Advance time past expiry
-            vi.advanceTimersByTime(6000);
+            jest.advanceTimersByTime(6000);
 
             const found = registry.findPendingQuestion('ch1' as ChannelId);
             expect(found).toBeNull();
@@ -377,7 +377,7 @@ describe('QuestionRegistry', () => {
 
             const result = await resultPromise;
             expect(result.questionId).toBe('q1');
-            expect(result.channelId).toBe('ch1');
+            expect(result.channelId).toBe('ch1' as ChannelId);
             expect(result.answer).toBeNull();
             expect(result.timedOut).toBe(false);
         });
@@ -444,11 +444,11 @@ describe('QuestionRegistry', () => {
             const result2 = await resultPromise2;
 
             expect(result1.questionId).toBe('q1');
-            expect(result1.channelId).toBe('ch1');
+            expect(result1.channelId).toBe('ch1' as ChannelId);
             expect(result1.answer).toBeNull();
             expect(result1.timedOut).toBe(false);
             expect(result2.questionId).toBe('q2');
-            expect(result2.channelId).toBe('ch2');
+            expect(result2.channelId).toBe('ch2' as ChannelId);
             expect(result2.answer).toBeNull();
             expect(result2.timedOut).toBe(false);
 
@@ -473,7 +473,7 @@ describe('QuestionRegistry', () => {
 
             const resultPromise = registry.register(question);
 
-            vi.advanceTimersByTime(5000);
+            jest.advanceTimersByTime(5000);
 
             const result = await resultPromise;
             expect(result.answer).toBeNull();
@@ -494,7 +494,7 @@ describe('QuestionRegistry', () => {
 
             const resultPromise = registry.register(question);
 
-            vi.advanceTimersByTime(5000);
+            jest.advanceTimersByTime(5000);
 
             await resultPromise;
 
@@ -525,7 +525,7 @@ describe('QuestionRegistry', () => {
             };
 
             // Answer before timeout
-            vi.advanceTimersByTime(3000);
+            jest.advanceTimersByTime(3000);
             registry.resolveWithAnswer('q1', answer);
 
             const result = await resultPromise;
@@ -533,7 +533,7 @@ describe('QuestionRegistry', () => {
             expect(result.timedOut).toBe(false);
 
             // Advancing further should not trigger timeout
-            vi.advanceTimersByTime(5000);
+            jest.advanceTimersByTime(5000);
         });
     });
 
@@ -555,12 +555,12 @@ describe('QuestionRegistry', () => {
             const resultPromise = customRegistry.register(question);
 
             // Should not timeout before custom timeout
-            vi.advanceTimersByTime(5000);
+            jest.advanceTimersByTime(5000);
             const found = customRegistry.findPendingQuestion('ch1' as ChannelId);
             expect(found).toBeTruthy();
 
             // Should timeout after custom timeout
-            vi.advanceTimersByTime(5000);
+            jest.advanceTimersByTime(5000);
             const result = await resultPromise;
             expect(result.timedOut).toBe(true);
 

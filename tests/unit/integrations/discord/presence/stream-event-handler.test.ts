@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test mocks */
+/* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks */
 /* eslint-disable @typescript-eslint/unbound-method -- Test assertions */
 
 /**
@@ -17,7 +18,7 @@
  * 5. Mutant 2727 (line 299) - Result event completion check
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import { constant, find, filter, some, repeat, endsWith } from 'lodash';
 import { createStreamEventHandler } from '../../../../../src/integrations/discord/presence/stream-event-handler.js';
 import type { StreamEventHandlerDeps } from '../../../../../src/integrations/discord/presence/stream-event-handler.js';
@@ -38,19 +39,19 @@ describe('StreamEventHandler', () => {
 
     beforeEach(() => {
         mockPresenceManager = {
-            shouldUpdate: vi.fn(constant(true)),
-            updatePhase:  vi.fn(async () => undefined),
-            start:        vi.fn(constant(undefined)),
-            stop:         vi.fn(constant(undefined)),
+            shouldUpdate: mock(constant(true)),
+            updatePhase:  mock(async () => undefined),
+            start:        mock(constant(undefined)),
+            stop:         mock(constant(undefined)),
         } as any;
 
         mockDynamicStatusGenerator = {
             // eslint-disable-next-line lodash/prefer-constant -- Async function
-            generateSynopsis: vi.fn(async () => 'Generated synopsis'),
+            generateSynopsis: mock(async () => 'Generated synopsis'),
         };
 
         mockLogger = {
-            error: vi.fn(constant(undefined)),
+            error: mock(constant(undefined)),
         };
 
         baseDeps = {
@@ -66,7 +67,7 @@ describe('StreamEventHandler', () => {
     describe('Mutant 2643 - Type guard for thinking blocks', () => {
         it('should NOT accumulate thinking content from non-thinking blocks (type: "text")', async () => {
             const capturedContexts: any[] = [];
-            mockDynamicStatusGenerator.generateSynopsis = vi.fn(async (ctx) => {
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
                 capturedContexts.push(ctx);
                 return 'Test status';
             });
@@ -94,7 +95,7 @@ describe('StreamEventHandler', () => {
 
         it('should accumulate thinking content ONLY from blocks with type: "thinking" AND non-empty thinking property', async () => {
             const capturedContexts: any[] = [];
-            mockDynamicStatusGenerator.generateSynopsis = vi.fn(async (ctx) => {
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
                 capturedContexts.push(ctx);
                 return 'Test status';
             });
@@ -157,7 +158,7 @@ describe('StreamEventHandler', () => {
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
 
             // Reset mock to count calls
-            vi.clearAllMocks();
+            (mockPresenceManager.updatePhase as any).mockClear();
 
             // Send assistant event with BOTH tool_use blocks AND delta.text
             onStreamEvent({
@@ -197,7 +198,7 @@ describe('StreamEventHandler', () => {
         it('should NOT update thinking/responding phase when hadToolUseUpdate is true', async () => {
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
 
-            vi.clearAllMocks();
+            (mockPresenceManager.updatePhase as any).mockClear();
 
             // Send assistant event with BOTH tool_use blocks AND no delta.text (would be thinking)
             onStreamEvent({
@@ -232,7 +233,7 @@ describe('StreamEventHandler', () => {
         it('should verify early return happens before responding phase detection', async () => {
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
 
-            vi.clearAllMocks();
+            (mockPresenceManager.updatePhase as any).mockClear();
 
             // Send assistant event with tool_use AND delta.text (would normally be responding)
             onStreamEvent({
@@ -265,11 +266,11 @@ describe('StreamEventHandler', () => {
     describe('Mutant 2670 - Phase change gate (newPhase !== currentPhase || shouldUpdate())', () => {
         it('should force updatePhase when phase changes even if shouldUpdate() returns false', async () => {
             // Configure presenceManager.shouldUpdate to return false
-            mockPresenceManager.shouldUpdate = vi.fn(constant(false));
+            mockPresenceManager.shouldUpdate = mock(constant(false));
 
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
 
-            vi.clearAllMocks();
+            (mockPresenceManager.updatePhase as any).mockClear();
 
             // First event: thinking phase
             onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
@@ -280,7 +281,7 @@ describe('StreamEventHandler', () => {
                 expect.objectContaining({ type: 'thinking' })
             );
 
-            vi.clearAllMocks();
+            (mockPresenceManager.updatePhase as any).mockClear();
 
             // Second event: transition to responding phase (phase change)
             onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
@@ -296,7 +297,7 @@ describe('StreamEventHandler', () => {
         it('should call updatePhase when staying in same phase if shouldUpdate() returns true', async () => {
             // Configure presenceManager.shouldUpdate to alternate between true and false
             let shouldUpdateCallCount = 0;
-            mockPresenceManager.shouldUpdate = vi.fn(() => {
+            mockPresenceManager.shouldUpdate = mock(() => {
                 shouldUpdateCallCount++;
                 // First two calls return true, then alternate
                 return shouldUpdateCallCount <= 2 || shouldUpdateCallCount % 2 === 1;
@@ -304,7 +305,7 @@ describe('StreamEventHandler', () => {
 
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
 
-            vi.clearAllMocks();
+            (mockPresenceManager.updatePhase as any).mockClear();
 
             // First thinking event
             onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
@@ -313,7 +314,7 @@ describe('StreamEventHandler', () => {
             const firstCallCount = (mockPresenceManager.updatePhase as any).mock.calls.length;
             expect(firstCallCount).toBeGreaterThan(0);
 
-            vi.clearAllMocks();
+            (mockPresenceManager.updatePhase as any).mockClear();
 
             // Second thinking event (same phase)
             // shouldUpdate() returns true, so update should happen
@@ -328,11 +329,11 @@ describe('StreamEventHandler', () => {
 
         it('should NOT call updatePhase when staying in same phase AND shouldUpdate() returns false', async () => {
             // Configure presenceManager.shouldUpdate to return false
-            mockPresenceManager.shouldUpdate = vi.fn(constant(false));
+            mockPresenceManager.shouldUpdate = mock(constant(false));
 
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
 
-            vi.clearAllMocks();
+            (mockPresenceManager.updatePhase as any).mockClear();
 
             // First event: thinking phase (initial transition always happens)
             onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
@@ -343,7 +344,7 @@ describe('StreamEventHandler', () => {
                 expect.objectContaining({ type: 'thinking' })
             );
 
-            vi.clearAllMocks();
+            (mockPresenceManager.updatePhase as any).mockClear();
 
             // Second event: still thinking phase (no delta.text)
             // Both conditions false: newPhase === currentPhase AND shouldUpdate() returns false
@@ -363,7 +364,7 @@ describe('StreamEventHandler', () => {
         it('should transition to idle phase when event.type is "result"', async () => {
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
 
-            vi.clearAllMocks();
+            (mockPresenceManager.updatePhase as any).mockClear();
 
             // Send result event
             onStreamEvent({ type: 'result', subtype: 'success' } as AgentStreamEvent);
@@ -380,7 +381,7 @@ describe('StreamEventHandler', () => {
         it('should NOT transition to idle for non-result events', async () => {
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
 
-            vi.clearAllMocks();
+            (mockPresenceManager.updatePhase as any).mockClear();
 
             // Send various non-result events
             onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
@@ -402,7 +403,7 @@ describe('StreamEventHandler', () => {
         it('should NOT transition to idle for other event types (tool_result, user, system)', async () => {
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
 
-            vi.clearAllMocks();
+            (mockPresenceManager.updatePhase as any).mockClear();
 
             // Send events that would reach the else-if but are NOT 'result' type
             // These events don't match 'assistant' or 'tool_progress', so they reach the final else-if
@@ -422,7 +423,7 @@ describe('StreamEventHandler', () => {
         it('should verify complete() method also transitions to idle', async () => {
             const { complete } = createStreamEventHandler(baseDeps);
 
-            vi.clearAllMocks();
+            (mockPresenceManager.updatePhase as any).mockClear();
 
             // Call complete()
             complete();
@@ -440,7 +441,7 @@ describe('StreamEventHandler', () => {
     describe('Error handling', () => {
         it('should handle presenceManager.updatePhase errors gracefully', async () => {
             // Configure presenceManager to throw
-            mockPresenceManager.updatePhase = vi.fn(async () => {
+            mockPresenceManager.updatePhase = mock(async () => {
                 throw new Error('Update phase failed');
             });
 
@@ -467,7 +468,7 @@ describe('StreamEventHandler', () => {
     describe('Tool input storage and redaction', () => {
         it('should store redacted tool inputs from tool_use blocks', async () => {
             const capturedContexts: any[] = [];
-            mockDynamicStatusGenerator.generateSynopsis = vi.fn(async (ctx) => {
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
                 capturedContexts.push(ctx);
                 return 'Test status';
             });
@@ -507,7 +508,7 @@ describe('StreamEventHandler', () => {
     describe('Dynamic synopsis generation', () => {
         it('should use thinkingSynopsis fallback when generateSynopsis throws an error', async () => {
             // Setup: generateSynopsis throws an error
-            mockDynamicStatusGenerator.generateSynopsis = vi.fn(async () => {
+            mockDynamicStatusGenerator.generateSynopsis = mock(async () => {
                 throw new Error('Synopsis generation failed');
             });
 
@@ -549,7 +550,7 @@ describe('StreamEventHandler', () => {
     describe('Accumulated state management', () => {
         it('should accumulate response text with 200-char limit', async () => {
             const capturedContexts: any[] = [];
-            mockDynamicStatusGenerator.generateSynopsis = vi.fn(async (ctx) => {
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
                 capturedContexts.push(ctx);
                 return 'Test status';
             });
@@ -576,7 +577,7 @@ describe('StreamEventHandler', () => {
 
         it('should track recent tool calls with MAX_RECENT_TOOLS limit', async () => {
             const capturedContexts: any[] = [];
-            mockDynamicStatusGenerator.generateSynopsis = vi.fn(async (ctx) => {
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
                 capturedContexts.push(ctx);
                 return 'Test status';
             });
