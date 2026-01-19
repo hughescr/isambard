@@ -17,14 +17,14 @@ Before any PR or commit:
 - [ ] All tests pass (`bun test`)
 - [ ] Zero TypeScript errors (`bun run typecheck`)
 - [ ] Zero lint warnings (`bun run lint`)
-- [ ] Mutation score >= 90% for changed files (`bun run mutate`)
+- [ ] Mutation score = 100% for changed files (`bun run mutate`)
 
 ### Stryker Mutation Testing
 Run mutation testing to verify test quality:
 ```bash
 bun run mutate
 ```
-Target: >= 90% mutation score (break threshold in stryker.conf.mjs). If mutants survive, tests are incomplete.
+Target: 100% mutation score (break threshold in stryker.conf.mjs). If mutants survive, tests are incomplete.
 
 **Claude Code Note**: When running mutation testing in Claude Code, use a clean PATH to avoid module resolution conflicts:
 ```bash
