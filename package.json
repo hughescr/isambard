@@ -6,7 +6,7 @@
   "main": "src/index.ts",
   "scripts": {
     "dev:docker": "docker compose -f docker/docker-compose.yml up --build",
-    "dev:sst": "bunx sst shell -- bun --watch src/index.ts",
+    "dev:sst": "bunx sst shell -- bun --hot src/index.ts",
     "lint": "eslint --cache --format unix .",
     "lint:fix": "eslint --cache --fix --format overview .",
     "lint:overview": "eslint --cache --format overview .",
