@@ -1029,7 +1029,9 @@ describe.concurrent('createDiscordMCPServer', () => {
                 question:  'What is your favorite color?',
             });
 
-            expect(mockChannel.send).toHaveBeenCalled();
+            expect(mockChannel.send).toHaveBeenCalledWith(expect.objectContaining({
+                content: 'What is your favorite color?'
+            }));
         });
 
         test('should create buttons when options provided', async () => {
@@ -1144,7 +1146,9 @@ describe.concurrent('createDiscordMCPServer', () => {
             });
 
             expect(mockChannel.threads.create).toHaveBeenCalledWith({ name: 'Q&A Thread' });
-            expect(mockThread.send).toHaveBeenCalled();
+            expect(mockThread.send).toHaveBeenCalledWith(expect.objectContaining({
+                content: 'Thread question?'
+            }));
         });
 
         test('should register question in registry', async () => {

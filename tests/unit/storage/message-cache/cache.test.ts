@@ -13,13 +13,13 @@ import type { MessageId, CachedSegmentItem, CachedMessage } from '@/storage/mess
 import type { ChannelId } from '@/integrations/discord/types';
 
 describe.concurrent('MessageCache', () => {
-    const ddbMock = mockClient(DynamoDBDocumentClient);
+    let ddbMock: ReturnType<typeof mockClient>;
     let cache: MessageCache;
 
     const channelId = '123456789012345678' as ChannelId;
 
     beforeEach(() => {
-        ddbMock.reset();
+        ddbMock = mockClient(DynamoDBDocumentClient);
         cache = new MessageCache(
             ddbMock as unknown as DynamoDBDocumentClient,
             'TestTable'
@@ -27,7 +27,7 @@ describe.concurrent('MessageCache', () => {
     });
 
     afterEach(() => {
-        ddbMock.reset();
+        ddbMock.restore();
     });
 
     describe('getMessagesInRange', () => {

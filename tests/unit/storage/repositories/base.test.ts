@@ -32,11 +32,11 @@ class TestRepository extends BaseRepository<{ id: string, name: string }> {
 }
 
 describe.concurrent('BaseRepository', () => {
-    const ddbMock = mockClient(DynamoDBDocumentClient);
+    let ddbMock: ReturnType<typeof mockClient>;
     let repository: TestRepository;
 
     beforeEach(() => {
-        ddbMock.reset();
+        ddbMock = mockClient(DynamoDBDocumentClient);
         repository = new TestRepository(
             ddbMock as unknown as DynamoDBDocumentClient,
             'TestTable'
@@ -44,12 +44,16 @@ describe.concurrent('BaseRepository', () => {
     });
 
     afterEach(() => {
-        ddbMock.reset();
+        ddbMock.restore();
     });
 
     describe('constructor', () => {
         test('should store docClient and tableName', () => {
             expect(repository).toBeDefined();
+            expect('testPut' in repository).toBe(true);
+            expect('testGet' in repository).toBe(true);
+            expect('testDelete' in repository).toBe(true);
+            expect('testQuery' in repository).toBe(true);
         });
     });
 

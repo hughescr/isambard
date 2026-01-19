@@ -159,6 +159,9 @@ describe('QuestionRegistry', () => {
             expect(found).toBeTruthy();
             expect(found?.questionId).toBe('q1');
             expect(found?.questionText).toBe('What is your name?');
+
+            // Clean up
+            registry.cancel('q1');
         });
 
         it('should return null for unknown channel', () => {
@@ -247,6 +250,10 @@ describe('QuestionRegistry', () => {
             // Thread should only see thread question
             const foundThread = registry.findPendingQuestion('ch1' as ChannelId, 'thread1');
             expect(foundThread?.questionId).toBe('q2');
+
+            // Clean up
+            registry.cancel('q1');
+            registry.cancel('q2');
         });
     });
 
@@ -588,6 +595,9 @@ describe('QuestionRegistry', () => {
             expect(found?.questionId).toBe('q1');
             expect(found?.questionText).toBe('What is your name?');
             expect(found?.state).toBe('waiting');
+
+            // Clean up
+            registry.cancel('q1');
         });
 
         it('should return null for unknown ID', () => {
@@ -614,6 +624,9 @@ describe('QuestionRegistry', () => {
             const found = registry.getQuestion('q1');
             expect(found).toBeTruthy();
             expect(found?.questionId).toBe('q1');
+
+            // Clean up
+            registry.cancel('q1');
         });
 
         it('should return null for answered question', async () => {

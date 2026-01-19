@@ -314,7 +314,7 @@ describe('cleanupSession', () => {
         await cleanupSession(sessionId);
 
         // Should still complete successfully
-        expect(mockAccess).toHaveBeenCalled();
+        expect(mockAccess).toHaveBeenCalledWith(expect.stringContaining('.claude/projects/'));
         expect(mockUnlink).toHaveBeenCalled();
     });
 
@@ -436,7 +436,7 @@ describe('cleanupSession', () => {
         // Whitespace is truthy in JavaScript but should still attempt cleanup
         // The function validates with !sessionId which will be false for whitespace
         // So it should proceed with cleanup
-        expect(mockAccess).toHaveBeenCalled();
+        expect(mockAccess).toHaveBeenCalledWith(expect.stringContaining('.claude/projects/'));
     });
 
     test('should handle missing projects directory during sub-agent cleanup gracefully', async () => {

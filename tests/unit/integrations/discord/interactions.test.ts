@@ -145,6 +145,9 @@ describe('createInteractionHandler', () => {
         const interaction = createMockButtonInteraction('question:q-expired:opt1', 'user1', 'msg1');
         await handler.handleButtonInteraction(interaction);
 
+        // Clean up
+        registry.cancel('q-expired');
+
         expect(interaction.reply).toHaveBeenCalledWith({
             content:   'This question has expired or is no longer valid.',
             ephemeral: true,

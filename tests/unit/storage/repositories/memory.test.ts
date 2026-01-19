@@ -11,11 +11,11 @@ import { ValidationError } from '@/storage/errors';
 import type { MemoryItem } from '@/storage/models/memory';
 
 describe.concurrent('MemoryRepository', () => {
-    const ddbMock = mockClient(DynamoDBDocumentClient);
+    let ddbMock: ReturnType<typeof mockClient>;
     let repository: MemoryRepository;
 
     beforeEach(() => {
-        ddbMock.reset();
+        ddbMock = mockClient(DynamoDBDocumentClient);
         repository = new MemoryRepository(
             ddbMock as unknown as DynamoDBDocumentClient,
             'TestTable'
@@ -23,7 +23,7 @@ describe.concurrent('MemoryRepository', () => {
     });
 
     afterEach(() => {
-        ddbMock.reset();
+        ddbMock.restore();
     });
 
     describe('create', () => {
