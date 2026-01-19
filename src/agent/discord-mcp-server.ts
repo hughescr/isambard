@@ -709,6 +709,82 @@ export function createDiscordMCPServer(
                     }
                 }
             ),
+
+            tool(
+                'addReaction',
+                'Add one or more emoji reactions to a Discord message',
+                {
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    channelId: z.string().describe('Discord channel ID'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    messageId: z.string().describe('Discord message ID to react to'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    emoji:     z.union([z.string(), z.array(z.string())]).describe('Emoji or array of emojis to react with (e.g., "👍" or ["👍", "❤️"])'),
+                },
+                async (args): Promise<CallToolResult> => {
+                    try {
+                        // Fetch and validate channel
+                        const channelResult = await fetchAndValidateChannel(client, args.channelId);
+                        if('error' in channelResult) {
+                            return channelResult.error;
+                        }
+
+                        // Fetch the message
+                        const message = await withDiscordRetry(
+                            () => channelResult.channel.messages.fetch(args.messageId),
+                            // Stryker disable next-line StringLiteral: Operation name for logging
+                            'fetchMessage'
+                        );
+
+                        if(!message) {
+                            return {
+                                content: [{ type: 'text' as const, text: 'Error: Message not found' }],
+                                isError: true,
+                            };
+                        }
+
+                        // Normalize emoji to array
+                        const emojis = _.isArray(args.emoji) ? args.emoji : [args.emoji];
+
+                        // Add reactions sequentially
+                        const addedEmojis: string[] = [];
+                        const failedEmojis: { emoji: string, error: string }[] = [];
+
+                        for(const emoji of emojis) {
+                            try {
+                                await withDiscordRetry(
+                                    () => message.react(emoji),
+                                    // Stryker disable next-line StringLiteral: Operation name for logging
+                                    'addReaction'
+                                );
+                                addedEmojis.push(emoji);
+                            } catch (error) {
+                                const errorMessage = _.isError(error) ? error.message : String(error);
+                                failedEmojis.push({ emoji, error: errorMessage });
+                            }
+                        }
+
+                        const result = {
+                            success:      failedEmojis.length === 0,
+                            addedEmojis,
+                            failedEmojis: failedEmojis.length > 0 ? failedEmojis : undefined,
+                            channelId:    args.channelId,
+                            messageId:    args.messageId,
+                        };
+
+                        return {
+                            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+                            ...(failedEmojis.length > 0 && { isError: true }),
+                        };
+                    } catch (error) {
+                        const message = _.isError(error) ? error.message : String(error);
+                        return {
+                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
+                            isError: true,
+                        };
+                    }
+                }
+            ),
         ],
     });
 }
