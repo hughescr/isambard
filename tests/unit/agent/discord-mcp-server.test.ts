@@ -109,6 +109,7 @@ describe.concurrent('createDiscordMCPServer', () => {
             ['getRecentMessages', 'Get the most recent messages from a Discord channel'],
             ['getMessageById', 'Fetch a specific Discord message by its ID, or multiple messages by an array of IDs'],
             ['sendDiscordMessage', 'Send a message to a Discord channel. Use this to communicate with users during processing.'],
+            ['setReaction', 'Add emoji reaction(s) to a Discord message. Can set a single emoji or multiple emojis at once.'],
             ['askUserQuestion', 'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit).'],
         ])('should have %s tool with description', (toolName, expectedDescription) => {
             const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
@@ -983,6 +984,239 @@ describe.concurrent('createDiscordMCPServer', () => {
         });
     });
 
+    describe('setReaction tool', () => {
+        test('should have setReaction tool with correct description', () => {
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing registered tools
+            const tool = (server.instance as any)._registeredTools.setReaction;
+
+            expect(tool.description).toBe('Add emoji reaction(s) to a Discord message. Can set a single emoji or multiple emojis at once.');
+        });
+
+        test('should have correct input schema fields', () => {
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing registered tools
+            const tool = (server.instance as any)._registeredTools.setReaction;
+
+            expect(tool.inputSchema).toBeDefined();
+
+            const shape = tool.inputSchema.shape;
+            expect(shape.channelId).toBeDefined();
+            expect(shape.messageId).toBeDefined();
+            expect(shape.emoji).toBeDefined();
+        });
+
+        test('should successfully add a single emoji reaction', async () => {
+            const mockMessage = {
+                id:    'message-id-123',
+                react: mock(async (_emoji: string) => undefined),
+            };
+            const mockChannel = {
+                id:       '123456789012345678',
+                messages: {
+                    fetch: mock(async () => mockMessage),
+                },
+                isTextBased: _constant(true),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const handler = getToolHandler(server, 'setReaction');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: 'message-id-123',
+                emoji:     '👍',
+            });
+
+            expect(result.isError).toBeUndefined();
+
+            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, results: { emoji: string, success: boolean }[], messageId: string, channelId: string };
+            expect(parsed.success).toBe(true);
+            expect(parsed.results).toHaveLength(1);
+            expect(parsed.results[0].emoji).toBe('👍');
+            expect(parsed.results[0].success).toBe(true);
+            expect(parsed.messageId).toBe('message-id-123');
+            expect(parsed.channelId).toBe('123456789012345678');
+            expect(mockMessage.react).toHaveBeenCalledWith('👍');
+        });
+
+        test('should successfully add multiple emoji reactions', async () => {
+            const mockMessage = {
+                id:    'message-id-456',
+                react: mock(async (_emoji: string) => undefined),
+            };
+            const mockChannel = {
+                id:       '123456789012345678',
+                messages: {
+                    fetch: mock(async () => mockMessage),
+                },
+                isTextBased: _constant(true),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const handler = getToolHandler(server, 'setReaction');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: 'message-id-456',
+                emoji:     ['👍', '❤️', '🎉'],
+            });
+
+            expect(result.isError).toBeUndefined();
+
+            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, results: { emoji: string, success: boolean }[], messageId: string, channelId: string };
+            expect(parsed.success).toBe(true);
+            expect(parsed.results).toHaveLength(3);
+            expect(parsed.results[0].emoji).toBe('👍');
+            expect(parsed.results[0].success).toBe(true);
+            expect(parsed.results[1].emoji).toBe('❤️');
+            expect(parsed.results[1].success).toBe(true);
+            expect(parsed.results[2].emoji).toBe('🎉');
+            expect(parsed.results[2].success).toBe(true);
+            expect(mockMessage.react).toHaveBeenCalledTimes(3);
+        });
+
+        test('should handle partial failures when adding multiple reactions', async () => {
+            const mockMessage = {
+                id:    'message-id-789',
+                react: mock(async (emoji: string) => {
+                    if(emoji === '❌') {
+                        throw new Error('Invalid emoji');
+                    }
+                }),
+            };
+            const mockChannel = {
+                id:       '123456789012345678',
+                messages: {
+                    fetch: mock(async () => mockMessage),
+                },
+                isTextBased: _constant(true),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const handler = getToolHandler(server, 'setReaction');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: 'message-id-789',
+                emoji:     ['👍', '❌', '🎉'],
+            });
+
+            expect(result.isError).toBe(true);
+
+            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, results: { emoji: string, success: boolean, error?: string }[], messageId: string, channelId: string };
+            expect(parsed.success).toBe(false);
+            expect(parsed.results).toHaveLength(3);
+            expect(parsed.results[0].success).toBe(true);
+            expect(parsed.results[1].success).toBe(false);
+            expect(parsed.results[1].error).toBe('Invalid emoji');
+            expect(parsed.results[2].success).toBe(true);
+        });
+
+        test('should return error when channel not found', async () => {
+            // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+            mockClient.channels.fetch = mock(async () => null);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const handler = getToolHandler(server, 'setReaction');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: 'message-id-123',
+                emoji:     '👍',
+            });
+
+            expect(result.isError).toBe(true);
+
+            expect(result.content[0].text).toContain('Channel not found');
+        });
+
+        test('should return error when message not found', async () => {
+            const mockChannel = {
+                id:       '123456789012345678',
+                messages: {
+                    // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                    fetch: mock(async () => null),
+                },
+                isTextBased: _constant(true),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const handler = getToolHandler(server, 'setReaction');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: 'nonexistent-message',
+                emoji:     '👍',
+            });
+
+            expect(result.isError).toBe(true);
+
+            expect(result.content[0].text).toBe('Error: Message not found');
+        });
+
+        test('should accept union schema for emoji parameter (string or array)', () => {
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing registered tools
+            const setReactionTool = (server.instance as any)._registeredTools.setReaction;
+
+            const schema = setReactionTool.inputSchema.shape.emoji;
+
+            // Should accept string
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Accessing schema
+            expect(schema.safeParse('👍').success).toBe(true);
+            // Should accept array of strings
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Accessing schema
+            expect(schema.safeParse(['👍', '❤️', '🎉']).success).toBe(true);
+            // Should accept empty array
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Accessing schema
+            expect(schema.safeParse([]).success).toBe(true);
+        });
+
+        test('should return error when Discord API throws an error', async () => {
+            const mockMessage = {
+                id:    'message-id-error',
+                react: mock(async () => {
+                    throw new Error('Discord rate limit exceeded');
+                }),
+            };
+            const mockChannel = {
+                id:       '123456789012345678',
+                messages: {
+                    fetch: mock(async () => mockMessage),
+                },
+                isTextBased: _constant(true),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const handler = getToolHandler(server, 'setReaction');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: 'message-id-error',
+                emoji:     '👍',
+            });
+
+            expect(result.isError).toBe(true);
+
+            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, results: { emoji: string, success: boolean, error?: string }[] };
+            expect(parsed.success).toBe(false);
+            expect(parsed.results[0].success).toBe(false);
+            expect(parsed.results[0].error).toBe('Discord rate limit exceeded');
+        });
+    });
+
     describe('askUserQuestion tool', () => {
         test('should have askUserQuestion tool with correct description', () => {
             const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
@@ -1592,6 +1826,210 @@ describe.concurrent('createDiscordMCPServer', () => {
             expect(mockQuestionRegistry.register).toHaveBeenCalled();
             registerCall = mockQuestionRegistry.register.mock.calls[0][0];
             expect(registerCall.triggerUserId).toBe('bot-user-id-12345');
+        });
+    });
+
+    describe('setReaction tool', () => {
+        test('should add single emoji reaction', async () => {
+            const mockMessage = {
+                id:    'message-123',
+                react: mock(async (_emoji: string) => undefined),
+            };
+            const mockChannel = {
+                id:       '123456789012345678',
+                messages: {
+                    fetch: mock(async () => mockMessage),
+                },
+                isTextBased: _constant(true),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const handler = getToolHandler(server, 'setReaction');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: 'message-123',
+                emoji:     '👍',
+            });
+
+            expect(result.isError).toBeUndefined();
+
+            const parsed = JSON.parse(result.content[0].text as string);
+            expect(parsed.success).toBe(true);
+            expect(parsed.results).toHaveLength(1);
+            expect(parsed.results[0].emoji).toBe('👍');
+            expect(mockMessage.react).toHaveBeenCalledWith('👍');
+        });
+
+        test('should add multiple emoji reactions', async () => {
+            const mockMessage = {
+                id:    'message-123',
+                react: mock(async (_emoji: string) => undefined),
+            };
+            const mockChannel = {
+                id:       '123456789012345678',
+                messages: {
+                    fetch: mock(async () => mockMessage),
+                },
+                isTextBased: _constant(true),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const handler = getToolHandler(server, 'setReaction');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: 'message-123',
+                emoji:     ['👍', '❤️', '🎉'],
+            });
+
+            expect(result.isError).toBeUndefined();
+
+            const parsed = JSON.parse(result.content[0].text as string);
+            expect(parsed.success).toBe(true);
+            expect(parsed.results).toHaveLength(3);
+            expect(mockMessage.react).toHaveBeenCalledTimes(3);
+        });
+
+        test('should handle partial failures', async () => {
+            const mockMessage = {
+                id:    'message-123',
+                react: mock(async (emoji: string) => {
+                    if(emoji === '❤️') {
+                        throw new Error('Invalid emoji');
+                    }
+                }),
+            };
+            const mockChannel = {
+                id:       '123456789012345678',
+                messages: {
+                    fetch: mock(async () => mockMessage),
+                },
+                isTextBased: _constant(true),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const handler = getToolHandler(server, 'setReaction');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: 'message-123',
+                emoji:     ['👍', '❤️', '🎉'],
+            });
+
+            expect(result.isError).toBe(true);
+
+            const parsed = JSON.parse(result.content[0].text as string);
+            expect(parsed.success).toBe(false);
+            expect(parsed.results[1].success).toBe(false);
+        });
+    });
+
+    describe('addReaction tool', () => {
+        test('should add single emoji reaction', async () => {
+            const mockMessage = {
+                id:    'message-123',
+                react: mock(async (_emoji: string) => undefined),
+            };
+            const mockChannel = {
+                id:       '123456789012345678',
+                messages: {
+                    fetch: mock(async () => mockMessage),
+                },
+                isTextBased: _constant(true),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const handler = getToolHandler(server, 'addReaction');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: 'message-123',
+                emoji:     '👍',
+            });
+
+            expect(result.isError).toBeUndefined();
+
+            const parsed = JSON.parse(result.content[0].text as string);
+            expect(parsed.success).toBe(true);
+            expect(parsed.addedEmojis).toEqual(['👍']);
+            expect(mockMessage.react).toHaveBeenCalledWith('👍');
+        });
+
+        test('should add multiple emoji reactions', async () => {
+            const mockMessage = {
+                id:    'message-123',
+                react: mock(async (_emoji: string) => undefined),
+            };
+            const mockChannel = {
+                id:       '123456789012345678',
+                messages: {
+                    fetch: mock(async () => mockMessage),
+                },
+                isTextBased: _constant(true),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const handler = getToolHandler(server, 'addReaction');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: 'message-123',
+                emoji:     ['👍', '❤️', '🎉'],
+            });
+
+            expect(result.isError).toBeUndefined();
+
+            const parsed = JSON.parse(result.content[0].text as string);
+            expect(parsed.success).toBe(true);
+            expect(parsed.addedEmojis).toEqual(['👍', '❤️', '🎉']);
+            expect(mockMessage.react).toHaveBeenCalledTimes(3);
+        });
+
+        test('should handle partial failures', async () => {
+            const mockMessage = {
+                id:    'message-123',
+                react: mock(async (emoji: string) => {
+                    if(emoji === '❤️') {
+                        throw new Error('Invalid emoji');
+                    }
+                }),
+            };
+            const mockChannel = {
+                id:       '123456789012345678',
+                messages: {
+                    fetch: mock(async () => mockMessage),
+                },
+                isTextBased: _constant(true),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const handler = getToolHandler(server, 'addReaction');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: 'message-123',
+                emoji:     ['👍', '❤️', '🎉'],
+            });
+
+            expect(result.isError).toBe(true);
+
+            const parsed = JSON.parse(result.content[0].text as string);
+            expect(parsed.success).toBe(false);
+            expect(parsed.addedEmojis).toEqual(['👍', '🎉']);
+            expect(parsed.failedEmojis[0].emoji).toBe('❤️');
         });
     });
 });

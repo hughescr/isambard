@@ -611,6 +611,80 @@ export function createDiscordMCPServer(
             ),
 
             tool(
+                'setReaction',
+                'Add emoji reaction(s) to a Discord message. Can set a single emoji or multiple emojis at once.',
+                {
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    channelId: z.string().describe('Channel ID where the message is located'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    messageId: z.string().describe('Message ID to react to'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    emoji:     z.union([z.string(), z.array(z.string())]).describe('Single emoji or array of emojis to add as reactions (e.g., "👍", ["👍", "❤️", "🎉"])'),
+                },
+                async (args): Promise<CallToolResult> => {
+                    try {
+                        // Fetch and validate channel
+                        const channelResult = await fetchAndValidateChannel(client, args.channelId);
+                        if('error' in channelResult) {
+                            return channelResult.error;
+                        }
+
+                        // Fetch the message
+                        const message = await withDiscordRetry(
+                            () => channelResult.channel.messages.fetch(args.messageId),
+                            // Stryker disable next-line StringLiteral: Operation name for logging
+                            'fetchMessage'
+                        );
+
+                        if(!message) {
+                            return {
+                                content: [{ type: 'text' as const, text: 'Error: Message not found' }],
+                                isError: true,
+                            };
+                        }
+
+                        // Normalize emoji to array
+                        const emojis = _.isArray(args.emoji) ? args.emoji : [args.emoji];
+
+                        // Add each reaction
+                        const results = [];
+                        for(const emoji of emojis) {
+                            try {
+                                await withDiscordRetry(
+                                    () => message.react(emoji),
+                                    // Stryker disable next-line StringLiteral: Operation name for logging
+                                    'addReaction'
+                                );
+                                results.push({ emoji, success: true });
+                            } catch (error) {
+                                const errorMessage = _.isError(error) ? error.message : String(error);
+                                results.push({ emoji, success: false, error: errorMessage });
+                            }
+                        }
+
+                        // Check if all succeeded
+                        const allSucceeded = _.every(results, 'success');
+
+                        return {
+                            content: [{ type: 'text' as const, text: JSON.stringify({
+                                success:   allSucceeded,
+                                results,
+                                messageId: args.messageId,
+                                channelId: args.channelId,
+                            }, null, 2) }],
+                            ...(!allSucceeded && { isError: true }),
+                        };
+                    } catch (error) {
+                        const message = _.isError(error) ? error.message : String(error);
+                        return {
+                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
+                            isError: true,
+                        };
+                    }
+                }
+            ),
+
+            tool(
                 'askUserQuestion',
                 'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit).',
                 {
@@ -706,6 +780,82 @@ export function createDiscordMCPServer(
                             isError: true,
                         };
                         // Stryker restore all
+                    }
+                }
+            ),
+
+            tool(
+                'addReaction',
+                'Add one or more emoji reactions to a Discord message',
+                {
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    channelId: z.string().describe('Discord channel ID'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    messageId: z.string().describe('Discord message ID to react to'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    emoji:     z.union([z.string(), z.array(z.string())]).describe('Emoji or array of emojis to react with (e.g., "👍" or ["👍", "❤️"])'),
+                },
+                async (args): Promise<CallToolResult> => {
+                    try {
+                        // Fetch and validate channel
+                        const channelResult = await fetchAndValidateChannel(client, args.channelId);
+                        if('error' in channelResult) {
+                            return channelResult.error;
+                        }
+
+                        // Fetch the message
+                        const message = await withDiscordRetry(
+                            () => channelResult.channel.messages.fetch(args.messageId),
+                            // Stryker disable next-line StringLiteral: Operation name for logging
+                            'fetchMessage'
+                        );
+
+                        if(!message) {
+                            return {
+                                content: [{ type: 'text' as const, text: 'Error: Message not found' }],
+                                isError: true,
+                            };
+                        }
+
+                        // Normalize emoji to array
+                        const emojis = _.isArray(args.emoji) ? args.emoji : [args.emoji];
+
+                        // Add reactions sequentially
+                        const addedEmojis: string[] = [];
+                        const failedEmojis: { emoji: string, error: string }[] = [];
+
+                        for(const emoji of emojis) {
+                            try {
+                                await withDiscordRetry(
+                                    () => message.react(emoji),
+                                    // Stryker disable next-line StringLiteral: Operation name for logging
+                                    'addReaction'
+                                );
+                                addedEmojis.push(emoji);
+                            } catch (error) {
+                                const errorMessage = _.isError(error) ? error.message : String(error);
+                                failedEmojis.push({ emoji, error: errorMessage });
+                            }
+                        }
+
+                        const result = {
+                            success:      failedEmojis.length === 0,
+                            addedEmojis,
+                            failedEmojis: failedEmojis.length > 0 ? failedEmojis : undefined,
+                            channelId:    args.channelId,
+                            messageId:    args.messageId,
+                        };
+
+                        return {
+                            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+                            ...(failedEmojis.length > 0 && { isError: true }),
+                        };
+                    } catch (error) {
+                        const message = _.isError(error) ? error.message : String(error);
+                        return {
+                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
+                            isError: true,
+                        };
                     }
                 }
             ),
