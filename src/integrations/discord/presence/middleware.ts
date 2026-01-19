@@ -131,13 +131,11 @@ export function createStatusMiddleware(
             }
 
             // Process message with stream callback
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call -- Agent chat type allows stream callback
-            const response = await (agent.chat as any)(context, onStreamEvent);
+            const response = await agent.chat(context, onStreamEvent);
 
             // Transition to idle after completion
             complete();
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- Response type matches agent return type
             return response;
         } catch (error) {
             // Handle errors gracefully

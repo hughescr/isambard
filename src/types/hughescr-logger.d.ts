@@ -5,16 +5,14 @@
 // - Object-only: logger.info({ msg: 'message' })
 
 declare module '@hughescr/logger' {
+    /* eslint-disable @typescript-eslint/no-explicit-any -- Logger accepts flexible arguments */
     interface Logger {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger accepts flexible arguments
         info(...args: any[]): void
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger accepts flexible arguments
         warn(...args: any[]): void
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger accepts flexible arguments
         error(...args: any[]): void
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger accepts flexible arguments
         debug(...args: any[]): void
     }
+    /* eslint-enable @typescript-eslint/no-explicit-any -- Re-enable no-explicit-any */
 
     export const logger: Logger;
     export const noprefix: string;

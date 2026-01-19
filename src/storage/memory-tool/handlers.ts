@@ -318,9 +318,9 @@ export async function search(
         items = result.items;
 
         // Apply AND logic for multiple tags
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: Testing params.tags.length > 1 vs >= 1 requires implementation-specific behavior
+        // Stryker disable next-line ConditionalExpression,EqualityOperator: Equivalent mutant - changing > 1 to >= 1 makes remainingTags=[], and _every([]) is always true (no-op filter)
         if(params.tags.length > 1) {
-            // Stryker disable next-line MethodExpression: params.tags.slice(1) vs params.tags produces functionally equivalent behavior for length > 1
+            // Stryker disable next-line MethodExpression: Equivalent mutant - all items already have params.tags[0] from searchByTag, so including it in filter is redundant
             const remainingTags = params.tags.slice(1);
             items = _filter(items, item =>
                 _every(remainingTags, tag => item.tags && _includes(item.tags, tag))
