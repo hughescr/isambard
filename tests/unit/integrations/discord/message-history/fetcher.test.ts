@@ -12,8 +12,8 @@ import { createChannelId, createGuildId } from '@/integrations/discord/types';
 /**
  * Creates an attachments map from an array of attachment objects.
  */
-function buildAttachmentsMap(attachments: { url: string, name: string, contentType?: string | null }[]): Map<string, { url: string, name: string, contentType: string | null }> {
-    const attachmentMap = new Map<string, { url: string, name: string, contentType: string | null }>();
+function buildAttachmentsMap(attachments: { url: string, name: string | null, contentType?: string | null }[]): Map<string, { url: string, name: string | null, contentType: string | null }> {
+    const attachmentMap = new Map<string, { url: string, name: string | null, contentType: string | null }>();
     for(const [idx, att] of attachments.entries()) {
         attachmentMap.set(idx.toString(), {
             url:         att.url,
@@ -50,7 +50,7 @@ function createMockMessage(overrides: {
     authorUsername?:    string
     authorDisplayName?: string
     createdAt?:         Date
-    attachments?:       { url: string, name: string, contentType?: string | null }[]
+    attachments?:       { url: string, name: string | null, contentType?: string | null }[]
     embeds?:            { title?: string | null, description?: string | null, url?: string | null }[]
     reactions?:         { emoji: string, count: number }[]
     replyToId?:         string | null
@@ -90,7 +90,7 @@ function createMockMessage(overrides: {
         createdAt,
         attachments: {
             values: () => buildAttachmentsMap(attachments).values(),
-        } as unknown as Collection<string, { url: string, name: string, contentType: string | null }>,
+        } as unknown as Collection<string, { url: string, name: string | null, contentType: string | null }>,
         embeds:    embedsArray,
         reactions: {
             cache: {
@@ -276,6 +276,29 @@ describe.concurrent('createMessageFetcher', () => {
                 expect('title' in result.messages[0].embeds[0]).toBe(false);
                 expect('url' in result.messages[0].embeds[0]).toBe(false);
                 expect(_.has(result.messages[0].embeds[0], 'title')).toBe(false);
+            });
+
+            test('should use "unnamed" as filename when attachment.name is null', async () => {
+                // This test specifically targets the mutant that changes
+                // `attachment.name ?? 'unnamed'` to `attachment.name ?? ''` at line 91.
+                const message = createMockMessage({
+                    id:          '100000000000000000',
+                    attachments: [
+                        { url: 'https://cdn.discord.com/file.bin', name: null, contentType: 'application/octet-stream' },
+                    ],
+                });
+
+                const channel = createMockChannel('123456789012345678', [message]);
+                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+                const client = createMockClient(channels);
+
+                const fetcher = createMessageFetcher(client);
+                const result = await fetcher.fetchMessages({ channelId: '123456789012345678' });
+
+                expect(result.messages[0].attachments).toHaveLength(1);
+                expect(result.messages[0].attachments[0].filename).toBe('unnamed');
+                expect(result.messages[0].attachments[0].url).toBe('https://cdn.discord.com/file.bin');
+                expect(result.messages[0].attachments[0].contentType).toBe('application/octet-stream');
             });
         });
 

@@ -551,6 +551,28 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 expect(result).toContain('Current state');
             });
 
+            test('should show "[no content]" when item has null content in recall', async () => {
+                // This test specifically targets the mutant that changes
+                // `item.content ?? '[no content]'` at line 423.
+                const backend = createMockBackend();
+                backend.getAutoLoadItems = mock(async () => [
+                    {
+                        path:        '/identity/empty.md' as MemoryPath,
+                        content:     undefined as unknown as string,
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                ]);
+
+                const result = await recallHandler(backend, {});
+
+                expect(result).toContain('/identity/empty.md');
+                expect(result).toContain('[no content]');
+            });
+
             test('should filter layers based on include_layers parameter', async () => {
                 const backend = createMockBackend();
                 backend.getAutoLoadItems = mock(async () => [
@@ -860,6 +882,31 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 const result = await listByLayerHandler(backend, { layer: 'identity' });
 
                 expect(result).toContain('No items found');
+            });
+
+            test('should show "[no content]" when include_content is true and item has null content', async () => {
+                // This test specifically targets the mutant that changes
+                // `item.content ? formatLineNumbers(item.content) : '[no content]'` at line 453.
+                const backend = createMockBackend();
+                backend.listByLayer = mock(async () => ({
+                    items: [
+                        {
+                            path:        '/identity/empty.md' as MemoryPath,
+                            content:     undefined as unknown as string,
+                            contentType: 'text/markdown' as ContentType,
+                            metadata:    {},
+                            version:     1,
+                            createdAt:   '2025-01-01T00:00:00.000Z',
+                            updatedAt:   '2025-01-01T00:00:00.000Z',
+                        },
+                    ],
+                    nextCursor: undefined,
+                }));
+
+                const result = await listByLayerHandler(backend, { layer: 'identity', include_content: true });
+
+                expect(result).toContain('/identity/empty.md');
+                expect(result).toContain('[no content]');
             });
 
             test('should join items with double newline when include_content is false', async () => {
