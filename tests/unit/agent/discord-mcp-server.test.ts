@@ -1538,17 +1538,7 @@ describe.concurrent('createDiscordMCPServer', () => {
             expect(registerCall.triggerUserId).toBe('system');
         });
 
-        test('clearConversationContext should reset context', () => {
-            // Set context
-            setConversationContext({
-                currentUserId:    'user-123' as UserId,
-                currentChannelId: '456' as ChannelId,
-            });
-
-            // Clear context
-            clearConversationContext();
-
-            // Verify context is cleared by checking triggerUserId falls back to bot ID
+        test('clearConversationContext should reset context', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
                 isTextBased: _constant(true),
@@ -1562,13 +1552,42 @@ describe.concurrent('createDiscordMCPServer', () => {
             const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
             const handler = getToolHandler(server, 'askUserQuestion');
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            void handler({
-                channelId: '123456789012345678',
-                question:  'Test question?',
+            // Set context
+            setConversationContext({
+                currentUserId:    'user-123' as UserId,
+                currentChannelId: '456' as ChannelId,
             });
 
-            // Note: We can't await here in describe block, but the test validates the pattern
+            // Call handler - should use the set context
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({
+                channelId: '123456789012345678',
+                question:  'Test question with context?',
+            });
+
+            // Verify context was used
+            expect(mockQuestionRegistry.register).toHaveBeenCalled();
+            let registerCall = mockQuestionRegistry.register.mock.calls[0][0];
+            expect(registerCall.triggerUserId).toBe('user-123');
+
+            // Reset mock for next call
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Mock method
+            mockQuestionRegistry.register.mockClear();
+
+            // Clear context
+            clearConversationContext();
+
+            // Call handler again - should fallback to bot ID
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({
+                channelId: '123456789012345678',
+                question:  'Test question after clear?',
+            });
+
+            // Verify context was cleared (falls back to bot ID)
+            expect(mockQuestionRegistry.register).toHaveBeenCalled();
+            registerCall = mockQuestionRegistry.register.mock.calls[0][0];
+            expect(registerCall.triggerUserId).toBe('bot-user-id-12345');
         });
     });
 });
