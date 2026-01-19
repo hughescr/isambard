@@ -70,13 +70,33 @@ const CONTENT_PREVIEW_MAX_LENGTH = 100;
 /**
  * Formats a memory item as a preview string with path, age, and truncated content.
  * Format: "- path (age): content_preview"
+ *
+ * Handles GSI2 projection cases where content may be undefined (only contentPreview available).
  */
-function formatMemoryPreview(path: MemoryPath, content: string, updatedAt: string, now: Date): string {
+function formatMemoryPreview(
+    path: MemoryPath,
+    content: string | undefined,
+    contentPreview: string | undefined,
+    updatedAt: string,
+    now: Date
+): string {
     const age = formatShortRelativeTime(new Date(updatedAt), now);
-    const preview = content.length > CONTENT_PREVIEW_MAX_LENGTH
-        ? content.slice(0, CONTENT_PREVIEW_MAX_LENGTH) + '...'
-        : content;
-    return `- ${path} (${age}): ${preview}`;
+
+    // Full content available - show preview
+    if(content) {
+        const preview = content.length > CONTENT_PREVIEW_MAX_LENGTH
+            ? content.slice(0, CONTENT_PREVIEW_MAX_LENGTH) + '...'
+            : content;
+        return `- ${path} (${age}): ${preview}`;
+    }
+
+    // Only preview available (GSI2 projection) - show hint
+    if(contentPreview) {
+        return `- ${path} (${age}): [preview] ${contentPreview}... (memory view ${path} for full)`;
+    }
+
+    // No content at all
+    return `- ${path} (${age}): [no content]`;
 }
 
 /**
@@ -121,7 +141,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
 
             // Format each item with path, age, and content preview
             const memories = _map(result.items, item =>
-                formatMemoryPreview(item.path, item.content, item.updatedAt, now)
+                formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, now)
             );
 
             logger.debug({ userId, memoryCount: memories.length }, 'User context loaded');
@@ -236,7 +256,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
 
             // Format each item with path, age, and content preview
             const events = _map(result, item =>
-                formatMemoryPreview(item.path, item.content, item.updatedAt, now)
+                formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, now)
             );
 
             // Prepend warning note if showing older events

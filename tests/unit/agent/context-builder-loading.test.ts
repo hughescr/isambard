@@ -830,6 +830,85 @@ describe('createContextBuilder loading methods', () => {
             }
         });
 
+        test('should handle GSI2 projection (content undefined, contentPreview present)', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Simulating GSI2 projection where content is undefined
+            backend.searchByTag = mock(async (): Promise<any> => ({
+                items: [
+                    {
+                        path:           createMemoryPath('/state/gsi2-item.md'),
+                        content:        undefined, // GSI2 projection does not include content
+                        contentPreview: 'This is a preview from GSI2...',
+                        contentType:    'text/markdown' as const,
+                        metadata:       {},
+                        version:        1,
+                        createdAt:      '2025-01-15T10:00:00.000Z',
+                        updatedAt:      '2025-01-15T10:00:00.000Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentContext('user123', 3, now);
+
+            expect(result).toHaveLength(1);
+            expect(result[0]).toBe('- /state/gsi2-item.md (2h ago): [preview] This is a preview from GSI2...... (memory view /state/gsi2-item.md for full)');
+        });
+
+        test('should handle both content and contentPreview undefined', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Simulating edge case where both content and preview are undefined
+            backend.searchByTag = mock(async (): Promise<any> => ({
+                items: [
+                    {
+                        path:           createMemoryPath('/state/no-content.md'),
+                        content:        undefined,
+                        contentPreview: undefined,
+                        contentType:    'text/markdown' as const,
+                        metadata:       {},
+                        version:        1,
+                        createdAt:      '2025-01-15T10:00:00.000Z',
+                        updatedAt:      '2025-01-15T10:00:00.000Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentContext('user123', 3, now);
+
+            expect(result).toHaveLength(1);
+            expect(result[0]).toBe('- /state/no-content.md (2h ago): [no content]');
+        });
+
+        test('should use full content when available (not preview)', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
+            backend.searchByTag = mock(async () => ({
+                items: [
+                    {
+                        path:           createMemoryPath('/state/full-content.md'),
+                        content:        'This is the full content',
+                        contentPreview: 'This is just a preview', // Should be ignored when content is present
+                        contentType:    'text/markdown' as const,
+                        metadata:       {},
+                        version:        1,
+                        createdAt:      '2025-01-15T10:00:00.000Z',
+                        updatedAt:      '2025-01-15T10:00:00.000Z',
+                    },
+                ],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentContext('user123', 3, now);
+
+            expect(result).toHaveLength(1);
+            expect(result[0]).toBe('- /state/full-content.md (2h ago): This is the full content');
+            expect(result[0]).not.toContain('[preview]');
+            expect(result[0]).not.toContain('This is just a preview');
+        });
+
         test('should format multiple context items with correct timestamps', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
