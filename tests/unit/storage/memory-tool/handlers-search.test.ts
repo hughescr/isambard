@@ -442,6 +442,56 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 // Should include compact timestamp with hours
                 expect(result).toContain('/state/recent.md (3h ago)');
             });
+
+            test('should use contentPreview when content is undefined (GSI2 result)', async () => {
+                const backend = createMockBackend();
+                backend.searchByTag = mock(async () => ({
+                    items: [
+                        {
+                            path:           '/state/note.md' as MemoryPath,
+                            content:        undefined as unknown as string,
+                            contentPreview: 'This is a preview from GSI2',
+                            contentType:    'text/markdown' as ContentType,
+                            metadata:       {},
+                            version:        1,
+                            createdAt:      '2025-01-01T00:00:00.000Z',
+                            updatedAt:      '2025-01-01T00:00:00.000Z',
+                            tags:           ['tag1'],
+                        },
+                    ],
+                    nextCursor: undefined,
+                }));
+
+                const result = await searchHandler(backend, { tags: ['tag1'] });
+
+                expect(result).toContain('/state/note.md');
+                expect(result).toContain('This is a preview from GSI2');
+            });
+
+            test('should show "[no content]" when both content and contentPreview are undefined', async () => {
+                const backend = createMockBackend();
+                backend.searchByTag = mock(async () => ({
+                    items: [
+                        {
+                            path:           '/state/empty.md' as MemoryPath,
+                            content:        undefined as unknown as string,
+                            contentPreview: undefined,
+                            contentType:    'text/markdown' as ContentType,
+                            metadata:       {},
+                            version:        1,
+                            createdAt:      '2025-01-01T00:00:00.000Z',
+                            updatedAt:      '2025-01-01T00:00:00.000Z',
+                            tags:           ['tag1'],
+                        },
+                    ],
+                    nextCursor: undefined,
+                }));
+
+                const result = await searchHandler(backend, { tags: ['tag1'] });
+
+                expect(result).toContain('/state/empty.md');
+                expect(result).toContain('[no content]');
+            });
         });
     });
 

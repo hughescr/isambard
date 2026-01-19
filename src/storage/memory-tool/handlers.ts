@@ -356,7 +356,12 @@ export async function search(
     // Format results with 100-char previews and compact timestamps
     // Use contentPreview with fallback for migration period
     const formatted = _map(items, (item) => {
-        const getPreviewFromContent = () => (item.content.length > 100 ? `${item.content.slice(0, 100)}...` : item.content);
+        const getPreviewFromContent = () => {
+            if(!item.content) {
+                return '[no content]';
+            }
+            return item.content.length > 100 ? `${item.content.slice(0, 100)}...` : item.content;
+        };
         const getPreviewFromField = () => (item.contentPreview && item.contentPreview.length >= 100 ? `${item.contentPreview}...` : item.contentPreview);
         const preview = item.contentPreview ? getPreviewFromField() : getPreviewFromContent();
         const timestamp = formatShortRelativeTime(new Date(item.updatedAt));
@@ -415,7 +420,7 @@ export async function recall(
         }
 
         const formatted = _map(layerItems, (item) => {
-            return `  ${item.path}\n    ${item.content}`;
+            return `  ${item.path}\n    ${item.content ?? '[no content]'}`;
         });
 
         sections.push(`${layer}:\n${formatted.join('\n')}`);
@@ -445,7 +450,7 @@ export async function list_by_layer(
         const timestamp = formatShortRelativeTime(new Date(item.updatedAt));
         const pathWithTimestamp = `${item.path} (${timestamp})`;
         if(params.include_content) {
-            const contentWithLines = formatLineNumbers(item.content);
+            const contentWithLines = item.content ? formatLineNumbers(item.content) : '[no content]';
             return `${pathWithTimestamp}\n${contentWithLines}`;
         }
         return pathWithTimestamp;

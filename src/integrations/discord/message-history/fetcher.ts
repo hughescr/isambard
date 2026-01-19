@@ -88,7 +88,7 @@ function transformMessage(message: Message): DiscordSearchResult {
     for(const attachment of message.attachments.values()) {
         const transformed: DiscordAttachment = {
             url:      attachment.url,
-            filename: attachment.name,
+            filename: attachment.name ?? 'unnamed',
         };
         // Stryker disable next-line BlockStatement: Optional contentType assignment tested via integration
         if(attachment.contentType) {
@@ -133,7 +133,7 @@ function transformMessage(message: Message): DiscordSearchResult {
         author:    {
             id:          message.author.id,
             username:    message.author.username,
-            displayName: message.author.displayName,
+            displayName: message.author.displayName ?? message.author.username,
         },
         content:   message.content,
         timestamp: message.createdAt.toISOString(),

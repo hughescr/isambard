@@ -90,7 +90,7 @@ export function createInteractionHandler(config: InteractionHandlerConfig): Inte
 
         // Determine channelId and threadId from interaction context
         const channelId = interaction.channel?.isThread()
-            ? createChannelId(interaction.channel.parentId ?? interaction.channelId)
+            ? createChannelId(interaction.channel?.parentId ?? interaction.channelId)
             : createChannelId(interaction.channelId);
         const threadId = interaction.channel?.isThread() ? interaction.channelId : undefined;
 
