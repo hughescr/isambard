@@ -26,11 +26,7 @@ bun run mutate
 ```
 Target: 100% mutation score (break threshold in stryker.conf.mjs). If mutants survive, tests are incomplete.
 
-**Claude Code Note**: When running mutation testing in Claude Code, use a clean PATH to avoid module resolution conflicts:
-```bash
-PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin bun run mutate
-```
-This prevents Claude Code's bundled paths from interfering with Stryker's `@babel/generator` module resolution.
+**Claude Code Note**: When running mutation testing, use `dangerouslyDisableSandbox: true` as Stryker requires filesystem access outside the sandbox.
 
 ### Codex Consultation
 Consult Codex for:
