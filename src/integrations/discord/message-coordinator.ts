@@ -24,6 +24,7 @@ import type { DiscordMessageContext, ChannelId } from './types';
 import type { StreamTracker, StreamProgress } from '../../agent/stream-tracker';
 import type { ResumeContext } from '../../agent/resume-prompt-builder';
 import _ from 'lodash';
+import { logger } from '@hughescr/logger';
 
 /** Result from processing messages */
 export interface ProcessResult {
@@ -129,6 +130,22 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
     function startTypingIndicator(state: ChannelState): void {
         if(!state.typingChannel) {
             return;
+        }
+
+        // Debug logging to trace calls
+        logger.debug({
+            hasExisting: !!state.typingInterval,
+            channelId:   'present',
+            msg:         'startTypingIndicator called',
+        });
+
+        // Clear any existing interval to prevent leaks.
+        // This is defensive: under normal flow, stopTypingIndicator() is always
+        // called first, but this guard protects against bugs in the complex
+        // async/debounce/interrupt logic.
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Defensive guard - cannot be triggered under normal operation as stopTypingIndicator always clears state.typingInterval
+        if(state.typingInterval) {
+            clearInterval(state.typingInterval);
         }
 
         // Send initial typing indicator

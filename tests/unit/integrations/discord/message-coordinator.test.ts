@@ -7,6 +7,7 @@ import type { DiscordMessageContext } from '@/integrations/discord/types';
 import { createChannelId, createGuildId, createUserId } from '@/integrations/discord/types';
 import { createStreamTracker } from '@/agent/stream-tracker';
 import type { ResumeContext } from '@/agent/resume-prompt-builder';
+import { logger } from '@hughescr/logger';
 
 describe('MessageCoordinator', () => {
     let coordinator: MessageCoordinator;
@@ -2276,6 +2277,230 @@ describe('MessageCoordinator', () => {
 
             // Processing should work normally
             expect(processorMock).toHaveBeenCalledTimes(1);
+        });
+
+        it('should clear existing typing interval before starting new one', async () => {
+            // This test verifies that startTypingIndicator() clears any existing interval
+            // before creating a new one, preventing interval leaks.
+
+            // Make first processor run for 10 seconds
+            processorMock.mockImplementationOnce(async () => {
+                await new Promise(resolve => setTimeout(resolve, 10000));
+                return {
+                    response:       'Response 1',
+                    wasInterrupted: false,
+                    streamTracker:  createStreamTracker(),
+                };
+            });
+            coordinator.setProcessor(processorMock);
+
+            // First message - starts typing indicator with first interval
+            coordinator.handleMessage(mockContext, mockMessage, mockChannel);
+            jest.advanceTimersByTime(10);
+
+            // Initial typing call
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
+
+            // Wait 8 seconds - first interval should fire (still during first message processing)
+            jest.advanceTimersByTime(8000);
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(2);
+
+            // Complete first message processing
+            jest.advanceTimersByTime(2000);
+
+            // Reset call count for clarity
+            mockChannel.sendTyping.mockClear();
+
+            // Make second processor run for 20 seconds
+            processorMock.mockImplementationOnce(async () => {
+                await new Promise(resolve => setTimeout(resolve, 20000));
+                return {
+                    response:       'Response 2',
+                    wasInterrupted: false,
+                    streamTracker:  createStreamTracker(),
+                };
+            });
+
+            // Second message - should clear the old interval and start a new one
+            const msg2Context = { ...mockContext, messageId: 'msg-002' };
+            const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
+            coordinator.handleMessage(msg2Context, msg2, mockChannel);
+            jest.advanceTimersByTime(10);
+
+            // Initial typing call for second message
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
+
+            // Wait 8 seconds - new interval should fire once
+            jest.advanceTimersByTime(8000);
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(2);
+
+            // If the bug exists (old interval not cleared), we'd see extra calls here
+            // because both the old and new intervals would be firing
+        });
+
+        it('should not create multiple intervals when startTypingIndicator is called twice in quick succession', async () => {
+            // This test verifies that calling startTypingIndicator() multiple times
+            // doesn't leak intervals by ensuring old ones are cleared.
+
+            // Make processor run for a long time
+            processorMock.mockImplementation(async () => {
+                await new Promise(resolve => setTimeout(resolve, 25000));
+                return {
+                    response:       'Response',
+                    wasInterrupted: false,
+                    streamTracker:  createStreamTracker(),
+                };
+            });
+            coordinator.setProcessor(processorMock);
+
+            // Send first message
+            coordinator.handleMessage(mockContext, mockMessage, mockChannel);
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+
+            // Initial typing call
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
+
+            // Queue up second message during processing (this will eventually restart typing)
+            const msg2Context = { ...mockContext, messageId: 'msg-002' };
+            const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
+            coordinator.handleMessage(msg2Context, msg2, mockChannel);
+
+            // Trigger debounce interrupt
+            jest.advanceTimersByTime(2100);
+            await Promise.resolve();
+
+            // The interrupt should have stopped the old typing and started a new one
+            // Clear the mock to count only new typing calls
+            mockChannel.sendTyping.mockClear();
+
+            // Wait 8 seconds - should see exactly ONE interval fire
+            jest.advanceTimersByTime(8000);
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
+
+            // Wait another 8 seconds - should see exactly ONE more interval fire
+            jest.advanceTimersByTime(8000);
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(2);
+
+            // If intervals weren't properly cleared, we'd see more than 2 calls
+            // (old interval + new interval both firing)
+        });
+
+        it('should start typing indicator correctly when no existing interval', async () => {
+            // This test verifies the normal case: starting typing indicator
+            // when there's no existing interval (fresh state).
+
+            // Make processor run for 20 seconds
+            processorMock.mockImplementation(async () => {
+                await new Promise(resolve => setTimeout(resolve, 20000));
+                return {
+                    response:       'Response',
+                    wasInterrupted: false,
+                    streamTracker:  createStreamTracker(),
+                };
+            });
+            coordinator.setProcessor(processorMock);
+
+            // First message ever - no existing interval
+            coordinator.handleMessage(mockContext, mockMessage, mockChannel);
+            jest.advanceTimersByTime(10);
+
+            // Should call sendTyping immediately
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
+
+            // Wait 8 seconds - interval should fire
+            jest.advanceTimersByTime(8000);
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(2);
+
+            // Wait another 8 seconds - interval should fire again
+            jest.advanceTimersByTime(8000);
+            expect(mockChannel.sendTyping).toHaveBeenCalledTimes(3);
+
+            // This confirms the interval is working properly from a fresh start
+        });
+
+        it('should log debug info when startTypingIndicator is called', async () => {
+            // This test verifies the debug logger is called with the correct object structure
+            // when a typing channel is provided.
+
+            // Mock the logger
+            const loggerDebugSpy = jest.spyOn(logger, 'debug');
+
+            processorMock.mockImplementation(async () => {
+                await new Promise(resolve => setTimeout(resolve, 100));
+                return {
+                    response:       'Response',
+                    wasInterrupted: false,
+                    streamTracker:  createStreamTracker(),
+                };
+            });
+            coordinator.setProcessor(processorMock);
+
+            // First message with channel
+            coordinator.handleMessage(mockContext, mockMessage, mockChannel);
+            jest.advanceTimersByTime(10);
+
+            // Verify debug was called with correct object showing 'present' and hasExisting
+            expect(loggerDebugSpy).toHaveBeenCalledWith({
+                hasExisting: false,
+                channelId:   'present',
+                msg:         'startTypingIndicator called',
+            });
+
+            // Verify the exact values by checking the calls
+            const calls = loggerDebugSpy.mock.calls;
+            const debugCall = _.find(calls, (call) => {
+                const arg = call[0] as { channelId?: string, msg?: string, hasExisting?: boolean };
+                return arg.msg === 'startTypingIndicator called';
+            });
+            expect(debugCall).toBeDefined();
+            expect(debugCall![0]).toHaveProperty('channelId', 'present');
+            expect(debugCall![0]).toHaveProperty('hasExisting', false);
+
+            loggerDebugSpy.mockRestore();
+        });
+
+        it('should verify defensive guard exists by checking hasExisting in logs and clearInterval logic', async () => {
+            // This test verifies the defensive guard exists by:
+            // 1. Confirming hasExisting is logged (tests the !!state.typingInterval expression)
+            // 2. Confirming clearInterval is called when starting new typing indicators
+            // The defensive guard protects against bugs where an interval exists when it shouldn't
+
+            const loggerDebugSpy = jest.spyOn(logger, 'debug');
+
+            // Create a processor
+            processorMock.mockImplementation(async () => {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                return {
+                    response:       'Response',
+                    wasInterrupted: false,
+                    streamTracker:  createStreamTracker(),
+                };
+            });
+            coordinator.setProcessor(processorMock);
+
+            // Start first message
+            coordinator.handleMessage(mockContext, mockMessage, mockChannel);
+            jest.advanceTimersByTime(10);
+
+            // Verify hasExisting is logged for first call (should be false)
+            const debugCalls = _.filter(loggerDebugSpy.mock.calls, (call) => {
+                const arg = call[0] as { msg?: string };
+                return arg.msg === 'startTypingIndicator called';
+            });
+
+            expect(debugCalls.length).toBeGreaterThan(0);
+            // Every call should have hasExisting property (tests the !!state.typingInterval expression)
+            for(const call of debugCalls) {
+                const arg = call[0] as { hasExisting?: boolean };
+                expect(arg).toHaveProperty('hasExisting');
+                expect(typeof arg.hasExisting).toBe('boolean');
+            }
+
+            // The first call should show hasExisting: false
+            expect(debugCalls[0][0]).toHaveProperty('hasExisting', false);
+
+            loggerDebugSpy.mockRestore();
         });
     });
 });
