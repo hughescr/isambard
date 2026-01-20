@@ -19,7 +19,7 @@ import {
 } from './presence';
 import { createMessageCoordinator, type MessageCoordinator } from './message-coordinator';
 import { splitMessage } from './messages';
-import { createDiscordRateLimiter } from './rate-limiter';
+import { createDiscordRateLimiter, type DiscordRateLimiter } from './rate-limiter';
 import { withDiscordRetry } from './retry';
 import { createQuestionRegistry, type QuestionRegistry } from '@/agent/question-registry';
 import { createAnswerClassifier, classifyWithHaiku } from '@/agent/answer-classifier';
@@ -128,6 +128,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     const client: Client = providedClient ?? createDiscordClient(config);
     let presenceManager: PresenceManager | undefined;
     let coordinator: MessageCoordinator | undefined;
+    let rateLimiter: DiscordRateLimiter | undefined;
     // Use provided registry or create a new one
     const questionRegistry: QuestionRegistry = options.questionRegistry ?? createQuestionRegistry();
 
@@ -174,7 +175,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         };
 
         // Create rate limiter for Discord message sending
-        const rateLimiter = createDiscordRateLimiter({
+        rateLimiter = createDiscordRateLimiter({
             globalConcurrency: 5,
             logger,
         });
@@ -244,9 +245,12 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                         const chunks = splitMessage(result.response);
 
                         try {
+                            // Capture rate limiter reference for safe closure access
+                            const limiter = rateLimiter!;
+
                             // First chunk uses reply() to thread the response
                             await withDiscordRetry(
-                                () => rateLimiter.replyToMessage(discordMessage, chunks[0]),
+                                () => limiter.replyToMessage(discordMessage, chunks[0]),
                                 'replyToMessage'
                             );
                             logger.info({ messageId: discordMessage.id, chunkIndex: 0, totalChunks: chunks.length, msg: 'Reply sent successfully' });
@@ -255,7 +259,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                             const channel = discordMessage.channel as TextChannel;
                             for(let i = 1; i < chunks.length; i++) {
                                 await withDiscordRetry(
-                                    () => rateLimiter.sendToChannel(channel, chunks[i]),
+                                    () => limiter.sendToChannel(channel, chunks[i]),
                                     'sendToChannel'
                                 );
                                 logger.info({ messageId: discordMessage.id, chunkIndex: i, totalChunks: chunks.length, msg: 'Continuation sent successfully' });
@@ -351,6 +355,10 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             // Stop presence manager if it exists
             if(presenceManager) {
                 presenceManager.stop();
+            }
+            // Stop rate limiter if it exists
+            if(rateLimiter) {
+                rateLimiter.stop();
             }
             // destroy() is sufficient for cleanup (as per user decision)
             await client.destroy();

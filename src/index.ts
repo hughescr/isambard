@@ -224,5 +224,13 @@ if(import.meta.main) {
         // eslint-disable-next-line n/no-process-exit -- Graceful shutdown requires exit
         process.exit(0);
     });
+
+    // Hot reload cleanup for bun --hot
+    if(import.meta.hot) {
+        import.meta.hot.dispose(async () => {
+            logger.info('Hot reload detected, cleaning up...');
+            await app.stop();
+        });
+    }
 }
 // Stryker restore all
