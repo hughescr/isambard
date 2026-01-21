@@ -57,6 +57,7 @@ export async function* retryAsyncGenerator<T>(
 
     // Stryker disable next-line EqualityOperator,BlockStatement: Retry loop with attempt counter prevents infinite retries
     while(attempt < maxAttempts) {
+        // Stryker disable next-line UpdateOperator: Decrement creates infinite retry loop
         attempt++;
         const generator = generatorFactory();
 

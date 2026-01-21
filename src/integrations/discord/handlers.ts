@@ -13,6 +13,32 @@ import { createDiscordRateLimiter } from './rate-limiter';
 import { withDiscordRetry } from './retry';
 import type { QuestionRegistry } from '@/agent/question-registry';
 import type { AnswerClassifier } from '@/agent/answer-classifier';
+import type { AttachmentMetadata } from './attachments/types';
+import { inferImageContentType } from './content-type';
+
+/**
+ * Helper function to extract attachment metadata from a Discord message.
+ * Converts Discord.js Attachment objects to AttachmentMetadata.
+ *
+ * @param message Discord message with attachments
+ * @returns Array of attachment metadata
+ */
+export function extractAttachmentMetadata(message: Message): AttachmentMetadata[] {
+    // Stryker disable next-line ConditionalExpression: Mutating to false throws TypeError on undefined attachments
+    if(!message.attachments || message.attachments.size === 0) {
+        return [];
+    }
+
+    return _.map(Array.from(message.attachments.values()), attachment => ({
+        url:         attachment.url,
+        filename:    attachment.name ?? 'unknown',
+        // Stryker disable next-line StringLiteral: Equivalent mutant - 'unknown' and '' both produce 'application/octet-stream' in inferImageContentType
+        contentType: inferImageContentType(attachment.name ?? 'unknown', attachment.contentType),
+        size:        attachment.size,
+        width:       attachment.width ?? undefined,
+        height:      attachment.height ?? undefined,
+    }));
+}
 
 /**
  * Creates a handler for the Discord 'clientReady' event.
@@ -282,15 +308,20 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
 
     // Helper function to process a message after filtering checks pass
     async function processMessage(message: Message): Promise<void> {
+        // Extract attachment metadata from Discord message
+        const attachments = extractAttachmentMetadata(message);
+
         // Convert Discord.js Message to DiscordMessageContext
         const context: DiscordMessageContext = {
-            guildId:   createGuildId(message.guild?.id ?? 'DM'),
-            channelId: createChannelId(message.channel.id),
-            userId:    createUserId(message.author.id),
-            messageId: message.id,
-            content:   message.content,
-            timestamp: message.createdAt.toISOString(),
+            guildId:     createGuildId(message.guild?.id ?? 'DM'),
+            channelId:   createChannelId(message.channel.id),
+            userId:      createUserId(message.author.id),
+            messageId:   message.id,
+            content:     message.content,
+            timestamp:   message.createdAt.toISOString(),
             botUserId,
+            // Stryker disable next-line ConditionalExpression: Internal state assignment tested via integration
+            attachments: attachments.length > 0 ? attachments : undefined,
         };
 
         try {
@@ -406,15 +437,19 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         // If coordinator is provided, delegate to it; otherwise process directly
         // Stryker disable all: Integration tests cover coordinator path, unit tests cover direct path
         if(coordinator) {
+            // Extract attachment metadata from Discord message
+            const attachments = extractAttachmentMetadata(message);
+
             // Convert Discord.js Message to DiscordMessageContext
             const context: DiscordMessageContext = {
-                guildId:   createGuildId(message.guild?.id ?? 'DM'),
-                channelId: createChannelId(message.channel.id),
-                userId:    createUserId(message.author.id),
-                messageId: message.id,
-                content:   message.content,
-                timestamp: message.createdAt.toISOString(),
+                guildId:     createGuildId(message.guild?.id ?? 'DM'),
+                channelId:   createChannelId(message.channel.id),
+                userId:      createUserId(message.author.id),
+                messageId:   message.id,
+                content:     message.content,
+                timestamp:   message.createdAt.toISOString(),
                 botUserId,
+                attachments: attachments.length > 0 ? attachments : undefined,
             };
 
             // Hand off to coordinator (it will handle batching, interruption, and onResponse)

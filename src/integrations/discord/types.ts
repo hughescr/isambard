@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AttachmentMetadataSchema } from './attachments/types';
 
 /**
  * GuildId is a branded type representing a Discord guild (server) ID.
@@ -47,14 +48,16 @@ export type MessageId = z.infer<typeof messageIdSchema>;
  * Represents the full context of a Discord message for processing.
  */
 export const discordMessageContextSchema = z.object({
-    guildId:   guildIdSchema,
-    channelId: channelIdSchema,
-    userId:    userIdSchema,
-    messageId: z.string().min(1),
-    content:   z.string(),
-    timestamp: z.string().datetime(),
+    guildId:     guildIdSchema,
+    channelId:   channelIdSchema,
+    userId:      userIdSchema,
+    messageId:   z.string().min(1),
+    content:     z.string(),
+    timestamp:   z.string().datetime(),
     /** The bot's own user ID (for self-awareness in memory operations) */
-    botUserId: userIdSchema,
+    botUserId:   userIdSchema,
+    /** Optional attachments metadata from the message */
+    attachments: z.array(AttachmentMetadataSchema).optional(),
 });
 
 export type DiscordMessageContext = z.infer<typeof discordMessageContextSchema>;

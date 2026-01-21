@@ -1,8 +1,9 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { McpServerConfig, SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
+import type { McpServerConfig, SDKUserMessage, SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
 import type { DiscordMessageContext } from '../integrations/discord/types';
+import type { FetchedImage } from '../integrations/discord/attachments/types';
 import { getCurrentTimeContext } from '../utils/time';
 import type { ContextBuilder } from './context-builder';
 import { buildSystemPrompt } from './prompts/index.js';
@@ -14,8 +15,9 @@ import type { StreamTracker } from './stream-tracker';
 import type { ResumeContext } from './resume-prompt-builder';
 import { createStreamTracker } from './stream-tracker';
 import { buildResumePrompt } from './resume-prompt-builder';
+import { buildMultimodalContent, hasImages } from './multimodal-message-builder';
 
-const CLAUDE_MODEL = 'sonnet';
+const CLAUDE_MODEL = 'opus';
 
 // Stryker disable all: Configuration constants validated by integration tests
 /**
@@ -301,6 +303,8 @@ export interface ChatBatchOptions {
     abortController?: AbortController
     /** Callback for stream events */
     onStreamEvent?:   (event: AgentStreamEvent) => void
+    /** Optional images to include in the first message */
+    images?:          FetchedImage[]
 }
 
 /** Result from chatBatch processing */
@@ -321,9 +325,14 @@ export interface ClaudeAgent {
      *
      * @param context Discord message context
      * @param onStreamEvent Optional callback invoked for each stream event
+     * @param images Optional images to include in the message
      * @returns Claude's response text, or null if an error occurred
      */
-    chat: (context: DiscordMessageContext, onStreamEvent?: (event: AgentStreamEvent) => void) => Promise<string | null>
+    chat: (
+        context: DiscordMessageContext,
+        onStreamEvent?: (event: AgentStreamEvent) => void,
+        images?: FetchedImage[]
+    ) => Promise<string | null>
 
     /**
      * Process multiple messages in batch with interruption support.
@@ -559,14 +568,14 @@ export function logStreamEvent(message: AgentStreamEvent): void {
 // Stryker restore all
 
 /**
- * Build user message for batch processing.
+ * Build user message content for batch processing.
  * Handles both resume context and normal message formatting.
  * @param contexts Array of Discord message contexts
  * @param contextBuilder Context builder for loading memories
  * @param resumeContext Optional resume context from interruption
- * @returns Formatted user message string
+ * @returns Formatted user message text
  */
-async function buildUserMessageForBatch(
+async function buildUserMessageTextForBatch(
     contexts: DiscordMessageContext[],
     contextBuilder: ContextBuilder | undefined,
     resumeContext?: ResumeContext
@@ -588,6 +597,37 @@ async function buildUserMessageForBatch(
 
     return contextPrefix + messageBlocks.join('\n\n');
 }
+
+/**
+ * Build prompt for SDK query as async generator for multimodal support.
+ * Creates an async generator yielding a single SDKUserMessage with content blocks (images + text).
+ * @param textContent The text content of the message
+ * @param images Optional images to include
+ * @returns Async generator yielding SDKUserMessage
+ */
+// Stryker disable all: Private async generator - behavior tested via chat() integration tests
+async function* buildPromptForSdk(
+    textContent: string,
+    images?: FetchedImage[]
+): AsyncGenerator<SDKUserMessage> {
+    // eslint-disable-next-line n/no-unsupported-features/node-builtins -- Bun runtime supports crypto.randomUUID
+    const sessionId = crypto.randomUUID();
+
+    const content = hasImages(images)
+        ? buildMultimodalContent(textContent, images)
+        : textContent;
+
+    yield {
+        type:    'user',
+        message: {
+            role: 'user',
+            content,
+        },
+        parent_tool_use_id: null,
+        session_id:         sessionId,
+    };
+}
+// Stryker restore all
 
 /**
  * Process stream events from Agent SDK response.
@@ -663,6 +703,65 @@ async function processStreamEvents(
     return { lastAssistantText, wasInterrupted, capturedSessionId };
 }
 
+/**
+ * Build query options for Agent SDK.
+ * @param systemPrompt System prompt with core identity
+ * @param memoryMcpServer Memory MCP server configuration
+ * @param discordMcpServer Discord MCP server configuration
+ * @param plugins Plugin configurations
+ * @param options Optional batch processing options
+ * @returns Query options object for Agent SDK
+ */
+function buildQueryOptions(
+    systemPrompt: string,
+    memoryMcpServer: McpServerConfig | undefined,
+    discordMcpServer: McpServerConfig | undefined,
+    plugins: SdkPluginConfig[] | undefined,
+    options?: ChatBatchOptions
+) {
+    return {
+        model:             CLAUDE_MODEL,
+        systemPrompt,
+        tools:             EXPLICIT_TOOLS,
+        agents:            EXPLICIT_AGENTS,
+        mcpServers:        buildMcpServers(memoryMcpServer, discordMcpServer),
+        plugins:           plugins && plugins.length > 0 ? plugins : undefined,
+        permissionMode:    'acceptEdits' as const,
+        allowedTools:      buildAllowedTools(discordMcpServer),
+        maxThinkingTokens: 10000,
+        settingSources:    [],
+        abortController:   options?.abortController,
+        ...(options?.sessionId && { resume: options.sessionId }),
+        // Stryker disable all: Observability - stderr logging doesn't affect behavior
+        stderr:            (data: string) => {
+            logger.error({ stderr: data }, 'Agent SDK stderr');
+        },
+        // Stryker restore all
+    };
+}
+
+/**
+ * Build result object for chatBatch.
+ * @param lastAssistantText Final response text from assistant
+ * @param wasInterrupted Whether processing was interrupted
+ * @param capturedSessionId Session ID for resuming
+ * @param tracker Stream tracker with captured progress
+ * @returns ChatBatchResult object
+ */
+function buildChatBatchResult(
+    lastAssistantText: string,
+    wasInterrupted: boolean,
+    capturedSessionId: string | undefined,
+    tracker: StreamTracker
+): ChatBatchResult {
+    return {
+        response:      wasInterrupted ? null : (lastAssistantText || null),
+        sessionId:     capturedSessionId,
+        wasInterrupted,
+        streamTracker: tracker,
+    };
+}
+
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     const { contextBuilder, memoryMcpServer, discordMcpServer, plugins } = options;
 
@@ -687,38 +786,32 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 // 1. Build system prompt with core identity
                 const systemPrompt = await buildSystemPrompt(contextBuilder);
 
-                // 2. Build user message (resume prompt or normal context)
-                const userMessage = await buildUserMessageForBatch(contexts, contextBuilder, options?.resumeContext);
+                // 2. Build user message text
+                const userMessageText = await buildUserMessageTextForBatch(
+                    contexts,
+                    contextBuilder,
+                    options?.resumeContext
+                );
 
-                // 3. Log start of processing
+                // 3. Build prompt (string for text-only, async generator for images or text)
+                // The SDK accepts either a plain string or an AsyncIterable<SDKUserMessage>
+                // For multimodal messages, we always use the generator form
+                const prompt = hasImages(options?.images)
+                    ? buildPromptForSdk(userMessageText, options?.images)
+                    : userMessageText;
+
+                // 4. Log start of processing
                 logger.info({
                     contextCount: contexts.length,
                     messageIds:   _.map(contexts, 'messageId'),
+                    hasImages:    hasImages(options?.images),
                     msg:          'Agent starting batch processing',
                 });
 
                 // 4. Query with MCP servers, plugins, and sandboxed execution (with retry)
                 const response = retryableQuery({
-                    prompt:  userMessage,
-                    options: {
-                        model:             CLAUDE_MODEL,
-                        systemPrompt,
-                        tools:             EXPLICIT_TOOLS,
-                        agents:            EXPLICIT_AGENTS,
-                        mcpServers:        buildMcpServers(memoryMcpServer, discordMcpServer),
-                        plugins:           plugins && plugins.length > 0 ? plugins : undefined,
-                        permissionMode:    'acceptEdits',
-                        allowedTools:      buildAllowedTools(discordMcpServer),
-                        maxThinkingTokens: 10000,
-                        settingSources:    [],
-                        abortController:   options?.abortController,
-                        ...(options?.sessionId && { resume: options.sessionId }),
-                        // Stryker disable all: Observability - stderr logging doesn't affect behavior
-                        stderr:            (data: string) => {
-                            logger.error({ stderr: data }, 'Agent SDK stderr');
-                        },
-                        // Stryker restore all
-                    },
+                    prompt,
+                    options: buildQueryOptions(systemPrompt, memoryMcpServer, discordMcpServer, plugins, options),
                 });
 
                 // 5. Process stream events and track progress
@@ -742,25 +835,19 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 });
 
                 // 8. Return result
-                return {
-                    response:      wasInterrupted ? null : (lastAssistantText || null),
-                    sessionId:     capturedSessionId,
-                    wasInterrupted,
-                    streamTracker: tracker,
-                };
+                return buildChatBatchResult(lastAssistantText, wasInterrupted, capturedSessionId, tracker);
             } catch (error) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 logger.error({ error, contextCount: contexts.length }, `Failed to process batch: ${errorMessage}`);
-                return {
-                    response:       null,
-                    sessionId:      capturedSessionId,
-                    wasInterrupted: false,
-                    streamTracker:  tracker,
-                };
+                return buildChatBatchResult('', false, capturedSessionId, tracker);
             }
         },
 
-        chat: async (context: DiscordMessageContext, onStreamEvent?: (event: AgentStreamEvent) => void): Promise<string | null> => {
+        chat: async (
+            context: DiscordMessageContext,
+            onStreamEvent?: (event: AgentStreamEvent) => void,
+            images?: FetchedImage[]
+        ): Promise<string | null> => {
             try {
                 // 1. Build system prompt with core identity
                 const systemPrompt = await buildSystemPrompt(contextBuilder);
@@ -770,20 +857,26 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                     ? await buildContextPrefix(contextBuilder, context)
                     : '';
 
-                // 3. Format user message with context
-                const userMessage = `${contextPrefix}User @${context.userId} in #${context.channelId}: ${context.content}`;
+                // 3. Format user message text content
+                const textContent = `${contextPrefix}User @${context.userId} in #${context.channelId}: ${context.content}`;
 
-                // 4. Log start of processing
+                // 4. Build prompt (string for text-only, async generator for multimodal)
+                const prompt = hasImages(images)
+                    ? buildPromptForSdk(textContent, images)
+                    : textContent;
+
+                // 5. Log start of processing
                 logger.info({
                     userId:    context.userId,
                     channelId: context.channelId,
                     messageId: context.messageId,
+                    hasImages: hasImages(images),
                     msg:       'Agent starting to process message',
                 });
 
-                // 5. Query with MCP servers, plugins, and sandboxed execution (with retry)
+                // 6. Query with MCP servers, plugins, and sandboxed execution (with retry)
                 const response = retryableQuery({
-                    prompt:  userMessage,
+                    prompt,
                     options: {
                         model:             CLAUDE_MODEL,
                         systemPrompt,

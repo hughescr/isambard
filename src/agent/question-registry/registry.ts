@@ -95,6 +95,7 @@ export function createQuestionRegistry(_config?: QuestionRegistryConfig): Questi
             });
         }
 
+        // Stryker disable all: BlockStatement mutations break Promise executor flow causing test timeouts
         return new Promise<QuestionResult>((resolve) => {
             const pendingQuestion: PendingQuestion = {
                 ...question,
@@ -135,6 +136,7 @@ export function createQuestionRegistry(_config?: QuestionRegistryConfig): Questi
             });
             // Stryker restore all
         });
+        // Stryker restore all
     }
 
     function findPendingQuestion(channelId: ChannelId, threadId?: string): PendingQuestion | null {

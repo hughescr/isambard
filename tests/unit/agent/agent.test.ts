@@ -358,7 +358,7 @@ describe('createClaudeAgent', () => {
             expect(querySpy).toHaveBeenCalledTimes(1);
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            expect(queryParams.options.model).toBe('sonnet');
+            expect(queryParams.options.model).toBe('opus');
             // Verify model is not an empty string (kills StringLiteral mutant on line 14)
             expect(queryParams.options.model).not.toBe('');
         });

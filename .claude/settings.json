@@ -1,8 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin bun run mutate:*)",
-      "Bash(PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin bunx stryker run:*)",
+      "Bash(bun run mutate:*)",
+      "Bash(stryker run:*)",
       "Bash(ag:*)",
       "Bash(bun -e:*)",
       "Bash(bun -p:*)",

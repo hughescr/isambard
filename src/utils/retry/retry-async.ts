@@ -54,7 +54,7 @@ export async function retryAsync<T>(
     const startTime = now();
     let lastError: unknown;
 
-    for(let attempt = 1; attempt <= maxAttempts; attempt++) {
+    for(let attempt = 1; attempt <= maxAttempts; /* Stryker disable next-line UpdateOperator: Decrement creates infinite retry loop */ attempt++) {
         try {
             const result = await operation();
             return result;

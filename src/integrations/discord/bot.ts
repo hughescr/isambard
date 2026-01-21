@@ -5,7 +5,6 @@ import { logger } from '@hughescr/logger';
 import type { DiscordConfig } from '@/config/schemas';
 import type { DiscordMessageContext, UserId, ChannelId } from './types';
 import type { ClaudeAgent } from '@/agent/agent';
-import type { AgentStreamEvent } from '@/agent/types';
 import { setConversationContext, clearConversationContext } from '@/agent';
 import { createDiscordClient } from './client';
 import { createReadyHandler, createErrorHandler, createMessageHandler } from './handlers';
@@ -24,6 +23,107 @@ import { withDiscordRetry } from './retry';
 import { createQuestionRegistry, type QuestionRegistry } from '@/agent/question-registry';
 import { createAnswerClassifier, classifyWithHaiku } from '@/agent/answer-classifier';
 import { createInteractionHandler } from './interactions';
+import { fetchImages, saveNonImageAttachment, isSupportedImageType, formatBytes, addAttachmentInfoToContexts } from './attachments';
+import type { FetchedImage } from './attachments/types';
+
+/**
+ * Result of processing Discord message attachments
+ */
+interface ProcessedAttachments {
+    /** Fetched image attachments ready for Claude */
+    images:           FetchedImage[]
+    /** Text descriptions of saved non-image attachments */
+    contentAdditions: string[]
+}
+
+/**
+ * Processes all attachments from Discord contexts.
+ * Images are fetched and prepared for Claude's vision API.
+ * Non-image files are saved to the scratch directory and referenced in text.
+ *
+ * @param contexts - Discord message contexts containing attachments
+ * @returns Processed images and content additions for message text
+ */
+// Stryker disable all: Integration function with external dependencies - tested via bot integration tests
+async function processAttachments(contexts: DiscordMessageContext[]): Promise<ProcessedAttachments> {
+    const allAttachments = contexts.flatMap(ctx => ctx.attachments ?? []);
+    let images: FetchedImage[] = [];
+    const contentAdditions: string[] = [];
+
+    if(allAttachments.length > 0) {
+        // Fetch images
+        const imageAttachments = _.filter(allAttachments, att => isSupportedImageType(att.contentType));
+        if(imageAttachments.length > 0) {
+            images = await fetchImages(imageAttachments);
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
+            logger.info({
+                totalAttachments: imageAttachments.length,
+                fetchedImages:    images.length,
+                msg:              `Fetched ${images.length} images from ${imageAttachments.length} image attachments`,
+            });
+        }
+
+        // Save non-image attachments to scratch directory
+        const nonImageAttachments = _.filter(allAttachments, att => !isSupportedImageType(att.contentType));
+        if(nonImageAttachments.length > 0) {
+            const scratchDir = process.cwd();
+            const messageId = contexts[0]?.messageId ?? 'unknown';
+
+            for(const attachment of nonImageAttachments) {
+                const stored = await saveNonImageAttachment(attachment, scratchDir, messageId);
+                if(stored) {
+                    contentAdditions.push(
+                        `[Attached file: ${stored.localPath} (${stored.contentType}, ${formatBytes(stored.size)})]`
+                    );
+                    // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
+                    logger.info({
+                        filename:    stored.originalFilename,
+                        localPath:   stored.localPath,
+                        contentType: stored.contentType,
+                        size:        stored.size,
+                        msg:         `Saved non-image attachment: ${stored.originalFilename}`,
+                    });
+                } else {
+                    // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
+                    logger.warn({
+                        filename:    attachment.filename,
+                        contentType: attachment.contentType,
+                        msg:         `Failed to save non-image attachment: ${attachment.filename}`,
+                    });
+                }
+            }
+        }
+    }
+
+    return { images, contentAdditions };
+}
+// Stryker restore all
+
+/**
+ * Creates a stream event handler for presence updates during agent processing.
+ * Returns undefined if presence manager is not available.
+ *
+ * @param presenceManager - Manager for Discord presence updates
+ * @param dynamicStatusGenerator - Optional generator for context-aware status messages
+ * @param userMessage - User's message content for synopsis generation
+ * @returns Stream event handler or undefined
+ */
+function createPresenceStreamHandler(
+    presenceManager: PresenceManager | undefined,
+    dynamicStatusGenerator: ReturnType<typeof createDynamicStatusGenerator> | undefined,
+    userMessage: string
+): ReturnType<typeof createStreamEventHandler> | undefined {
+    if(!presenceManager) {
+        return undefined;
+    }
+
+    return createStreamEventHandler({
+        presenceManager,
+        dynamicStatusGenerator,
+        logger,
+        userMessage,
+    });
+}
 
 /**
  * Options for configuring the Discord bot.
@@ -283,32 +383,31 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 try {
                     // Create abort controller from signal
                     const abortController = new AbortController();
-                    // Connect the signals
                     abortSignal.addEventListener('abort', () => abortController.abort());
+
+                    // Process attachments from all contexts
+                    const { images, contentAdditions } = await processAttachments(contexts);
+
+                    // Modify contexts to include attachment file paths in content
+                    const modifiedContexts = addAttachmentInfoToContexts(contexts, contentAdditions);
 
                     // Extract user message from first context for synopsis generation
                     const userMessage = contexts[0]?.content ?? '';
 
                     // Create stream event handler for presence updates if presenceManager available
-                    let streamEventHandler: ReturnType<typeof createStreamEventHandler> | undefined;
-                    let onStreamEvent: ((event: AgentStreamEvent) => void) | undefined;
+                    const streamEventHandler = createPresenceStreamHandler(
+                        presenceManager,
+                        dynamicStatusGenerator,
+                        userMessage
+                    );
 
-                    if(presenceManager) {
-                        streamEventHandler = createStreamEventHandler({
-                            presenceManager,
-                            dynamicStatusGenerator,
-                            logger,
-                            userMessage,
-                        });
-                        onStreamEvent = streamEventHandler.onStreamEvent;
-                    }
-
-                    // Call chatBatch with presence updates
-                    const result = await agent.chatBatch(contexts, {
+                    // Call chatBatch with presence updates and images
+                    const result = await agent.chatBatch(modifiedContexts, {
                         sessionId,
                         resumeContext: resumeContext ?? undefined,
                         abortController,
-                        onStreamEvent,
+                        onStreamEvent: streamEventHandler?.onStreamEvent,
+                        images:        images.length > 0 ? images : undefined,
                     });
 
                     // Transition to idle after completion

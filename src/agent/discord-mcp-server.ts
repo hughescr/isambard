@@ -577,6 +577,7 @@ export function createDiscordMCPServer(
                         sentMessages.push(firstMessage);
 
                         // Send remaining chunks (no reply reference)
+                        // Stryker disable next-line EqualityOperator: Inverted loop condition creates infinite loop
                         for(let i = 1; i < chunks.length; i++) {
                             const msg = await sendMessage(channelResult.channel, chunks[i]);
                             sentMessages.push(msg);
