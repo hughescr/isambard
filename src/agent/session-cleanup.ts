@@ -215,6 +215,78 @@ const cleanupSubAgentSessions = async (sessionId: string, projectPath: string): 
 };
 
 /**
+ * Cleans up all stale session files from previous runs.
+ *
+ * This is useful during startup to clear accumulated sessions from
+ * hot reloads or crashes that didn't complete cleanup.
+ *
+ * This is a fire-and-forget operation that:
+ * - Scans the project's session directory for all .jsonl files
+ * - Deletes all session files (main and agent-*.jsonl)
+ * - Cleans up all session-env directories
+ * - Logs a single summary message
+ * - Is safe to call even if directories don't exist
+ *
+ * @returns Promise that resolves when cleanup is complete
+ */
+// Stryker disable all: Startup cleanup is fire-and-forget, not observable in tests
+export const cleanupAllStaleSessions = async (): Promise<void> => {
+    const projectPath = getProjectPath();
+    const projectsDir = join(homedir(), '.claude', 'projects', projectPath);
+    const sessionEnvDir = join(homedir(), '.claude', 'session-env');
+
+    let cleanedCount = 0;
+
+    // Clean up session .jsonl files
+    try {
+        // Check if directory exists
+        await access(projectsDir);
+
+        // List all .jsonl files
+        const files = await readdir(projectsDir);
+        const sessionFiles = _.filter(files, file => _.endsWith(file, '.jsonl'));
+
+        // Delete each file
+        for(const file of sessionFiles) {
+            try {
+                await unlink(join(projectsDir, file));
+                cleanedCount++;
+            } catch{
+                // Ignore individual file errors
+            }
+        }
+    } catch{
+        // Directory doesn't exist - nothing to clean
+    }
+
+    // Clean up session-env directories for this project
+    try {
+        await access(sessionEnvDir);
+        const envDirs = await readdir(sessionEnvDir);
+        for(const dir of envDirs) {
+            try {
+                await rm(join(sessionEnvDir, dir), { recursive: true, force: true });
+                cleanedCount++;
+            } catch{
+                // Ignore individual directory errors
+            }
+        }
+    } catch{
+        // Directory doesn't exist
+    }
+
+    if(cleanedCount > 0) {
+        // Stryker disable next-line ObjectLiteral: Logger info object for observability
+        logger.info({
+            cleanedCount,
+            // Stryker disable next-line StringLiteral: Log message for observability only
+            msg: `Cleaned up ${cleanedCount} stale session files on startup`,
+        });
+    }
+    // Stryker restore all
+};
+
+/**
  * Cleans up a session file by deleting it from disk.
  *
  * This is a fire-and-forget operation that:

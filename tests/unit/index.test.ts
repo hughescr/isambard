@@ -880,4 +880,101 @@ describe('createApp', () => {
             expect(botCallArgs.identityContext).toBe('Isambard - AI Assistant');
         });
     });
+
+    describe('App stop idempotency', () => {
+        test('should only call bot.stop() once when stop() is called multiple times', async () => {
+            mockLogger.debug.mockClear();
+
+            // Mock storage client to throw error (simple setup)
+            const storageClientModule = await import('@/storage/client');
+            const createClientSpy = spyOn(storageClientModule, 'createDynamoDBClient').mockImplementation(() => {
+                throw new Error('DynamoDB not configured');
+            });
+            spies.push(createClientSpy);
+
+            const pluginLoaderModule = await import('@/agent/plugin-loader');
+            const loadPluginsSpy = spyOn(pluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
+            spies.push(loadPluginsSpy);
+
+            const agentModule = await import('@/agent/agent');
+            const createAgentSpy = spyOn(agentModule, 'createClaudeAgent').mockReturnValue({
+                chat:      mock(async () => 'response'),
+                chatBatch: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as any })),
+            });
+            spies.push(createAgentSpy);
+
+            // Mock bot with trackable stop method
+            const discordModule = await import('@/integrations/discord/bot');
+            const mockBotStop = mock(async () => undefined);
+            const createBotSpy = spyOn(discordModule, 'createDiscordBot').mockReturnValue({
+                start: mock(async () => undefined),
+                stop:  mockBotStop,
+            });
+            spies.push(createBotSpy);
+
+            // Mock loadConfig and loadDynamoDBConfig
+            const configModule = await import('@/config/loader');
+            const loadConfigSpy = spyOn(configModule, 'loadConfig').mockReturnValue({
+                app: {
+                    nodeEnv:  'development',
+                    logLevel: 'info',
+                    port:     3000,
+                },
+                agent: {
+                    oauthToken: 'test-oauth-token-123',
+                },
+                caldav: {
+                    url:      'https://caldav.example.com',
+                    username: 'user',
+                    password: 'password',
+                },
+                email: {
+                    imapHost: 'mail.example.com',
+                    imapPort: 993,
+                    smtpHost: 'mail.example.com',
+                    smtpPort: 587,
+                    user:     'user@example.com',
+                    password: 'emailpass',
+                },
+                discord: {
+                    botToken:            'bot-token-123',
+                    applicationId:       'app-id-456',
+                    monitoredChannelIds: ['123', '456'],
+                    presence:            {
+                        updateThrottleMs:      2000,
+                        idleTimeoutMs:         60000,
+                        idleRefreshIntervalMs: 300000,
+                    },
+                },
+                box: {
+                    clientId:     'box-client-id',
+                    clientSecret: 'box-secret',
+                },
+            });
+            spies.push(loadConfigSpy);
+
+            const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
+                tableName: 'IsambardMemory',
+                region:    'us-west-2',
+                endpoint:  undefined,
+            });
+            spies.push(loadDynamoDBConfigSpy);
+
+            // Import and call createApp
+            const { createApp } = await import('@/index');
+            const app = await createApp();
+
+            // Call stop twice
+            await app.stop();
+            await app.stop();
+
+            // Verify bot.stop() was only called once (idempotent)
+            expect(mockBotStop).toHaveBeenCalledTimes(1);
+
+            // Optionally verify logger.debug was called with skip message on second call
+            const debugCalls = mockLogger.debug.mock.calls as any[][];
+            const skipMessage = _find(debugCalls, (call: any) => call[0].includes('already stopped'));
+            expect(skipMessage).toBeDefined();
+        });
+    });
 });

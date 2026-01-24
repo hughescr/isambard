@@ -14,6 +14,7 @@ import { createDiscordMCPServer } from './agent/discord-mcp-server';
 import { createClaudeAgent } from './agent/agent';
 import { loadPlugins } from './agent/plugin-loader';
 import { createQuestionRegistry } from './agent/question-registry';
+import { cleanupAllStaleSessions } from './agent/session-cleanup';
 import { createDiscordBot } from './integrations/discord/bot';
 import type { DiscordBot } from './integrations/discord/bot';
 import { createDiscordClient } from './integrations/discord/client';
@@ -38,11 +39,12 @@ export interface App {
  * Creates the Isambard application with all components wired together.
  *
  * Initialization flow:
- * 1. Load configuration (Discord, Agent OAuth token)
- * 2. Set CLAUDE_CODE_OAUTH_TOKEN for Agent SDK
- * 3. Optionally create memory system (context builder + MCP server) if DynamoDB is available
- * 4. Create Claude agent with hybrid memory support
- * 5. Create Discord bot with agent as message handler
+ * 1. Clean up stale session files from previous runs
+ * 2. Load configuration (Discord, Agent OAuth token)
+ * 3. Set CLAUDE_CODE_OAUTH_TOKEN for Agent SDK
+ * 4. Optionally create memory system (context builder + MCP server) if DynamoDB is available
+ * 5. Create Claude agent with hybrid memory support
+ * 6. Create Discord bot with agent as message handler
  *
  * Error handling:
  * - Missing required config (Discord, OAuth token) throws immediately
@@ -52,6 +54,9 @@ export interface App {
  * @throws {Error} If required configuration is missing or invalid
  */
 export async function createApp(): Promise<App> {
+    // Clean up stale session files from previous hot reloads
+    await cleanupAllStaleSessions();
+
     // Load configuration (required)
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- SST Resource type is complex
     const config = loadConfig(Resource as any);
@@ -162,8 +167,11 @@ export async function createApp(): Promise<App> {
         questionRegistry,
     });
 
+    let isStopping = false;
+
     return {
         start: async () => {
+            isStopping = false;
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Starting Isambard application...');
             await bot.start();
@@ -172,6 +180,13 @@ export async function createApp(): Promise<App> {
         },
 
         stop: async () => {
+            if(isStopping) {
+                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+                logger.debug('Application already stopped, skipping duplicate call');
+                return;
+            }
+            isStopping = true;
+
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Stopping Isambard application...');
             await bot.stop();
