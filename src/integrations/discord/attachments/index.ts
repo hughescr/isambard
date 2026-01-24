@@ -6,12 +6,14 @@ export {
     AttachmentMetadataSchema,
     FetchedImageSchema,
     StoredAttachmentSchema,
+    FailedAttachmentSchema,
     isNativeImageType,
     isConvertibleImageType,
     isSupportedImageType,
     type AttachmentMetadata,
     type FetchedImage,
-    type StoredAttachment
+    type StoredAttachment,
+    type FailedAttachment
 } from './types';
 
 export {
@@ -23,7 +25,9 @@ export {
 export {
     fetchImage,
     fetchImages,
-    saveNonImageAttachment
+    saveNonImageAttachment,
+    type FetchImageResult,
+    type FetchImagesResult
 } from './fetcher';
 
 export {

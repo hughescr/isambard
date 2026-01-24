@@ -7,6 +7,7 @@ import {
     AttachmentMetadataSchema,
     FetchedImageSchema,
     StoredAttachmentSchema,
+    FailedAttachmentSchema,
     isNativeImageType,
     isConvertibleImageType,
     isSupportedImageType
@@ -207,6 +208,46 @@ describe('Discord Attachment Types', () => {
             };
 
             const result = StoredAttachmentSchema.safeParse(invalidData);
+            expect(result.success).toBe(false);
+        });
+    });
+
+    describe('FailedAttachmentSchema', () => {
+        test('validates correct failed attachment', () => {
+            const validData = {
+                filename:    'image.heic',
+                contentType: 'image/heic',
+                size:        4096,
+                error:       'HEIC conversion failed: Invalid format',
+            };
+
+            const result = FailedAttachmentSchema.safeParse(validData);
+            expect(result.success).toBe(true);
+            if(result.success) {
+                expect(result.data).toEqual(validData);
+            }
+        });
+
+        test('rejects missing error field', () => {
+            const invalidData = {
+                filename:    'image.heic',
+                contentType: 'image/heic',
+                size:        4096,
+            };
+
+            const result = FailedAttachmentSchema.safeParse(invalidData);
+            expect(result.success).toBe(false);
+        });
+
+        test('rejects negative size', () => {
+            const invalidData = {
+                filename:    'image.heic',
+                contentType: 'image/heic',
+                size:        -1,
+                error:       'Some error',
+            };
+
+            const result = FailedAttachmentSchema.safeParse(invalidData);
             expect(result.success).toBe(false);
         });
     });

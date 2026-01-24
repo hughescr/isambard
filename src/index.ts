@@ -223,27 +223,36 @@ if(import.meta.main) {
     // Start the application
     await app.start();
 
-    // Handle graceful shutdown
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async shutdown handler is intentional
-    process.on('SIGINT', async () => {
+    // Store handler references so we can remove them on hot reload
+    const sigintHandler = async () => {
         logger.info('Received SIGINT, shutting down gracefully...');
         await app.stop();
         // eslint-disable-next-line n/no-process-exit -- Graceful shutdown requires exit
         process.exit(0);
-    });
+    };
 
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async shutdown handler is intentional
-    process.on('SIGTERM', async () => {
+    const sigtermHandler = async () => {
         logger.info('Received SIGTERM, shutting down gracefully...');
         await app.stop();
         // eslint-disable-next-line n/no-process-exit -- Graceful shutdown requires exit
         process.exit(0);
-    });
+    };
+
+    // Handle graceful shutdown
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async shutdown handler is intentional
+    process.on('SIGINT', sigintHandler);
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async shutdown handler is intentional
+    process.on('SIGTERM', sigtermHandler);
 
     // Hot reload cleanup for bun --hot
     if(import.meta.hot) {
         import.meta.hot.dispose(async () => {
             logger.info('Hot reload detected, cleaning up...');
+            // Remove signal handlers before cleanup to prevent duplicate calls
+            // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async shutdown handler is intentional
+            process.off('SIGINT', sigintHandler);
+            // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async shutdown handler is intentional
+            process.off('SIGTERM', sigtermHandler);
             await app.stop();
         });
     }

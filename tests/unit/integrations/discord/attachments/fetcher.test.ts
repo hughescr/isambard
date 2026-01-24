@@ -63,12 +63,15 @@ describe('Attachment Fetcher', () => {
             const result = await fetchImage(metadata);
 
             expect(result).not.toBeNull();
-            expect(result?.filename).toBe('image.jpg');
-            expect(result?.mediaType).toBe('image/jpeg');
-            expect(result?.base64Data).toBe(imageData.toString('base64'));
-            expect(result?.originalSize).toBe(1024);
-            expect(result?.width).toBe(800);
-            expect(result?.height).toBe(600);
+            expect(result?.success).toBe(true);
+            if(result?.success) {
+                expect(result.image.filename).toBe('image.jpg');
+                expect(result.image.mediaType).toBe('image/jpeg');
+                expect(result.image.base64Data).toBe(imageData.toString('base64'));
+                expect(result.image.originalSize).toBe(1024);
+                expect(result.image.width).toBe(800);
+                expect(result.image.height).toBe(600);
+            }
             // Native image types don't need conversion
         });
 
@@ -89,10 +92,13 @@ describe('Attachment Fetcher', () => {
             const result = await fetchImage(metadata);
 
             expect(result).not.toBeNull();
-            expect(result?.filename).toBe('image.png');
-            expect(result?.mediaType).toBe('image/png');
-            expect(result?.base64Data).toBe(imageData.toString('base64'));
-            expect(result?.originalSize).toBe(2048);
+            expect(result?.success).toBe(true);
+            if(result?.success) {
+                expect(result.image.filename).toBe('image.png');
+                expect(result.image.mediaType).toBe('image/png');
+                expect(result.image.base64Data).toBe(imageData.toString('base64'));
+                expect(result.image.originalSize).toBe(2048);
+            }
             // Native image types don't need conversion
         });
 
@@ -113,9 +119,12 @@ describe('Attachment Fetcher', () => {
             const result = await fetchImage(metadata);
 
             expect(result).not.toBeNull();
-            expect(result?.filename).toBe('image.gif');
-            expect(result?.mediaType).toBe('image/gif');
-            expect(result?.base64Data).toBe(imageData.toString('base64'));
+            expect(result?.success).toBe(true);
+            if(result?.success) {
+                expect(result.image.filename).toBe('image.gif');
+                expect(result.image.mediaType).toBe('image/gif');
+                expect(result.image.base64Data).toBe(imageData.toString('base64'));
+            }
             // Native image types don't need conversion
         });
 
@@ -136,9 +145,12 @@ describe('Attachment Fetcher', () => {
             const result = await fetchImage(metadata);
 
             expect(result).not.toBeNull();
-            expect(result?.filename).toBe('image.webp');
-            expect(result?.mediaType).toBe('image/webp');
-            expect(result?.base64Data).toBe(imageData.toString('base64'));
+            expect(result?.success).toBe(true);
+            if(result?.success) {
+                expect(result.image.filename).toBe('image.webp');
+                expect(result.image.mediaType).toBe('image/webp');
+                expect(result.image.base64Data).toBe(imageData.toString('base64'));
+            }
             // Native image types don't need conversion
         });
 
@@ -161,12 +173,15 @@ describe('Attachment Fetcher', () => {
             const result = await fetchImage(metadata);
 
             expect(result).not.toBeNull();
-            expect(result?.filename).toBe('image.heic');
-            expect(result?.mediaType).toBe('image/png');
-            expect(result?.base64Data).toBe(Buffer.from('converted-png-data').toString('base64'));
-            expect(result?.originalSize).toBe(2048);
-            expect(result?.width).toBe(1024);
-            expect(result?.height).toBe(768);
+            expect(result?.success).toBe(true);
+            if(result?.success) {
+                expect(result.image.filename).toBe('image.heic');
+                expect(result.image.mediaType).toBe('image/png');
+                expect(result.image.base64Data).toBe(Buffer.from('converted-png-data').toString('base64'));
+                expect(result.image.originalSize).toBe(2048);
+                expect(result.image.width).toBe(1024);
+                expect(result.image.height).toBe(768);
+            }
         });
 
         test('fetches HEIF, converts to PNG, returns as base64', async () => {
@@ -186,9 +201,12 @@ describe('Attachment Fetcher', () => {
             const result = await fetchImage(metadata);
 
             expect(result).not.toBeNull();
-            expect(result?.filename).toBe('image.heif');
-            expect(result?.mediaType).toBe('image/png');
-            expect(result?.base64Data).toBe(Buffer.from('converted-png-data').toString('base64'));
+            expect(result?.success).toBe(true);
+            if(result?.success) {
+                expect(result.image.filename).toBe('image.heif');
+                expect(result.image.mediaType).toBe('image/png');
+                expect(result.image.base64Data).toBe(Buffer.from('converted-png-data').toString('base64'));
+            }
         });
 
         test('allows images exactly at MAX_IMAGE_SIZE_BYTES', async () => {
@@ -208,9 +226,12 @@ describe('Attachment Fetcher', () => {
             const result = await fetchImage(metadata);
 
             expect(result).not.toBeNull();
-            expect(result?.filename).toBe('exact-size.jpg');
-            expect(result?.mediaType).toBe('image/jpeg');
-            expect(result?.base64Data).toBe(imageData.toString('base64'));
+            expect(result?.success).toBe(true);
+            if(result?.success) {
+                expect(result.image.filename).toBe('exact-size.jpg');
+                expect(result.image.mediaType).toBe('image/jpeg');
+                expect(result.image.base64Data).toBe(imageData.toString('base64'));
+            }
         });
 
         test('skips images exceeding MAX_IMAGE_SIZE_BYTES', async () => {
@@ -241,7 +262,7 @@ describe('Attachment Fetcher', () => {
             expect(mockFetch).not.toHaveBeenCalled();
         });
 
-        test('handles fetch errors gracefully (returns null)', async () => {
+        test('returns failure info on fetch error', async () => {
             const metadata: AttachmentMetadata = {
                 url:         'https://example.com/image.jpg',
                 filename:    'image.jpg',
@@ -253,10 +274,17 @@ describe('Attachment Fetcher', () => {
 
             const result = await fetchImage(metadata);
 
-            expect(result).toBeNull();
+            expect(result).not.toBeNull();
+            expect(result?.success).toBe(false);
+            if(result && !result.success) {
+                expect(result.failure.filename).toBe('image.jpg');
+                expect(result.failure.contentType).toBe('image/jpeg');
+                expect(result.failure.size).toBe(1024);
+                expect(result.failure.error).toContain('Network error');
+            }
         });
 
-        test('handles non-ok response (returns null)', async () => {
+        test('returns failure info on non-ok response', async () => {
             const metadata: AttachmentMetadata = {
                 url:         'https://example.com/image.jpg',
                 filename:    'image.jpg',
@@ -270,17 +298,54 @@ describe('Attachment Fetcher', () => {
 
             mockFetch.mockResolvedValueOnce({
                 ok:          false,
+                status:      404,
+                statusText:  'Not Found',
                 arrayBuffer: arrayBufferMock,
             } as unknown as Response);
 
             const result = await fetchImage(metadata);
 
-            expect(result).toBeNull();
+            expect(result).not.toBeNull();
+            expect(result?.success).toBe(false);
+            if(result && !result.success) {
+                expect(result.failure.filename).toBe('image.jpg');
+                expect(result.failure.contentType).toBe('image/jpeg');
+                expect(result.failure.size).toBe(1024);
+                expect(result.failure.error).toContain('HTTP');
+            }
             expect(arrayBufferMock).not.toHaveBeenCalled();
         });
 
+        test('returns failure info when HEIC conversion fails', async () => {
+            const metadata: AttachmentMetadata = {
+                url:         'https://example.com/image.heic',
+                filename:    'image.heic',
+                contentType: 'image/heic',
+                size:        2048,
+            };
+
+            const heicData = Buffer.from('corrupt-heic-data');
+            mockFetch.mockResolvedValueOnce({
+                ok:          true,
+                arrayBuffer: async () => heicData.buffer,
+            } as Response);
+
+            // Make heic-convert throw
+            const heicConvert = (await import('heic-convert')).default as unknown as ReturnType<typeof mock>;
+            heicConvert.mockRejectedValueOnce(new Error('Invalid HEIC data'));
+
+            const result = await fetchImage(metadata);
+
+            expect(result).not.toBeNull();
+            expect(result?.success).toBe(false);
+            if(result && !result.success) {
+                expect(result.failure.filename).toBe('image.heic');
+                expect(result.failure.error).toContain('Invalid HEIC data');
+            }
+        });
+
         // Note: Conversion error handling is tested in converter.test.ts
-        // The fetcher will catch any errors from the converter and return null
+        // The fetcher will catch any errors from the converter and return failure info
     });
 
     describe('fetchImages', () => {
@@ -319,15 +384,16 @@ describe('Attachment Fetcher', () => {
                 arrayBuffer: async () => Buffer.from('gif-data').buffer,
             } as Response);
 
-            const results = await fetchImages(attachments);
+            const result = await fetchImages(attachments);
 
-            expect(results).toHaveLength(3);
-            expect(results[0]?.filename).toBe('image1.jpg');
-            expect(results[1]?.filename).toBe('image2.png');
-            expect(results[2]?.filename).toBe('image3.gif');
+            expect(result.images).toHaveLength(3);
+            expect(result.failures).toHaveLength(0);
+            expect(result.images[0]?.filename).toBe('image1.jpg');
+            expect(result.images[1]?.filename).toBe('image2.png');
+            expect(result.images[2]?.filename).toBe('image3.gif');
         });
 
-        test('filters out failed fetches', async () => {
+        test('separates successful fetches from skipped attachments', async () => {
             const attachments: AttachmentMetadata[] = [
                 {
                     url:         'https://example.com/image1.jpg',
@@ -339,7 +405,7 @@ describe('Attachment Fetcher', () => {
                     url:         'https://example.com/image2.jpg',
                     filename:    'image2.jpg',
                     contentType: 'image/jpeg',
-                    size:        MAX_IMAGE_SIZE_BYTES + 1, // Too large
+                    size:        MAX_IMAGE_SIZE_BYTES + 1, // Too large - skipped
                 },
                 {
                     url:         'https://example.com/image3.jpg',
@@ -358,14 +424,46 @@ describe('Attachment Fetcher', () => {
                 arrayBuffer: async () => Buffer.from('jpeg-data-3').buffer,
             } as Response);
 
-            const results = await fetchImages(attachments);
+            const result = await fetchImages(attachments);
 
-            expect(results).toHaveLength(2);
-            expect(results[0]?.filename).toBe('image1.jpg');
-            expect(results[1]?.filename).toBe('image3.jpg');
+            expect(result.images).toHaveLength(2);
+            expect(result.failures).toHaveLength(0); // Skipped items don't appear in failures
+            expect(result.images[0]?.filename).toBe('image1.jpg');
+            expect(result.images[1]?.filename).toBe('image3.jpg');
         });
 
-        test('returns empty array when all fetches fail', async () => {
+        test('separates successful fetches from failures', async () => {
+            const attachments: AttachmentMetadata[] = [
+                {
+                    url:         'https://example.com/image1.jpg',
+                    filename:    'image1.jpg',
+                    contentType: 'image/jpeg',
+                    size:        1024,
+                },
+                {
+                    url:         'https://example.com/image2.jpg',
+                    filename:    'image2.jpg',
+                    contentType: 'image/jpeg',
+                    size:        2048,
+                },
+            ];
+
+            mockFetch.mockResolvedValueOnce({
+                ok:          true,
+                arrayBuffer: async () => Buffer.from('jpeg-data-1').buffer,
+            } as Response);
+            mockFetch.mockRejectedValueOnce(new Error('Network error'));
+
+            const result = await fetchImages(attachments);
+
+            expect(result.images).toHaveLength(1);
+            expect(result.failures).toHaveLength(1);
+            expect(result.images[0]?.filename).toBe('image1.jpg');
+            expect(result.failures[0]?.filename).toBe('image2.jpg');
+            expect(result.failures[0]?.error).toContain('Network error');
+        });
+
+        test('returns empty arrays when all fetches are skipped', async () => {
             const attachments: AttachmentMetadata[] = [
                 {
                     url:         'https://example.com/image1.jpg',
@@ -381,15 +479,17 @@ describe('Attachment Fetcher', () => {
                 },
             ];
 
-            const results = await fetchImages(attachments);
+            const result = await fetchImages(attachments);
 
-            expect(results).toHaveLength(0);
+            expect(result.images).toHaveLength(0);
+            expect(result.failures).toHaveLength(0);
         });
 
-        test('returns empty array for empty input', async () => {
-            const results = await fetchImages([]);
+        test('returns empty arrays for empty input', async () => {
+            const result = await fetchImages([]);
 
-            expect(results).toHaveLength(0);
+            expect(result.images).toHaveLength(0);
+            expect(result.failures).toHaveLength(0);
         });
     });
 

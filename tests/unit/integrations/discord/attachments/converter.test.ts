@@ -80,5 +80,17 @@ describe('Image Converter', () => {
                 'Unsupported content type for conversion: application/pdf'
             );
         });
+
+        test('wraps heicConvert errors with context', async () => {
+            const heicConvert = (await import('heic-convert')).default as unknown as ReturnType<typeof mock>;
+            heicConvert.mockRejectedValueOnce(new Error('Invalid HEIC data'));
+
+            const inputBuffer = Buffer.from('corrupt-heic-data');
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
+            await expect(convert(inputBuffer, 'image/heic')).rejects.toThrow(
+                'HEIC conversion failed: Invalid HEIC data'
+            );
+        });
     });
 });

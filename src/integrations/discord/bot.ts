@@ -54,13 +54,30 @@ async function processAttachments(contexts: DiscordMessageContext[]): Promise<Pr
         // Fetch images
         const imageAttachments = _.filter(allAttachments, att => isSupportedImageType(att.contentType));
         if(imageAttachments.length > 0) {
-            images = await fetchImages(imageAttachments);
+            const result = await fetchImages(imageAttachments);
+            images = result.images;
             // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
             logger.info({
                 totalAttachments: imageAttachments.length,
                 fetchedImages:    images.length,
-                msg:              `Fetched ${images.length} images from ${imageAttachments.length} image attachments`,
+                failedImages:     result.failures.length,
+                msg:              `Fetched ${images.length} images from ${imageAttachments.length} image attachments (${result.failures.length} failed)`,
             });
+
+            // Log failures
+            for(const failure of result.failures) {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
+                logger.warn({
+                    filename:    failure.filename,
+                    contentType: failure.contentType,
+                    size:        failure.size,
+                    error:       failure.error,
+                    msg:         `Failed to fetch image: ${failure.filename}`,
+                });
+                contentAdditions.push(
+                    `[Image fetch failed: ${failure.filename} - ${failure.error}]`
+                );
+            }
         }
 
         // Save non-image attachments to scratch directory

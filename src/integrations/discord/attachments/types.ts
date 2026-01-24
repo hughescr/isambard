@@ -43,6 +43,15 @@ export const StoredAttachmentSchema = z.object({
 });
 export type StoredAttachment = z.infer<typeof StoredAttachmentSchema>;
 
+// Schema for failed attachment processing
+export const FailedAttachmentSchema = z.object({
+    filename:    z.string(),
+    contentType: z.string(),
+    size:        z.number().int().positive(),
+    error:       z.string(),
+});
+export type FailedAttachment = z.infer<typeof FailedAttachmentSchema>;
+
 // Type guards
 export function isNativeImageType(contentType: string): contentType is typeof NATIVE_IMAGE_TYPES[number] {
     return (NATIVE_IMAGE_TYPES as readonly string[]).includes(contentType);

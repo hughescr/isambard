@@ -1,8 +1,11 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import _ from 'lodash';
+import { logger } from '@hughescr/logger';
 import {
     type AttachmentMetadata,
     type FetchedImage,
+    type FailedAttachment,
     type StoredAttachment,
     MAX_IMAGE_SIZE_BYTES,
     isNativeImageType,
@@ -12,9 +15,22 @@ import { needsConversion, convert } from './converter';
 
 const FETCH_TIMEOUT_MS = 30_000;
 
+export type FetchImageResult = {
+    success: true
+    image:   FetchedImage
+} | {
+    success: false
+    failure: FailedAttachment
+};
+
+export interface FetchImagesResult {
+    images:   FetchedImage[]
+    failures: FailedAttachment[]
+}
+
 export async function fetchImage(
     metadata: AttachmentMetadata
-): Promise<FetchedImage | null> {
+): Promise<FetchImageResult | null> {
     // Skip if too large
     if(metadata.size > MAX_IMAGE_SIZE_BYTES) {
         return null;
@@ -34,7 +50,25 @@ export async function fetchImage(
         });
 
         if(!response.ok) {
-            return null;
+            const errorMessage = `HTTP ${response.status} ${response.statusText}`;
+            // Stryker disable all: logging statement
+            logger.error({
+                filename:    metadata.filename,
+                contentType: metadata.contentType,
+                size:        metadata.size,
+                error:       errorMessage,
+                msg:         `Failed to fetch image: ${metadata.filename}`,
+            });
+            // Stryker restore all
+            return {
+                success: false,
+                failure: {
+                    filename:    metadata.filename,
+                    contentType: metadata.contentType,
+                    size:        metadata.size,
+                    error:       errorMessage,
+                },
+            };
         }
 
         const arrayBuffer = await response.arrayBuffer();
@@ -55,27 +89,62 @@ export async function fetchImage(
         }
 
         return {
-            filename:     metadata.filename,
-            mediaType,
-            base64Data,
-            originalSize: metadata.size,
-            width:        metadata.width,
-            height:       metadata.height,
+            success: true,
+            image:   {
+                filename:     metadata.filename,
+                mediaType,
+                base64Data,
+                originalSize: metadata.size,
+                width:        metadata.width,
+                height:       metadata.height,
+            },
         };
-    } catch{
-        return null;
+    } catch (error) {
+        const errorMessage = _.isError(error) ? error.message : String(error);
+        // Stryker disable all: logging statement
+        logger.error({
+            filename:    metadata.filename,
+            contentType: metadata.contentType,
+            size:        metadata.size,
+            error:       errorMessage,
+            msg:         `Failed to fetch/convert image: ${metadata.filename}`,
+        });
+        // Stryker restore all
+        return {
+            success: false,
+            failure: {
+                filename:    metadata.filename,
+                contentType: metadata.contentType,
+                size:        metadata.size,
+                error:       errorMessage,
+            },
+        };
     }
 }
 
 export async function fetchImages(
     attachments: AttachmentMetadata[]
-): Promise<FetchedImage[]> {
+): Promise<FetchImagesResult> {
     const results = await Promise.all(
         // eslint-disable-next-line lodash/prefer-lodash-method -- Native array methods preferred for simplicity
         attachments.map(fetchImage)
     );
-    // eslint-disable-next-line lodash/prefer-lodash-method -- Native array methods preferred for simplicity
-    return results.filter((r): r is FetchedImage => r !== null);
+
+    const images: FetchedImage[] = [];
+    const failures: FailedAttachment[] = [];
+
+    for(const result of results) {
+        if(result === null) {
+            continue;  // Skipped (too large, unsupported type)
+        }
+        if(result.success) {
+            images.push(result.image);
+        } else {
+            failures.push(result.failure);
+        }
+    }
+
+    return { images, failures };
 }
 
 export async function saveNonImageAttachment(
