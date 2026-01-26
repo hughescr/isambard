@@ -837,6 +837,132 @@ describe('Discord Event Handlers', () => {
         });
     });
 
+    describe('Catch-up interruption handling', () => {
+        const botUserId = createUserId('bot-123');
+        const monitoredChannelId = createChannelId('channel-456');
+
+        const createMockMessageForCatchUp = (): Message => {
+            return {
+                id:     'msg-123',
+                author: {
+                    id:  'user-789',
+                    tag: 'TestUser#1234',
+                    bot: false,
+                },
+                content: 'Test message',
+                channel: {
+                    id:         monitoredChannelId,
+                    // Stryker disable next-line all: Mock function for testing only
+                    sendTyping: mock(async () => { return; }),
+                },
+                guild: {
+                    id: 'guild-123',
+                },
+                attachments: new Map(),
+                createdAt:   new Date(),
+            } as unknown as Message;
+        };
+
+        it('should call handleCatchUpInterruption when state is catching_up and runner exists', async () => {
+            const mockCatchUpStateManager = {
+                getState: mock(_.constant('catching_up' as const)),
+            };
+
+            const mockCatchUpSessionRunner = {
+                interrupt: mock(async () => { /* intentionally empty */ }),
+            };
+
+            const mockPresenceManager = {
+                // Stryker disable next-line all: Mock functions for testing only
+                setPhase:       mock(() => _.noop()),
+                // Stryker disable next-line all: Mock functions for testing only
+                setCatchUpMode: mock(() => _.noop()),
+            };
+
+            const onMessage = mock(_.constant(Promise.resolve(null)));
+
+            const handler = createMessageHandler({
+                monitoredChannelIds:  [monitoredChannelId],
+                botUserId,
+                onMessage,
+                catchUpStateManager:  mockCatchUpStateManager as unknown as import('@/integrations/discord/catchup').CatchUpStateManager,
+                catchUpSessionRunner: mockCatchUpSessionRunner as unknown as import('@/integrations/discord/catchup').CatchUpSessionRunner,
+                presenceManager:      mockPresenceManager as unknown as import('@/integrations/discord/presence').PresenceManager,
+            });
+
+            const message = createMockMessageForCatchUp();
+            await handler(message);
+
+            // Verify handleCatchUpInterruption was called (which calls interrupt)
+            expect(mockCatchUpSessionRunner.interrupt).toHaveBeenCalled();
+        });
+
+        it('should NOT call handleCatchUpInterruption when state is NOT catching_up', async () => {
+            const mockCatchUpStateManager = {
+                getState: mock(_.constant('idle' as const)),
+            };
+
+            const mockCatchUpSessionRunner = {
+                interrupt: mock(async () => { /* intentionally empty */ }),
+            };
+
+            const mockPresenceManager = {
+                // Stryker disable next-line all: Mock functions for testing only
+                setPhase:       mock(() => _.noop()),
+                // Stryker disable next-line all: Mock functions for testing only
+                setCatchUpMode: mock(() => _.noop()),
+            };
+
+            const onMessage = mock(_.constant(Promise.resolve(null)));
+
+            const handler = createMessageHandler({
+                monitoredChannelIds:  [monitoredChannelId],
+                botUserId,
+                onMessage,
+                catchUpStateManager:  mockCatchUpStateManager as unknown as import('@/integrations/discord/catchup').CatchUpStateManager,
+                catchUpSessionRunner: mockCatchUpSessionRunner as unknown as import('@/integrations/discord/catchup').CatchUpSessionRunner,
+                presenceManager:      mockPresenceManager as unknown as import('@/integrations/discord/presence').PresenceManager,
+            });
+
+            const message = createMockMessageForCatchUp();
+            await handler(message);
+
+            // Verify handleCatchUpInterruption was NOT called
+            expect(mockCatchUpSessionRunner.interrupt).not.toHaveBeenCalled();
+        });
+
+        it('should NOT call handleCatchUpInterruption when catchUpSessionRunner is undefined', async () => {
+            const mockCatchUpStateManager = {
+                getState: mock(_.constant('catching_up' as const)),
+            };
+
+            const mockPresenceManager = {
+                // Stryker disable next-line all: Mock functions for testing only
+                setPhase:       mock(() => _.noop()),
+                // Stryker disable next-line all: Mock functions for testing only
+                setCatchUpMode: mock(() => _.noop()),
+            };
+
+            const onMessage = mock(_.constant(Promise.resolve(null)));
+
+            const handler = createMessageHandler({
+                monitoredChannelIds: [monitoredChannelId],
+                botUserId,
+                onMessage,
+                catchUpStateManager: mockCatchUpStateManager as unknown as import('@/integrations/discord/catchup').CatchUpStateManager,
+                // catchUpSessionRunner is undefined
+                presenceManager:     mockPresenceManager as unknown as import('@/integrations/discord/presence').PresenceManager,
+            });
+
+            const message = createMockMessageForCatchUp();
+            // Should not throw
+            await handler(message);
+
+            // No exception should be thrown when catchUpSessionRunner is undefined
+            expect(onMessage).toHaveBeenCalled();
+        });
+    });
+
     describe('extractAttachmentMetadata', () => {
         const createMockMessageForExtraction = (
             attachments: { name: string | null, contentType: string | null }[] | null | undefined

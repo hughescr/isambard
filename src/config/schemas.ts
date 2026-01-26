@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { PresenceConfigSchema } from '@/integrations/discord/presence/types';
+import { inboxConfigSchema } from '@/integrations/discord/inbox/config';
 
 // Log level enum schema
 // Stryker disable next-line all: Log level enum values are configuration
@@ -43,6 +44,7 @@ export const discordConfigSchema = z.object({
     applicationId:       z.string().min(1),
     monitoredChannelIds: z.array(z.string().min(1)).default([]),
     presence:            PresenceConfigSchema.optional(),
+    inbox:               inboxConfigSchema.optional(),
 });
 
 // Box config

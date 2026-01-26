@@ -69,7 +69,7 @@ describe('Bot Lifecycle Integration', () => {
         mockDiscordBot = {
             start: mock(async () => undefined),
             stop:  mock(async () => undefined),
-        };
+        } as DiscordBot;
 
         // Mock Claude Agent
         mockClaudeAgent = {
@@ -253,6 +253,7 @@ describe('Bot Lifecycle Integration', () => {
                 contextBuilder:   mockContextBuilder,
                 memoryMcpServer:  mockMemoryMcp,
                 discordMcpServer: expect.any(Object),
+                inboxMcpServer:   expect.any(Object),
                 plugins:          expect.any(Array),
             });
         }, { timeout: process.env.CI ? 150 : 15 });
@@ -453,5 +454,67 @@ describe('Bot Lifecycle Integration', () => {
 
             expect(response).toBeNull();
         });
+    });
+
+    describe('Catch-Up Mode Integration', () => {
+        it('should not start catch-up when memoryBackend is not provided', async () => {
+            spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
+                discord: mockDiscordConfig,
+                agent:   mockAgentConfig,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
+            } as any));
+            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockImplementation(() => {
+                throw new Error('DynamoDB not configured');
+            }));
+            spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
+            spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
+
+            await createApp();
+
+            // Agent should not be called with specialMode: 'catchup' when no memoryBackend
+            expect(mockClaudeAgent.chatBatch).not.toHaveBeenCalled();
+        });
+
+        it('should pass memoryBackend to bot when DynamoDB is configured', async () => {
+            const mockClient = {} as DynamoDBClient;
+            const mockDocClient = {} as DynamoDBDocumentClient;
+            const mockContextBuilder = {} as ContextBuilder;
+            const mockMemoryMcp = {};
+
+            spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
+                discord: mockDiscordConfig,
+                agent:   mockAgentConfig,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
+            } as any));
+            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
+            const createDynamoDBClientSpy = spyOn(dynamoClient, 'createDynamoDBClient').mockReturnValue({
+                client:    mockClient,
+                docClient: mockDocClient,
+                tableName: 'IsambardMemory',
+            });
+            spies.push(createDynamoDBClientSpy);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock context builder
+            const createContextBuilderSpy = spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder as any);
+            spies.push(createContextBuilderSpy);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock MCP server
+            const createMemoryMCPServerSpy = spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as any);
+            spies.push(createMemoryMCPServerSpy);
+            const createClaudeAgentSpy = spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent);
+            spies.push(createClaudeAgentSpy);
+            const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
+            spies.push(createDiscordBotSpy);
+
+            // Create app (which will trigger memoryBackend creation)
+            await createApp();
+
+            // Verify memoryBackend was passed to bot
+            const botOptions = createDiscordBotSpy.mock.calls[0][0];
+            expect(botOptions.memoryBackend).toBeDefined();
+            expect(botOptions.memoryBackend).toHaveProperty('storeCompletionSignal');
+            expect(botOptions.memoryBackend).toHaveProperty('loadCompletionSignal');
+            expect(botOptions.memoryBackend).toHaveProperty('storeInProgressSignal');
+            expect(botOptions.memoryBackend).toHaveProperty('loadInProgressSignal');
+            expect(botOptions.memoryBackend).toHaveProperty('deleteInProgressSignal');
+        }, { timeout: process.env.CI ? 150 : 15 });
     });
 });

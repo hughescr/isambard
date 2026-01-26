@@ -15,4 +15,5 @@ export default {
     thresholds:       { high: 100, low: 100, 'break': 100 },
     concurrency:      isCI ? 4 : 24,
     tempDirName:      '.stryker-tmp',
+    warnings:         { slow: false },
 };

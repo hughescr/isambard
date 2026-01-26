@@ -126,7 +126,7 @@ describe('PresenceManager', () => {
             await manager.updatePhase(phase);
 
             // Should update immediately (leading-edge)
-            expect(mockActiveGenerator.generate).toHaveBeenCalledWith(phase);
+            expect(mockActiveGenerator.generate).toHaveBeenCalledWith(phase, 'none');
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
         });
 

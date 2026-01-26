@@ -25,6 +25,14 @@ import { createAnswerClassifier, classifyWithHaiku } from '@/agent/answer-classi
 import { createInteractionHandler } from './interactions';
 import { fetchImages, saveNonImageAttachment, isSupportedImageType, formatBytes, addAttachmentInfoToContexts } from './attachments';
 import type { FetchedImage } from './attachments/types';
+import type { InboxManager } from './inbox';
+import {
+    createCatchUpSessionRunner,
+    type CatchUpStateManager,
+    type CatchUpSessionRunner,
+    type CatchUpCompletionSignal,
+    type CatchUpInProgressSignal
+} from './catchup';
 
 /**
  * Result of processing Discord message attachments
@@ -181,6 +189,35 @@ export interface DiscordBotOptions {
      * Pass this to share the registry with the Discord MCP server.
      */
     questionRegistry?: QuestionRegistry
+
+    /**
+     * Optional inbox manager for tracking unread messages and channel activity.
+     * If provided, enables inbox functionality for the bot.
+     */
+    inboxManager?: InboxManager
+
+    /**
+     * Optional memory backend for storing catch-up state (completion/inProgress signals).
+     * If provided along with agent and inboxManager, enables catch-up mode.
+     */
+    memoryBackend?: {
+        /** Store catch-up completion signal */
+        storeCompletionSignal:  (signal: CatchUpCompletionSignal) => Promise<void>
+        /** Load catch-up completion signal */
+        loadCompletionSignal:   () => Promise<CatchUpCompletionSignal | null>
+        /** Store catch-up in-progress signal */
+        storeInProgressSignal:  (signal: CatchUpInProgressSignal) => Promise<void>
+        /** Load catch-up in-progress signal */
+        loadInProgressSignal:   () => Promise<CatchUpInProgressSignal | null>
+        /** Delete catch-up in-progress signal */
+        deleteInProgressSignal: () => Promise<void>
+    }
+
+    /**
+     * Optional catch-up state manager for tracking catch-up session state.
+     * If provided along with inboxManager, agent, and memoryBackend, enables catch-up mode.
+     */
+    catchUpStateManager?: CatchUpStateManager
 }
 
 /**
@@ -241,11 +278,12 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, onMessage, identityContext, agent, client: providedClient } = options;
+    const { config, onMessage, identityContext, agent, client: providedClient, inboxManager, memoryBackend, catchUpStateManager } = options;
     const client: Client = providedClient ?? createDiscordClient(config);
     let presenceManager: PresenceManager | undefined;
     let coordinator: MessageCoordinator | undefined;
     let rateLimiter: DiscordRateLimiter | undefined;
+    let catchUpSessionRunner: CatchUpSessionRunner | undefined;
     // Use provided registry or create a new one
     const questionRegistry: QuestionRegistry = options.questionRegistry ?? createQuestionRegistry();
 
@@ -346,6 +384,79 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             presenceManager.start();
         }
 
+        // Initialize inbox on startup
+        if(inboxManager) {
+            // Load unread messages from all tracked channels
+            inboxManager.loadUnread().then((count) => {
+                if(count > 0) {
+                    logger.info({
+                        unreadCount: count,
+                        msg:         `Inbox loaded with ${count} unread messages`,
+                    });
+                }
+                return;
+            }).catch((error) => {
+                const errorMsg = _.isError(error) ? error.message : String(error);
+                logger.warn({
+                    error: errorMsg,
+                    msg:   'Failed to load inbox on startup',
+                });
+            });
+        }
+
+        // Create catch-up session runner if all dependencies available
+        if(inboxManager && agent && memoryBackend && catchUpStateManager) {
+            // Create session runner
+            catchUpSessionRunner = createCatchUpSessionRunner({
+                stateManager:           catchUpStateManager,
+                inboxManager,
+                storeCompletionSignal:  memoryBackend.storeCompletionSignal,
+                loadCompletionSignal:   memoryBackend.loadCompletionSignal,
+                storeInProgressSignal:  memoryBackend.storeInProgressSignal,
+                loadInProgressSignal:   memoryBackend.loadInProgressSignal,
+                deleteInProgressSignal: memoryBackend.deleteInProgressSignal,
+                resolveChannelName:     channelId => inboxManager.getChannelName(channelId),
+                runAgentSession:        async (runOptions) => {
+                    // Create abort controller from signal
+                    const abortController = new AbortController();
+                    runOptions.abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
+
+                    // Call agent.chatBatch with specialMode: 'catchup' and the catch-up prompt
+                    const result = await agent.chatBatch([], {
+                        specialMode:   'catchup',
+                        abortController,
+                        sessionId:     runOptions.sessionId,
+                        catchUpPrompt: runOptions.prompt,
+                    });
+
+                    return {
+                        completed: !result.wasInterrupted,
+                        sessionId: result.sessionId,
+                    };
+                },
+                onCatchUpComplete: () => {
+                    // Reset presence mode when catch-up completes
+                    presenceManager?.setCatchUpMode('none');
+                },
+            });
+
+            // Check if catch-up should start
+            // Capture runner reference for closure safety
+            const runner = catchUpSessionRunner;
+            runner.shouldStartCatchUp().then(async (shouldStart) => {
+                if(shouldStart) {
+                    logger.info({ msg: 'Starting catch-up mode' });
+                    // Update presence to show catching up
+                    presenceManager?.setCatchUpMode('catching_up');
+                    await runner.startCatchUp();
+                }
+                return;
+            }).catch((error) => {
+                const errorMsg = _.isError(error) ? error.message : String(error);
+                logger.error({ error: errorMsg, msg: 'Failed to start catch-up' });
+            });
+        }
+
         // Create dynamic status generator if identityContext is provided
         // IMPORTANT: Must create before coordinator.setProcessor so it's available in onStreamEvent
         const dynamicStatusGenerator = identityContext
@@ -386,11 +497,30 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                             logger.error({ error: err, messageId: discordMessage.id, msg: `Failed to reply to message ${discordMessage.id}: ${err.message}` });
                         }
                     }
+
+                    // Resume catch-up if we were interrupted
+                    if(catchUpStateManager?.getState() === 'catching_up_interrupted' && catchUpSessionRunner) {
+                        logger.info({ msg: 'Resuming catch-up after interruption' });
+                        // Update presence back to catching_up
+                        presenceManager?.setCatchUpMode('catching_up');
+                        // Resume catch-up (async, don't await)
+                        void catchUpSessionRunner.resumeAfterInterruption().catch((error) => {
+                            const errorMsg = _.isError(error) ? error.message : String(error);
+                            logger.error({ error: errorMsg, msg: 'Failed to resume catch-up after interruption' });
+                            // Reset presence on failure
+                            presenceManager?.setCatchUpMode('none');
+                        });
+                    }
                 },
             });
 
             // Set the processor to call agent.chatBatch
             coordinator.setProcessor(async (contexts, resumeContext, sessionId, abortSignal) => {
+                // Update presence to show processing message if not in catch-up mode
+                if(catchUpStateManager?.getState() === 'idle') {
+                    presenceManager?.setCatchUpMode('processing_message');
+                }
+
                 // Set conversation context for MCP tools
                 setConversationContext({
                     currentUserId:    contexts[0]?.userId,
@@ -400,7 +530,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 try {
                     // Create abort controller from signal
                     const abortController = new AbortController();
-                    abortSignal.addEventListener('abort', () => abortController.abort());
+                    abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
 
                     // Process attachments from all contexts
                     const { images, contentAdditions } = await processAttachments(contexts);
@@ -432,6 +562,11 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                         streamEventHandler.complete();
                     }
 
+                    // Reset presence mode back to none if we were in processing_message mode
+                    if(catchUpStateManager?.getState() === 'idle') {
+                        presenceManager?.setCatchUpMode('none');
+                    }
+
                     return result;
                 } finally {
                     // Clear context after processing
@@ -452,6 +587,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             coordinator,
             questionRegistry,
             answerClassifier,
+            inboxManager,
+            catchUpStateManager,
+            catchUpSessionRunner,
         }));
     });
 
@@ -462,6 +600,13 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         },
 
         async stop(): Promise<void> {
+            // Abort any running catch-up session FIRST to prevent race conditions
+            if(catchUpSessionRunner) {
+                const controller = catchUpSessionRunner.getAbortController();
+                if(controller) {
+                    controller.abort();
+                }
+            }
             // Stop coordinator if it exists
             if(coordinator) {
                 coordinator.stop();

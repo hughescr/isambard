@@ -749,7 +749,7 @@ describe('PresenceManager Lifecycle', () => {
             await manager.updatePhase(phase);
 
             // Active generator SHOULD be called for active phase
-            expect(mockActiveGenerator.generate).toHaveBeenCalledWith(phase);
+            expect(mockActiveGenerator.generate).toHaveBeenCalledWith(phase, 'none');
 
             // Idle generator should NOT be called for active phase
             expect(mockIdleGenerator.generate).not.toHaveBeenCalled();

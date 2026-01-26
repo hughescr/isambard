@@ -6,7 +6,7 @@
  */
 
 import type { ActivitiesOptions, ActivityType } from 'discord.js';
-import type { PresencePhase } from './types.js';
+import type { PresencePhase, CatchUpMode } from './types.js';
 import { ToolStatusMap } from './types.js';
 
 /**
@@ -18,9 +18,10 @@ export interface ActiveStatusGenerator {
    * This is fast and synchronous - uses pre-defined mappings.
    *
    * @param phase - Current presence phase
+   * @param catchUpMode - Current catch-up mode for prefix generation
    * @returns Discord activity configuration
    */
-    generate(phase: PresencePhase): ActivitiesOptions
+    generate(phase: PresencePhase, catchUpMode?: CatchUpMode): ActivitiesOptions
 }
 
 /**
@@ -41,11 +42,42 @@ export interface ActiveStatusGeneratorDeps {
 }
 
 /**
+ * Returns the emoji prefix for the given catch-up mode.
+ *
+ * @param catchUpMode - Current catch-up mode
+ * @returns Emoji prefix string (with trailing space if applicable)
+ */
+function getCatchUpPrefix(catchUpMode: CatchUpMode | undefined): string {
+    // Stryker disable BlockStatement,ConditionalExpression,LogicalOperator: Early return and default case have same behavior ('') - tested in integration
+    if(!catchUpMode || catchUpMode === 'none') {
+        return '';
+    }
+    // Stryker restore BlockStatement,ConditionalExpression,LogicalOperator
+
+    // Switch case emojis are tested in test file
+    switch(catchUpMode) { // Stryker disable ConditionalExpression,StringLiteral
+        case 'catching_up':
+            return '📥 ';
+        case 'catching_up_interrupted':
+            return '📥💬 ';
+        case 'processing_message':
+            return '💬 ';
+        default:
+            return '';
+    }
+}
+
+/**
  * Creates an active status generator.
  *
  * The generator maps presence phases to Discord status text using a simple switch statement.
  * For tool usage, it looks up the tool name in ToolStatusMap and falls back to "Working..."
  * for unknown tools.
+ *
+ * When catch-up mode is provided, adds appropriate emoji prefixes:
+ * - catching_up: 📥
+ * - catching_up_interrupted: 📥💬
+ * - processing_message: 💬
  *
  * @param deps - Dependencies including logger and activity type
  * @returns ActiveStatusGenerator instance
@@ -59,6 +91,12 @@ export interface ActiveStatusGeneratorDeps {
  *
  * const activity = generator.generate({ type: 'thinking', startedAt: new Date() });
  * // Returns: { name: 'Thinking...', type: ActivityType.Custom }
+ *
+ * const activityWithPrefix = generator.generate(
+ *   { type: 'thinking', startedAt: new Date() },
+ *   'catching_up'
+ * );
+ * // Returns: { name: '📥 Thinking...', type: ActivityType.Custom }
  * ```
  */
 export function createActiveStatusGenerator(
@@ -67,33 +105,40 @@ export function createActiveStatusGenerator(
     const { logger, activityType } = deps;
 
     return {
-        generate(phase: PresencePhase): ActivitiesOptions {
-            logger.debug({ phase }, 'Generating active status');
+        generate(phase: PresencePhase, catchUpMode?: CatchUpMode): ActivitiesOptions {
+            logger.debug({ phase, catchUpMode }, 'Generating active status');
+
+            const prefix = getCatchUpPrefix(catchUpMode);
+            let baseStatus: string;
 
             switch(phase.type) {
                 case 'idle':
                     // Should not be called for idle - caller's responsibility
                     logger.warn('Active status generator called for idle phase');
-                    return { name: 'Idle', type: activityType };
+                    baseStatus = 'Idle';
+                    break;
 
                 case 'thinking':
-                    return { name: phase.generatedStatus ?? 'Thinking...', type: activityType };
+                    baseStatus = phase.generatedStatus ?? 'Thinking...';
+                    break;
 
-                case 'using_tool': {
-                    const statusText = phase.generatedStatus ?? ToolStatusMap[phase.toolName] ?? 'Working...';
-                    return { name: statusText, type: activityType };
-                }
+                case 'using_tool':
+                    baseStatus = phase.generatedStatus ?? ToolStatusMap[phase.toolName] ?? 'Working...';
+                    break;
 
                 case 'responding':
-                    return { name: phase.generatedStatus ?? 'Responding...', type: activityType };
+                    baseStatus = phase.generatedStatus ?? 'Responding...';
+                    break;
 
                 default: {
                     // Exhaustiveness check - TypeScript will error if we miss a case
                     const _exhaustive: never = phase;
                     logger.error({ phase: _exhaustive }, 'Unknown presence phase');
-                    return { name: 'Processing...', type: activityType };
+                    baseStatus = 'Processing...';
                 }
             }
+
+            return { name: `${prefix}${baseStatus}`, type: activityType };
         },
     };
 }

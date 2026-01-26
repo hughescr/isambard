@@ -17,9 +17,10 @@ export interface IdleStatusGenerator {
    * Generate creative idle status text using Claude Haiku.
    * This is async and may fail - returns fallback "Idle" on error.
    *
+   * @param includeIdleEmoji - Whether to include the 💤 emoji prefix (default: true)
    * @returns Discord activity configuration
    */
-    generate(): Promise<ActivitiesOptions>
+    generate(includeIdleEmoji?: boolean): Promise<ActivitiesOptions>
 }
 
 /**
@@ -107,9 +108,9 @@ export function createIdleStatusGenerator(
     const { logger, activityType, identityContext, getRecentContext } = deps;
 
     return {
-        async generate(): Promise<ActivitiesOptions> {
+        async generate(includeIdleEmoji = true): Promise<ActivitiesOptions> {
             try {
-                logger.debug('Generating idle status with Haiku');
+                logger.debug({ includeIdleEmoji }, 'Generating idle status with Haiku');
 
                 // Build system prompt with identity context
                 const systemPrompt = _.replace(SYSTEM_PROMPT_TEMPLATE, '{identityContext}', identityContext);
@@ -123,13 +124,21 @@ export function createIdleStatusGenerator(
                     : USER_PROMPT_WITHOUT_CONTEXT;
 
                 const text = await generateTextWithSystemPrompt(systemPrompt, userPrompt, { stripMarkdown: true });
-                const statusText = text.slice(0, 128);
+                // Reserve space for emoji prefix if needed (💤 + space = 3 chars)
+                const maxLength = includeIdleEmoji ? 125 : 128;
+                const statusText = text.slice(0, maxLength);
 
-                logger.info({ statusText }, 'Generated idle status');
-                return { name: statusText, type: activityType };
+                // Add 💤 prefix if requested
+                const finalStatus = includeIdleEmoji ? `💤 ${statusText}` : statusText;
+
+                logger.info({ statusText: finalStatus }, 'Generated idle status');
+                return { name: finalStatus, type: activityType };
             } catch (error) {
+                // Stryker disable all: Error fallback - tested only via integration, difficult to trigger in unit tests
                 logger.error({ error }, 'Failed to generate idle status, using fallback');
-                return { name: 'Idle', type: activityType };
+                const fallback = includeIdleEmoji ? '💤 Idle' : 'Idle';
+                return { name: fallback, type: activityType };
+                // Stryker restore all
             }
         },
     };

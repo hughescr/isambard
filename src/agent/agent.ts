@@ -289,6 +289,8 @@ export interface ClaudeAgentOptions {
     memoryMcpServer?:  McpServerConfig
     /** Discord MCP server instance for message history access */
     discordMcpServer?: McpServerConfig
+    /** Inbox MCP server instance for inbox management */
+    inboxMcpServer?:   McpServerConfig
     /** Plugins to load (from plugin-loader.ts) */
     plugins?:          SdkPluginConfig[]
 }
@@ -305,6 +307,10 @@ export interface ChatBatchOptions {
     onStreamEvent?:   (event: AgentStreamEvent) => void
     /** Optional images to include in the first message */
     images?:          FetchedImage[]
+    /** Special mode for the session (affects tool availability) */
+    specialMode?:     'catchup'
+    /** Optional catch-up prompt to use instead of building from contexts */
+    catchUpPrompt?:   string
 }
 
 /** Result from chatBatch processing */
@@ -361,8 +367,8 @@ export interface ClaudeAgent {
 /**
  * Builds the mcpServers configuration object based on provided servers.
  */
-function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: McpServerConfig): Record<string, McpServerConfig> | undefined {
-    if(!memoryMcpServer && !discordMcpServer) {
+function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, specialMode?: 'catchup'): Record<string, McpServerConfig> | undefined {
+    if(!memoryMcpServer && !discordMcpServer && !inboxMcpServer) {
         return undefined;
     }
 
@@ -375,13 +381,17 @@ function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: M
     if(discordMcpServer) {
         servers.discord = discordMcpServer;
     }
+    // Stryker disable next-line ConditionalExpression: Truthiness check for optional parameter
+    if(inboxMcpServer && specialMode === 'catchup') {
+        servers.inbox = inboxMcpServer;
+    }
     return servers;
 }
 
 /**
  * Builds the allowedTools list based on which MCP servers are configured.
  */
-function buildAllowedTools(discordMcpServer?: McpServerConfig): string[] {
+function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, specialMode?: 'catchup'): string[] {
     const baseTools = [
         // Memory MCP tools (auto-approved)
         'mcp__memory__*',
@@ -404,15 +414,17 @@ function buildAllowedTools(discordMcpServer?: McpServerConfig): string[] {
         'Bash(ls:*)',
     ];
 
+    const tools = [...baseTools];
+
     if(discordMcpServer) {
-        return [
-            ...baseTools,
-            // Discord MCP tools (auto-approved)
-            'mcp__discord__*',
-        ];
+        tools.push('mcp__discord__*');
     }
 
-    return baseTools;
+    if(inboxMcpServer && specialMode === 'catchup') {
+        tools.push('mcp__inbox__*');
+    }
+
+    return tools;
 }
 
 /**
@@ -569,20 +581,27 @@ export function logStreamEvent(message: AgentStreamEvent): void {
 
 /**
  * Build user message content for batch processing.
- * Handles both resume context and normal message formatting.
+ * Handles resume context, catch-up prompts, and normal message formatting.
  * @param contexts Array of Discord message contexts
  * @param contextBuilder Context builder for loading memories
  * @param resumeContext Optional resume context from interruption
+ * @param catchUpPrompt Optional catch-up prompt (used in catch-up mode)
  * @returns Formatted user message text
  */
 async function buildUserMessageTextForBatch(
     contexts: DiscordMessageContext[],
     contextBuilder: ContextBuilder | undefined,
-    resumeContext?: ResumeContext
+    resumeContext?: ResumeContext,
+    catchUpPrompt?: string
 ): Promise<string> {
     if(resumeContext) {
         // Use resume prompt when resuming after interruption
         return buildResumePrompt(resumeContext);
+    }
+
+    if(catchUpPrompt) {
+        // Use catch-up prompt when in catch-up mode
+        return catchUpPrompt;
     }
 
     // Build context prefix from memories and events
@@ -708,6 +727,7 @@ async function processStreamEvents(
  * @param systemPrompt System prompt with core identity
  * @param memoryMcpServer Memory MCP server configuration
  * @param discordMcpServer Discord MCP server configuration
+ * @param inboxMcpServer Inbox MCP server configuration
  * @param plugins Plugin configurations
  * @param options Optional batch processing options
  * @returns Query options object for Agent SDK
@@ -716,6 +736,7 @@ function buildQueryOptions(
     systemPrompt: string,
     memoryMcpServer: McpServerConfig | undefined,
     discordMcpServer: McpServerConfig | undefined,
+    inboxMcpServer: McpServerConfig | undefined,
     plugins: SdkPluginConfig[] | undefined,
     options?: ChatBatchOptions
 ) {
@@ -724,10 +745,10 @@ function buildQueryOptions(
         systemPrompt,
         tools:             EXPLICIT_TOOLS,
         agents:            EXPLICIT_AGENTS,
-        mcpServers:        buildMcpServers(memoryMcpServer, discordMcpServer),
+        mcpServers:        buildMcpServers(memoryMcpServer, discordMcpServer, inboxMcpServer, options?.specialMode),
         plugins:           plugins && plugins.length > 0 ? plugins : undefined,
         permissionMode:    'acceptEdits' as const,
-        allowedTools:      buildAllowedTools(discordMcpServer),
+        allowedTools:      buildAllowedTools(discordMcpServer, inboxMcpServer, options?.specialMode),
         maxThinkingTokens: 10000,
         settingSources:    [],
         abortController:   options?.abortController,
@@ -763,7 +784,7 @@ function buildChatBatchResult(
 }
 
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
-    const { contextBuilder, memoryMcpServer, discordMcpServer, plugins } = options;
+    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins } = options;
 
     // Load retry configuration
     const retryConfig = loadRetryConfig();
@@ -790,7 +811,8 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 const userMessageText = await buildUserMessageTextForBatch(
                     contexts,
                     contextBuilder,
-                    options?.resumeContext
+                    options?.resumeContext,
+                    options?.catchUpPrompt
                 );
 
                 // 3. Build prompt (string for text-only, async generator for images or text)
@@ -811,7 +833,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 // 4. Query with MCP servers, plugins, and sandboxed execution (with retry)
                 const response = retryableQuery({
                     prompt,
-                    options: buildQueryOptions(systemPrompt, memoryMcpServer, discordMcpServer, plugins, options),
+                    options: buildQueryOptions(systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, options),
                 });
 
                 // 5. Process stream events and track progress
@@ -882,10 +904,10 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                         systemPrompt,
                         tools:             EXPLICIT_TOOLS,
                         agents:            EXPLICIT_AGENTS,
-                        mcpServers:        buildMcpServers(memoryMcpServer, discordMcpServer),
+                        mcpServers:        buildMcpServers(memoryMcpServer, discordMcpServer, inboxMcpServer),
                         plugins:           plugins && plugins.length > 0 ? plugins : undefined,
                         permissionMode:    'acceptEdits',
-                        allowedTools:      buildAllowedTools(discordMcpServer),
+                        allowedTools:      buildAllowedTools(discordMcpServer, inboxMcpServer),
                         maxThinkingTokens: 10000,  // Enable extended thinking for richer status context
                         // Explicitly disable filesystem settings loading - we provide all config programmatically
                         settingSources:    [],

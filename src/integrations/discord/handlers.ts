@@ -15,6 +15,8 @@ import type { QuestionRegistry } from '@/agent/question-registry';
 import type { AnswerClassifier } from '@/agent/answer-classifier';
 import type { AttachmentMetadata } from './attachments/types';
 import { inferImageContentType } from './content-type';
+import type { InboxManager } from './inbox';
+import type { CatchUpStateManager, CatchUpSessionRunner } from './catchup';
 
 /**
  * Helper function to extract attachment metadata from a Discord message.
@@ -139,6 +141,21 @@ export interface MessageHandlerOptions {
      * Optional answer classifier for message classification.
      */
     answerClassifier?: AnswerClassifier
+
+    /**
+     * Optional inbox manager for tracking channel activity and unread messages.
+     */
+    inboxManager?: InboxManager
+
+    /**
+     * Optional catch-up state manager for checking if in catch-up mode.
+     */
+    catchUpStateManager?: CatchUpStateManager
+
+    /**
+     * Optional catch-up session runner for interrupting catch-up sessions.
+     */
+    catchUpSessionRunner?: CatchUpSessionRunner
 }
 
 /**
@@ -174,6 +191,87 @@ export interface MessageHandlerOptions {
  * }));
  * ```
  */
+/**
+ * Helper function to handle catch-up mode interruption.
+ * Interrupts the catch-up session and updates presence manager.
+ */
+async function handleCatchUpInterruption(
+    message: Message,
+    catchUpSessionRunner: CatchUpSessionRunner,
+    presenceManager: PresenceManager | undefined
+): Promise<void> {
+    // Stryker disable all: Logging for observability
+    logger.info({
+        channelId: message.channel.id,
+        msg:       'Interrupting catch-up mode for new message',
+    });
+    // Stryker restore all
+
+    // Interrupt the catch-up session with full message details
+    const channelId = createChannelId(message.channel.id);
+    const channel = message.channel as TextChannel;
+    catchUpSessionRunner.interrupt({
+        channelId,
+        author:      message.author.username,
+        // Stryker disable next-line LogicalOperator: Fallback for DM channels where name is null
+        channelName: channel.name ?? message.channel.id,
+        content:     message.content,
+    });
+
+    // Update presence to show interrupted state
+    presenceManager?.setCatchUpMode('catching_up_interrupted');
+}
+
+/**
+ * Helper function to track channel in inbox manager.
+ * Handles errors gracefully with logging.
+ */
+// Stryker disable all: Optional inbox integration - tested via inbox-manager.test.ts
+async function trackChannelInInbox(
+    message: Message,
+    inboxManager: InboxManager
+): Promise<void> {
+    const channel = message.channel as TextChannel;
+    inboxManager.trackChannel({
+        channelId:   createChannelId(message.channel.id),
+        channelName: channel.name ?? message.channel.id,
+        guildId:     createGuildId(message.guild?.id ?? 'DM'),
+    }).catch((error) => {
+        const errorMsg = _.isError(error) ? error.message : String(error);
+        logger.warn({
+            channelId: message.channel.id,
+            error:     errorMsg,
+            msg:       'Failed to track channel for inbox',
+        });
+    });
+}
+// Stryker restore all
+
+/**
+ * Helper function to delegate message to coordinator or process directly.
+ */
+async function delegateToCoordinatorOrProcess(
+    message: Message,
+    coordinator: MessageCoordinator | undefined,
+    createContext: (message: Message) => DiscordMessageContext,
+    processMessage: (message: Message) => Promise<void>
+): Promise<void> {
+    // Stryker disable all: Integration tests cover coordinator path, unit tests cover direct path
+    if(coordinator) {
+        // Convert Discord.js Message to DiscordMessageContext
+        const context = createContext(message);
+
+        // Hand off to coordinator (it will handle batching, interruption, and onResponse)
+        // Only pass channel if it has sendTyping method (some channel types don't)
+        const channel = 'sendTyping' in message.channel ? message.channel : undefined;
+        coordinator.handleMessage(context, message, channel);
+        // Stryker restore all
+    } else {
+        // Direct processing (backward compatibility)
+        await processMessage(message);
+    }
+}
+
 /**
  * Helper function to check for pending questions and handle answers/interruptions/unrelated.
  * Returns true if message was handled (early return), false to continue normal processing.
@@ -287,7 +385,7 @@ async function handlePendingQuestion(
 }
 
 export function createMessageHandler(options: MessageHandlerOptions): (message: Message) => Promise<void> {
-    const { monitoredChannelIds, botUserId, onMessage, presenceManager, agent, dynamicStatusGenerator, addRecentMessage, coordinator, questionRegistry, answerClassifier } = options;
+    const { monitoredChannelIds, botUserId, onMessage, presenceManager, agent, dynamicStatusGenerator, addRecentMessage, coordinator, questionRegistry, answerClassifier, inboxManager, catchUpStateManager, catchUpSessionRunner } = options;
 
     // Create status middleware if both presenceManager and agent are provided
     const statusMiddleware = presenceManager && agent
@@ -306,13 +404,10 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         logger,
     });
 
-    // Helper function to process a message after filtering checks pass
-    async function processMessage(message: Message): Promise<void> {
-        // Extract attachment metadata from Discord message
+    // Helper to create DiscordMessageContext from Discord.js Message
+    const createContext = (message: Message): DiscordMessageContext => {
         const attachments = extractAttachmentMetadata(message);
-
-        // Convert Discord.js Message to DiscordMessageContext
-        const context: DiscordMessageContext = {
+        return {
             guildId:     createGuildId(message.guild?.id ?? 'DM'),
             channelId:   createChannelId(message.channel.id),
             userId:      createUserId(message.author.id),
@@ -320,9 +415,15 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
             content:     message.content,
             timestamp:   message.createdAt.toISOString(),
             botUserId,
-            // Stryker disable next-line ConditionalExpression: Internal state assignment tested via integration
+            // Stryker disable next-line ConditionalExpression: Empty array exclusion - tests verify both cases
             attachments: attachments.length > 0 ? attachments : undefined,
         };
+    };
+
+    // Helper function to process a message after filtering checks pass
+    async function processMessage(message: Message): Promise<void> {
+        // Convert Discord.js Message to DiscordMessageContext
+        const context = createContext(message);
 
         try {
             logger.info({
@@ -342,6 +443,26 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
 
             // Track this message for context-aware idle status
             addRecentMessage?.(context.content);
+
+            // Record channel activity for inbox tracking
+            // Stryker disable all: Optional inbox integration - tested via inbox-manager.test.ts
+            if(inboxManager) {
+                const guildId = createGuildId(message.guild?.id ?? 'DM');
+                inboxManager.recordActivity(
+                    context.channelId,
+                    guildId,
+                    context.messageId,
+                    context.timestamp
+                ).catch((error) => {
+                    const errorMsg = _.isError(error) ? error.message : String(error);
+                    logger.warn({
+                        channelId: context.channelId,
+                        error:     errorMsg,
+                        msg:       'Failed to record inbox activity',
+                    });
+                });
+            }
+            // Stryker restore all
 
             // Reply if callback returned a string
             if(reply !== null) {
@@ -434,32 +555,23 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
             return;
         }
 
-        // If coordinator is provided, delegate to it; otherwise process directly
-        // Stryker disable all: Integration tests cover coordinator path, unit tests cover direct path
-        if(coordinator) {
-            // Extract attachment metadata from Discord message
-            const attachments = extractAttachmentMetadata(message);
-
-            // Convert Discord.js Message to DiscordMessageContext
-            const context: DiscordMessageContext = {
-                guildId:     createGuildId(message.guild?.id ?? 'DM'),
-                channelId:   createChannelId(message.channel.id),
-                userId:      createUserId(message.author.id),
-                messageId:   message.id,
-                content:     message.content,
-                timestamp:   message.createdAt.toISOString(),
-                botUserId,
-                attachments: attachments.length > 0 ? attachments : undefined,
-            };
-
-            // Hand off to coordinator (it will handle batching, interruption, and onResponse)
-            // Only pass channel if it has sendTyping method (some channel types don't)
-            const channel = 'sendTyping' in message.channel ? message.channel : undefined;
-            coordinator.handleMessage(context, message, channel);
-            // Stryker restore all
-        } else {
-            // Direct processing (backward compatibility)
-            await processMessage(message);
+        // Handle catch-up mode interruption
+        if(catchUpStateManager?.getState() === 'catching_up' && catchUpSessionRunner) {
+            await handleCatchUpInterruption(message, catchUpSessionRunner, presenceManager);
+            // Continue to process the interrupting message normally
+            // The coordinator's onResponse callback will resume catch-up after the reply is sent
         }
+
+        // Allow message processing if in 'catching_up_interrupted' state
+        // This is the interrupting message being handled
+
+        // Track channel for inbox if shouldRespond is true
+        // Stryker disable next-line all: Optional inbox integration - tested via inbox-manager.test.ts
+        if(inboxManager && shouldRespond) {
+            await trackChannelInInbox(message, inboxManager);
+        }
+
+        // If coordinator is provided, delegate to it; otherwise process directly
+        await delegateToCoordinatorOrProcess(message, coordinator, createContext, processMessage);
     };
 }

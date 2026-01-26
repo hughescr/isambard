@@ -12,7 +12,7 @@
  */
 
 import type { Client as DiscordClient, ActivitiesOptions } from 'discord.js';
-import type { PresenceConfig, PresencePhase } from './types.js';
+import type { PresenceConfig, PresencePhase, CatchUpMode } from './types.js';
 import type { ActiveStatusGenerator } from './status-generator-active.js';
 import type { IdleStatusGenerator } from './status-generator-idle.js';
 import { withDiscordRetry } from '@/integrations/discord/retry';
@@ -38,6 +38,14 @@ export interface PresenceManager {
      * @param phase - Current activity phase
      */
     updatePhase(phase: PresencePhase): Promise<void>
+
+    /**
+     * Set the catch-up mode for status prefix generation.
+     * This affects the emoji prefix shown in Discord status.
+     *
+     * @param mode - Catch-up mode state
+     */
+    setCatchUpMode(mode: CatchUpMode): void
 
     /**
      * Start the presence manager (enables idle refresh if idle).
@@ -123,6 +131,7 @@ export function createPresenceManager(
     let currentPhase: PresencePhase | null = null; // Start uninitialized
     let lastActiveUpdateTime = 0; // Track last active phase update time
     let idleRefreshInterval: NodeJS.Timeout | null = null;
+    let catchUpMode: CatchUpMode = 'none'; // Track catch-up mode for status prefixes
 
     /**
      * Check if enough time has passed since last active phase update.
@@ -215,6 +224,20 @@ export function createPresenceManager(
             return isThrottleCooldownExpired();
         },
 
+        // Stryker disable all: setCatchUpMode integration tested via bot lifecycle, not unit tested
+        setCatchUpMode(mode: CatchUpMode): void {
+            logger.debug({ mode, previousMode: catchUpMode }, 'Setting catch-up mode');
+            catchUpMode = mode;
+
+            // Trigger an immediate presence update if we have a current phase
+            // This ensures the emoji prefix changes immediately when catch-up mode changes
+            if(currentPhase && currentPhase.type !== 'idle') {
+                const activity = activeStatusGenerator.generate(currentPhase, mode);
+                void applyPresenceUpdate(activity);
+            }
+        },
+        // Stryker restore all
+
         async updatePhase(phase: PresencePhase): Promise<void> {
             logger.debug({ phase }, 'Updating presence phase');
 
@@ -239,7 +262,7 @@ export function createPresenceManager(
             if(!nowIdle) {
                 // Check throttle: only update if cooldown has expired
                 if(isThrottleCooldownExpired()) {
-                    const activity = activeStatusGenerator.generate(phase);
+                    const activity = activeStatusGenerator.generate(phase, catchUpMode);
                     await applyPresenceUpdate(activity);
                     lastActiveUpdateTime = Date.now();
                 } else {

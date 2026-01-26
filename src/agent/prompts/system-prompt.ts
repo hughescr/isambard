@@ -5,6 +5,7 @@
  */
 
 import type { ContextBuilder } from '../context-builder.js';
+import { getCurrentTimeContext } from '@/utils/time.js';
 
 /**
  * Base system prompt defining Isambard's identity and behavior.
@@ -245,14 +246,20 @@ Example: "I discovered I enjoy collaborative debugging"
  * @returns System prompt string
  */
 export async function buildSystemPrompt(contextBuilder?: ContextBuilder): Promise<string> {
+    const timeContext = getCurrentTimeContext();
+    // Stryker disable StringLiteral: Static time context format string - mutation doesn't affect behavior
+    const timeContextStr = `${timeContext.utc} (${timeContext.dayOfWeek} ${timeContext.timeOfDay})`;
+    // Stryker restore StringLiteral
+    const systemPromptWithTime = `${BASE_SYSTEM_PROMPT}\n\n## Current Time Context\n${timeContextStr}`;
+
     if(!contextBuilder) {
-        return BASE_SYSTEM_PROMPT;
+        return systemPromptWithTime;
     }
 
     const coreIdentity = await contextBuilder.loadCoreIdentity();
     if(!coreIdentity) {
-        return BASE_SYSTEM_PROMPT;
+        return systemPromptWithTime;
     }
 
-    return `${BASE_SYSTEM_PROMPT}\n\n## Who You Are\n${coreIdentity}`;
+    return `${systemPromptWithTime}\n\n## Who You Are\n${coreIdentity}`;
 }

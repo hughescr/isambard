@@ -29,6 +29,20 @@ export type PresencePhase
       | { type: 'responding', startedAt: Date, generatedStatus?: string };
 
 // ============================================================================
+// Catch-Up Mode - For status prefix generation
+// ============================================================================
+
+/**
+ * Catch-up mode state for presence status prefix generation.
+ * Maps to emoji prefixes shown in Discord status:
+ * - 'none': No special prefix (normal operation)
+ * - 'catching_up': 📥 prefix (processing backlog)
+ * - 'catching_up_interrupted': 📥💬 prefix (handling new message during catch-up)
+ * - 'processing_message': 💬 prefix (normal message handling)
+ */
+export type CatchUpMode = 'none' | 'catching_up' | 'catching_up_interrupted' | 'processing_message';
+
+// ============================================================================
 // Synopsis Context - For LLM status generation
 // ============================================================================
 

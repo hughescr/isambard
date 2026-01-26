@@ -17,10 +17,15 @@ import { createQuestionRegistry } from './agent/question-registry';
 import { cleanupAllStaleSessions } from './agent/session-cleanup';
 import { createDiscordBot } from './integrations/discord/bot';
 import type { DiscordBot } from './integrations/discord/bot';
+import type { CatchUpCompletionSignal, CatchUpInProgressSignal } from './integrations/discord/catchup';
 import { createDiscordClient } from './integrations/discord/client';
+import { createMemoryPath } from './storage/memory-tool/types';
 import { createMessageFetcher } from './integrations/discord/message-history/fetcher';
 import { createMessageSummarizer } from './integrations/discord/message-history/summarizer';
 import { createMessageSearchService } from './integrations/discord/message-history/search';
+import { CheckpointManager, InboxManager } from './integrations/discord/inbox';
+import { createInboxMCPServer } from './agent/inbox-mcp-server';
+import { createCatchUpStateManager, type CatchUpStateManager } from './integrations/discord/catchup';
 import { logger } from '@hughescr/logger';
 
 export interface App {
@@ -72,6 +77,10 @@ export async function createApp(): Promise<App> {
     let memoryMcpServer: McpServerConfig | undefined;
     let discordClient: Client | undefined;
     let discordMcpServer: McpServerConfig | undefined;
+    let inboxMcpServer: McpServerConfig | undefined;
+    let inboxManager: InboxManager | undefined;
+    let memoryBackend: MemoryToolBackend | undefined;
+    let catchUpStateManager: CatchUpStateManager | undefined;
 
     try {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- SST Resource type is complex
@@ -79,7 +88,7 @@ export async function createApp(): Promise<App> {
         const { docClient, tableName } = createDynamoDBClient(dynamoDBConfig);
 
         // Create memory backend
-        const memoryBackend = new MemoryToolBackend(docClient, tableName);
+        memoryBackend = new MemoryToolBackend(docClient, tableName);
 
         // Create context builder (for core identity + recent context)
         contextBuilder = createContextBuilder({ backend: memoryBackend });
@@ -110,6 +119,25 @@ export async function createApp(): Promise<App> {
 
         // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
         logger.info('Discord message history enabled');
+
+        // Create checkpoint manager for inbox
+        const checkpointManager = new CheckpointManager({ backend: memoryBackend });
+
+        // Create inbox manager (will be populated on startup)
+        inboxManager = new InboxManager({
+            checkpointManager,
+            messageSearchService,
+            config: config.discord.inbox,  // Optional inbox config from Discord config
+        });
+
+        // Create catch-up state manager (needed by both inbox MCP server and bot)
+        catchUpStateManager = createCatchUpStateManager(logger);
+
+        // Create inbox MCP server with state manager for tracking viewed channels
+        inboxMcpServer = createInboxMCPServer(inboxManager, catchUpStateManager);
+
+        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+        logger.info('Inbox system initialized');
     // Stryker disable next-line BlockStatement: Catch block continues execution regardless - equivalent mutant
     } catch (error) {
         const errorMessage = _.isError(error) ? error.message : String(error);
@@ -126,6 +154,7 @@ export async function createApp(): Promise<App> {
         contextBuilder,
         memoryMcpServer,
         discordMcpServer,
+        inboxMcpServer,
         plugins,
     });
 
@@ -163,8 +192,99 @@ export async function createApp(): Promise<App> {
         },
         identityContext,
         agent,
-        client: discordClient,
+        client:        discordClient,
         questionRegistry,
+        inboxManager,
+        catchUpStateManager,
+        memoryBackend: memoryBackend
+            ? {
+                storeCompletionSignal: async (signal: CatchUpCompletionSignal) => {
+                    try {
+                        const path = createMemoryPath('/state/catchup-completion');
+                        const existing = await memoryBackend.get(path);
+                        const content = JSON.stringify(signal);
+                        if(existing) {
+                            await memoryBackend.update(path, { content });
+                        } else {
+                            await memoryBackend.create({ path, content, contentType: 'application/json' });
+                        }
+                    } catch (error) {
+                        const errorMsg = _.isError(error) ? error.message : String(error);
+                        logger.error({
+                            error: errorMsg,
+                            msg:   'Failed to store catch-up completion signal',
+                        });
+                        // Don't re-throw - allow catch-up to continue
+                    }
+                },
+                loadCompletionSignal: async () => {
+                    try {
+                        const path = createMemoryPath('/state/catchup-completion');
+                        const result = await memoryBackend.get(path);
+                        if(!result) {
+                            return null;
+                        }
+                        return JSON.parse(result.content) as CatchUpCompletionSignal;
+                    } catch (error) {
+                        const errorMsg = _.isError(error) ? error.message : String(error);
+                        logger.error({
+                            error: errorMsg,
+                            msg:   'Failed to load catch-up completion signal',
+                        });
+                        return null;
+                    }
+                },
+                storeInProgressSignal: async (signal: CatchUpInProgressSignal) => {
+                    try {
+                        const path = createMemoryPath('/state/catchup-inprogress');
+                        const existing = await memoryBackend.get(path);
+                        const content = JSON.stringify(signal);
+                        if(existing) {
+                            await memoryBackend.update(path, { content });
+                        } else {
+                            await memoryBackend.create({ path, content, contentType: 'application/json' });
+                        }
+                    } catch (error) {
+                        const errorMsg = _.isError(error) ? error.message : String(error);
+                        logger.error({
+                            error: errorMsg,
+                            msg:   'Failed to store catch-up in-progress signal',
+                        });
+                        // Don't re-throw - allow catch-up to continue
+                    }
+                },
+                loadInProgressSignal: async () => {
+                    try {
+                        const path = createMemoryPath('/state/catchup-inprogress');
+                        const result = await memoryBackend.get(path);
+                        if(!result) {
+                            return null;
+                        }
+                        return JSON.parse(result.content) as CatchUpInProgressSignal;
+                    } catch (error) {
+                        const errorMsg = _.isError(error) ? error.message : String(error);
+                        logger.error({
+                            error: errorMsg,
+                            msg:   'Failed to load catch-up in-progress signal',
+                        });
+                        return null;
+                    }
+                },
+                deleteInProgressSignal: async () => {
+                    try {
+                        const path = createMemoryPath('/state/catchup-inprogress');
+                        await memoryBackend.delete(path);
+                    } catch (error) {
+                        const errorMsg = _.isError(error) ? error.message : String(error);
+                        logger.error({
+                            error: errorMsg,
+                            msg:   'Failed to delete catch-up in-progress signal',
+                        });
+                        // Don't re-throw - allow catch-up to continue
+                    }
+                },
+            }
+            : undefined,
     });
 
     let isStopping = false;

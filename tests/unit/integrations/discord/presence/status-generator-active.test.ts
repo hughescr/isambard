@@ -72,6 +72,65 @@ describe('ActiveStatusGenerator', () => {
         });
     });
 
+    describe('catchUpMode prefixes', () => {
+        test('undefined catchUpMode -> no prefix', () => {
+            const generator = createActiveStatusGenerator({
+                logger:       createMockLogger(),
+                activityType: ActivityType.Custom,
+            });
+            const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
+            const result = generator.generate(phase, undefined);
+            expect(result.name).toBe('Thinking...');
+            expect(result.name).not.toContain('📥');
+            expect(result.name).not.toContain('💬');
+        });
+
+        test('none catchUpMode -> no prefix', () => {
+            const generator = createActiveStatusGenerator({
+                logger:       createMockLogger(),
+                activityType: ActivityType.Custom,
+            });
+            const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
+            const result = generator.generate(phase, 'none');
+            expect(result.name).toBe('Thinking...');
+            expect(result.name).not.toContain('📥');
+            expect(result.name).not.toContain('💬');
+        });
+
+        test('catching_up mode -> 📥 prefix', () => {
+            const generator = createActiveStatusGenerator({
+                logger:       createMockLogger(),
+                activityType: ActivityType.Custom,
+            });
+            const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
+            const result = generator.generate(phase, 'catching_up');
+            expect(result.name).toBe('📥 Thinking...');
+            expect(result.name).toStartWith('📥 ');
+        });
+
+        test('catching_up_interrupted mode -> 📥💬 prefix', () => {
+            const generator = createActiveStatusGenerator({
+                logger:       createMockLogger(),
+                activityType: ActivityType.Custom,
+            });
+            const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
+            const result = generator.generate(phase, 'catching_up_interrupted');
+            expect(result.name).toBe('📥💬 Thinking...');
+            expect(result.name).toStartWith('📥💬 ');
+        });
+
+        test('processing_message mode -> 💬 prefix', () => {
+            const generator = createActiveStatusGenerator({
+                logger:       createMockLogger(),
+                activityType: ActivityType.Custom,
+            });
+            const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
+            const result = generator.generate(phase, 'processing_message');
+            expect(result.name).toBe('💬 Thinking...');
+            expect(result.name).toStartWith('💬 ');
+        });
+    });
+
     describe('logging behavior', () => {
         test('should log debug with phase object and message string', () => {
             const mockLogger = createMockLogger();

@@ -174,10 +174,11 @@ describe.concurrent('createDiscordBot', () => {
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
             const mockPresenceManager = {
-                start:        mock(() => undefined),
-                stop:         mock(() => undefined),
-                shouldUpdate: mock(() => true),
-                updatePhase:  mock(async () => undefined),
+                start:          mock(() => undefined),
+                stop:           mock(() => undefined),
+                shouldUpdate:   mock(() => true),
+                updatePhase:    mock(async () => undefined),
+                setCatchUpMode: mock(() => undefined),
             };
             const presenceManagerSpy = spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager);
             spies.push(presenceManagerSpy);
@@ -270,10 +271,11 @@ describe.concurrent('createDiscordBot', () => {
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
             const mockPresenceManager = {
-                start:        mock(() => undefined),
-                stop:         mock(() => undefined),
-                shouldUpdate: mock(() => true),
-                updatePhase:  mock(async () => undefined),
+                start:          mock(() => undefined),
+                stop:           mock(() => undefined),
+                shouldUpdate:   mock(() => true),
+                updatePhase:    mock(async () => undefined),
+                setCatchUpMode: mock(() => undefined),
             };
             spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 
@@ -329,10 +331,11 @@ describe.concurrent('createDiscordBot', () => {
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
             const mockPresenceManager = {
-                start:        mock(() => undefined),
-                stop:         mock(() => { callOrder.push('stop'); }),
-                shouldUpdate: mock(() => true),
-                updatePhase:  mock(async () => undefined),
+                start:          mock(() => undefined),
+                stop:           mock(() => { callOrder.push('stop'); }),
+                shouldUpdate:   mock(() => true),
+                updatePhase:    mock(async () => undefined),
+                setCatchUpMode: mock(() => undefined),
             };
             spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 

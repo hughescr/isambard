@@ -59,10 +59,11 @@ describe('StatusMiddleware', () => {
 
     beforeEach(() => {
         mockPresenceManager = {
-            shouldUpdate: mock(_constant(true)),
-            updatePhase:  mock(async () => undefined),
-            start:        mock(() => undefined),
-            stop:         mock(() => undefined),
+            shouldUpdate:   mock(_constant(true)),
+            updatePhase:    mock(async () => undefined),
+            setCatchUpMode: mock(() => undefined),
+            start:          mock(() => undefined),
+            stop:           mock(() => undefined),
         };
 
         mockAgent = {
@@ -281,8 +282,9 @@ describe('StatusMiddleware', () => {
                 updatePhase:  mock(async () => {
                     throw new Error('Presence update failed');
                 }),
-                start: mock(() => undefined),
-                stop:  mock(() => undefined),
+                start:          mock(() => undefined),
+                stop:           mock(() => undefined),
+                setCatchUpMode: mock(() => undefined),
             };
 
             const middleware = createStatusMiddleware({
@@ -550,8 +552,9 @@ describe('StatusMiddleware', () => {
                     callCount++;
                     throw new Error(`Presence error ${callCount}`);
                 }),
-                start: mock(() => undefined),
-                stop:  mock(() => undefined),
+                start:          mock(() => undefined),
+                stop:           mock(() => undefined),
+                setCatchUpMode: mock(() => undefined),
             };
 
             const middleware = createStatusMiddleware({

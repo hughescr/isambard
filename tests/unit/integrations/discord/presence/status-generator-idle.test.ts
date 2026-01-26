@@ -73,7 +73,7 @@ describe('IdleStatusGenerator', () => {
 
             const result = await generator.generate();
 
-            expect(result.name).toBe('Contemplating existence');
+            expect(result.name).toBe('💤 Contemplating existence');
             expect(result.type).toBe(ActivityType.Custom);
         });
 
@@ -112,12 +112,16 @@ describe('IdleStatusGenerator', () => {
 
             const result = await generator.generate();
 
-            expect(_size(result.name)).toBe(128);
-            expect(result.name).toBe(_repeat(char, 128));
+            // With "💤 " prefix (3 code units), we truncate to 125 chars before adding emoji
+            // This ensures the final status is exactly 128 code units (Discord's limit)
+            // Note: "💤 " is 3 code units (2 for emoji surrogate pair + 1 for space)
+            // but lodash _size counts it as 2 (it counts characters, not code units)
+            expect(result.name.length).toBe(128); // Discord's limit is based on .length
+            expect(result.name).toBe(`💤 ${_repeat(char, 125)}`);
             // Verify correct truncation for edge cases
-            if(len > 128) {
+            if(len > 125) {
                 expect(result.name).not.toBe(text);
-                expect(_size(result.name)).not.toBe(127); // off-by-one check
+                expect(result.name.length).not.toBeGreaterThan(128); // should not exceed Discord's limit
             }
         });
 
@@ -133,7 +137,7 @@ describe('IdleStatusGenerator', () => {
 
             const result = await generator.generate();
 
-            expect(result.name).toBe('Waiting patiently');
+            expect(result.name).toBe('💤 Waiting patiently');
         });
 
         test('should fall back to "Idle" on generateTextWithSystemPrompt error', async () => {
@@ -147,7 +151,7 @@ describe('IdleStatusGenerator', () => {
 
             const result = await generator.generate();
 
-            expect(result.name).toBe('Idle');
+            expect(result.name).toBe('💤 Idle');
             expect(result.type).toBe(ActivityType.Custom);
         });
 
@@ -180,7 +184,7 @@ describe('IdleStatusGenerator', () => {
 
             const result = await generator.generate();
 
-            expect(result.name).toBe('');
+            expect(result.name).toBe('💤 ');
             expect(result.type).toBe(ActivityType.Custom);
         });
 
@@ -222,7 +226,7 @@ describe('IdleStatusGenerator', () => {
             await generator.generate();
 
             expect(localMockLogger.info).toHaveBeenCalledWith(
-                { statusText: 'Generated status text' },
+                { statusText: '💤 Generated status text' },
                 'Generated idle status'
             );
         });
@@ -266,9 +270,9 @@ describe('IdleStatusGenerator', () => {
 
             const result = await generator.generate();
 
-            // Should start with 'A', not skip any characters
-            expect(result.name).toStartWith('A');
-            expect(result.name).toStartWith('ABCDEFGHIJ');
+            // Should start with emoji prefix, then 'A'
+            expect(result.name).toStartWith('💤 A');
+            expect(result.name).toStartWith('💤 ABCDEFGHIJ');
         });
 
         // Tests for getRecentContext functionality
@@ -384,7 +388,7 @@ describe('IdleStatusGenerator', () => {
 
                 const result = await generator.generate();
 
-                expect(result.name).toBe('Idle');
+                expect(result.name).toBe('💤 Idle');
                 expect(result.type).toBe(ActivityType.Custom);
             });
 
@@ -426,12 +430,13 @@ describe('IdleStatusGenerator', () => {
 
             await generator.generate();
 
-            // Kill StringLiteral mutant on line 112 col 30 - verify arg is the specific string
+            // Kill StringLiteral mutant on line 113 col 46 - verify second arg is the specific string
             const debugCalls = localMockLogger.debug.mock.calls;
             expect(debugCalls.length).toBeGreaterThan(0);
             const firstCall = debugCalls[0];
-            expect(firstCall[0]).toBe('Generating idle status with Haiku');
-            expect(firstCall[0]).not.toBe('');
+            expect(firstCall[0]).toEqual({ includeIdleEmoji: true });
+            expect(firstCall[1]).toBe('Generating idle status with Haiku');
+            expect(firstCall[1]).not.toBe('');
         });
     });
 });

@@ -632,6 +632,92 @@ describe('createClaudeAgent', () => {
         });
     });
 
+    describe('tool filtering by specialMode', () => {
+        test('should exclude inbox tools when specialMode is undefined (chat)', async () => {
+            const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
+            const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
+            await agent.chat(mockMessageContext);
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const allowedTools = queryParams.options.allowedTools;
+
+            // Verify inbox tools are NOT included
+            expect(allowedTools).not.toContain('mcp__inbox__*');
+        });
+
+        test('should exclude inbox MCP server when specialMode is undefined (chat)', async () => {
+            const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
+            const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
+            await agent.chat(mockMessageContext);
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const mcpServers = queryParams.options.mcpServers;
+
+            // Verify inbox server is NOT registered
+            expect(mcpServers?.inbox).toBeUndefined();
+        });
+
+        test('should exclude inbox tools when specialMode is undefined (chatBatch)', async () => {
+            const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
+            const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
+            await agent.chatBatch([mockMessageContext]);
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const allowedTools = queryParams.options.allowedTools;
+
+            // Verify inbox tools are NOT included
+            expect(allowedTools).not.toContain('mcp__inbox__*');
+        });
+
+        test('should exclude inbox MCP server when specialMode is undefined (chatBatch)', async () => {
+            const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
+            const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
+            await agent.chatBatch([mockMessageContext]);
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const mcpServers = queryParams.options.mcpServers;
+
+            // Verify inbox server is NOT registered
+            expect(mcpServers?.inbox).toBeUndefined();
+        });
+
+        test('should include inbox tools when specialMode is catchup (chatBatch)', async () => {
+            const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
+            const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
+            await agent.chatBatch([mockMessageContext], { specialMode: 'catchup' });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const allowedTools = queryParams.options.allowedTools;
+
+            // Verify inbox tools ARE included
+            expect(allowedTools).toContain('mcp__inbox__*');
+        });
+
+        test('should include inbox MCP server when specialMode is catchup (chatBatch)', async () => {
+            const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
+            const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
+            await agent.chatBatch([mockMessageContext], { specialMode: 'catchup' });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const mcpServers = queryParams.options.mcpServers;
+
+            // Verify inbox server IS registered
+            expect(mcpServers?.inbox).toEqual(mockInboxServer);
+        });
+    });
+
     describe('Plugins configuration', () => {
         test('should pass undefined when plugins array is empty', async () => {
             const agent = createClaudeAgent({ plugins: [] });
@@ -1206,6 +1292,36 @@ describe('createClaudeAgent', () => {
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams2 = querySpy.mock.calls[0][0];
             expect(queryParams2.options.plugins).toEqual(mockPlugins);
+        });
+
+        test('should use catchUpPrompt when provided with empty contexts', async () => {
+            const agent = createClaudeAgent({});
+            const catchUpPrompt = 'You have 5 unread messages across 2 channels. Use the inbox tools to review them.';
+
+            await agent.chatBatch([], {
+                catchUpPrompt,
+                specialMode: 'catchup',
+            });
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            const prompt = querySpy.mock.calls[0][0].prompt as string;
+
+            // Should use the catchUpPrompt, not try to build from contexts
+            expect(prompt).toBe(catchUpPrompt);
+        });
+
+        test('should handle catch-up mode without crashing on empty contexts', async () => {
+            const agent = createClaudeAgent({});
+            const catchUpPrompt = 'Catch up on unread messages.';
+
+            // This should not crash even with empty contexts array
+            const result = await agent.chatBatch([], {
+                catchUpPrompt,
+                specialMode: 'catchup',
+            });
+
+            expect(result.response).toBe('Hello! This is a test response.');
+            expect(result.wasInterrupted).toBe(false);
         });
     });
 });
