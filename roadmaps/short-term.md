@@ -37,6 +37,32 @@ Read-only access to Apple Calendar for scheduling context.
 - [ ] MCP tools for calendar context (upcoming events, availability)
 - [ ] Integration with session gap tracking (catch up on calendar changes)
 
+### Channel Discovery and Registration
+Replace hardcoded channel IDs with dynamic discovery using Discord APIs.
+
+**Problems with current approach:**
+- Channel IDs hardcoded in SST config
+- Must redeploy to add/remove monitored channels
+- Izzy can't discover or choose channels to send to
+- No way to initiate DMs with users
+
+**Implementation:**
+- [ ] Dynamic channel discovery via Discord API
+  - Use `client.guilds` to get all guilds bot is in
+  - Use `guild.channels` to enumerate accessible channels
+  - Filter by channel type and permissions
+- [ ] Auto-register channels Izzy has access to (or configurable allowlist)
+- [ ] Add `listChannels` tool to Discord MCP server
+  - Returns channels Izzy can see/send to
+  - Include channel type (text, voice, DM, thread)
+  - Include guild name for context
+- [ ] Add `getDMChannel` tool (or extend listChannels)
+  - Given a user ID or username, return/create DM channel
+  - Allows Izzy to initiate DMs with users
+- [ ] Consider: Should monitored channels (for inbox) be separate from sendable channels?
+
+**Priority:** Medium (current hardcoded approach is limiting)
+
 ### State/Status System Overhaul (Technical Debt)
 The current presence/status system is a confused mess with ad-hoc state tracking scattered across multiple components (presence manager, catch-up state manager, stream event handler). Status generation receives inconsistent context depending on code path.
 
