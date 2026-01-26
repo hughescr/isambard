@@ -62,7 +62,7 @@ async function populateChannelMetadata(
 ): Promise<void> {
     logger.debug({
         channelIds: channelIds,
-        msg: 'Starting channel metadata population'
+        msg:        'Starting channel metadata population'
     });
 
     for(const channelId of channelIds) {
@@ -72,17 +72,17 @@ async function populateChannelMetadata(
             logger.debug({
                 channelId,
                 channelFound: !!channel,
-                channelType: channel?.type,
-                msg: 'Fetched channel for metadata'
+                channelType:  channel?.type,
+                msg:          'Fetched channel for metadata'
             });
 
             if(channel) {
                 logger.debug({
                     channelId,
                     isDMBased: channel.isDMBased(),
-                    hasGuild: 'guild' in channel && !!channel.guild,
-                    type: channel.type,
-                    msg: 'Processing channel type'
+                    hasGuild:  'guild' in channel && !!channel.guild,
+                    type:      channel.type,
+                    msg:       'Processing channel type'
                 });
                 // Determine guild ID and name based on channel type
                 let guildId: GuildId | 'DM' = 'DM';

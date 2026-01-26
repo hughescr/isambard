@@ -91,6 +91,7 @@ export interface UserEvent {
 /**
  * Event emitted by the system at various lifecycle points.
  * The 'init' subtype is emitted at query start and contains the session_id.
+ * The 'compact_boundary' subtype is emitted when context compaction occurs.
  */
 export interface SystemEvent {
     type:        'system'

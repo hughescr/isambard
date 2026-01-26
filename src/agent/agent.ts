@@ -1,12 +1,12 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { McpServerConfig, SDKUserMessage, SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
+import type { McpServerConfig, SDKUserMessage, SdkPluginConfig, SDKCompactBoundaryMessage } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
 import type { DiscordMessageContext } from '../integrations/discord/types';
 import type { FetchedImage } from '../integrations/discord/attachments/types';
 import { getCurrentTimeContext } from '../utils/time';
 import type { ContextBuilder } from './context-builder';
-import { buildSystemPrompt } from './prompts/index.js';
+import { buildSystemPrompt, COMPACTION_SUMMARY_PROMPT } from './prompts/index.js';
 import { cleanupSession, extractSessionId } from './session-cleanup';
 import type { AgentStreamEvent } from './types';
 import { createRetryableQuery } from './claude-retry';
@@ -575,6 +575,23 @@ export function logStreamEvent(message: AgentStreamEvent): void {
                 msg:       'Claude LLM stream complete',
             });
             break;
+
+        case 'system':
+            if(message.subtype === 'compact_boundary') {
+                const compactMessage = message as SDKCompactBoundaryMessage;
+                const preTokens = compactMessage.compact_metadata?.pre_tokens;
+                const trigger = compactMessage.compact_metadata?.trigger;
+                const tokenInfo = preTokens
+                    ? ` (pre-compaction: ${preTokens.toLocaleString()} tokens)`
+                    : '';
+                logger.info({
+                    eventType: 'compaction',
+                    trigger,
+                    preTokens,
+                    msg:       `Context compaction completed${tokenInfo}`,
+                });
+            }
+            break;
     }
 }
 // Stryker restore all
@@ -750,11 +767,17 @@ function buildQueryOptions(
         permissionMode:    'acceptEdits' as const,
         allowedTools:      buildAllowedTools(discordMcpServer, inboxMcpServer, options?.specialMode),
         maxThinkingTokens: 10000,
-        settingSources:    [],
-        abortController:   options?.abortController,
+        compactionControl: {
+            enabled:               true,
+            contextTokenThreshold: 150000,
+            model:                 'haiku',
+            summaryPrompt:         COMPACTION_SUMMARY_PROMPT,
+        },
+        settingSources:  [],
+        abortController: options?.abortController,
         ...(options?.sessionId && { resume: options.sessionId }),
         // Stryker disable all: Observability - stderr logging doesn't affect behavior
-        stderr:            (data: string) => {
+        stderr:          (data: string) => {
             logger.error({ stderr: data }, 'Agent SDK stderr');
         },
         // Stryker restore all
