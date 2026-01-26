@@ -819,7 +819,8 @@ describe('StatusMiddleware', () => {
 
         beforeEach(() => {
             mockDynamicStatusGenerator = {
-                generateSynopsis: mock(_constant(Promise.resolve('Generated status...'))),
+                generateSynopsis:        mock(_constant(Promise.resolve('Generated status...'))),
+                generateCatchUpSynopsis: mock(_constant(Promise.resolve('Catch-up status'))),
             };
         });
 

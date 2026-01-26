@@ -47,7 +47,9 @@ describe('StreamEventHandler', () => {
 
         mockDynamicStatusGenerator = {
             // eslint-disable-next-line lodash/prefer-constant -- Async function
-            generateSynopsis: mock(async () => 'Generated synopsis'),
+            generateSynopsis:        mock(async () => 'Generated synopsis'),
+            // eslint-disable-next-line lodash/prefer-constant -- Async function
+            generateCatchUpSynopsis: mock(async () => 'Catch-up status'),
         };
 
         mockLogger = {

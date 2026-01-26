@@ -123,11 +123,12 @@ export async function createApp(): Promise<App> {
         // Create checkpoint manager for inbox
         const checkpointManager = new CheckpointManager({ backend: memoryBackend });
 
-        // Create inbox manager (will be populated on startup)
+        // Create inbox manager with monitored channels from config
         inboxManager = new InboxManager({
             checkpointManager,
             messageSearchService,
-            config: config.discord.inbox,  // Optional inbox config from Discord config
+            monitoredChannelIds: config.discord.monitoredChannelIds as import('@/integrations/discord/types').ChannelId[],
+            config:              config.discord.inbox,  // Optional inbox config from Discord config
         });
 
         // Create catch-up state manager (needed by both inbox MCP server and bot)

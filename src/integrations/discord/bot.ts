@@ -3,7 +3,7 @@ import { ActivityType } from 'discord.js';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { DiscordConfig } from '@/config/schemas';
-import type { DiscordMessageContext, UserId, ChannelId } from './types';
+import type { DiscordMessageContext, UserId, ChannelId, GuildId } from './types';
 import type { ClaudeAgent } from '@/agent/agent';
 import { setConversationContext, clearConversationContext } from '@/agent';
 import { createDiscordClient } from './client';
@@ -14,7 +14,8 @@ import {
     createIdleStatusGenerator,
     createPresenceManager,
     createStreamEventHandler,
-    type PresenceManager
+    type PresenceManager,
+    type CatchUpSynopsisContext
 } from './presence';
 import { createMessageCoordinator, type MessageCoordinator } from './message-coordinator';
 import { splitMessage } from './messages';
@@ -26,6 +27,7 @@ import { createInteractionHandler } from './interactions';
 import { fetchImages, saveNonImageAttachment, isSupportedImageType, formatBytes, addAttachmentInfoToContexts } from './attachments';
 import type { FetchedImage } from './attachments/types';
 import type { InboxManager } from './inbox';
+import { formatTimeSince, getTimeOfDay } from '@/utils/time';
 import {
     createCatchUpSessionRunner,
     type CatchUpStateManager,
@@ -42,6 +44,132 @@ interface ProcessedAttachments {
     images:           FetchedImage[]
     /** Text descriptions of saved non-image attachments */
     contentAdditions: string[]
+}
+
+/**
+ * Populates channel metadata cache for better display names.
+ * Fetches channel details from Discord and updates the inbox manager.
+ *
+ * @param client - Discord client for fetching channels
+ * @param inboxManager - Inbox manager to update with metadata
+ * @param channelIds - Channel IDs to fetch metadata for
+ */
+// Stryker disable all: Integration function with external dependencies - tested via bot integration tests
+async function populateChannelMetadata(
+    client: Client,
+    inboxManager: InboxManager,
+    channelIds: string[]
+): Promise<void> {
+    logger.debug({
+        channelIds: channelIds,
+        msg: 'Starting channel metadata population'
+    });
+
+    for(const channelId of channelIds) {
+        try {
+            const channel = await client.channels.fetch(channelId);
+
+            logger.debug({
+                channelId,
+                channelFound: !!channel,
+                channelType: channel?.type,
+                msg: 'Fetched channel for metadata'
+            });
+
+            if(channel) {
+                logger.debug({
+                    channelId,
+                    isDMBased: channel.isDMBased(),
+                    hasGuild: 'guild' in channel && !!channel.guild,
+                    type: channel.type,
+                    msg: 'Processing channel type'
+                });
+                // Determine guild ID and name based on channel type
+                let guildId: GuildId | 'DM' = 'DM';
+                let channelName = channelId;
+
+                // Check if this is a guild-based channel (has a guild property)
+                if('guild' in channel && channel.guild) {
+                    guildId = channel.guild.id as GuildId;
+                    channelName = 'name' in channel && _.isString(channel.name)
+                        ? channel.name
+                        : channelId;
+                } else if(channel.isDMBased()) {
+                    // DM channel - try to get recipient name for better display
+                    if('recipient' in channel && channel.recipient) {
+                        // Single-user DM - use recipient's display name
+                        const recipient = channel.recipient;
+                        channelName = `DM with ${recipient.displayName ?? recipient.username}`;
+                    } else {
+                        // Group DM or unknown - fall back to generic name
+                        channelName = 'DM';
+                    }
+                }
+
+                // Update metadata cache (for display names)
+                inboxManager.updateChannelMetadata(
+                    channelId as ChannelId,
+                    channelName,
+                    guildId
+                );
+            } else {
+                logger.warn({
+                    channelId,
+                    msg: 'Channel not found or not accessible'
+                });
+            }
+        } catch (error) {
+            logger.warn({
+                channelId,
+                error: _.isError(error) ? error.message : String(error),
+            }, 'Failed to fetch channel for metadata');
+        }
+    }
+}
+// Stryker restore all
+
+/**
+ * Builds catch-up synopsis context from inbox state.
+ *
+ * @param inboxManager - Inbox manager with unread messages
+ * @param memoryBackend - Memory backend for loading completion signal
+ * @returns Promise resolving to catch-up synopsis context
+ */
+async function buildCatchUpContext(
+    inboxManager: InboxManager,
+    memoryBackend: {
+        loadCompletionSignal: () => Promise<CatchUpCompletionSignal | null>
+    }
+): Promise<CatchUpSynopsisContext> {
+    const overview = inboxManager.getUnreadOverview();
+    const allMessages = _.flatMap(
+        overview.channels,
+        ch => inboxManager.getChannelMessages(ch.channelId)
+    );
+    const topAuthors = _(allMessages)
+        .map('author')
+        .countBy()
+        .toPairs()
+        .orderBy([1], ['desc'])
+        .take(3)
+        .map(([author]) => author)
+        .value();
+
+    // Get time since last active from completion signal
+    const completionSignal = await memoryBackend.loadCompletionSignal();
+    const lastActiveTime = completionSignal?.completedAt
+        ? new Date(completionSignal.completedAt)
+        : new Date(Date.now() - 24 * 60 * 60 * 1000); // Default to 24h ago
+
+    return {
+        totalUnread:         overview.totalUnread,
+        channelCount:        overview.channels.length,
+        channelNames:        _.map(overview.channels, 'channelName'),
+        topAuthors,
+        timeSinceLastActive: formatTimeSince(lastActiveTime),
+        timeOfDay:           getTimeOfDay(new Date()),
+        dayOfWeek:           new Date().toLocaleDateString('en-US', { weekday: 'long' }),
+    };
 }
 
 /**
@@ -353,6 +481,12 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             }
         });
 
+        // Create dynamic status generator if identityContext is provided
+        // IMPORTANT: Must create before presence manager, catch-up session runner, and coordinator
+        const dynamicStatusGenerator = identityContext
+            ? createDynamicStatusGenerator({ identityContext })
+            : undefined;
+
         // Create presence manager if optional deps provided
         // IMPORTANT: Must create before coordinator.setProcessor so it's available in onStreamEvent
         if(identityContext && config.presence) {
@@ -378,33 +512,20 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 config:        config.presence,
                 activeStatusGenerator,
                 idleStatusGenerator,
+                dynamicStatusGenerator,
                 logger,
             });
 
             presenceManager.start();
+
+            // If no inbox manager, transition to idle immediately
+            // (otherwise, idle transition happens after catch-up check in inbox init)
+            if(!inboxManager) {
+                void presenceManager.updatePhase({ type: 'idle', since: new Date() });
+            }
         }
 
-        // Initialize inbox on startup
-        if(inboxManager) {
-            // Load unread messages from all tracked channels
-            inboxManager.loadUnread().then((count) => {
-                if(count > 0) {
-                    logger.info({
-                        unreadCount: count,
-                        msg:         `Inbox loaded with ${count} unread messages`,
-                    });
-                }
-                return;
-            }).catch((error) => {
-                const errorMsg = _.isError(error) ? error.message : String(error);
-                logger.warn({
-                    error: errorMsg,
-                    msg:   'Failed to load inbox on startup',
-                });
-            });
-        }
-
-        // Create catch-up session runner if all dependencies available
+        // Create catch-up session runner if all dependencies available (must be created before inbox init)
         if(inboxManager && agent && memoryBackend && catchUpStateManager) {
             // Create session runner
             catchUpSessionRunner = createCatchUpSessionRunner({
@@ -421,13 +542,32 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     const abortController = new AbortController();
                     runOptions.abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
 
+                    // Build dynamic user message from status context
+                    const statusContext = runOptions.statusContext;
+                    const userMessage = statusContext
+                        ? `Processing ${statusContext.totalUnread} messages from ${statusContext.topAuthors.join(', ')} in ${statusContext.channelNames.join(', ')}`
+                        : 'Catching up on messages...';
+
+                    // Create stream event handler for presence updates during catch-up
+                    const streamEventHandler = createPresenceStreamHandler(
+                        presenceManager,
+                        dynamicStatusGenerator,
+                        userMessage
+                    );
+
                     // Call agent.chatBatch with specialMode: 'catchup' and the catch-up prompt
                     const result = await agent.chatBatch([], {
                         specialMode:   'catchup',
                         abortController,
                         sessionId:     runOptions.sessionId,
                         catchUpPrompt: runOptions.prompt,
+                        onStreamEvent: streamEventHandler?.onStreamEvent,
                     });
+
+                    // Transition to idle after completion
+                    if(streamEventHandler) {
+                        streamEventHandler.complete();
+                    }
 
                     return {
                         completed: !result.wasInterrupted,
@@ -439,29 +579,65 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     presenceManager?.setCatchUpMode('none');
                 },
             });
-
-            // Check if catch-up should start
-            // Capture runner reference for closure safety
-            const runner = catchUpSessionRunner;
-            runner.shouldStartCatchUp().then(async (shouldStart) => {
-                if(shouldStart) {
-                    logger.info({ msg: 'Starting catch-up mode' });
-                    // Update presence to show catching up
-                    presenceManager?.setCatchUpMode('catching_up');
-                    await runner.startCatchUp();
-                }
-                return;
-            }).catch((error) => {
-                const errorMsg = _.isError(error) ? error.message : String(error);
-                logger.error({ error: errorMsg, msg: 'Failed to start catch-up' });
-            });
         }
 
-        // Create dynamic status generator if identityContext is provided
-        // IMPORTANT: Must create before coordinator.setProcessor so it's available in onStreamEvent
-        const dynamicStatusGenerator = identityContext
-            ? createDynamicStatusGenerator({ identityContext })
-            : undefined;
+        // Initialize inbox on startup and then check for catch-up
+        if(inboxManager) {
+            // Capture runner reference for closure safety
+            const runner = catchUpSessionRunner;
+
+            (async () => {
+                try {
+                    // Set bot user ID for filtering bot messages from inbox
+                    inboxManager.setBotUserId(readyClient.user!.id);
+
+                    // Populate channel metadata cache for better display names
+                    await populateChannelMetadata(readyClient, inboxManager, config.monitoredChannelIds);
+
+                    // Load unread messages (automatically initializes checkpoints for monitored channels)
+                    const count = await inboxManager.loadUnread();
+                    if(count > 0) {
+                        logger.info({
+                            unreadCount: count,
+                            msg:         `Inbox loaded with ${count} unread messages`,
+                        });
+                    }
+
+                    // NOW check if catch-up should start (after inbox is loaded)
+                    if(runner) {
+                        const shouldStart = await runner.shouldStartCatchUp();
+                        if(shouldStart) {
+                            logger.info({ msg: 'Starting catch-up mode' });
+
+                            // Build catch-up context for rich status generation
+                            const catchUpContext = await buildCatchUpContext(inboxManager, memoryBackend!);
+
+                            // Update presence to show catching up with rich context
+                            presenceManager?.setCatchUpMode('catching_up', catchUpContext);
+                            await runner.startCatchUp();
+                        } else {
+                            // Not doing catch-up, transition to idle mode
+                            void presenceManager?.updatePhase({ type: 'idle', since: new Date() });
+                        }
+                    } else {
+                        // No catch-up system, transition to idle after startup
+                        void presenceManager?.updatePhase({ type: 'idle', since: new Date() });
+                    }
+                } catch (error) {
+                    const errorMsg = _.isError(error) ? error.message : String(error);
+                    logger.warn({
+                        error: errorMsg,
+                        msg:   'Failed to load inbox on startup',
+                    });
+                }
+            })().catch((error) => {
+                const errorMsg = _.isError(error) ? error.message : String(error);
+                logger.error({
+                    error: errorMsg,
+                    msg:   'Unhandled error in inbox initialization',
+                });
+            });
+        }
 
         // Create message coordinator if agent is provided
         if(agent) {
@@ -514,12 +690,34 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 },
             });
 
-            // Set the processor to call agent.chatBatch
-            coordinator.setProcessor(async (contexts, resumeContext, sessionId, abortSignal) => {
-                // Update presence to show processing message if not in catch-up mode
+            // Helper to update presence when starting to process a user message
+            const updatePresenceForMessageStart = (): void => {
                 if(catchUpStateManager?.getState() === 'idle') {
                     presenceManager?.setCatchUpMode('processing_message');
                 }
+            };
+
+            // Helper to complete presence updates after message processing
+            const completePresenceForMessage = (
+                streamEventHandler: ReturnType<typeof createPresenceStreamHandler> | undefined
+            ): void => {
+                // Transition to idle after completion, but NOT if we're in catch-up interrupted state
+                // (the resumed catch-up session will handle presence updates)
+                const currentState = catchUpStateManager?.getState();
+                if(streamEventHandler && currentState !== 'catching_up_interrupted') {
+                    streamEventHandler.complete();
+                }
+
+                // Reset presence mode back to none if we were in processing_message mode
+                if(currentState === 'idle') {
+                    presenceManager?.setCatchUpMode('none');
+                }
+            };
+
+            // Set the processor to call agent.chatBatch
+            coordinator.setProcessor(async (contexts, resumeContext, sessionId, abortSignal) => {
+                // Update presence to show processing message if not in catch-up mode
+                updatePresenceForMessageStart();
 
                 // Set conversation context for MCP tools
                 setConversationContext({
@@ -557,15 +755,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                         images:        images.length > 0 ? images : undefined,
                     });
 
-                    // Transition to idle after completion
-                    if(streamEventHandler) {
-                        streamEventHandler.complete();
-                    }
-
-                    // Reset presence mode back to none if we were in processing_message mode
-                    if(catchUpStateManager?.getState() === 'idle') {
-                        presenceManager?.setCatchUpMode('none');
-                    }
+                    // Complete presence updates after processing
+                    completePresenceForMessage(streamEventHandler);
 
                     return result;
                 } finally {

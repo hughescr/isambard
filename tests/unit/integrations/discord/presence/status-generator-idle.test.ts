@@ -43,7 +43,7 @@ describe('IdleStatusGenerator', () => {
             expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalled();
             const [systemPrompt, userPrompt] = mockGenerateTextWithSystemPrompt.mock.calls[0];
             expect(systemPrompt).toContain('I am a helpful assistant');
-            expect(userPrompt).toContain('What fleeting thought might cross Isambard\'s mind while idle?');
+            expect(userPrompt).toContain('Status text (first person, max 128 chars):');
         });
 
         test('should pass stripMarkdown: true option to generateTextWithSystemPrompt', async () => {
@@ -226,7 +226,7 @@ describe('IdleStatusGenerator', () => {
             await generator.generate();
 
             expect(localMockLogger.info).toHaveBeenCalledWith(
-                { statusText: '💤 Generated status text' },
+                { statusText: '💤 Generated status text', catchUpMode: 'none' },
                 'Generated idle status'
             );
         });
@@ -307,7 +307,7 @@ describe('IdleStatusGenerator', () => {
 
                 const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
                 expect(userPromptArg).toContain(recentContext);
-                expect(userPromptArg).toContain('Recent activity that might be on Isambard\'s mind:');
+                expect(userPromptArg).toContain('Recent activity:');
             });
 
             test('should use simple user prompt when getRecentContext returns undefined', async () => {
@@ -323,7 +323,7 @@ describe('IdleStatusGenerator', () => {
                 await generator.generate();
 
                 const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
-                expect(userPromptArg).toBe('What fleeting thought might cross Isambard\'s mind while idle?');
+                expect(userPromptArg).toBe('Status text (first person, max 128 chars):');
                 expect(userPromptArg).not.toContain('Recent activity');
             });
 
@@ -338,7 +338,7 @@ describe('IdleStatusGenerator', () => {
                 await generator.generate();
 
                 const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
-                expect(userPromptArg).toBe('What fleeting thought might cross Isambard\'s mind while idle?');
+                expect(userPromptArg).toBe('Status text (first person, max 128 chars):');
             });
 
             test('should use simple user prompt when getRecentContext returns empty string', async () => {
@@ -355,7 +355,7 @@ describe('IdleStatusGenerator', () => {
 
                 const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
                 // Empty string is falsy, so should use simple prompt
-                expect(userPromptArg).toBe('What fleeting thought might cross Isambard\'s mind while idle?');
+                expect(userPromptArg).toBe('Status text (first person, max 128 chars):');
             });
 
             test('should replace {recentContext} placeholder with actual recent context', async () => {
@@ -393,9 +393,9 @@ describe('IdleStatusGenerator', () => {
             });
 
             test.each([
-                { section: 'Who is Isambard', marker: '## Who is Isambard?', content: 'Isambard is an AI who has developed their own sense of identity' },
-                { section: 'Your Task', marker: '## Your Task', content: 'Isambard is currently idle' },
-                { section: 'NEVER restrictions', marker: 'NEVER output:', content: '"Idle", "Waiting...", "Standing by"' },
+                { section: 'Who is Isambard', marker: '## Who is Isambard (Izzy)?', content: 'Test identity' },
+                { section: 'The Vibe', marker: '## The Vibe', content: 'Izzy is between conversations, mind wandering' },
+                { section: 'NEVER restrictions', marker: '## NEVER output:', content: 'Corporate speak ("Processing", "Standing by", "Idle", "Waiting")' },
             ])('should include $section section in system prompt', async ({ marker, content }) => {
                 const generator = createIdleStatusGenerator({
                     logger:          mockLogger,
@@ -434,7 +434,7 @@ describe('IdleStatusGenerator', () => {
             const debugCalls = localMockLogger.debug.mock.calls;
             expect(debugCalls.length).toBeGreaterThan(0);
             const firstCall = debugCalls[0];
-            expect(firstCall[0]).toEqual({ includeIdleEmoji: true });
+            expect(firstCall[0]).toEqual({ includeIdleEmoji: true, catchUpMode: 'none' });
             expect(firstCall[1]).toBe('Generating idle status with Haiku');
             expect(firstCall[1]).not.toBe('');
         });

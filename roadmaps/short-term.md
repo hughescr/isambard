@@ -37,6 +37,37 @@ Read-only access to Apple Calendar for scheduling context.
 - [ ] MCP tools for calendar context (upcoming events, availability)
 - [ ] Integration with session gap tracking (catch up on calendar changes)
 
+### State/Status System Overhaul (Technical Debt)
+The current presence/status system is a confused mess with ad-hoc state tracking scattered across multiple components (presence manager, catch-up state manager, stream event handler). Status generation receives inconsistent context depending on code path.
+
+**Problems:**
+- State tracked in multiple places with no single source of truth
+- Status context varies by code path (rich for normal messages, poor for catch-up)
+- Race conditions between state transitions and status generation
+- Catch-up mode flag is separate from presence phase, causing coordination issues
+- Stream event handler doesn't know about catch-up context
+
+**Proposed Solution:**
+- [ ] Design proper state machine with clearly defined states:
+  - `idle` - waiting for activity
+  - `processing_message` - handling a direct message
+  - `catching_up` - processing inbox backlog
+  - `perching` - autonomous activity (future)
+  - Consider: Is "interrupted" a separate state or a flag/modifier?
+    - Could have `catching_up_interrupted`, `processing_message_interrupted`, `perching_interrupted`
+    - Or: base state + `interrupted: boolean` flag
+    - Need to think through which approach is cleaner for state transitions and status generation
+- [ ] Each state defines:
+  - Available tools/capabilities
+  - Status prefix (💤, 💬, 📥, etc.)
+  - Context available for status generation
+  - Valid transitions to other states
+- [ ] Single state manager as source of truth
+- [ ] Status generator receives full context from state manager
+- [ ] Presence updates driven by state transitions, not scattered code paths
+
+**Priority:** Low (current system works adequately, but fragile)
+
 ---
 
 ## Previously Completed

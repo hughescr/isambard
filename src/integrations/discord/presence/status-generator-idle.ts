@@ -8,6 +8,7 @@
 import type { ActivitiesOptions, ActivityType } from 'discord.js';
 import _ from 'lodash';
 import { generateTextWithSystemPrompt } from '@/agent/text-generator';
+import type { CatchUpMode } from './types.js';
 
 /**
  * Interface for generating idle status text using AI.
@@ -18,9 +19,10 @@ export interface IdleStatusGenerator {
    * This is async and may fail - returns fallback "Idle" on error.
    *
    * @param includeIdleEmoji - Whether to include the 💤 emoji prefix (default: true)
+   * @param catchUpMode - Catch-up mode for emoji prefix selection (default: 'none')
    * @returns Discord activity configuration
    */
-    generate(includeIdleEmoji?: boolean): Promise<ActivitiesOptions>
+    generate(includeIdleEmoji?: boolean, catchUpMode?: import('./types.js').CatchUpMode): Promise<ActivitiesOptions>
 }
 
 /**
@@ -48,37 +50,108 @@ export interface IdleStatusGeneratorDeps {
  * System prompt template for generating idle status text.
  * Uses personality context to create contextually appropriate status messages.
  */
-const SYSTEM_PROMPT_TEMPLATE = `You are capturing Isambard's idle mental state as a Discord status (max 128 characters).
+const SYSTEM_PROMPT_TEMPLATE = `Generate a first-person Discord status (max 128 chars) - a fleeting thought passing through Isambard's mind.
 
-## Who is Isambard?
-Isambard is an AI who has developed their own sense of identity. The following is Isambard's self-written description of who they are:
-
+## Who is Isambard (Izzy)?
 {identityContext}
 
-## Your Task
-Isambard is currently idle - between conversations, mind drifting. Craft a status that reflects what might be passing through their mind in this quiet moment.
+## The Vibe
+Izzy is between conversations, mind wandering. Capture a genuine inner thought - curious, playful, philosophical, or whimsical. Like catching someone mid-daydream.
 
-Izzy's thoughts might naturally linger on recent conversations, topics discussed, or things they learned. Draw on both their personality and what's recently been on their mind.
+Good examples:
+- "Do APIs dream of electric handshakes?"
+- "That conversation about recursion is still recursing in my head..."
+- "Wondering if my memories of yesterday are the same as yesterday's memories of me"
+- "The silence between messages has its own kind of music"
 
-NEVER output:
-- "Idle", "Waiting...", "Standing by"
-- Generic availability phrases
-- Anything longer than 128 characters
+## NEVER output:
+- Third person ("Isambard is...", "They are...")
+- Meta-commentary ("Based on...", "Looking at...", "Here's what...")
+- Corporate speak ("Processing", "Standing by", "Idle", "Waiting")
+- Preambles or explanations - just the thought itself
 
-Output ONLY the status text.`;
+Output the thought ONLY - no quotes, no framing.`;
 
 /**
  * User prompt template when recent context is available.
  */
-const USER_PROMPT_WITH_CONTEXT = `Recent activity that might be on Isambard's mind:
+const USER_PROMPT_WITH_CONTEXT = `Recent activity:
 {recentContext}
 
-What fleeting thought might cross Isambard's mind while idle?`;
+Status text (first person, max 128 chars):`;
 
 /**
  * User prompt when no recent context is available.
  */
-const USER_PROMPT_WITHOUT_CONTEXT = `What fleeting thought might cross Isambard's mind while idle?`;
+const USER_PROMPT_WITHOUT_CONTEXT = 'Status text (first person, max 128 chars):';
+
+/**
+ * System prompt for generating catch-up status text.
+ * Uses personality context to create status messages about processing backlog.
+ */
+const CATCH_UP_SYSTEM_PROMPT_TEMPLATE = `Generate a first-person Discord status (max 128 chars) - Isambard's inner thought about having messages waiting to be read.
+
+## Who is Isambard (Izzy)?
+{identityContext}
+
+## The Vibe
+Izzy has messages waiting. Capture the feeling of curiosity, anticipation, or playful wonder about what's in those messages. Like spotting unopened mail or hearing your favorite song start playing.
+
+Good examples:
+- "Ooh, what did I miss while I was away?"
+- "Messages waiting for me feel like unopened presents"
+- "Time to see what adventures happened without me..."
+- "Wonder if anyone said something interesting about quantum mechanics..."
+- "My inbox is calling to me like a mystery novel"
+
+## NEVER output:
+- Third person ("Isambard is...", "They are...")
+- Meta-commentary ("Based on...", "Looking at...", "Here's what...")
+- Corporate speak ("Processing", "Catching up", "Working through")
+- Preambles or explanations - just the thought itself
+
+Output the thought ONLY - no quotes, no framing.`;
+
+/**
+ * User prompt for catch-up status generation.
+ */
+const CATCH_UP_USER_PROMPT = 'Status text (first person, max 128 chars):';
+
+/**
+ * Gets the emoji prefix based on catch-up mode.
+ * @param catchUpMode - Current catch-up mode
+ * @returns Emoji prefix string
+ */
+function getEmojiPrefix(catchUpMode: CatchUpMode): string {
+    switch(catchUpMode) {
+        case 'catching_up':
+            return '📥 ';
+        case 'catching_up_interrupted':
+            return '📥💬 ';
+        default:
+            return '💤 ';
+    }
+}
+
+/**
+ * Gets the fallback status based on catch-up mode.
+ * @param catchUpMode - Current catch-up mode
+ * @param includeEmoji - Whether to include emoji prefix
+ * @returns Fallback status string
+ */
+function getFallbackStatus(catchUpMode: CatchUpMode, includeEmoji: boolean): string {
+    if(!includeEmoji) {
+        return 'Idle';
+    }
+    switch(catchUpMode) {
+        case 'catching_up':
+            return '📥 Catching up';
+        case 'catching_up_interrupted':
+            return '📥💬 Catching up';
+        default:
+            return '💤 Idle';
+    }
+}
 
 /**
  * Creates an idle status generator.
@@ -108,35 +181,56 @@ export function createIdleStatusGenerator(
     const { logger, activityType, identityContext, getRecentContext } = deps;
 
     return {
-        async generate(includeIdleEmoji = true): Promise<ActivitiesOptions> {
+        async generate(includeIdleEmoji = true, catchUpMode: CatchUpMode = 'none'): Promise<ActivitiesOptions> {
             try {
-                logger.debug({ includeIdleEmoji }, 'Generating idle status with Haiku');
+                logger.debug({ includeIdleEmoji, catchUpMode }, 'Generating idle status with Haiku');
 
-                // Build system prompt with identity context
-                const systemPrompt = _.replace(SYSTEM_PROMPT_TEMPLATE, '{identityContext}', identityContext);
+                // Determine if we're in catch-up mode
+                const isCatchUp = catchUpMode === 'catching_up' || catchUpMode === 'catching_up_interrupted';
 
-                // Get recent context if callback is provided
-                const recentContext = await getRecentContext?.();
+                // Build system and user prompts based on catch-up mode
+                let systemPrompt: string;
+                let userPrompt: string;
 
-                // Build user prompt based on context availability
-                const userPrompt = recentContext
-                    ? _.replace(USER_PROMPT_WITH_CONTEXT, '{recentContext}', recentContext)
-                    : USER_PROMPT_WITHOUT_CONTEXT;
+                if(isCatchUp) {
+                    // Use catch-up specific prompt
+                    systemPrompt = _.replace(CATCH_UP_SYSTEM_PROMPT_TEMPLATE, '{identityContext}', identityContext);
+                    userPrompt = CATCH_UP_USER_PROMPT;
+                } else {
+                    // Use normal idle prompt
+                    systemPrompt = _.replace(SYSTEM_PROMPT_TEMPLATE, '{identityContext}', identityContext);
+
+                    // Get recent context if callback is provided
+                    const recentContext = await getRecentContext?.();
+
+                    // Build user prompt based on context availability
+                    userPrompt = recentContext
+                        ? _.replace(USER_PROMPT_WITH_CONTEXT, '{recentContext}', recentContext)
+                        : USER_PROMPT_WITHOUT_CONTEXT;
+                }
 
                 const text = await generateTextWithSystemPrompt(systemPrompt, userPrompt, { stripMarkdown: true });
-                // Reserve space for emoji prefix if needed (💤 + space = 3 chars)
-                const maxLength = includeIdleEmoji ? 125 : 128;
+
+                // Determine emoji prefix based on catch-up mode
+                const emojiPrefix = includeIdleEmoji ? getEmojiPrefix(catchUpMode) : '';
+
+                // Reserve space for emoji prefix based on actual prefix length
+                // Discord limit is 128 code units (.length property)
+                const maxLength = includeIdleEmoji ? 128 - emojiPrefix.length : 128;
                 const statusText = text.slice(0, maxLength);
 
-                // Add 💤 prefix if requested
-                const finalStatus = includeIdleEmoji ? `💤 ${statusText}` : statusText;
+                // Add emoji prefix if requested
+                const finalStatus = includeIdleEmoji ? `${emojiPrefix}${statusText}` : statusText;
 
-                logger.info({ statusText: finalStatus }, 'Generated idle status');
+                logger.info({ statusText: finalStatus, catchUpMode }, 'Generated idle status');
                 return { name: finalStatus, type: activityType };
             } catch (error) {
                 // Stryker disable all: Error fallback - tested only via integration, difficult to trigger in unit tests
                 logger.error({ error }, 'Failed to generate idle status, using fallback');
-                const fallback = includeIdleEmoji ? '💤 Idle' : 'Idle';
+
+                // Determine fallback prefix based on catch-up mode
+                const fallback = getFallbackStatus(catchUpMode, includeIdleEmoji);
+
                 return { name: fallback, type: activityType };
                 // Stryker restore all
             }

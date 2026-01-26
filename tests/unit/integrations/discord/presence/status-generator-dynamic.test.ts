@@ -169,8 +169,8 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
 
                 const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('Who is Isambard?');
-                expect(prompt).toContain("Isambard's mental state");
+                expect(prompt).toContain('Who is Izzy?');
+                expect(prompt).toContain('first-person inner thought');
                 expect(prompt).toContain('max 40 characters');
             });
 
@@ -188,7 +188,7 @@ describe('DynamicStatusGenerator', () => {
 
                 const prompt = mockGenerateText.mock.calls[0][0];
                 expect(prompt).toContain('present participle form');
-                expect(prompt).toContain('evocative snapshot');
+                expect(prompt).toContain('inner monologue');
             });
 
             it('should include anti-patterns to avoid', async () => {
@@ -457,7 +457,7 @@ describe('DynamicStatusGenerator', () => {
 
                 const prompt = mockGenerateText.mock.calls[0][0];
                 expect(prompt).toContain('What is the meaning of life?');
-                expect(prompt).toContain('Isambard is considering this question');
+                expect(prompt).toContain('You (Izzy) just received this question');
             });
 
             it('should truncate user message to 200 characters', async () => {
@@ -492,7 +492,7 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
 
                 const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain("Isambard's internal thoughts:");
+                expect(prompt).toContain('Your internal thoughts so far:');
                 expect(prompt).toContain('I need to consider the algorithm complexity first...');
             });
 
@@ -509,7 +509,7 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
 
                 const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).not.toContain("Isambard's internal thoughts:");
+                expect(prompt).not.toContain('Your internal thoughts so far:');
             });
 
             it('should NOT include thinking section when thinkingContent is empty string', async () => {
@@ -526,7 +526,7 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
 
                 const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).not.toContain("Isambard's internal thoughts:");
+                expect(prompt).not.toContain('Your internal thoughts so far:');
             });
 
             it('should produce clean prompt when thinkingContent is absent (no garbage text)', async () => {
@@ -548,7 +548,7 @@ describe('DynamicStatusGenerator', () => {
                 const prompt = mockGenerateText.mock.calls[0][0];
                 // Verify no garbage from mutation survives in the prompt
                 expect(prompt).not.toContain('Stryker');
-                expect(prompt).not.toContain("Isambard's internal thoughts:");
+                expect(prompt).not.toContain('Your internal thoughts so far:');
                 // The {thinkingSection} placeholder should be replaced with empty string
                 expect(prompt).not.toContain('{thinkingSection}');
             });
@@ -657,7 +657,7 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
 
                 const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('What Isambard is asking:');
+                expect(prompt).toContain('What you\'re asking the tool:');
                 expect(prompt).toContain('/memories/identity/core.md');
             });
 
@@ -736,7 +736,7 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
 
                 const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('Recent thoughts:');
+                expect(prompt).toContain('Your recent thoughts:');
                 expect(prompt).toContain('I was just thinking about how to approach this...');
             });
 
@@ -775,7 +775,7 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
 
                 const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('Recent thoughts: ""');
+                expect(prompt).toContain('Your recent thoughts: ""');
             });
         });
 
@@ -794,8 +794,8 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
 
                 const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('Isambard is composing a response');
-                expect(prompt).toContain("What they're writing:");
+                expect(prompt).toContain('You (Izzy) are composing a response');
+                expect(prompt).toContain("What you're writing:");
                 expect(prompt).toContain('The issue seems to be related to the async handling...');
             });
 
@@ -832,7 +832,7 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
 
                 const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain("What they're writing: \"\"");
+                expect(prompt).toContain("What you're writing: \"\"");
             });
         });
 

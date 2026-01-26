@@ -184,7 +184,8 @@ describe.concurrent('createDiscordBot', () => {
             spies.push(presenceManagerSpy);
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                generate: mock(() => ({ name: 'Thinking...', type: 4 })),
+                generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
+                formatStatus: mock((status: string) => ({ name: status, type: 4 })),
             }));
 
             spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
@@ -280,7 +281,8 @@ describe.concurrent('createDiscordBot', () => {
             spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                generate: mock(() => ({ name: 'Thinking...', type: 4 })),
+                generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
+                formatStatus: mock((status: string) => ({ name: status, type: 4 })),
             }));
 
             spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
@@ -340,7 +342,8 @@ describe.concurrent('createDiscordBot', () => {
             spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                generate: mock(() => ({ name: 'Thinking...', type: 4 })),
+                generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
+                formatStatus: mock((status: string) => ({ name: status, type: 4 })),
             }));
 
             spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({

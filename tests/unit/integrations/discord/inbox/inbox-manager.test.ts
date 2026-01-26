@@ -55,6 +55,7 @@ describe.concurrent('InboxManager', () => {
         manager = new InboxManager({
             checkpointManager:    mockCheckpointManager,
             messageSearchService: mockMessageSearchService,
+            monitoredChannelIds:  [],  // Empty by default, tests will populate as needed
         });
     });
 
@@ -63,79 +64,79 @@ describe.concurrent('InboxManager', () => {
         jest.useRealTimers();
     });
 
-    describe('trackChannel', () => {
-        test('should register channel for tracking', async () => {
-            const channel = {
-                channelId,
-                channelName: 'general',
-                guildId,
-            };
+    describe('updateChannelMetadata', () => {
+        test('should update channel metadata cache', () => {
+            manager.updateChannelMetadata(channelId, 'general', guildId);
 
-            await manager.trackChannel(channel);
-
-            expect(mockCheckpointManager.initializeIfMissing).toHaveBeenCalledTimes(1);
-            expect(mockCheckpointManager.initializeIfMissing).toHaveBeenCalledWith(channelId, guildId);
+            // Verify metadata is cached by checking getChannelName
+            expect(manager.getChannelName(channelId)).toBe('general');
         });
 
-        test('should handle DM channel', async () => {
-            const dmChannel = {
-                channelId,
-                channelName: 'DM with User',
-                guildId:     'DM' as const,
-            };
+        test('should handle DM channel', () => {
+            manager.updateChannelMetadata(channelId, 'DM with User', 'DM');
 
-            await manager.trackChannel(dmChannel);
-
-            expect(mockCheckpointManager.initializeIfMissing).toHaveBeenCalledWith(channelId, 'DM');
+            expect(manager.getChannelName(channelId)).toBe('DM with User');
         });
 
-        test('should allow tracking multiple channels', async () => {
-            const channel1 = {
-                channelId:   createChannelId('111111111'),
-                channelName: 'general',
-                guildId:     createGuildId('999999999'),
-            };
+        test('should allow updating multiple channels', () => {
+            const channel1Id = createChannelId('111111111');
+            const channel2Id = createChannelId('222222222');
 
-            const channel2 = {
-                channelId:   createChannelId('222222222'),
-                channelName: 'random',
-                guildId:     createGuildId('888888888'),
-            };
+            manager.updateChannelMetadata(channel1Id, 'general', createGuildId('999999999'));
+            manager.updateChannelMetadata(channel2Id, 'random', createGuildId('888888888'));
 
-            await manager.trackChannel(channel1);
-            await manager.trackChannel(channel2);
+            expect(manager.getChannelName(channel1Id)).toBe('general');
+            expect(manager.getChannelName(channel2Id)).toBe('random');
+        });
 
-            expect(mockCheckpointManager.initializeIfMissing).toHaveBeenCalledTimes(2);
+        test('should overwrite existing metadata', () => {
+            manager.updateChannelMetadata(channelId, 'old-name', guildId);
+            manager.updateChannelMetadata(channelId, 'new-name', guildId);
+
+            expect(manager.getChannelName(channelId)).toBe('new-name');
         });
     });
 
     describe('loadUnread', () => {
-        test('should return zero when no checkpoints exist', async () => {
-            mockCheckpointManager.listAll = mock(async () => []);
-
+        test('should return zero when no monitored channels', async () => {
+            // Manager has empty monitoredChannelIds from beforeEach
             const total = await manager.loadUnread();
 
             expect(total).toBe(0);
         });
 
         test('should skip channels with gap smaller than minGapDurationMs', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
                 guildId,
-                lastSeenAt: new Date(Date.now() - 60000).toISOString(), // 1 minute ago
+                lastSeenAt: new Date(Date.now() - 5000).toISOString(), // 5 seconds ago (less than 10s default)
                 updatedAt:  nowIso,
             };
 
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
 
-            const total = await manager.loadUnread();
+            const total = await managerWithChannel.loadUnread();
 
             expect(total).toBe(0);
             expect(mockMessageSearchService.searchMessages).not.toHaveBeenCalled();
         });
 
         test('should load messages for channels with sufficient gap', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -158,7 +159,7 @@ describe.concurrent('InboxManager', () => {
                 },
             ];
 
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
@@ -170,13 +171,20 @@ describe.concurrent('InboxManager', () => {
                 },
             }));
 
-            const total = await manager.loadUnread();
+            const total = await managerWithChannel.loadUnread();
 
             expect(total).toBe(1);
             expect(mockMessageSearchService.searchMessages).toHaveBeenCalledTimes(1);
         });
 
         test('should limit catch-up age to maxCatchUpAgeDays', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -185,7 +193,7 @@ describe.concurrent('InboxManager', () => {
                 updatedAt:  nowIso,
             };
 
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: [],
                 metadata: {
@@ -197,7 +205,7 @@ describe.concurrent('InboxManager', () => {
                 },
             }));
 
-            await manager.loadUnread();
+            await managerWithChannel.loadUnread();
 
             expect(mockMessageSearchService.searchMessages).toHaveBeenCalledTimes(1);
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Accessing mock internals
@@ -211,6 +219,13 @@ describe.concurrent('InboxManager', () => {
         });
 
         test('should respect maxCatchUpMessages limit', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -219,16 +234,26 @@ describe.concurrent('InboxManager', () => {
                 updatedAt:  nowIso,
             };
 
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
 
-            await manager.loadUnread();
+            await managerWithChannel.loadUnread();
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Accessing mock internals
             const call = (mockMessageSearchService.searchMessages as any).mock.calls[0][0] as { limit: number };
             expect(call.limit).toBe(100); // Default maxCatchUpMessages
         });
 
-        test('should use tracked channel name if available', async () => {
+        test('should use channel metadata name if available', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
+            // Update metadata with channel name
+            managerWithChannel.updateChannelMetadata(channelId, 'general', guildId);
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -251,14 +276,7 @@ describe.concurrent('InboxManager', () => {
                 },
             ];
 
-            // Track channel with name
-            await manager.trackChannel({
-                channelId,
-                channelName: 'general',
-                guildId,
-            });
-
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
@@ -270,13 +288,20 @@ describe.concurrent('InboxManager', () => {
                 },
             }));
 
-            await manager.loadUnread();
+            await managerWithChannel.loadUnread();
 
-            const messages = manager.getChannelMessages(channelId);
+            const messages = managerWithChannel.getChannelMessages(channelId);
             expect(messages[0].channelName).toBe('general');
         });
 
-        test('should use channelId as fallback name if not tracked', async () => {
+        test('should use channelId as fallback name if metadata not set', async () => {
+            // Create manager with monitored channel but don't update metadata
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -299,7 +324,7 @@ describe.concurrent('InboxManager', () => {
                 },
             ];
 
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
@@ -311,16 +336,26 @@ describe.concurrent('InboxManager', () => {
                 },
             }));
 
-            await manager.loadUnread();
+            await managerWithChannel.loadUnread();
 
-            const messages = manager.getChannelMessages(channelId);
+            const messages = managerWithChannel.getChannelMessages(channelId);
             expect(messages[0].channelName).toBe(channelId);
         });
 
         test('should continue processing channels despite errors', async () => {
+            const channel1Id = createChannelId('111111111');
+            const channel2Id = createChannelId('222222222');
+
+            // Create manager with two monitored channels
+            const managerWithChannels = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channel1Id, channel2Id],
+            });
+
             const checkpoint1: DiscordChannelCheckpoint = {
                 service:    'discord',
-                channelId:  createChannelId('111111111'),
+                channelId:  channel1Id,
                 guildId,
                 lastSeenAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
                 updatedAt:  nowIso,
@@ -328,7 +363,7 @@ describe.concurrent('InboxManager', () => {
 
             const checkpoint2: DiscordChannelCheckpoint = {
                 service:    'discord',
-                channelId:  createChannelId('222222222'),
+                channelId:  channel2Id,
                 guildId,
                 lastSeenAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
                 updatedAt:  nowIso,
@@ -337,7 +372,7 @@ describe.concurrent('InboxManager', () => {
             const mockMessages = [
                 {
                     id:          '333',
-                    channelId:   createChannelId('222222222'),
+                    channelId:   channel2Id,
                     guildId:     null,
                     author:      { id: createUserId('user1'), username: 'bob', displayName: 'Bob' },
                     content:     'Success',
@@ -348,12 +383,22 @@ describe.concurrent('InboxManager', () => {
                 },
             ];
 
-            mockCheckpointManager.listAll = mock(async () => [checkpoint1, checkpoint2]);
+            // Mock load to return checkpoints for each channel
+            mockCheckpointManager.load = mock(async (id) => {
+                if(id === channel1Id) {
+                    return checkpoint1;
+                }
+                if(id === channel2Id) {
+                    return checkpoint2;
+                }
+                return undefined;
+            });
 
-            let callCount = 0;
+            // First call throws error, second succeeds
+            let searchCallCount = 0;
             mockMessageSearchService.searchMessages = mock(async () => {
-                callCount++;
-                if(callCount === 1) {
+                searchCallCount++;
+                if(searchCallCount === 1) {
                     throw new Error('Network error');
                 }
                 return {
@@ -368,13 +413,20 @@ describe.concurrent('InboxManager', () => {
                 };
             });
 
-            const total = await manager.loadUnread();
+            const total = await managerWithChannels.loadUnread();
 
             expect(total).toBe(1);
             expect(mockMessageSearchService.searchMessages).toHaveBeenCalledTimes(2);
         });
 
         test('should handle empty message results', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -383,7 +435,7 @@ describe.concurrent('InboxManager', () => {
                 updatedAt:  nowIso,
             };
 
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: [],
                 metadata: {
@@ -395,7 +447,7 @@ describe.concurrent('InboxManager', () => {
                 },
             }));
 
-            const total = await manager.loadUnread();
+            const total = await managerWithChannel.loadUnread();
 
             expect(total).toBe(0);
         });
@@ -410,6 +462,16 @@ describe.concurrent('InboxManager', () => {
         });
 
         test('should return correct overview with unread messages', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
+            // Update metadata with channel name
+            managerWithChannel.updateChannelMetadata(channelId, 'general', guildId);
+
             // Load some messages
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
@@ -433,13 +495,7 @@ describe.concurrent('InboxManager', () => {
                 },
             ];
 
-            await manager.trackChannel({
-                channelId,
-                channelName: 'general',
-                guildId,
-            });
-
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
@@ -451,9 +507,9 @@ describe.concurrent('InboxManager', () => {
                 },
             }));
 
-            await manager.loadUnread();
+            await managerWithChannel.loadUnread();
 
-            const overview = manager.getUnreadOverview();
+            const overview = managerWithChannel.getUnreadOverview();
 
             expect(overview.totalUnread).toBe(1);
             expect(overview.channels).toHaveLength(1);
@@ -463,6 +519,13 @@ describe.concurrent('InboxManager', () => {
         });
 
         test('should exclude channels with all messages marked as read', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -485,7 +548,7 @@ describe.concurrent('InboxManager', () => {
                 },
             ];
 
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
@@ -497,10 +560,10 @@ describe.concurrent('InboxManager', () => {
                 },
             }));
 
-            await manager.loadUnread();
-            await manager.markChannelRead(channelId);
+            await managerWithChannel.loadUnread();
+            await managerWithChannel.markChannelRead(channelId);
 
-            const overview = manager.getUnreadOverview();
+            const overview = managerWithChannel.getUnreadOverview();
 
             expect(overview.totalUnread).toBe(0);
             expect(overview.channels).toEqual([]);
@@ -515,6 +578,13 @@ describe.concurrent('InboxManager', () => {
         });
 
         test('should return unread messages only', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -548,7 +618,7 @@ describe.concurrent('InboxManager', () => {
                 },
             ];
 
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
@@ -560,10 +630,10 @@ describe.concurrent('InboxManager', () => {
                 },
             }));
 
-            await manager.loadUnread();
-            await manager.markAsRead(channelId, ['111']);
+            await managerWithChannel.loadUnread();
+            await managerWithChannel.markAsRead(channelId, ['111']);
 
-            const messages = manager.getChannelMessages(channelId);
+            const messages = managerWithChannel.getChannelMessages(channelId);
 
             expect(messages).toHaveLength(1);
             expect(messages[0].id).toBe('222');
@@ -578,6 +648,13 @@ describe.concurrent('InboxManager', () => {
         });
 
         test('should return undefined for unknown message', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -586,15 +663,22 @@ describe.concurrent('InboxManager', () => {
                 updatedAt:  nowIso,
             };
 
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
-            await manager.loadUnread();
+            mockCheckpointManager.load = mock(async () => checkpoint);
+            await managerWithChannel.loadUnread();
 
-            const message = manager.getMessage(channelId, '999');
+            const message = managerWithChannel.getMessage(channelId, '999');
 
             expect(message).toBeUndefined();
         });
 
         test('should return message by ID', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -617,7 +701,7 @@ describe.concurrent('InboxManager', () => {
                 },
             ];
 
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
@@ -629,9 +713,9 @@ describe.concurrent('InboxManager', () => {
                 },
             }));
 
-            await manager.loadUnread();
+            await managerWithChannel.loadUnread();
 
-            const message = manager.getMessage(channelId, '111');
+            const message = managerWithChannel.getMessage(channelId, '111');
 
             expect(message).toBeDefined();
             expect(message?.id).toBe('111');
@@ -647,6 +731,16 @@ describe.concurrent('InboxManager', () => {
         });
 
         test('should mark messages as read and update checkpoint', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
+            // Update metadata
+            managerWithChannel.updateChannelMetadata(channelId, 'general', guildId);
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -669,13 +763,7 @@ describe.concurrent('InboxManager', () => {
                 },
             ];
 
-            await manager.trackChannel({
-                channelId,
-                channelName: 'general',
-                guildId,
-            });
-
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
@@ -687,9 +775,9 @@ describe.concurrent('InboxManager', () => {
                 },
             }));
 
-            await manager.loadUnread();
+            await managerWithChannel.loadUnread();
 
-            await manager.markAsRead(channelId, ['111']);
+            await managerWithChannel.markAsRead(channelId, ['111']);
 
             expect(mockCheckpointManager.updateLastSeen).toHaveBeenCalledWith(
                 channelId,
@@ -698,11 +786,21 @@ describe.concurrent('InboxManager', () => {
                 '111'
             );
 
-            const messages = manager.getChannelMessages(channelId);
+            const messages = managerWithChannel.getChannelMessages(channelId);
             expect(messages).toHaveLength(0);
         });
 
         test('should update checkpoint to latest marked message', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
+            // Update metadata
+            managerWithChannel.updateChannelMetadata(channelId, 'general', guildId);
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -736,13 +834,7 @@ describe.concurrent('InboxManager', () => {
                 },
             ];
 
-            await manager.trackChannel({
-                channelId,
-                channelName: 'general',
-                guildId,
-            });
-
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
@@ -754,9 +846,9 @@ describe.concurrent('InboxManager', () => {
                 },
             }));
 
-            await manager.loadUnread();
+            await managerWithChannel.loadUnread();
 
-            await manager.markAsRead(channelId, ['111', '222']);
+            await managerWithChannel.markAsRead(channelId, ['111', '222']);
 
             expect(mockCheckpointManager.updateLastSeen).toHaveBeenCalledWith(
                 channelId,
@@ -792,6 +884,13 @@ describe.concurrent('InboxManager', () => {
         });
 
         test('should do nothing for channel with no messages', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -800,15 +899,25 @@ describe.concurrent('InboxManager', () => {
                 updatedAt:  nowIso,
             };
 
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
-            await manager.loadUnread();
+            mockCheckpointManager.load = mock(async () => checkpoint);
+            await managerWithChannel.loadUnread();
 
-            await manager.markChannelRead(channelId);
+            await managerWithChannel.markChannelRead(channelId);
 
             expect(mockCheckpointManager.updateLastSeen).not.toHaveBeenCalled();
         });
 
         test('should mark all messages as read', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
+            // Update metadata
+            managerWithChannel.updateChannelMetadata(channelId, 'general', guildId);
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -842,13 +951,7 @@ describe.concurrent('InboxManager', () => {
                 },
             ];
 
-            await manager.trackChannel({
-                channelId,
-                channelName: 'general',
-                guildId,
-            });
-
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
@@ -860,9 +963,9 @@ describe.concurrent('InboxManager', () => {
                 },
             }));
 
-            await manager.loadUnread();
+            await managerWithChannel.loadUnread();
 
-            await manager.markChannelRead(channelId);
+            await managerWithChannel.markChannelRead(channelId);
 
             expect(mockCheckpointManager.updateLastSeen).toHaveBeenCalledWith(
                 channelId,
@@ -871,7 +974,7 @@ describe.concurrent('InboxManager', () => {
                 '222'
             );
 
-            const messages = manager.getChannelMessages(channelId);
+            const messages = managerWithChannel.getChannelMessages(channelId);
             expect(messages).toHaveLength(0);
         });
     });
@@ -906,6 +1009,13 @@ describe.concurrent('InboxManager', () => {
         });
 
         test('should return correct count with unread messages', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -939,7 +1049,7 @@ describe.concurrent('InboxManager', () => {
                 },
             ];
 
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
@@ -951,12 +1061,19 @@ describe.concurrent('InboxManager', () => {
                 },
             }));
 
-            await manager.loadUnread();
+            await managerWithChannel.loadUnread();
 
-            expect(manager.totalUnread).toBe(2);
+            expect(managerWithChannel.totalUnread).toBe(2);
         });
 
         test('should exclude read messages from count', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -990,7 +1107,7 @@ describe.concurrent('InboxManager', () => {
                 },
             ];
 
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
@@ -1002,10 +1119,10 @@ describe.concurrent('InboxManager', () => {
                 },
             }));
 
-            await manager.loadUnread();
-            await manager.markAsRead(channelId, ['111']);
+            await managerWithChannel.loadUnread();
+            await managerWithChannel.markAsRead(channelId, ['111']);
 
-            expect(manager.totalUnread).toBe(1);
+            expect(managerWithChannel.totalUnread).toBe(1);
         });
     });
 
@@ -1015,6 +1132,13 @@ describe.concurrent('InboxManager', () => {
         });
 
         test('should return true with unread messages', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -1037,7 +1161,7 @@ describe.concurrent('InboxManager', () => {
                 },
             ];
 
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
@@ -1049,12 +1173,19 @@ describe.concurrent('InboxManager', () => {
                 },
             }));
 
-            await manager.loadUnread();
+            await managerWithChannel.loadUnread();
 
-            expect(manager.hasUnread).toBe(true);
+            expect(managerWithChannel.hasUnread).toBe(true);
         });
 
         test('should return false after marking all as read', async () => {
+            // Create manager with monitored channel
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                monitoredChannelIds:  [channelId],
+            });
+
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
                 channelId,
@@ -1077,7 +1208,7 @@ describe.concurrent('InboxManager', () => {
                 },
             ];
 
-            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockCheckpointManager.load = mock(async () => checkpoint);
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
@@ -1089,10 +1220,10 @@ describe.concurrent('InboxManager', () => {
                 },
             }));
 
-            await manager.loadUnread();
-            await manager.markChannelRead(channelId);
+            await managerWithChannel.loadUnread();
+            await managerWithChannel.markChannelRead(channelId);
 
-            expect(manager.hasUnread).toBe(false);
+            expect(managerWithChannel.hasUnread).toBe(false);
         });
     });
 });

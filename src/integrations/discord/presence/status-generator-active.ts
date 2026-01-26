@@ -22,6 +22,16 @@ export interface ActiveStatusGenerator {
    * @returns Discord activity configuration
    */
     generate(phase: PresencePhase, catchUpMode?: CatchUpMode): ActivitiesOptions
+
+    /**
+     * Format a status text with the appropriate catch-up prefix.
+     * Use this when you have a pre-generated status text (e.g., from LLM).
+     *
+     * @param statusText - The status text to format
+     * @param catchUpMode - Current catch-up mode for prefix generation
+     * @returns Discord activity configuration
+     */
+    formatStatus(statusText: string, catchUpMode?: CatchUpMode): ActivitiesOptions
 }
 
 /**
@@ -139,6 +149,11 @@ export function createActiveStatusGenerator(
             }
 
             return { name: `${prefix}${baseStatus}`, type: activityType };
+        },
+
+        formatStatus(statusText: string, catchUpMode?: CatchUpMode): ActivitiesOptions {
+            const prefix = getCatchUpPrefix(catchUpMode);
+            return { name: `${prefix}${statusText}`, type: activityType };
         },
     };
 }

@@ -1,5 +1,5 @@
 import _ from 'lodash';
-import type { Client, Message, TextChannel } from 'discord.js';
+import type { Client, Message, TextBasedChannel } from 'discord.js';
 import { DiscordIntegrationError } from '@/integrations/discord/errors';
 import { timestampToSnowflake } from '@/integrations/discord/message-history/snowflake';
 import type { DiscordSearchResult, DiscordAttachment, DiscordEmbed, DiscordReaction } from '@/integrations/discord/message-history/types';
@@ -184,15 +184,16 @@ function transformMessage(message: Message): DiscordSearchResult {
  */
 export function createMessageFetcher(client: Client): MessageFetcher {
     /**
-     * Gets a text channel from the client, throwing if not accessible.
+     * Gets a text-based channel from the client, throwing if not accessible.
+     * Supports both guild text channels and DM channels.
      */
-    async function getChannel(channelId: string): Promise<TextChannel> {
+    async function getChannel(channelId: string): Promise<TextBasedChannel> {
         try {
             const channel = await client.channels.fetch(channelId);
-            if(!channel) {
+            if(!channel?.isTextBased()) {
                 throw new ChannelNotAccessibleError(channelId);
             }
-            return channel as TextChannel;
+            return channel;
         } catch (error) {
             // Stryker disable next-line ConditionalExpression,BlockStatement: Re-throwing original error preserves stack trace
             if(error instanceof ChannelNotAccessibleError) {
@@ -270,7 +271,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
                     () => channel.messages.fetch(fetchOptions),
                     // Stryker disable next-line StringLiteral: Operation name for retry logging
                     'fetchMessages'
-                );
+                ) as Map<string, Message>;
 
                 // Stryker disable next-line ConditionalExpression,BlockStatement: Empty batch check terminates pagination loop early; break is redundant with line 277 but clearer
                 if(batch.size === 0) {
@@ -278,7 +279,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
                 }
 
                 // Process batch using helper function
-                const batchResult = processBatch(batch as unknown as Map<string, Message>, afterSnowflake, allMessages, maxMessages);
+                const batchResult = processBatch(batch, afterSnowflake, allMessages, maxMessages);
                 // Stryker disable next-line BlockStatement: Array spread tested via integration tests
                 allMessages.push(...batchResult.messages);
                 hasMore = batchResult.hasMore;

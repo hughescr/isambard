@@ -24,6 +24,7 @@ describe('CatchUpSessionRunner', () => {
     let mockDeleteInProgressSignal: ReturnType<typeof mock>;
     let mockRunAgentSession: ReturnType<typeof mock>;
     let deps: CatchUpSessionRunnerDeps;
+    let mockTotalUnread: number;
 
     beforeEach(() => {
         // Set up fake timers with fixed system time for deterministic tests
@@ -38,9 +39,13 @@ describe('CatchUpSessionRunner', () => {
             clearViewedChannels: mock(),
         };
 
+        // Use a mutable variable for totalUnread that tests can modify
+        mockTotalUnread = 0;
         mockInboxManager = {
-            loadUnread:        mock(() => Promise.resolve(0)),
-            getUnreadOverview: mock(() => ({ totalUnread: 0, channels: [] })),
+            loadUnread:         mock(() => Promise.resolve(0)),
+            getUnreadOverview:  mock(() => ({ totalUnread: mockTotalUnread, channels: [] })),
+            getChannelMessages: mock(() => []),
+            get totalUnread() { return mockTotalUnread; },
         } as unknown as InboxManager;
 
         mockStoreCompletionSignal = mock();
@@ -69,7 +74,7 @@ describe('CatchUpSessionRunner', () => {
 
     describe('shouldStartCatchUp', () => {
         it('should return false when no unread messages', async () => {
-            mockInboxManager.loadUnread = mock().mockResolvedValue(0);
+            mockTotalUnread = 0;
 
             const runner = createCatchUpSessionRunner(deps);
             const result = await runner.shouldStartCatchUp();
@@ -78,7 +83,7 @@ describe('CatchUpSessionRunner', () => {
         });
 
         it('should return true when inProgress marker exists (crash recovery)', async () => {
-            mockInboxManager.loadUnread = mock().mockResolvedValue(5);
+            mockTotalUnread = 5;
             mockLoadInProgressSignal.mockResolvedValue({
                 startedAt: new Date('2025-01-25T11:50:00.000Z').toISOString(),
             } as CatchUpInProgressSignal);
@@ -91,7 +96,7 @@ describe('CatchUpSessionRunner', () => {
         });
 
         it('should delete inProgress marker when found', async () => {
-            mockInboxManager.loadUnread = mock().mockResolvedValue(5);
+            mockTotalUnread = 5;
             mockLoadInProgressSignal.mockResolvedValue({
                 startedAt: new Date('2025-01-25T11:50:00.000Z').toISOString(),
             } as CatchUpInProgressSignal);
@@ -103,7 +108,7 @@ describe('CatchUpSessionRunner', () => {
         });
 
         it('should return true when no completion signal exists', async () => {
-            mockInboxManager.loadUnread = mock().mockResolvedValue(5);
+            mockTotalUnread = 5;
             mockLoadInProgressSignal.mockResolvedValue(null);
             mockLoadCompletionSignal.mockResolvedValue(null);
 
@@ -114,7 +119,7 @@ describe('CatchUpSessionRunner', () => {
         });
 
         it('should return true when completed > 5 minutes ago', async () => {
-            mockInboxManager.loadUnread = mock().mockResolvedValue(5);
+            mockTotalUnread = 5;
             mockLoadInProgressSignal.mockResolvedValue(null);
 
             // 10 minutes ago from fixed time (12:00:00 - 10 minutes = 11:50:00)
@@ -132,7 +137,7 @@ describe('CatchUpSessionRunner', () => {
         });
 
         it('should return false when completed < 5 minutes ago', async () => {
-            mockInboxManager.loadUnread = mock().mockResolvedValue(5);
+            mockTotalUnread = 5;
             mockLoadInProgressSignal.mockResolvedValue(null);
 
             // 2 minutes ago from fixed time (12:00:00 - 2 minutes = 11:58:00)

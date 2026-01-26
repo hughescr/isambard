@@ -52,7 +52,7 @@ export const config = {
             properties: { value: '1451687588418293861' },
         }),
         monitoredChannelIds: new sst.Linkable('DiscordMonitoredChannels', {
-            properties: { value: '1451694737026449581' },
+            properties: { value: '1451694737026449581,1455228995556741121' },
         }),
     },
 

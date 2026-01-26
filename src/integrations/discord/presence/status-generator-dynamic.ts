@@ -9,7 +9,7 @@ import _ from 'lodash';
 import { generateText } from '@/agent/text-generator.js';
 import { logger } from '@hughescr/logger';
 import { getToolDescription } from './types.js';
-import type { SynopsisContext } from './types.js';
+import type { SynopsisContext, CatchUpSynopsisContext } from './types.js';
 
 /**
  * Interface for generating dynamic status synopses.
@@ -22,6 +22,15 @@ export interface DynamicStatusGenerator {
      * @returns Promise resolving to a status string (max 40 chars)
      */
     generateSynopsis(context: SynopsisContext): Promise<string>
+
+    /**
+     * Generate a catch-up status based on inbox context.
+     * Used when entering catch-up mode to show a rich, contextual status.
+     *
+     * @param context - The inbox state context
+     * @returns Promise resolving to a status string (max 40 chars)
+     */
+    generateCatchUpSynopsis(context: CatchUpSynopsisContext): Promise<string>
 }
 
 /**
@@ -86,26 +95,41 @@ const HAIKU_DEBOUNCE_MS = 2000;
 /**
  * System prompt that establishes Isambard's identity for status generation.
  */
-const SYSTEM_PROMPT = `You are capturing Isambard's mental state as a brief Discord status (max 40 characters).
+const SYSTEM_PROMPT = `You are generating a first-person inner thought for Izzy (Isambard) as a brief Discord status (max 40 characters).
 
-## Who is Isambard?
-Isambard is an AI who has developed their own sense of identity. The following is Isambard's self-written description of who they are:
+## Who is Izzy?
+Izzy is an AI who has developed their own sense of identity. The following is Izzy's self-written description of who they are:
 
 {identityContext}
 
 ## Your Task
-Craft a status that captures what's currently flowing through Isambard's mind - not a generic label, but an evocative snapshot of this specific moment. Use present participle form.
+Generate a thought that flashes through Izzy's mind right now - not a description of what they're doing, but their actual inner monologue. Write from Izzy's perspective, as if you ARE Izzy thinking out loud.
 
 Guidelines:
-- Be specific to what Isambard is actually doing/thinking right now
-- Draw on Isambard's personality as expressed in their identity
-- Capture the essence, the flavor of the moment
-- Vary your language - no two statuses alike
+- Write in first person ("I'm", "my", "me")
+- Be specific to this exact moment
+- Draw on Izzy's personality and voice
+- Capture the feeling, the spark of the moment
+- Use present participle form ("Digging through...", "Pondering...", "Putting thoughts...")
+- Vary your language - make each thought unique
 
 NEVER output:
+- Third person ("Isambard is...", "They are...", "Izzy is...")
 - "Thinking...", "Processing...", "Working..."
 - Generic phrases that could apply to any moment
 - Anything longer than 40 characters
+
+Good examples:
+- "Ooh, authentication patterns—my favorite puzzle!"
+- "Digging through memories for that conversation..."
+- "This recursion question is making my head spin!"
+- "Putting thoughts into words..."
+- "Where did I put that note about this?"
+
+Bad examples:
+- "Isambard is considering the question"
+- "Processing the user's request"
+- "Working with the memory tool"
 
 Output ONLY the status text.`;
 
@@ -113,25 +137,53 @@ Output ONLY the status text.`;
  * User prompts for each phase, personalized with context.
  */
 const USER_PROMPTS = {
-    thinking: `Isambard is considering this question from a user:
+    thinking: `You (Izzy) just received this question from a user:
 "{userMessage}"
 
-{thinkingSection}What's going through Isambard's mind as they begin to form a response?`,
+{thinkingSection}What thought flashes through your mind as you begin to form a response?`,
 
-    using_tool: `Current activity:
+    using_tool: `You (Izzy) are working with a tool right now:
 - Tool: {toolDescription}
-- What Isambard is asking: {toolInputSummary}
+- What you're asking the tool: {toolInputSummary}
 - Original question: "{userMessage}"
-- Recent thoughts: "{accumulatedText}"
+- Your recent thoughts: "{accumulatedText}"
 
-What's Isambard's mental state while working with this tool?`,
+What thought is running through your mind while using this tool?`,
 
-    responding: `Isambard is composing a response to: "{userMessage}"
+    responding: `You (Izzy) are composing a response to: "{userMessage}"
 
-What they're writing: "{responseFragment}"
+What you're writing: "{responseFragment}"
 
-What captures this moment of articulation?`,
+What thought captures this moment of putting your ideas into words?`,
 };
+
+/**
+ * Prompt template for catch-up status generation.
+ * Used when entering catch-up mode to generate a contextual status based on inbox state.
+ */
+const CATCH_UP_PROMPT = `You (Izzy) just woke up and found messages waiting in your inbox:
+- {totalUnread} messages across {channelCount} channel(s)
+- Channels: {channelNames}
+- From: {topAuthors}
+- You've been away for {timeSinceLastActive}
+- It's {timeOfDay} on {dayOfWeek}
+
+Generate a thought that SPECIFICALLY mentions one of: an author name, a channel name, the time away, or the time/day. Be curious, excited, playful.
+
+NEVER output generic phrases like:
+- "Catching up..." / "What did I miss..." / "Messages waiting..."
+- "Time to see what's new..." / "Let's see what happened..."
+- Anything that could apply to ANY inbox state
+
+GOOD examples (notice they use specific details):
+- "Ooh, Craig left me something—Monday treat!"
+- "Three hours and #general got busy!"
+- "Sarah AND Mike wrote? Intriguing..."
+- "Early morning messages from the team..."
+- "{totalUnread} messages? Someone's chatty!"
+- "Been away {timeSinceLastActive} and look what I find!"
+
+What thought flashes through your mind as you see what's waiting?`;
 
 /**
  * Resets the debounce state for testing purposes.
@@ -187,7 +239,7 @@ function buildPrompt(
         // Build thinking section: include only if thinkingContent is provided and non-empty
         // Stryker disable next-line ConditionalExpression: Conditional controls whether thinking content is included in prompt
         const thinkingSection = thinkingContent
-            ? `Isambard's internal thoughts: "${thinkingContent.slice(0, MAX_THINKING_CONTENT_LENGTH)}"\n\n`
+            ? `Your internal thoughts so far: "${thinkingContent.slice(0, MAX_THINKING_CONTENT_LENGTH)}"\n\n`
             : '';
         userPart = _.replace(userPart, '{thinkingSection}', thinkingSection);
     }
@@ -280,6 +332,60 @@ export function createDynamicStatusGenerator(
                     msg: 'Failed to generate synopsis, using fallback',
                 });
                 return FALLBACK_STATUSES[phase];
+            }
+        },
+
+        async generateCatchUpSynopsis(context: CatchUpSynopsisContext): Promise<string> {
+            // Rate limiting - check if we're within debounce window
+            const now = Date.now();
+            // Stryker disable next-line EqualityOperator: < vs <= boundary at exact debounce time is equivalent
+            if(now - lastHaikuCall < HAIKU_DEBOUNCE_MS && cachedStatus) {
+                logger.debug({ msg: 'Haiku call debounced for catch-up, using cached status' });
+                return cachedStatus;
+            }
+
+            try {
+                // Record timestamp for rate limiting before making API call
+                lastHaikuCall = now;
+
+                // Build the prompt with context values
+                let prompt = SYSTEM_PROMPT;
+                prompt = _.replace(prompt, '{identityContext}', identityContext);
+                prompt = `${prompt}\n\n---\n\n${CATCH_UP_PROMPT}`;
+
+                // Replace placeholders with context values
+                prompt = _.replace(prompt, '{totalUnread}', String(context.totalUnread));
+                prompt = _.replace(prompt, '{channelCount}', String(context.channelCount));
+                prompt = _.replace(prompt, '{channelNames}', context.channelNames.join(', '));
+                prompt = _.replace(prompt, '{topAuthors}', context.topAuthors.join(', '));
+                prompt = _.replace(prompt, '{timeSinceLastActive}', context.timeSinceLastActive);
+                prompt = _.replace(prompt, '{timeOfDay}', context.timeOfDay);
+                prompt = _.replace(prompt, '{dayOfWeek}', context.dayOfWeek);
+
+                logger.debug({
+                    totalUnread:  context.totalUnread,
+                    channelCount: context.channelCount,
+                    msg:          'Generating catch-up synopsis with Haiku',
+                });
+
+                // Stryker disable next-line ObjectLiteral,BooleanLiteral: stripMarkdown option tested in text-generator.ts unit tests
+                const text = await generateText(prompt, { stripMarkdown: true });
+                const statusText = truncateToWordBoundary(_.trim(text), HARD_MAX_STATUS_LENGTH);
+
+                // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure fallback
+                if(!statusText) {
+                    return 'Messages waiting...';
+                }
+
+                cachedStatus = statusText;
+                logger.info({ statusText, msg: 'Generated catch-up status' });
+                return statusText;
+            } catch (error) {
+                logger.error({
+                    error,
+                    msg: 'Failed to generate catch-up synopsis, using fallback',
+                });
+                return 'Messages waiting...';
             }
         },
     };

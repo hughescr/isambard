@@ -12,9 +12,10 @@
  */
 
 import type { Client as DiscordClient, ActivitiesOptions } from 'discord.js';
-import type { PresenceConfig, PresencePhase, CatchUpMode } from './types.js';
+import type { PresenceConfig, PresencePhase, CatchUpMode, CatchUpSynopsisContext } from './types.js';
 import type { ActiveStatusGenerator } from './status-generator-active.js';
 import type { IdleStatusGenerator } from './status-generator-idle.js';
+import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
 import { withDiscordRetry } from '@/integrations/discord/retry';
 
 /**
@@ -44,8 +45,9 @@ export interface PresenceManager {
      * This affects the emoji prefix shown in Discord status.
      *
      * @param mode - Catch-up mode state
+     * @param catchUpContext - Optional rich context for catch-up status generation
      */
-    setCatchUpMode(mode: CatchUpMode): void
+    setCatchUpMode(mode: CatchUpMode, catchUpContext?: CatchUpSynopsisContext): void
 
     /**
      * Start the presence manager (enables idle refresh if idle).
@@ -63,13 +65,15 @@ export interface PresenceManager {
  */
 export interface PresenceManagerDeps {
     /** Discord client for setting presence */
-    discordClient:         DiscordClient
+    discordClient:           DiscordClient
     /** Generator for active status text */
-    activeStatusGenerator: ActiveStatusGenerator
+    activeStatusGenerator:   ActiveStatusGenerator
     /** Generator for idle status text */
-    idleStatusGenerator:   IdleStatusGenerator
+    idleStatusGenerator:     IdleStatusGenerator
+    /** Optional generator for dynamic status text (used for catch-up mode) */
+    dynamicStatusGenerator?: DynamicStatusGenerator
     /** Configuration for timing and rate limiting */
-    config:                PresenceConfig
+    config:                  PresenceConfig
     /** Logger instance */
     logger: {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
@@ -124,6 +128,7 @@ export function createPresenceManager(
         discordClient,
         activeStatusGenerator,
         idleStatusGenerator,
+        dynamicStatusGenerator,
         config,
         logger,
     } = deps;
@@ -182,7 +187,17 @@ export function createPresenceManager(
             return; // No longer idle
         }
 
-        const activity = await idleStatusGenerator.generate();
+        // Capture current mode at start to detect stale results
+        const modeAtStart = catchUpMode;
+
+        const activity = await idleStatusGenerator.generate(true, catchUpMode);
+
+        // Check if mode changed while generating - if so, discard stale result
+        if(catchUpMode !== modeAtStart) {
+            logger.debug({ modeAtStart, currentMode: catchUpMode }, 'Discarding stale idle status (mode changed during generation)');
+            return;
+        }
+
         await applyPresenceUpdate(activity);
     }
 
@@ -225,16 +240,72 @@ export function createPresenceManager(
         },
 
         // Stryker disable all: setCatchUpMode integration tested via bot lifecycle, not unit tested
-        setCatchUpMode(mode: CatchUpMode): void {
+        setCatchUpMode(mode: CatchUpMode, catchUpContext?: CatchUpSynopsisContext): void {
             logger.debug({ mode, previousMode: catchUpMode }, 'Setting catch-up mode');
+            const previousMode = catchUpMode;
             catchUpMode = mode;
 
-            // Trigger an immediate presence update if we have a current phase
-            // This ensures the emoji prefix changes immediately when catch-up mode changes
-            if(currentPhase && currentPhase.type !== 'idle') {
-                const activity = activeStatusGenerator.generate(currentPhase, mode);
-                void applyPresenceUpdate(activity);
+            // When ENTERING catch-up mode (from 'none'), generate ONE initial status update
+            // to show the 📥 prefix. The catch-up agent session's stream handler will then
+            // drive all subsequent status updates (thinking, using_tool, responding).
+            // We do NOT start the idle refresh loop during catch-up.
+            const enteringCatchUp = (mode === 'catching_up' || mode === 'catching_up_interrupted') && previousMode === 'none';
+
+            // Handle based on current phase state
+            if(currentPhase) {
+                // We have a current phase - update it with the new mode
+                if(currentPhase.type === 'idle') {
+                    // For idle phase, generate ONE initial status when entering catch-up mode
+                    // This shows the 📥 prefix immediately
+                    // Do NOT start the idle refresh loop - stream handler will drive updates
+                    if(enteringCatchUp) {
+                        void (async () => {
+                            // Use dynamic generator if catch-up context provided and generator available
+                            if(catchUpContext && dynamicStatusGenerator) {
+                                const statusText = await dynamicStatusGenerator.generateCatchUpSynopsis(catchUpContext);
+                                const activity = activeStatusGenerator.formatStatus(statusText, mode);
+                                await applyPresenceUpdate(activity);
+                            } else {
+                                // Fallback to idle generator
+                                const activity = await idleStatusGenerator.generate(true, mode);
+                                await applyPresenceUpdate(activity);
+                            }
+                        })();
+                    }
+                    // When exiting catch-up mode, generate an immediate idle refresh
+                    // This ensures we show normal idle status without waiting for the next interval
+                    const exitingCatchUp = mode === 'none' && (previousMode === 'catching_up' || previousMode === 'catching_up_interrupted');
+                    if(exitingCatchUp) {
+                        void refreshIdleStatus();
+                    }
+                } else {
+                    // For active phases, update immediately (always)
+                    const activity = activeStatusGenerator.generate(currentPhase, mode);
+                    void applyPresenceUpdate(activity);
+                }
+            } else {
+                // No current phase (startup case) - generate ONE initial status when entering catch-up mode
+                if(enteringCatchUp) {
+                    // Generate catch-up status (with 📥 prefix)
+                    // Note: We can't use refreshIdleStatus() here because it checks currentPhase.type === 'idle'
+                    // and returns early if false. At startup, currentPhase is null.
+                    void (async () => {
+                        // Use dynamic generator if catch-up context provided and generator available
+                        if(catchUpContext && dynamicStatusGenerator) {
+                            const statusText = await dynamicStatusGenerator.generateCatchUpSynopsis(catchUpContext);
+                            const activity = activeStatusGenerator.formatStatus(statusText, mode);
+                            await applyPresenceUpdate(activity);
+                        } else {
+                            // Fallback to idle generator
+                            const activity = await idleStatusGenerator.generate(true, mode);
+                            await applyPresenceUpdate(activity);
+                        }
+                    })();
+                }
             }
+
+            // DON'T trigger idle refresh loop during catch-up - stream handler drives updates
+            // DO trigger immediate idle refresh when exiting catch-up to 'none' (handled above)
         },
         // Stryker restore all
 
@@ -249,8 +320,18 @@ export function createPresenceManager(
             // Handle idle state transitions
             // Transition TO idle: always immediate (bypasses cooldown)
             if(nowIdle && !wasIdle) {
-                await startIdleRefresh();
-                return; // refreshIdleStatus() will update presence
+                // If catch-up mode is active, don't start idle refresh yet.
+                // The setCatchUpMode('none') call will trigger idle refresh with correct mode.
+                if(catchUpMode === 'none') {
+                    await startIdleRefresh();
+                }
+                return;
+            }
+
+            // Already idle and staying idle - don't restart the refresh loop
+            if(nowIdle && wasIdle) {
+                logger.debug('Already idle, skipping duplicate idle transition');
+                return;
             }
 
             // Transition FROM idle: stop the refresh loop
@@ -277,9 +358,8 @@ export function createPresenceManager(
 
         start(): void {
             logger.info('Starting presence manager');
-            if(currentPhase?.type === 'idle') {
-                void startIdleRefresh();
-            }
+            // Don't start idle refresh here - wait for explicit phase transition
+            // The caller should call updatePhase() after determining if catch-up is needed
         },
 
         stop(): void {

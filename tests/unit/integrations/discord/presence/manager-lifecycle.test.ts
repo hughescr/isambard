@@ -34,6 +34,10 @@ describe('PresenceManager Lifecycle', () => {
                 name: `Status for ${phase.type}`,
                 type: ActivityType.Custom,
             })),
+            formatStatus: mock((status: string) => ({
+                name: status,
+                type: ActivityType.Custom,
+            })),
         };
 
         mockIdleGenerator = {
@@ -136,9 +140,7 @@ describe('PresenceManager Lifecycle', () => {
             clearIntervalSpy.mockRestore();
         });
 
-        it('should not start idle refresh in start() when currentPhase is null', () => {
-            const setIntervalSpy = spyOn(globalThis, 'setInterval');
-
+        it('should not trigger idle refresh in start() - caller must explicitly transition', async () => {
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -147,16 +149,19 @@ describe('PresenceManager Lifecycle', () => {
                 logger:                mockLogger,
             });
 
-            // Call start without setting any phase
+            // Call start without setting any phase (currentPhase is null)
             manager.start();
 
-            // Should not call idle generator since currentPhase is null
+            // Allow async operations to complete
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Should NOT call idle generator - start() no longer triggers status generation
             expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
 
-            // Verify no interval was created (startIdleRefresh was not called)
-            expect(setIntervalSpy).not.toHaveBeenCalled();
-
-            setIntervalSpy.mockRestore();
+            // Verify setActivity was NOT called
+            expect(mockClient.user.setActivity).not.toHaveBeenCalled();
         });
 
         it('should not start idle refresh in start() when currentPhase is active', async () => {
@@ -186,7 +191,7 @@ describe('PresenceManager Lifecycle', () => {
     });
 
     describe('start', () => {
-        it('should start idle refresh if currently idle', async () => {
+        it('should not automatically restart idle refresh even if currently idle', async () => {
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -203,22 +208,22 @@ describe('PresenceManager Lifecycle', () => {
             // Stop it (clears the interval and sets idleRefreshInterval to null)
             manager.stop();
 
-            // Clear mock to track new calls
+            // Clear mocks to track new calls
             mockIdleGenerator.generate.mockClear();
+            mockClient.user.setActivity.mockClear();
 
-            // Start again - since currentPhase is still idle, should restart idle refresh
+            // Start again - start() should NOT trigger idle refresh anymore
             manager.start();
 
-            // Allow async operations to complete (start calls void startIdleRefresh())
+            // Allow async operations to complete
             await Promise.resolve();
             await Promise.resolve();
 
-            // Verify idle generator was called again (proves start() triggered startIdleRefresh)
-            expect(mockIdleGenerator.generate).toHaveBeenCalled();
+            // Verify idle generator was NOT called again (start() no longer triggers status generation)
+            expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
 
-            // Verify setActivity was called (proves the full refresh flow executed)
-            const activityCallsAfterStart = mockClient.user.setActivity.mock.calls.length;
-            expect(activityCallsAfterStart).toBeGreaterThan(0);
+            // Verify setActivity was NOT called
+            expect(mockClient.user.setActivity).not.toHaveBeenCalled();
         });
     });
 
@@ -423,7 +428,7 @@ describe('PresenceManager Lifecycle', () => {
             expect(mockLogger.info).toHaveBeenCalledWith('Starting presence manager');
         });
 
-        it('should start idle refresh when current phase is idle', async () => {
+        it('should not start idle refresh even when current phase is idle', async () => {
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -441,15 +446,15 @@ describe('PresenceManager Lifecycle', () => {
             // Reset mocks to clearly see the effect of start()
             mockIdleGenerator.generate.mockClear();
 
-            // Now call start() - should trigger startIdleRefresh since currentPhase is idle
+            // Now call start() - should NOT trigger idle refresh anymore
             manager.start();
 
-            // Wait for async idle refresh to complete
+            // Wait for any potential async operations
             await Promise.resolve();
             await Promise.resolve();
 
-            // Should have called idle generator again
-            expect(mockIdleGenerator.generate).toHaveBeenCalled();
+            // Should NOT have called idle generator again
+            expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
         });
 
         it('should not start idle refresh when current phase is active', async () => {
@@ -480,7 +485,7 @@ describe('PresenceManager Lifecycle', () => {
             expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
         });
 
-        it('should not start idle refresh when current phase is null', () => {
+        it('should not start idle refresh when current phase is null', async () => {
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -492,7 +497,11 @@ describe('PresenceManager Lifecycle', () => {
             // Call start() without ever setting a phase (currentPhase is null)
             manager.start();
 
-            // Idle generator should NOT have been called
+            // Allow async operations to complete
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Idle generator should NOT have been called (start() no longer triggers status)
             expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
         });
     });
@@ -908,10 +917,9 @@ describe('PresenceManager Lifecycle', () => {
             expect(mockIdleGenerator.generate.mock.calls.length).toBe(countAfterTransition);
         });
 
-        it('should not create duplicate intervals when startIdleRefresh called twice (kills guard mutants)', async () => {
-            // This test kills manager.ts:148 mutants:
-            // - if(false) - would always create new interval
-            // - remove block - would not return early
+        it('should not create any intervals when start() is called (new behavior)', async () => {
+            // With the new behavior, start() should NOT create any intervals
+            // It just logs and returns
 
             const setIntervalSpy = spyOn(globalThis, 'setInterval');
 
@@ -923,23 +931,16 @@ describe('PresenceManager Lifecycle', () => {
                 logger:                mockLogger,
             });
 
-            // First idle transition - creates interval
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-            const intervalsAfterFirst = setIntervalSpy.mock.calls.length;
-            expect(intervalsAfterFirst).toBe(1);
-
-            // Call start() which would try to startIdleRefresh again
-            // The guard should prevent creating a duplicate interval
+            // Call start() without any prior phase
             manager.start();
             await Promise.resolve();
             await Promise.resolve();
 
-            // Should NOT have created another interval
-            expect(setIntervalSpy.mock.calls.length).toBe(intervalsAfterFirst);
+            // Should NOT have created any intervals
+            expect(setIntervalSpy).not.toHaveBeenCalled();
 
-            // Additional verification: idle generator should only have been called once
-            // (from the first startIdleRefresh, not from start())
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(1);
+            // Idle generator should not have been called
+            expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
 
             setIntervalSpy.mockRestore();
         });
@@ -1051,6 +1052,7 @@ describe('PresenceManager Lifecycle', () => {
         it('should handle refreshIdleStatus guard when currentPhase is null (kills optional chaining removal)', async () => {
             // This test ensures the optional chaining ?. in currentPhase?.type !== 'idle'
             // handles null correctly. Without ?., accessing .type on null would throw.
+            // Now that null is treated as idle, start() will trigger idle refresh.
 
             const manager = createPresenceManager({
                 discordClient:         mockClient,
@@ -1060,12 +1062,17 @@ describe('PresenceManager Lifecycle', () => {
                 logger:                mockLogger,
             });
 
-            // Start and stop without ever setting a phase
-            // This shouldn't throw even though currentPhase is null
+            // Start without ever setting a phase - should not throw
             manager.start();
+
+            // Allow async operations to complete
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Stop should also not throw
             manager.stop();
 
-            // If the optional chaining was removed, this would have thrown an error
+            // With new behavior, start() does NOT trigger status generation
             expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
         });
 
@@ -1215,18 +1222,9 @@ describe('PresenceManager Lifecycle', () => {
             expect(mockActiveGenerator.generate).not.toHaveBeenCalled();
         });
 
-        it('should not call startIdleRefresh in start() when phase is not idle (line 212 if(true) mutant)', async () => {
-            // This test PRECISELY kills the mutant: if(currentPhase?.type === 'idle') -> if(true)
-            //
-            // When currentPhase is active (not idle), startIdleRefresh should NOT be called.
-            // If mutated to if(true), startIdleRefresh is ALWAYS called.
-            //
-            // The key insight: even if refreshIdleStatus returns early (because phase is not idle),
-            // startIdleRefresh still:
-            // 1. Sets up idleRefreshInterval (observable via setInterval being called)
-            // 2. Logs 'Started idle status refresh'
-            //
-            // We can detect this by checking the logger.debug calls for the idle refresh start message.
+        it('should not call startIdleRefresh in start() regardless of phase (new behavior)', async () => {
+            // With the new behavior, start() NEVER calls startIdleRefresh
+            // regardless of the current phase state
 
             const setIntervalSpy = spyOn(globalThis, 'setInterval');
 
@@ -1247,15 +1245,14 @@ describe('PresenceManager Lifecycle', () => {
             mockLogger.debug.mockClear();
             setIntervalSpy.mockClear();
 
-            // Call start() - should NOT call startIdleRefresh because phase is active
+            // Call start() - should NOT call startIdleRefresh (new behavior)
             manager.start();
 
             // Wait for any potential async effects
             await Promise.resolve();
             await Promise.resolve();
 
-            // With correct code: startIdleRefresh is NOT called, so no interval set
-            // With mutant (if(true)): startIdleRefresh IS called, interval IS set
+            // start() should NOT set any intervals
             expect(setIntervalSpy).not.toHaveBeenCalled();
 
             // Also verify no 'Started idle status refresh' log
@@ -1265,11 +1262,9 @@ describe('PresenceManager Lifecycle', () => {
             setIntervalSpy.mockRestore();
         });
 
-        it('should handle null currentPhase in start() guard (line 212 optional chaining mutant)', async () => {
-            // This test kills the optional chaining removal mutant in start():
-            // if(currentPhase?.type === 'idle') -> if(currentPhase.type === 'idle')
-            //
-            // When currentPhase is null, accessing .type without ?. would throw.
+        it('should handle null currentPhase in start() without throwing', async () => {
+            // With the new behavior, start() just logs and returns
+            // It doesn't access currentPhase at all, so no optional chaining needed
 
             const manager = createPresenceManager({
                 discordClient:         mockClient,
@@ -1280,9 +1275,14 @@ describe('PresenceManager Lifecycle', () => {
             });
 
             // Call start() without ever setting a phase (currentPhase is null)
-            // With ?.  : null?.type === 'idle' = undefined === 'idle' = false, no throw
-            // Without ?. : null.type would throw TypeError
+            // Should not throw
             expect(() => manager.start()).not.toThrow();
+
+            // Allow async operations to complete
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // With new behavior, start() does NOT trigger status generation
             expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
         });
     });

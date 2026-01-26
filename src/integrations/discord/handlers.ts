@@ -223,27 +223,20 @@ async function handleCatchUpInterruption(
 }
 
 /**
- * Helper function to track channel in inbox manager.
- * Handles errors gracefully with logging.
+ * Helper function to update channel metadata in inbox manager.
+ * This is a synchronous operation that just updates the cache.
  */
 // Stryker disable all: Optional inbox integration - tested via inbox-manager.test.ts
-async function trackChannelInInbox(
+function updateChannelMetadataInInbox(
     message: Message,
     inboxManager: InboxManager
-): Promise<void> {
+): void {
     const channel = message.channel as TextChannel;
-    inboxManager.trackChannel({
-        channelId:   createChannelId(message.channel.id),
-        channelName: channel.name ?? message.channel.id,
-        guildId:     createGuildId(message.guild?.id ?? 'DM'),
-    }).catch((error) => {
-        const errorMsg = _.isError(error) ? error.message : String(error);
-        logger.warn({
-            channelId: message.channel.id,
-            error:     errorMsg,
-            msg:       'Failed to track channel for inbox',
-        });
-    });
+    inboxManager.updateChannelMetadata(
+        createChannelId(message.channel.id),
+        channel.name ?? message.channel.id,
+        createGuildId(message.guild?.id ?? 'DM')
+    );
 }
 // Stryker restore all
 
@@ -270,6 +263,41 @@ async function delegateToCoordinatorOrProcess(
         // Direct processing (backward compatibility)
         await processMessage(message);
     }
+}
+
+/**
+ * Helper function to check if a message should be ignored.
+ * Returns true if the message is from a bot or from the bot itself.
+ */
+function shouldIgnoreMessage(message: Message, botUserId: UserId): boolean {
+    // Ignore bot messages
+    if(message.author.bot) {
+        return true;
+    }
+
+    // Ignore messages from the bot itself
+    if(message.author.id === botUserId) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Helper function to determine response context for a message.
+ * Returns an object with isDM, isMention, isMonitoredChannel, and shouldRespond.
+ */
+function determineResponseContext(
+    message: Message,
+    botUserId: UserId,
+    monitoredChannelIds: ChannelId[]
+): { isDM: boolean, isMention: boolean, isMonitoredChannel: boolean, shouldRespond: boolean } {
+    const isDM = !message.guild; // DM channels have no guild
+    const isMention = message.content.includes(`<@${botUserId}>`) || message.content.includes(`<@!${botUserId}>`);
+    const isMonitoredChannel = monitoredChannelIds.includes(message.channel.id as ChannelId);
+    const shouldRespond = isDM || isMention || isMonitoredChannel;
+
+    return { isDM, isMention, isMonitoredChannel, shouldRespond };
 }
 
 /**
@@ -516,19 +544,17 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
             msg:       `Message received from ${message.author.tag}`,
         });
 
-        // Ignore bot messages
-        if(message.author.bot) {
+        // Check if message should be ignored
+        if(shouldIgnoreMessage(message, botUserId)) {
             return;
         }
 
-        // Ignore messages from the bot itself
-        if(message.author.id === botUserId) {
-            return;
-        }
-
-        // Determine mention status early (needed for pending question check)
-        const isDM = !message.guild; // DM channels have no guild
-        const isMention = message.content.includes(`<@${botUserId}>`) || message.content.includes(`<@!${botUserId}>`);
+        // Determine response context
+        const { isDM, isMention, isMonitoredChannel, shouldRespond } = determineResponseContext(
+            message,
+            botUserId,
+            monitoredChannelIds
+        );
 
         // FIRST: Check for pending questions BEFORE shouldRespond filtering
         // This allows answers in unmonitored channels or without mentions
@@ -540,9 +566,6 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         }
 
         // THEN: Normal shouldRespond check for non-pending-question messages
-        const isMonitoredChannel = monitoredChannelIds.includes(message.channel.id as ChannelId);
-        const shouldRespond = isDM || isMention || isMonitoredChannel;
-
         logger.debug({
             isDM,
             isMention,
@@ -565,13 +588,25 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         // Allow message processing if in 'catching_up_interrupted' state
         // This is the interrupting message being handled
 
-        // Track channel for inbox if shouldRespond is true
+        // Update channel metadata in inbox if shouldRespond is true
         // Stryker disable next-line all: Optional inbox integration - tested via inbox-manager.test.ts
         if(inboxManager && shouldRespond) {
-            await trackChannelInInbox(message, inboxManager);
+            updateChannelMetadataInInbox(message, inboxManager);
         }
 
         // If coordinator is provided, delegate to it; otherwise process directly
         await delegateToCoordinatorOrProcess(message, coordinator, createContext, processMessage);
+
+        // Update checkpoint to mark this message as "seen" for catch-up purposes
+        // Stryker disable all: Optional inbox integration - checkpoint update for catch-up tracking
+        if(inboxManager && shouldRespond) {
+            await inboxManager.recordActivity(
+                createChannelId(message.channel.id),
+                createGuildId(message.guild?.id ?? 'DM'),
+                message.id,
+                message.createdAt.toISOString()
+            );
+        }
+        // Stryker restore all
     };
 }

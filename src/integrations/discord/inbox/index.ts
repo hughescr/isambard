@@ -43,6 +43,5 @@ export {
 // Inbox Manager
 export {
     InboxManager,
-    type InboxManagerOptions,
-    type TrackedChannel
+    type InboxManagerOptions
 } from './inbox-manager';

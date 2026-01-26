@@ -12,6 +12,7 @@ import type { ChannelId } from '@/integrations/discord/types';
 import type { CatchUpStateManager } from './state-manager';
 import type { InboxManager } from '../inbox';
 import { buildCatchUpPrompt, buildCatchUpInterruptedPrompt } from './prompts';
+import { logger } from '@hughescr/logger';
 import _ from 'lodash';
 
 /**
@@ -49,15 +50,29 @@ export interface CatchUpInProgressSignal {
 }
 
 /**
+ * Rich context for status generation during catch-up.
+ */
+export interface StatusContext {
+    /** Channel names being processed */
+    channelNames: string[]
+    /** Top message authors (up to 3) */
+    topAuthors:   string[]
+    /** Total unread message count */
+    totalUnread:  number
+}
+
+/**
  * Options for running an agent session.
  */
 export interface RunAgentSessionOptions {
     /** Catch-up prompt to use */
-    prompt:      string
+    prompt:         string
     /** Session ID to resume (optional) */
-    sessionId?:  string
+    sessionId?:     string
     /** Abort signal for cancellation */
-    abortSignal: AbortSignal
+    abortSignal:    AbortSignal
+    /** Rich context for status generation during catch-up */
+    statusContext?: StatusContext
 }
 
 /**
@@ -103,9 +118,8 @@ export interface CatchUpSessionRunner {
     /**
      * Check if catch-up should be started on startup.
      * Returns true if:
-     * - inProgress marker exists (catch-up was interrupted by crash/hot reload)
-     * - OR lastCompleted was > 5 minutes ago (or doesn't exist)
-     * AND there are unread messages
+     * - There are unread messages in the inbox (already loaded by bot.ts)
+     * - AND (inProgress marker exists OR lastCompleted was > 5 minutes ago OR never completed)
      */
     shouldStartCatchUp(): Promise<boolean>
 
@@ -214,12 +228,14 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
         prompt:            string
         channelsProcessed: number
         messagesProcessed: number
+        statusContext?:    StatusContext
     }): Promise<void> => {
         try {
             const result = await deps.runAgentSession({
-                prompt:      options.prompt,
-                sessionId:   currentSessionId,
-                abortSignal: currentAbortController!.signal,
+                prompt:        options.prompt,
+                sessionId:     currentSessionId,
+                abortSignal:   currentAbortController!.signal,
+                statusContext: options.statusContext,
             });
 
             // Store session ID for resumption
@@ -252,31 +268,77 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
     return {
         async shouldStartCatchUp(): Promise<boolean> {
-            // 1. Load unread messages first
-            const unreadCount = await deps.inboxManager.loadUnread();
+            // 1. Check if there are unread messages (inbox is already loaded by bot.ts)
+            const unreadCount = deps.inboxManager.totalUnread;
+            // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+            logger.debug({
+                unreadCount,
+                msg: 'Checking if catch-up should start - unread count',
+            });
+            // Stryker restore ObjectLiteral,StringLiteral
+
             if(unreadCount === 0) {
+                // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+                logger.debug({ msg: 'No unread messages - skipping catch-up' });
+                // Stryker restore ObjectLiteral,StringLiteral
                 return false;
             }
 
             // 2. Check inProgress marker (crash/hot reload during catch-up)
             const inProgress = await deps.loadInProgressSignal();
+            // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+            logger.debug({
+                inProgress: !!inProgress,
+                startedAt:  inProgress?.startedAt,
+                msg:        'Checking inProgress signal',
+            });
+            // Stryker restore ObjectLiteral,StringLiteral
+
             if(inProgress) {
                 // Delete the old marker - we'll create a new one when starting
                 await deps.deleteInProgressSignal();
+                // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+                logger.info({ msg: 'Resuming interrupted catch-up session' });
+                // Stryker restore ObjectLiteral,StringLiteral
                 return true;
             }
 
             // 3. Check lastCompleted timestamp
             const completion = await deps.loadCompletionSignal();
+            // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+            logger.debug({
+                hasCompletion:     !!completion,
+                completedAt:       completion?.completedAt,
+                channelsProcessed: completion?.channelsProcessed,
+                messagesProcessed: completion?.messagesProcessed,
+                msg:               'Checking completion signal',
+            });
+            // Stryker restore ObjectLiteral,StringLiteral
+
             if(!completion) {
+                // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+                logger.info({ msg: 'No previous completion - starting catch-up' });
+                // Stryker restore ObjectLiteral,StringLiteral
                 return true;  // Never completed before
             }
 
             // Skip if completed < 5 minutes ago
             const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
             const completedAt = new Date(completion.completedAt).getTime();
+            const minutesSinceCompletion = (Date.now() - completedAt) / (60 * 1000);
+            const shouldStart = completedAt < fiveMinutesAgo;
+
+            // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+            logger.debug({
+                completedAt:            completion.completedAt,
+                minutesSinceCompletion: minutesSinceCompletion.toFixed(1),
+                shouldStart,
+                msg:                    `Completion check: ${shouldStart ? 'starting' : 'skipping'} catch-up (${minutesSinceCompletion.toFixed(1)} minutes since last completion)`,
+            });
+            // Stryker restore ObjectLiteral,StringLiteral
+
             // Stryker disable next-line EqualityOperator: Boundary condition < vs <= at exact 5 minutes makes no practical difference
-            return completedAt < fiveMinutesAgo;
+            return shouldStart;
         },
 
         async startCatchUp(): Promise<void> {
@@ -299,6 +361,25 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             // Get current unread overview
             const overview = deps.inboxManager.getUnreadOverview();
 
+            // Build status context for dynamic status generation
+            const allMessages = _.flatMap(
+                overview.channels,
+                ch => deps.inboxManager.getChannelMessages(ch.channelId)
+            );
+            const topAuthors = _(allMessages)
+                .map('author')
+                .countBy()
+                .toPairs()
+                .orderBy([1], ['desc'])
+                .take(3)
+                .map(([author]) => author)
+                .value();
+            const statusContext: StatusContext = {
+                channelNames: _.map(overview.channels, 'channelName'),
+                topAuthors,
+                totalUnread:  overview.totalUnread,
+            };
+
             // Build catch-up prompt
             const prompt = buildCatchUpPrompt(overview.totalUnread, overview.channels.length);
 
@@ -307,6 +388,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
                 prompt,
                 channelsProcessed: overview.channels.length,
                 messagesProcessed: overview.totalUnread,
+                statusContext,
             });
         },
 
@@ -346,6 +428,25 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             // Create new abort controller
             currentAbortController = new AbortController();
 
+            // Build status context for dynamic status generation
+            const allMessages = _.flatMap(
+                overview.channels,
+                ch => deps.inboxManager.getChannelMessages(ch.channelId)
+            );
+            const topAuthors = _(allMessages)
+                .map('author')
+                .countBy()
+                .toPairs()
+                .orderBy([1], ['desc'])
+                .take(3)
+                .map(([author]) => author)
+                .value();
+            const statusContext: StatusContext = {
+                channelNames: _.map(overview.channels, 'channelName'),
+                topAuthors,
+                totalUnread:  overview.totalUnread,
+            };
+
             // Build catch-up interrupted prompt
             // Get viewed channels from state manager
             const viewedChannelIds = Array.from(deps.stateManager.getViewedChannels());
@@ -380,6 +481,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
                 prompt,
                 channelsProcessed: overview.channels.length,
                 messagesProcessed: overview.totalUnread,
+                statusContext,
             });
         },
 

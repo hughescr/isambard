@@ -20,7 +20,7 @@ describe.concurrent('inboxConfigSchema', () => {
         const result = inboxConfigSchema.safeParse(config);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data.minGapDurationMs).toBe(5 * 60 * 1000);
+            expect(result.data.minGapDurationMs).toBe(10 * 1000);
         }
     });
 
@@ -52,7 +52,7 @@ describe.concurrent('inboxConfigSchema', () => {
         const result = inboxConfigSchema.safeParse({});
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data.minGapDurationMs).toBe(5 * 60 * 1000);
+            expect(result.data.minGapDurationMs).toBe(10 * 1000);
             expect(result.data.maxCatchUpMessages).toBe(100);
             expect(result.data.maxCatchUpAgeDays).toBe(7);
         }
@@ -151,7 +151,7 @@ describe.concurrent('inboxConfigSchema', () => {
 
 describe.concurrent('DEFAULT_INBOX_CONFIG', () => {
     test('should have correct default values', () => {
-        expect(DEFAULT_INBOX_CONFIG.minGapDurationMs).toBe(5 * 60 * 1000);
+        expect(DEFAULT_INBOX_CONFIG.minGapDurationMs).toBe(10 * 1000);
         expect(DEFAULT_INBOX_CONFIG.maxCatchUpMessages).toBe(100);
         expect(DEFAULT_INBOX_CONFIG.maxCatchUpAgeDays).toBe(7);
     });

@@ -24,12 +24,10 @@ import type { InboxConfig } from './config';
 import { DEFAULT_INBOX_CONFIG } from './config';
 
 /**
- * Channel info for tracking purposes.
- * Stores metadata about channels being monitored for unread messages.
+ * Channel metadata cache entry.
+ * Optional metadata stored when available from Discord events.
  */
-export interface TrackedChannel {
-    /** Discord channel ID */
-    channelId:   ChannelId
+interface ChannelMetadata {
     /** Human-readable channel name for display */
     channelName: string
     /** Guild ID where the channel exists, or 'DM' for direct messages */
@@ -44,6 +42,10 @@ export interface InboxManagerOptions {
     checkpointManager:    CheckpointManager
     /** Message search service for fetching historical messages */
     messageSearchService: MessageSearchService
+    /** List of monitored channel IDs from config (single source of truth) */
+    monitoredChannelIds:  ChannelId[]
+    /** Bot user ID to filter out bot's own messages from unread inbox (can be set later via setBotUserId) */
+    botUserId?:           string
     /** Optional configuration overrides */
     config?:              Partial<InboxConfig>
 }
@@ -57,17 +59,19 @@ export interface InboxManagerOptions {
  * const inboxManager = new InboxManager({
  *   checkpointManager,
  *   messageSearchService,
+ *   monitoredChannelIds: [channelId1, channelId2],
+ *   botUserId: client.user.id,
  *   config: { maxCatchUpMessages: 50 },
  * });
  *
- * // Register channels for tracking
- * await inboxManager.trackChannel({
- *   channelId: createChannelId('123456789'),
- *   channelName: 'general',
- *   guildId: createGuildId('987654321'),
- * });
+ * // Optionally update channel metadata for better display names
+ * inboxManager.updateChannelMetadata(
+ *   createChannelId('123456789'),
+ *   'general',
+ *   createGuildId('987654321')
+ * );
  *
- * // Load unread messages on startup
+ * // Load unread messages on startup (automatically initializes checkpoints)
  * const unreadCount = await inboxManager.loadUnread();
  * console.log(`Loaded ${unreadCount} unread messages`);
  *
@@ -87,64 +91,91 @@ export class InboxManager {
     private readonly checkpointManager:    CheckpointManager;
     private readonly messageSearchService: MessageSearchService;
     private readonly config:               InboxConfig;
+    private readonly monitoredChannelIds:  ChannelId[];
+    private botUserId?:                    string;
 
     /** In-memory storage of unread messages by channel */
     private readonly unreadMessages = new Map<ChannelId, UnreadMessage[]>();
 
-    /** Channel metadata for name lookups */
-    private readonly trackedChannels = new Map<ChannelId, TrackedChannel>();
+    /** Optional channel metadata cache for name lookups (populated from Discord events) */
+    private readonly channelMetadata = new Map<ChannelId, ChannelMetadata>();
 
     constructor(options: InboxManagerOptions) {
         this.checkpointManager = options.checkpointManager;
         this.messageSearchService = options.messageSearchService;
+        this.monitoredChannelIds = options.monitoredChannelIds;
+        this.botUserId = options.botUserId;
         this.config = { ...DEFAULT_INBOX_CONFIG, ...options.config };
     }
 
     /**
-     * Registers a channel for tracking.
-     * Call this when the bot first sees a message in a channel or on startup.
-     * Initializes a checkpoint if one doesn't exist (sets lastSeenAt to now).
+     * Sets the bot user ID for filtering bot messages from the inbox.
+     * Should be called after the Discord client is ready and user ID is available.
      *
-     * @param channel - Channel metadata including ID, name, and guild
+     * @param botUserId - The bot's Discord user ID
      *
      * @example
      * ```typescript
-     * await inboxManager.trackChannel({
-     *   channelId: createChannelId('123456789'),
-     *   channelName: 'general',
-     *   guildId: createGuildId('987654321'),
-     * });
+     * // After Discord client is ready
+     * inboxManager.setBotUserId(client.user.id);
      * ```
      */
-    async trackChannel(channel: TrackedChannel): Promise<void> {
-        this.trackedChannels.set(channel.channelId, channel);
-
-        // Initialize checkpoint if missing (sets lastSeenAt to now)
-        await this.checkpointManager.initializeIfMissing(channel.channelId, channel.guildId);
+    setBotUserId(botUserId: string): void {
+        this.botUserId = botUserId;
 
         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
         logger.debug({
-            channelId:   channel.channelId,
-            channelName: channel.channelName,
-            guildId:     channel.guildId,
-            msg:         'Channel registered for inbox tracking',
+            botUserId,
+            msg: 'Bot user ID set for inbox filtering',
         });
         // Stryker restore ObjectLiteral,StringLiteral
     }
 
     /**
-     * Loads unread messages for all tracked channels since their last checkpoint.
+     * Updates channel metadata cache with channel name and guild ID.
+     * This is optional metadata used for display purposes.
+     * Should be called when channel information becomes available (e.g., from Discord events).
+     *
+     * @param channelId - Discord channel ID
+     * @param channelName - Human-readable channel name
+     * @param guildId - Guild ID or 'DM' for direct messages
+     *
+     * @example
+     * ```typescript
+     * inboxManager.updateChannelMetadata(
+     *   createChannelId('123456789'),
+     *   'general',
+     *   createGuildId('987654321')
+     * );
+     * ```
+     */
+    updateChannelMetadata(channelId: ChannelId, channelName: string, guildId: GuildId | 'DM'): void {
+        this.channelMetadata.set(channelId, { channelName, guildId });
+
+        // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+        logger.debug({
+            channelId,
+            channelName,
+            guildId,
+            msg: 'Channel metadata updated',
+        });
+        // Stryker restore ObjectLiteral,StringLiteral
+    }
+
+    /**
+     * Loads unread messages for all monitored channels since their last checkpoint.
      * Call this on bot startup after clientReady to populate the inbox with messages
      * that arrived while the bot was offline.
      *
      * Algorithm:
-     * 1. Load all checkpoints from persistent storage
-     * 2. For each checkpoint, calculate time gap since lastSeenAt
-     * 3. Skip channels with gaps smaller than minGapDurationMs (avoid noise)
-     * 4. Limit catch-up to maxCatchUpAgeDays to avoid overwhelming the inbox
-     * 5. Fetch messages using MessageSearchService
-     * 6. Store messages in memory as UnreadMessage objects
-     * 7. Log errors but continue processing other channels (resilient to failures)
+     * 1. Iterate over all monitored channel IDs from config
+     * 2. Load or initialize checkpoint for each channel (sets lastSeenAt to now if missing)
+     * 3. Calculate time gap since lastSeenAt
+     * 4. Skip channels with gaps smaller than minGapDurationMs (avoid noise)
+     * 5. Limit catch-up to maxCatchUpAgeDays to avoid overwhelming the inbox
+     * 6. Fetch messages using MessageSearchService
+     * 7. Store messages in memory as UnreadMessage objects
+     * 8. Log errors but continue processing other channels (resilient to failures)
      *
      * @returns Total number of unread messages loaded across all channels
      *
@@ -156,36 +187,55 @@ export class InboxManager {
      * ```
      */
     async loadUnread(): Promise<number> {
-        const checkpoints = await this.checkpointManager.listAll();
         let totalLoaded = 0;
 
-        for(const checkpoint of checkpoints) {
-            const channelId = checkpoint.channelId;
-
-            // Skip if gap is too small (avoid noise from brief disconnects)
-            const lastSeen = new Date(checkpoint.lastSeenAt);
-            const now = new Date();
-            const gapMs = now.getTime() - lastSeen.getTime();
-
-            // Stryker disable next-line EqualityOperator: Boundary condition for noise reduction - < vs <= makes no practical difference
-            if(gapMs < this.config.minGapDurationMs) {
-                // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-                logger.debug({
-                    channelId,
-                    gapMs,
-                    minGapMs: this.config.minGapDurationMs,
-                    msg:      'Skipping channel - gap too small',
-                });
-                // Stryker restore ObjectLiteral,StringLiteral
-                continue;
-            }
-
-            // Limit catch-up age to prevent overwhelming the inbox
-            const maxAgeMs = this.config.maxCatchUpAgeDays * 24 * 60 * 60 * 1000;
-            const effectiveStartTime = new Date(Math.max(lastSeen.getTime(), now.getTime() - maxAgeMs));
-
+        for(const channelId of this.monitoredChannelIds) {
             // Stryker disable BlockStatement: Error handling logs failure but continues processing other channels
             try {
+                // Load checkpoint or initialize if missing
+                // Get guildId from metadata cache if available, otherwise use 'DM' as fallback
+                const metadata = this.channelMetadata.get(channelId);
+                const guildId = metadata?.guildId ?? 'DM';
+
+                // Initialize checkpoint if it doesn't exist (creates new checkpoint with lastSeenAt = now)
+                await this.checkpointManager.initializeIfMissing(channelId, guildId);
+
+                // Load the checkpoint (now guaranteed to exist)
+                const checkpoint = await this.checkpointManager.load(channelId);
+
+                // If checkpoint doesn't exist after initialization, skip this channel
+                if(!checkpoint) {
+                    // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+                    logger.warn({
+                        channelId,
+                        msg: 'Checkpoint missing after initialization',
+                    });
+                    // Stryker restore ObjectLiteral,StringLiteral
+                    continue;
+                }
+
+                // Skip if gap is too small (avoid noise from brief disconnects)
+                const lastSeen = new Date(checkpoint.lastSeenAt);
+                const now = new Date();
+                const gapMs = now.getTime() - lastSeen.getTime();
+
+                // Stryker disable next-line EqualityOperator: Boundary condition for noise reduction - < vs <= makes no practical difference
+                if(gapMs < this.config.minGapDurationMs) {
+                    // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+                    logger.debug({
+                        channelId,
+                        gapMs,
+                        minGapMs: this.config.minGapDurationMs,
+                        msg:      'Skipping channel - gap too small',
+                    });
+                    // Stryker restore ObjectLiteral,StringLiteral
+                    continue;
+                }
+
+                // Limit catch-up age to prevent overwhelming the inbox
+                const maxAgeMs = this.config.maxCatchUpAgeDays * 24 * 60 * 60 * 1000;
+                const effectiveStartTime = new Date(Math.max(lastSeen.getTime() + 1, now.getTime() - maxAgeMs));
+
                 const response = await this.messageSearchService.searchMessages({
                     channelId,
                     startTime: effectiveStartTime,
@@ -195,12 +245,13 @@ export class InboxManager {
 
                 // Stryker disable next-line all: Guard clause - > vs >= makes no practical difference when checking for empty arrays
                 if(response.messages.length > 0) {
-                    // Get channel name from tracked channels or use ID as fallback
-                    const tracked = this.trackedChannels.get(channelId);
-                    const channelName = tracked?.channelName ?? channelId;
+                    // Get channel name from metadata cache or use ID as fallback
+                    const cachedMetadata = this.channelMetadata.get(channelId);
+                    const channelName = cachedMetadata?.channelName ?? channelId;
 
-                    // Convert to UnreadMessage format
-                    const unreadMessages: UnreadMessage[] = _.map(response.messages, msg => ({
+                    // Filter out bot messages (if botUserId is set) and convert to UnreadMessage format
+                    const filteredMessages = _.filter(response.messages, msg => !this.botUserId || msg.author.id !== this.botUserId);
+                    const unreadMessages: UnreadMessage[] = _.map(filteredMessages, msg => ({
                         id:        msg.id,
                         channelId,
                         channelName,
@@ -211,17 +262,20 @@ export class InboxManager {
                         isRead:    false,
                     }));
 
-                    this.unreadMessages.set(channelId, unreadMessages);
-                    totalLoaded += unreadMessages.length;
+                    // Stryker disable next-line ConditionalExpression: Guard clause - only store if we have messages after filtering
+                    if(unreadMessages.length > 0) {
+                        this.unreadMessages.set(channelId, unreadMessages);
+                        totalLoaded += unreadMessages.length;
 
-                    // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-                    logger.info({
-                        channelId,
-                        channelName,
-                        messageCount: unreadMessages.length,
-                        msg:          `Loaded ${unreadMessages.length} unread messages for channel`,
-                    });
-                    // Stryker restore ObjectLiteral,StringLiteral
+                        // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+                        logger.info({
+                            channelId,
+                            channelName,
+                            messageCount: unreadMessages.length,
+                            msg:          `Loaded ${unreadMessages.length} unread messages for channel`,
+                        });
+                        // Stryker restore ObjectLiteral,StringLiteral
+                    }
                 }
             } catch (error) {
                 const message = _.isError(error) ? error.message : String(error);
@@ -270,10 +324,10 @@ export class InboxManager {
         for(const [channelId, messages] of this.unreadMessages) {
             const unreadCount = _.filter(messages, m => !m.isRead).length;
             if(unreadCount > 0) {
-                const tracked = this.trackedChannels.get(channelId);
+                const metadata = this.channelMetadata.get(channelId);
                 channels.push({
                     channelId,
-                    channelName:  tracked?.channelName ?? channelId,
+                    channelName:  metadata?.channelName ?? channelId,
                     messageCount: unreadCount,
                 });
                 totalUnread += unreadCount;
@@ -361,8 +415,8 @@ export class InboxManager {
 
         // Update checkpoint if we marked any messages
         if(latestTimestamp && latestMessageId) {
-            const tracked = this.trackedChannels.get(channelId);
-            const guildId = tracked?.guildId ?? 'DM';
+            const metadata = this.channelMetadata.get(channelId);
+            const guildId = metadata?.guildId ?? 'DM';
             await this.checkpointManager.updateLastSeen(
                 channelId,
                 guildId,
@@ -414,8 +468,8 @@ export class InboxManager {
 
         // Update checkpoint to latest message
         if(latestMessage) {
-            const tracked = this.trackedChannels.get(channelId);
-            const guildId = tracked?.guildId ?? 'DM';
+            const metadata = this.channelMetadata.get(channelId);
+            const guildId = metadata?.guildId ?? 'DM';
             await this.checkpointManager.updateLastSeen(
                 channelId,
                 guildId,
@@ -498,11 +552,11 @@ export class InboxManager {
     }
 
     /**
-     * Gets the channel name for a channel ID.
-     * Returns undefined if the channel is not tracked.
+     * Gets the channel name for a channel ID from the metadata cache.
+     * Returns undefined if no metadata is cached for this channel.
      *
      * @param channelId - Discord channel ID
-     * @returns Channel name or undefined if not tracked
+     * @returns Channel name or undefined if not in cache
      *
      * @example
      * ```typescript
@@ -511,6 +565,6 @@ export class InboxManager {
      * ```
      */
     getChannelName(channelId: ChannelId): string | undefined {
-        return this.trackedChannels.get(channelId)?.channelName;
+        return this.channelMetadata.get(channelId)?.channelName;
     }
 }

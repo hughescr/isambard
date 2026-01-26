@@ -71,6 +71,27 @@ export interface SynopsisContext {
     recentToolCalls?:  string[]
 }
 
+/**
+ * Context for generating catch-up status synopses.
+ * Provides rich information about the inbox state when entering catch-up mode.
+ */
+export interface CatchUpSynopsisContext {
+    /** Total number of unread messages */
+    totalUnread:         number
+    /** Number of channels with unread messages */
+    channelCount:        number
+    /** Names of channels with unread messages (e.g., ["general", "DM"]) */
+    channelNames:        string[]
+    /** Top authors who sent messages (up to 3) */
+    topAuthors:          string[]
+    /** Human-readable time since last active (e.g., "3 hours", "overnight", "2 days") */
+    timeSinceLastActive: string
+    /** Time of day (morning, afternoon, evening, night) */
+    timeOfDay:           string
+    /** Day of week (e.g., "Monday", "Saturday") */
+    dayOfWeek:           string
+}
+
 // ============================================================================
 // Status Update - What to show users
 // ============================================================================

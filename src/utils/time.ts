@@ -241,3 +241,38 @@ export function formatShortRelativeTime(date: Date, now: Date = new Date()): str
     const years = differenceInYears(now, date);
     return `${years}y ago`;
 }
+
+/**
+ * Format duration since a past time in human-readable form.
+ * Used for catch-up status generation to describe how long Izzy has been away.
+ * @param since - The past timestamp
+ * @returns Human readable string like "3 hours", "overnight", "2 days"
+ */
+export function formatTimeSince(since: Date): string {
+    const now = new Date();
+    const diffMs = now.getTime() - since.getTime();
+    const diffHours = diffMs / (1000 * 60 * 60);
+
+    if(diffHours < 1) {
+        return 'a few minutes';
+    }
+    if(diffHours < 2) {
+        return 'an hour';
+    }
+    if(diffHours < 6) {
+        return `${Math.round(diffHours)} hours`;
+    }
+    if(diffHours < 12) {
+        return 'half a day';
+    }
+    if(diffHours < 18) {
+        return 'overnight';
+    }
+    if(diffHours < 36) {
+        return 'a day';
+    }
+    if(diffHours < 72) {
+        return `${Math.round(diffHours / 24)} days`;
+    }
+    return 'a few days';
+}

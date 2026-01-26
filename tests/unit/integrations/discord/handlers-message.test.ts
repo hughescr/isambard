@@ -412,7 +412,8 @@ describe('Discord Event Handlers', () => {
         describe('dynamicStatusGenerator option', () => {
             it('should accept optional dynamicStatusGenerator in options', async () => {
                 const mockDynamicStatusGenerator = {
-                    generateSynopsis: mock(async () => 'Thinking deeply...'),
+                    generateSynopsis:        mock(async () => 'Thinking deeply...'),
+                    generateCatchUpSynopsis: mock(async () => 'Catch-up status'),
                 };
 
                 const handler = createMessageHandler({
@@ -441,7 +442,8 @@ describe('Discord Event Handlers', () => {
                 };
 
                 const mockDynamicStatusGenerator = {
-                    generateSynopsis: mock(async () => 'Pondering...'),
+                    generateSynopsis:        mock(async () => 'Pondering...'),
+                    generateCatchUpSynopsis: mock(async () => 'Catch-up status'),
                 };
 
                 const handler = createMessageHandler({

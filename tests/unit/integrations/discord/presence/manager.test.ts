@@ -34,6 +34,10 @@ describe('PresenceManager', () => {
                 name: `Status for ${phase.type}`,
                 type: ActivityType.Custom,
             })),
+            formatStatus: mock((status: string) => ({
+                name: status,
+                type: ActivityType.Custom,
+            })),
         };
 
         mockIdleGenerator = {
@@ -622,6 +626,104 @@ describe('PresenceManager', () => {
 
             // No new idle refreshes should have occurred
             expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCountAfterActive);
+        });
+    });
+
+    describe('setCatchUpMode edge cases', () => {
+        it('should generate catch-up status when entering catch-up mode with null currentPhase', async () => {
+            const manager = createPresenceManager({
+                discordClient:         mockClient,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            // At startup, currentPhase is null
+            // Enter catch-up mode - should trigger idle status generation with 📥 prefix
+            manager.setCatchUpMode('catching_up');
+
+            // Wait for async status generation
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Should have called idle generator (with catch-up context)
+            expect(mockIdleGenerator.generate).toHaveBeenCalledWith(true, 'catching_up');
+            expect(mockClient.user.setActivity).toHaveBeenCalled();
+        });
+
+        it('should NOT trigger idle status when exiting catch-up mode to none', async () => {
+            const manager = createPresenceManager({
+                discordClient:         mockClient,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            // Start in catch-up mode
+            manager.setCatchUpMode('catching_up');
+            await Promise.resolve();
+            await Promise.resolve();
+
+            const callCountAfterEntry = mockIdleGenerator.generate.mock.calls.length;
+
+            // Exit catch-up mode - should NOT trigger idle status
+            manager.setCatchUpMode('none');
+            await Promise.resolve();
+
+            // No additional calls to idle generator
+            expect(mockIdleGenerator.generate.mock.calls.length).toBe(callCountAfterEntry);
+        });
+
+        it('should update active phase status immediately when catch-up mode changes', async () => {
+            const manager = createPresenceManager({
+                discordClient:         mockClient,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            // Go to active phase first
+            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            const initialSetActivityCount = mockClient.user.setActivity.mock.calls.length;
+
+            // Change catch-up mode - should trigger immediate status update
+            manager.setCatchUpMode('catching_up');
+            await Promise.resolve();
+
+            // Should have updated status
+            expect(mockClient.user.setActivity.mock.calls.length).toBe(initialSetActivityCount + 1);
+            expect(mockActiveGenerator.generate).toHaveBeenCalledWith(
+                expect.objectContaining({ type: 'thinking' }),
+                'catching_up'
+            );
+        });
+    });
+
+    describe('idle→idle duplicate transition', () => {
+        it('should skip idle refresh when already idle and updatePhase(idle) called again', async () => {
+            const manager = createPresenceManager({
+                discordClient:         mockClient,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            // First idle transition
+            await manager.updatePhase({ type: 'idle', since: new Date() });
+            const firstIdleCallCount = mockIdleGenerator.generate.mock.calls.length;
+
+            // Second idle transition (duplicate) - should be skipped
+            await manager.updatePhase({ type: 'idle', since: new Date() });
+
+            // Should not have triggered another idle refresh
+            expect(mockIdleGenerator.generate.mock.calls.length).toBe(firstIdleCallCount);
+
+            // Verify log message
+            expect(mockLogger.debug).toHaveBeenCalledWith('Already idle, skipping duplicate idle transition');
         });
     });
 });
