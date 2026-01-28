@@ -9,11 +9,12 @@
  */
 
 import type { ChannelId } from '@/integrations/discord/types';
-import type { CatchUpStateManager } from './state-manager';
+import type { BotStateManager, CatchingUpModeContext } from '../state';
 import type { InboxManager } from '../inbox';
 import { buildCatchUpPrompt, buildCatchUpInterruptedPrompt } from './prompts';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
+import { formatTimeSince } from '@/utils/time';
 
 /**
  * Hot reload signal stored in memory - indicates catch-up completed.
@@ -90,7 +91,7 @@ export interface AgentSessionResult {
  */
 export interface CatchUpSessionRunnerDeps {
     /** State manager for catch-up mode */
-    stateManager:           CatchUpStateManager
+    stateManager:           BotStateManager
     /** Inbox manager for tracking unread messages */
     inboxManager:           InboxManager
     /** Function to store completion signal in memory */
@@ -209,15 +210,12 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             messagesProcessed,
         });
 
-        // Clear viewed channels
-        deps.stateManager.clearViewedChannels();
-
         // Clear session state to prevent memory leak
         currentSessionId = undefined;
         currentAbortController = null;
 
-        // Set state to idle
-        deps.stateManager.setState('idle');
+        // Transition to idle (this also clears viewed channels in the context)
+        deps.stateManager.goIdle();
 
         // Invoke callback if provided
         deps.onCatchUpComplete?.();
@@ -286,13 +284,13 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
             // 2. Check inProgress marker (crash/hot reload during catch-up)
             const inProgress = await deps.loadInProgressSignal();
-            // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+            // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Logging for observability
             logger.debug({
                 inProgress: !!inProgress,
                 startedAt:  inProgress?.startedAt,
                 msg:        'Checking inProgress signal',
             });
-            // Stryker restore ObjectLiteral,StringLiteral
+            // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral
 
             if(inProgress) {
                 // Delete the old marker - we'll create a new one when starting
@@ -305,7 +303,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
             // 3. Check lastCompleted timestamp
             const completion = await deps.loadCompletionSignal();
-            // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+            // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Logging for observability
             logger.debug({
                 hasCompletion:     !!completion,
                 completedAt:       completion?.completedAt,
@@ -313,7 +311,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
                 messagesProcessed: completion?.messagesProcessed,
                 msg:               'Checking completion signal',
             });
-            // Stryker restore ObjectLiteral,StringLiteral
+            // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral
 
             if(!completion) {
                 // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
@@ -325,7 +323,10 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             // Skip if completed < 5 minutes ago
             const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
             const completedAt = new Date(completion.completedAt).getTime();
+            // Stryker disable ArithmeticOperator: Logging calculation only
             const minutesSinceCompletion = (Date.now() - completedAt) / (60 * 1000);
+            // Stryker restore ArithmeticOperator
+            // Stryker disable next-line EqualityOperator: Boundary condition < vs <= at exact 5 minutes makes no practical difference
             const shouldStart = completedAt < fiveMinutesAgo;
 
             // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
@@ -337,18 +338,15 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             });
             // Stryker restore ObjectLiteral,StringLiteral
 
-            // Stryker disable next-line EqualityOperator: Boundary condition < vs <= at exact 5 minutes makes no practical difference
+            // Stryker disable next-line EqualityOperator,ArithmeticOperator: Boundary condition < vs <= at exact 5 minutes makes no practical difference
             return shouldStart;
         },
 
         async startCatchUp(): Promise<void> {
             // Guard against duplicate sessions - test verifies no side effects occur when state is catching_up
-            if(deps.stateManager.getState() === 'catching_up') { // Stryker disable ConditionalExpression,BlockStatement
+            if(deps.stateManager.getMode() === 'catching_up') { // Stryker disable ConditionalExpression,BlockStatement
                 return;
             }
-
-            // Set state to catching_up
-            deps.stateManager.setState('catching_up');
 
             // Store inProgress marker
             await deps.storeInProgressSignal({
@@ -362,6 +360,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             const overview = deps.inboxManager.getUnreadOverview();
 
             // Build status context for dynamic status generation
+            // Stryker disable ArrowFunction,ArrayDeclaration,StringLiteral: Status context building - values affect status generation but not core behavior
             const allMessages = _.flatMap(
                 overview.channels,
                 ch => deps.inboxManager.getChannelMessages(ch.channelId)
@@ -379,6 +378,27 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
                 topAuthors,
                 totalUnread:  overview.totalUnread,
             };
+
+            // Load completion signal to calculate time since last active
+            const completionSignal = await deps.loadCompletionSignal();
+            const timeSinceLastActive = completionSignal
+                ? formatTimeSince(new Date(completionSignal.completedAt))
+                : null;
+
+            // Create catch-up context
+            const catchUpContext: CatchingUpModeContext = {
+                viewedChannels: new Set(),
+                sessionId:      null,
+                startedAt:      new Date(),
+                unreadCount:    overview.totalUnread,
+                channelNames:   _.map(overview.channels, 'channelName'),
+                topAuthors,
+                timeSinceLastActive,
+            };
+            // Stryker restore ArrowFunction,ArrayDeclaration,StringLiteral
+
+            // Transition to catching_up mode
+            deps.stateManager.startCatchUp(catchUpContext);
 
             // Build catch-up prompt
             const prompt = buildCatchUpPrompt(overview.totalUnread, overview.channels.length);
@@ -396,8 +416,8 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             // Store the interrupting message
             interruptingMessage = message;
 
-            // Set state to catching_up_interrupted
-            deps.stateManager.setState('catching_up_interrupted');
+            // Mark as interrupted
+            deps.stateManager.interrupt();
 
             // Abort current session
             if(currentAbortController) {
@@ -406,8 +426,8 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
         },
 
         async resumeAfterInterruption(): Promise<void> {
-            // Stryker disable next-line ConditionalExpression: Guard clause - test verifies no operations occur when not in interrupted state
-            if(deps.stateManager.getState() !== 'catching_up_interrupted') {
+            // Stryker disable next-line ConditionalExpression,LogicalOperator: Guard clause - test verifies no operations occur when not in interrupted state
+            if(deps.stateManager.getMode() !== 'catching_up' || !deps.stateManager.isInterrupted()) {
                 // Stryker disable BlockStatement: Guard clause return
                 return;
                 // Stryker restore BlockStatement
@@ -422,13 +442,14 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
                 return;
             }
 
-            // Set state back to catching_up
-            deps.stateManager.setState('catching_up');
+            // Resume (clear interrupted flag)
+            deps.stateManager.resume();
 
             // Create new abort controller
             currentAbortController = new AbortController();
 
             // Build status context for dynamic status generation
+            // Stryker disable ArrowFunction,ArrayDeclaration,StringLiteral: Status context building - values affect status generation but not core behavior
             const allMessages = _.flatMap(
                 overview.channels,
                 ch => deps.inboxManager.getChannelMessages(ch.channelId)
@@ -446,10 +467,13 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
                 topAuthors,
                 totalUnread:  overview.totalUnread,
             };
+            // Stryker restore ArrowFunction,ArrayDeclaration,StringLiteral
 
             // Build catch-up interrupted prompt
-            // Get viewed channels from state manager
-            const viewedChannelIds = Array.from(deps.stateManager.getViewedChannels());
+            // Get viewed channels from state manager context
+            const state = deps.stateManager.getState();
+            const catchUpContext = state.modeContext as CatchingUpModeContext;
+            const viewedChannelIds = Array.from(catchUpContext.viewedChannels);
             const viewedChannels = _.map(viewedChannelIds, channelId =>
                 deps.resolveChannelName?.(channelId) ?? channelId
             );

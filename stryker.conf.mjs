@@ -11,7 +11,7 @@ export default {
     plugins:          ['@hughescr/stryker-bun-runner', '@stryker-mutator/typescript-checker'],
     coverageAnalysis: 'perTest',
     disableBail:      true, // Do not stop with first failing test, so we can get complete map of mutant:killer-tests
-    mutate:           ['src/**/*.ts', '!src/index.ts'],
+    mutate:           ['src/**/*.ts', '!src/index.ts', '!src/**/*.test.ts'],
     thresholds:       { high: 100, low: 100, 'break': 100 },
     concurrency:      isCI ? 4 : 24,
     tempDirName:      '.stryker-tmp',

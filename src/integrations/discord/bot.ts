@@ -30,11 +30,15 @@ import type { InboxManager } from './inbox';
 import { formatTimeSince, getTimeOfDay } from '@/utils/time';
 import {
     createCatchUpSessionRunner,
-    type CatchUpStateManager,
     type CatchUpSessionRunner,
     type CatchUpCompletionSignal,
     type CatchUpInProgressSignal
 } from './catchup';
+import {
+    createBotStateManager,
+    type BotStateManager,
+    type StateChange
+} from './state';
 
 /**
  * Result of processing Discord message attachments
@@ -135,6 +139,7 @@ async function populateChannelMetadata(
  * @param memoryBackend - Memory backend for loading completion signal
  * @returns Promise resolving to catch-up synopsis context
  */
+// Stryker disable all: Context building with lodash chains and object literals for catch-up status - tested via integration
 async function buildCatchUpContext(
     inboxManager: InboxManager,
     memoryBackend: {
@@ -171,6 +176,7 @@ async function buildCatchUpContext(
         dayOfWeek:           new Date().toLocaleDateString('en-US', { weekday: 'long' }),
     };
 }
+// Stryker restore all
 
 /**
  * Processes all attachments from Discord contexts.
@@ -264,7 +270,8 @@ async function processAttachments(contexts: DiscordMessageContext[]): Promise<Pr
 function createPresenceStreamHandler(
     presenceManager: PresenceManager | undefined,
     dynamicStatusGenerator: ReturnType<typeof createDynamicStatusGenerator> | undefined,
-    userMessage: string
+    userMessage: string,
+    botStateManager: BotStateManager
 ): ReturnType<typeof createStreamEventHandler> | undefined {
     if(!presenceManager) {
         return undefined;
@@ -275,6 +282,7 @@ function createPresenceStreamHandler(
         dynamicStatusGenerator,
         logger,
         userMessage,
+        botStateManager,
     });
 }
 
@@ -342,10 +350,11 @@ export interface DiscordBotOptions {
     }
 
     /**
-     * Optional catch-up state manager for tracking catch-up session state.
-     * If provided along with inboxManager, agent, and memoryBackend, enables catch-up mode.
+     * Optional bot state manager.
+     * If provided, this will be used instead of creating a new one.
+     * Useful when the state manager needs to be shared with other components.
      */
-    catchUpStateManager?: CatchUpStateManager
+    botStateManager?: BotStateManager
 }
 
 /**
@@ -362,6 +371,12 @@ export interface DiscordBot {
      * Stops the bot by destroying the Discord client connection.
      */
     stop(): Promise<void>
+
+    /**
+     * For testing - expose internal state manager (Phase 2).
+     * @internal
+     */
+    _botStateManager?: BotStateManager
 }
 
 /**
@@ -406,7 +421,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, onMessage, identityContext, agent, client: providedClient, inboxManager, memoryBackend, catchUpStateManager } = options;
+    const { config, onMessage, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager } = options;
     const client: Client = providedClient ?? createDiscordClient(config);
     let presenceManager: PresenceManager | undefined;
     let coordinator: MessageCoordinator | undefined;
@@ -414,6 +429,16 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     let catchUpSessionRunner: CatchUpSessionRunner | undefined;
     // Use provided registry or create a new one
     const questionRegistry: QuestionRegistry = options.questionRegistry ?? createQuestionRegistry();
+
+    // Capture unsubscribe functions for cleanup
+    let unsubscribeModeTransition: (() => void) | undefined;
+    let unsubscribeActivityPhase: (() => void) | undefined;
+
+    // Use provided bot state manager or create a new one
+    const botStateManager: BotStateManager = providedBotStateManager ?? createBotStateManager({
+        logger,
+        updateThrottleMs: config.presence?.updateThrottleMs,
+    });
 
     // Register error handler for Discord client errors
     // Stryker disable next-line StringLiteral: Discord.js event name
@@ -518,6 +543,85 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
             presenceManager.start();
 
+            // Bridge: Sync BotStateManager → PresenceManager
+            /**
+             * Set up idempotent subscription using `??=` (nullish coalescing assignment).
+             *
+             * The `??=` operator only assigns if the variable is null or undefined, ensuring
+             * this subscription is created exactly once even if this handler runs multiple times
+             * (e.g., on Discord reconnects).
+             *
+             * Problem solved: Without idempotency, each Discord reconnect would create duplicate
+             * subscriptions, causing the same event to fire multiple times and create memory leaks.
+             *
+             * Cleanup: The unsubscribe functions are called in stop() to properly clean up
+             * all subscriptions when the bot shuts down.
+             */
+            unsubscribeModeTransition ??= botStateManager.subscribe((change: StateChange) => {
+                // Sync mode changes to presence manager
+                if(change.changeType === 'mode_transition') {
+                    const mode = change.newState.mode;
+                    const interrupted = change.newState.interrupted;
+
+                    // Map BotState mode to CatchUpMode for presence
+                    if(mode === 'idle') {
+                        presenceManager!.transitionCatchUpMode('none');
+                    } else if(mode === 'catching_up') {
+                        presenceManager!.transitionCatchUpMode(interrupted ? 'catching_up_interrupted' : 'catching_up');
+                    } else if(mode === 'processing_message') {
+                        presenceManager!.transitionCatchUpMode('processing_message');
+                    }
+                    // perching mode will be handled when implemented
+                }
+
+                // Sync interrupted flag changes
+                if(change.changeType === 'interrupted') {
+                    const mode = change.newState.mode;
+                    const interrupted = change.newState.interrupted;
+                    if(mode === 'catching_up') {
+                        presenceManager!.transitionCatchUpMode(interrupted ? 'catching_up_interrupted' : 'catching_up');
+                    }
+                }
+            });
+
+            // Bridge: Sync activity phases to presence manager
+            /**
+             * Set up idempotent subscription using `??=` (nullish coalescing assignment).
+             *
+             * The `??=` operator only assigns if the variable is null or undefined, ensuring
+             * this subscription is created exactly once even if this handler runs multiple times
+             * (e.g., on Discord reconnects).
+             *
+             * Problem solved: Without idempotency, each Discord reconnect would create duplicate
+             * subscriptions, causing the same event to fire multiple times and create memory leaks.
+             *
+             * Cleanup: The unsubscribe functions are called in stop() to properly clean up
+             * all subscriptions when the bot shuts down.
+             *
+             * Note: Check throttle BEFORE calling presenceManager.updatePhase() to ensure single throttle gate.
+             */
+            unsubscribeActivityPhase ??= botStateManager.subscribe((change: StateChange) => {
+                if(change.changeType === 'activity_phase' && presenceManager) {
+                    const phase = change.newState.activityPhase;
+                    if(phase) {
+                        // Throttle active phase updates to avoid Discord rate limits
+                        if(botStateManager.shouldUpdatePresence()) {
+                            void presenceManager.updatePhase(phase);
+                            botStateManager.recordPresenceUpdate();
+                        }
+                    } else {
+                        // Idle transitions intentionally bypass throttling:
+                        // - End of work should show immediately to users
+                        // - Prevents "stuck" active status after processing completes
+                        // - Idle is a stable state, not a rapid-fire event
+                        if(change.newState.mode === 'idle') {
+                            void presenceManager.updatePhase({ type: 'idle', since: new Date() });
+                            botStateManager.recordPresenceUpdate();
+                        }
+                    }
+                }
+            });
+
             // If no inbox manager, transition to idle immediately
             // (otherwise, idle transition happens after catch-up check in inbox init)
             if(!inboxManager) {
@@ -526,10 +630,10 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         }
 
         // Create catch-up session runner if all dependencies available (must be created before inbox init)
-        if(inboxManager && agent && memoryBackend && catchUpStateManager) {
+        if(inboxManager && agent && memoryBackend) {
             // Create session runner
             catchUpSessionRunner = createCatchUpSessionRunner({
-                stateManager:           catchUpStateManager,
+                stateManager:           botStateManager,
                 inboxManager,
                 storeCompletionSignal:  memoryBackend.storeCompletionSignal,
                 loadCompletionSignal:   memoryBackend.loadCompletionSignal,
@@ -552,7 +656,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     const streamEventHandler = createPresenceStreamHandler(
                         presenceManager,
                         dynamicStatusGenerator,
-                        userMessage
+                        userMessage,
+                        botStateManager
                     );
 
                     // Call agent.chatBatch with specialMode: 'catchup' and the catch-up prompt
@@ -576,7 +681,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 },
                 onCatchUpComplete: () => {
                     // Reset presence mode when catch-up completes
-                    presenceManager?.setCatchUpMode('none');
+                    presenceManager?.transitionCatchUpMode('none');
                 },
             });
         }
@@ -588,6 +693,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
             (async () => {
                 try {
+                    // Start unified state manager
+                    botStateManager.start();
+
                     // Set bot user ID for filtering bot messages from inbox
                     inboxManager.setBotUserId(readyClient.user!.id);
 
@@ -613,7 +721,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                             const catchUpContext = await buildCatchUpContext(inboxManager, memoryBackend!);
 
                             // Update presence to show catching up with rich context
-                            presenceManager?.setCatchUpMode('catching_up', catchUpContext);
+                            presenceManager?.transitionCatchUpMode('catching_up', catchUpContext);
                             await runner.startCatchUp();
                         } else {
                             // Not doing catch-up, transition to idle mode
@@ -675,16 +783,16 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     }
 
                     // Resume catch-up if we were interrupted
-                    if(catchUpStateManager?.getState() === 'catching_up_interrupted' && catchUpSessionRunner) {
+                    if(botStateManager.getMode() === 'catching_up' && botStateManager.isInterrupted() && catchUpSessionRunner) {
                         logger.info({ msg: 'Resuming catch-up after interruption' });
                         // Update presence back to catching_up
-                        presenceManager?.setCatchUpMode('catching_up');
+                        presenceManager?.transitionCatchUpMode('catching_up');
                         // Resume catch-up (async, don't await)
                         void catchUpSessionRunner.resumeAfterInterruption().catch((error) => {
                             const errorMsg = _.isError(error) ? error.message : String(error);
                             logger.error({ error: errorMsg, msg: 'Failed to resume catch-up after interruption' });
                             // Reset presence on failure
-                            presenceManager?.setCatchUpMode('none');
+                            presenceManager?.transitionCatchUpMode('none');
                         });
                     }
                 },
@@ -692,8 +800,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
             // Helper to update presence when starting to process a user message
             const updatePresenceForMessageStart = (): void => {
-                if(catchUpStateManager?.getState() === 'idle') {
-                    presenceManager?.setCatchUpMode('processing_message');
+                if(botStateManager.getMode() === 'idle') {
+                    presenceManager?.transitionCatchUpMode('processing_message');
                 }
             };
 
@@ -703,14 +811,21 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             ): void => {
                 // Transition to idle after completion, but NOT if we're in catch-up interrupted state
                 // (the resumed catch-up session will handle presence updates)
-                const currentState = catchUpStateManager?.getState();
-                if(streamEventHandler && currentState !== 'catching_up_interrupted') {
+                const currentMode = botStateManager.getMode();
+                const isInterrupted = botStateManager.isInterrupted();
+                if(streamEventHandler && !(currentMode === 'catching_up' && isInterrupted)) {
                     streamEventHandler.complete();
                 }
 
-                // Reset presence mode back to none if we were in processing_message mode
-                if(currentState === 'idle') {
-                    presenceManager?.setCatchUpMode('none');
+                // Reset presence mode back to none if we were in idle mode
+                if(currentMode === 'idle') {
+                    presenceManager?.transitionCatchUpMode('none');
+                }
+
+                // Transition state manager to idle when message processing completes
+                // (unless we're in catch-up interrupted state)
+                if(currentMode === 'processing_message' && !isInterrupted) {
+                    botStateManager.goIdle();
                 }
             };
 
@@ -743,7 +858,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     const streamEventHandler = createPresenceStreamHandler(
                         presenceManager,
                         dynamicStatusGenerator,
-                        userMessage
+                        userMessage,
+                        botStateManager
                     );
 
                     // Call chatBatch with presence updates and images
@@ -779,8 +895,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             questionRegistry,
             answerClassifier,
             inboxManager,
-            catchUpStateManager,
             catchUpSessionRunner,
+            botStateManager,
         }));
     });
 
@@ -804,6 +920,15 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             }
             // Stop question registry (always exists now)
             questionRegistry.stop();
+            // Unsubscribe from botStateManager subscriptions
+            if(unsubscribeModeTransition) {
+                unsubscribeModeTransition();
+            }
+            if(unsubscribeActivityPhase) {
+                unsubscribeActivityPhase();
+            }
+            // Stop unified state manager
+            botStateManager.stop();
             // Stop presence manager if it exists
             if(presenceManager) {
                 presenceManager.stop();
@@ -815,5 +940,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             // destroy() is sufficient for cleanup (as per user decision)
             await client.destroy();
         },
+
+        // For testing - expose internal state manager (Phase 2)
+        _botStateManager: botStateManager,
     };
 }

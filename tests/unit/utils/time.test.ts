@@ -7,6 +7,7 @@ import {
     formatRelativeTime,
     formatShortRelativeTime,
     getCurrentTimeContext,
+    formatTimeSince,
     type TimeContext
 } from '@/utils/time';
 
@@ -148,5 +149,68 @@ describe('getCurrentTimeContext', () => {
         // Should use 24-hour format (14:30:45), not 12-hour format (02:30:45 PM)
         // The mutant (hour12: true) would produce "T02:30:45" instead of "T14:30:45"
         expect(context.userLocalTime).toBe('2025-01-01T14:30:45');
+    });
+});
+
+describe('formatTimeSince', () => {
+    let RealDate: DateConstructor;
+
+    beforeEach(() => {
+        RealDate = global.Date;
+    });
+
+    afterEach(() => {
+        global.Date = RealDate;
+    });
+
+    test.each([
+        // Test all boundary conditions (< not <=)
+        { hours: 0.5, expected: 'a few minutes' },
+        { hours: 0.9999, expected: 'a few minutes' }, // Just before 1 hour boundary
+        { hours: 1.0, expected: 'an hour' },          // Exact boundary
+        { hours: 1.5, expected: 'an hour' },
+        { hours: 1.9999, expected: 'an hour' },       // Just before 2 hour boundary
+        { hours: 2.0, expected: '2 hours' },          // Exact boundary
+        { hours: 3, expected: '3 hours' },
+        { hours: 5.9999, expected: '6 hours' },       // Just before 6 hour boundary
+        { hours: 6.0, expected: 'half a day' },       // Exact boundary
+        { hours: 9, expected: 'half a day' },
+        { hours: 11.9999, expected: 'half a day' },   // Just before 12 hour boundary
+        { hours: 12.0, expected: 'overnight' },       // Exact boundary
+        { hours: 15, expected: 'overnight' },
+        { hours: 17.9999, expected: 'overnight' },    // Just before 18 hour boundary
+        { hours: 18.0, expected: 'a day' },           // Exact boundary
+        { hours: 24, expected: 'a day' },
+        { hours: 35.9999, expected: 'a day' },        // Just before 36 hour boundary
+        { hours: 36.0, expected: '2 days' },          // Exact boundary
+        { hours: 48, expected: '2 days' },
+        { hours: 71.9999, expected: '3 days' },       // Just before 72 hour boundary
+        { hours: 72.0, expected: 'a few days' },      // Exact boundary
+        { hours: 96, expected: 'a few days' },
+    ])('should format $hours hours as "$expected"', ({ hours, expected }) => {
+        const now = new RealDate('2025-01-15T12:00:00Z');
+        const since = new RealDate(now.getTime() - hours * 60 * 60 * 1000);
+
+        // Mock Date constructor to return fixed 'now'
+        const DateMock = function(this: Date | undefined, ...args: unknown[]): Date | string {
+            if(new.target) {
+                if(args.length === 0) {
+                    return now;
+                }
+                return Reflect.construct(RealDate, args) as Date;
+            } else {
+                return now.toString();
+            }
+        };
+        DateMock.prototype = RealDate.prototype;
+        Object.setPrototypeOf(DateMock, RealDate);
+        DateMock.now = () => now.getTime();
+        DateMock.parse = RealDate.parse;
+        DateMock.UTC = RealDate.UTC;
+
+        global.Date = DateMock as DateConstructor;
+
+        const result = formatTimeSince(since);
+        expect(result).toBe(expected);
     });
 });

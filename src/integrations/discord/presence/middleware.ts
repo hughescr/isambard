@@ -4,15 +4,16 @@
  * Wraps message processing to update Discord presence based on agent stream events.
  * Maps agent activity (thinking, tool usage, responding) to Discord presence phases.
  *
- * Uses shouldUpdate() from PresenceManager to avoid wasted LLM calls for synopsis
+ * Throttling is handled upstream by BotStateManager to avoid wasted LLM calls for synopsis
  * generation when the update would be throttled anyway.
  */
 
 import type { PresenceManager } from './manager.js';
 import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
-import { createStreamEventHandler } from './stream-event-handler.js';
+import { createStreamEventHandler, shouldGenerateSynopsis } from './stream-event-handler.js';
 import type { ClaudeAgent } from '../../../agent/agent.js';
 import type { DiscordMessageContext } from '../types.js';
+import type { BotStateManager } from '../state/types.js';
 
 /**
  * Discord channel interface for typing indicator.
@@ -37,6 +38,8 @@ export interface StatusMiddlewareDeps {
     }
     /** Optional dynamic status generator for LLM-generated synopses */
     dynamicStatusGenerator?: DynamicStatusGenerator
+    /** Bot state manager for unified state management */
+    botStateManager:         BotStateManager
 }
 
 /**
@@ -54,7 +57,6 @@ export type StatusMiddleware = (
  * - Starts typing indicator when processing begins
  * - Updates presence based on agent stream events
  * - Maps stream events to presence phases (thinking, using_tool, responding)
- * - Checks shouldUpdate() before generating expensive LLM synopses
  * - Stops typing and clears presence when complete or on error
  * - Handles concurrent messages independently
  *
@@ -76,7 +78,7 @@ export type StatusMiddleware = (
 export function createStatusMiddleware(
     deps: StatusMiddlewareDeps
 ): StatusMiddleware {
-    const { presenceManager, agent, logger, dynamicStatusGenerator } = deps;
+    const { presenceManager, agent, logger, dynamicStatusGenerator, botStateManager } = deps;
 
     return async (
         context: DiscordMessageContext,
@@ -91,8 +93,8 @@ export function createStatusMiddleware(
         // This allows immediate status display without waiting for the first stream event.
         // The synopsis is cached and reused when transitioning to 'thinking' phase.
         let thinkingSynopsis: string | undefined;
-        // Stryker disable next-line ConditionalExpression: Equivalent - try/catch swallows TypeError when undefined
-        if(dynamicStatusGenerator && presenceManager.shouldUpdate()) {
+        // Stryker disable next-line ConditionalExpression: Fallback to false when botStateManager unavailable
+        if(shouldGenerateSynopsis(dynamicStatusGenerator, botStateManager)) {
             try {
                 thinkingSynopsis = await dynamicStatusGenerator.generateSynopsis({
                     phase: 'thinking',
@@ -111,6 +113,7 @@ export function createStatusMiddleware(
             userMessage,
             messageId: context.messageId,
             thinkingSynopsis,
+            botStateManager,
         });
 
         try {

@@ -140,6 +140,18 @@ describe('Discord Presence Flow (Integration)', () => {
             }),
         } as ClaudeAgent;
 
+        // Create mock bot state manager
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock type is intentionally loose
+        const mockBotStateManager = {
+            shouldUpdatePresence:   mock(_constant(true)),
+            updateActivityPhase:    mock(() => undefined),
+            clearActivityPhase:     mock(() => undefined),
+            getMode:                mock(_constant('idle' as const)),
+            goIdle:                 mock(() => undefined),
+            startProcessingMessage: mock(() => undefined),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+        } as any;
+
         // Don't use onMessage directly if presenceManager and agent are provided
         // The middleware will call agent.chat instead
         const messageHandler = createMessageHandler({
@@ -148,6 +160,8 @@ describe('Discord Presence Flow (Integration)', () => {
             onMessage:           mock(_constant(Promise.resolve('test response'))), // This won't be called when middleware is used
             presenceManager,
             agent:               mockAgent,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock type is intentionally loose
+            botStateManager:     mockBotStateManager,
         });
 
         // Process message
@@ -215,11 +229,25 @@ describe('Discord Presence Flow (Integration)', () => {
             })),
         } as ClaudeAgent;
 
+        // Create mock bot state manager
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock type is intentionally loose
+        const mockBotStateManager = {
+            shouldUpdatePresence:   mock(_constant(true)),
+            updateActivityPhase:    mock(() => undefined),
+            clearActivityPhase:     mock(() => undefined),
+            getMode:                mock(_constant('idle' as const)),
+            goIdle:                 mock(() => undefined),
+            startProcessingMessage: mock(() => undefined),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+        } as any;
+
         // Create status middleware
         const statusMiddleware = createStatusMiddleware({
             presenceManager,
-            agent: mockAgent,
+            agent:           mockAgent,
             logger,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock type is intentionally loose
+            botStateManager: mockBotStateManager,
         });
 
         // Process message - should not throw

@@ -9,13 +9,12 @@ import type {
     AgentSessionResult,
     InterruptingMessage
 } from '@/integrations/discord/catchup/session-runner';
-import type { CatchUpStateManager } from '@/integrations/discord/catchup/state-manager';
+import type { BotStateManager, OperationalMode, CatchingUpModeContext } from '@/integrations/discord/state';
 import type { InboxManager } from '@/integrations/discord/inbox';
 import { createChannelId, type ChannelId } from '@/integrations/discord/types';
-import type { CatchUpState } from '@/integrations/discord/catchup/types';
 
 describe('CatchUpSessionRunner', () => {
-    let mockStateManager: CatchUpStateManager;
+    let mockStateManager: BotStateManager;
     let mockInboxManager: InboxManager;
     let mockStoreCompletionSignal: ReturnType<typeof mock>;
     let mockLoadCompletionSignal: ReturnType<typeof mock>;
@@ -25,19 +24,44 @@ describe('CatchUpSessionRunner', () => {
     let mockRunAgentSession: ReturnType<typeof mock>;
     let deps: CatchUpSessionRunnerDeps;
     let mockTotalUnread: number;
+    let mockMode: OperationalMode;
+    let mockInterrupted: boolean;
+    let mockModeContext: CatchingUpModeContext;
 
     beforeEach(() => {
         // Set up fake timers with fixed system time for deterministic tests
         jest.useFakeTimers();
         jest.setSystemTime(new Date('2025-01-25T12:00:00.000Z'));
 
-        mockStateManager = {
-            getState:            mock(() => 'idle' as CatchUpState),
-            setState:            mock(),
-            getViewedChannels:   mock(() => new Set<ChannelId>()),
-            markChannelViewed:   mock(),
-            clearViewedChannels: mock(),
+        // Default mode state
+        mockMode = 'idle';
+        mockInterrupted = false;
+        mockModeContext = {
+            viewedChannels:      new Set<ChannelId>(),
+            sessionId:           null,
+            startedAt:           new Date(),
+            unreadCount:         0,
+            channelNames:        [],
+            topAuthors:          [],
+            timeSinceLastActive: null,
         };
+
+        mockStateManager = {
+            getMode:       mock(() => mockMode),
+            isInterrupted: mock(() => mockInterrupted),
+            startCatchUp:  mock((context: CatchingUpModeContext) => {
+                mockMode        = 'catching_up';
+                mockModeContext = context;
+            }),
+            interrupt: mock(() => { mockInterrupted = true; }),
+            resume:    mock(() => { mockInterrupted = false; }),
+            goIdle:    mock(() => {
+                mockMode        = 'idle';
+                mockModeContext = { viewedChannels: new Set(), sessionId: null, startedAt: new Date(), unreadCount: 0, channelNames: [], topAuthors: [], timeSinceLastActive: null };
+            }),
+            markChannelViewed: mock((channelId: ChannelId) => { mockModeContext.viewedChannels.add(channelId); }),
+            getState:          mock(() => ({ mode: mockMode, interrupted: mockInterrupted, activityPhase: null, modeEnteredAt: new Date(), modeContext: mockModeContext })),
+        } as unknown as BotStateManager;
 
         // Use a mutable variable for totalUnread that tests can modify
         mockTotalUnread = 0;
@@ -54,6 +78,14 @@ describe('CatchUpSessionRunner', () => {
         mockLoadInProgressSignal = mock();
         mockDeleteInProgressSignal = mock();
         mockRunAgentSession = mock();
+
+        // Set default mock return values for async signal functions
+        mockStoreCompletionSignal.mockResolvedValue(undefined);
+        mockLoadCompletionSignal.mockResolvedValue(null);
+        mockStoreInProgressSignal.mockResolvedValue(undefined);
+        mockLoadInProgressSignal.mockResolvedValue(null);
+        mockDeleteInProgressSignal.mockResolvedValue(undefined);
+        mockRunAgentSession.mockResolvedValue({ completed: true } as AgentSessionResult);
 
         deps = {
             stateManager:           mockStateManager,
@@ -156,31 +188,85 @@ describe('CatchUpSessionRunner', () => {
     });
 
     describe('startCatchUp', () => {
-        it('should return early when already in catching_up state', async () => {
-            // Set state to catching_up
-            mockStateManager.getState = mock(() => 'catching_up' as CatchUpState);
+        it('should prevent duplicate catch-up sessions when already in catching_up state', async () => {
+            // Set mode to catching_up to test guard clause
+            mockMode = 'catching_up';
 
             const runner = createCatchUpSessionRunner(deps);
             await runner.startCatchUp();
 
-            // Should not store inProgress marker or run agent session
+            // Behavior: No side effects should occur when guard prevents duplicate session
+            // The guard protects against TransitionError from BotStateManager.startCatchUp()
             expect(mockStoreInProgressSignal).not.toHaveBeenCalled();
             expect(mockRunAgentSession).not.toHaveBeenCalled();
-            // Should not attempt to set state (guard returns early)
-            expect(mockStateManager.setState).not.toHaveBeenCalled();
+            expect(mockStateManager.startCatchUp).not.toHaveBeenCalled();
         });
 
-        it('should set state to catching_up', async () => {
+        it('should transition to catching_up mode with correct context', async () => {
+            const testChannelId = createChannelId('123');
             mockInboxManager.getUnreadOverview = mock().mockReturnValue({
                 totalUnread: 5,
-                channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 5 }],
+                channels:    [{ channelId: testChannelId, channelName: 'general', messageCount: 5 }],
             });
+
+            // Mock getChannelMessages with proper UnreadMessage structure
+            const mockMessages = [
+                {
+                    id:          '1',
+                    channelId:   testChannelId,
+                    channelName: 'general',
+                    guildId:     'DM' as const,
+                    author:      'Alice',
+                    content:     'Hello',
+                    timestamp:   '2025-01-25T11:50:00.000Z',
+                    isRead:      false,
+                },
+                {
+                    id:          '2',
+                    channelId:   testChannelId,
+                    channelName: 'general',
+                    guildId:     'DM' as const,
+                    author:      'Bob',
+                    content:     'Hi',
+                    timestamp:   '2025-01-25T11:51:00.000Z',
+                    isRead:      false,
+                },
+                {
+                    id:          '3',
+                    channelId:   testChannelId,
+                    channelName: 'general',
+                    guildId:     'DM' as const,
+                    author:      'Alice',
+                    content:     'How are you?',
+                    timestamp:   '2025-01-25T11:52:00.000Z',
+                    isRead:      false,
+                },
+            ];
+            mockInboxManager.getChannelMessages = mock(() => mockMessages);
+
+            mockLoadCompletionSignal.mockResolvedValue({
+                completedAt:       new Date('2025-01-25T11:00:00.000Z').toISOString(),
+                channelsProcessed: 1,
+                messagesProcessed: 3,
+            } as CatchUpCompletionSignal);
             mockRunAgentSession.mockResolvedValue({ completed: true } as AgentSessionResult);
 
             const runner = createCatchUpSessionRunner(deps);
             await runner.startCatchUp();
 
-            expect(mockStateManager.setState).toHaveBeenCalledWith('catching_up');
+            expect(mockStateManager.startCatchUp).toHaveBeenCalled();
+            // Access the mock property via type assertion to avoid TS error
+            const startCatchUpMock = mockStateManager.startCatchUp as ReturnType<typeof mock>;
+            const context = startCatchUpMock.mock.calls[0][0] as CatchingUpModeContext;
+
+            // Verify context has correct structure and values
+            expect(context.viewedChannels).toEqual(new Set());
+            expect(context.sessionId).toBeNull();
+            expect(context.startedAt).toBeInstanceOf(Date);
+            expect(context.unreadCount).toBe(5);
+            expect(context.channelNames).toEqual(['general']);
+            expect(context.topAuthors).toEqual(['Alice', 'Bob']); // Alice appears twice, Bob once
+            expect(context.timeSinceLastActive).toBe('an hour'); // From fixed time 12:00:00 - 11:00:00
         });
 
         it('should store inProgress marker', async () => {
@@ -228,7 +314,7 @@ describe('CatchUpSessionRunner', () => {
             // completeCatchUp should be called with stats
             expect(mockDeleteInProgressSignal).toHaveBeenCalled();
             expect(mockStoreCompletionSignal).toHaveBeenCalled();
-            expect(mockStateManager.setState).toHaveBeenCalledWith('idle');
+            expect(mockStateManager.goIdle).toHaveBeenCalled();
         });
 
         it('should NOT call completeCatchUp when session is interrupted', async () => {
@@ -245,8 +331,8 @@ describe('CatchUpSessionRunner', () => {
             // completeCatchUp should NOT be called (storeCompletionSignal is part of completeCatchUp)
             expect(mockStoreCompletionSignal).not.toHaveBeenCalled();
             // But state should still be catching_up (not idle)
-            expect(mockStateManager.setState).toHaveBeenCalledWith('catching_up');
-            expect(mockStateManager.setState).not.toHaveBeenCalledWith('idle');
+            expect(mockStateManager.startCatchUp).toHaveBeenCalled();
+            expect(mockStateManager.goIdle).not.toHaveBeenCalled();
         });
 
         it('should return without completing when AbortError is thrown', async () => {
@@ -282,7 +368,7 @@ describe('CatchUpSessionRunner', () => {
             // Should call completeCatchUp with 0, 0
             expect(mockStoreCompletionSignal).toHaveBeenCalled();
             expect(mockDeleteInProgressSignal).toHaveBeenCalled();
-            expect(mockStateManager.setState).toHaveBeenCalledWith('idle');
+            expect(mockStateManager.goIdle).toHaveBeenCalled();
 
             // Verify completion signal has 0 channels and messages
             const signal = mockStoreCompletionSignal.mock.calls[0][0] as CatchUpCompletionSignal;
@@ -292,7 +378,7 @@ describe('CatchUpSessionRunner', () => {
     });
 
     describe('interrupt', () => {
-        it('should set state to catching_up_interrupted', () => {
+        it('should mark state as interrupted', () => {
             const runner = createCatchUpSessionRunner(deps);
             const message: InterruptingMessage = {
                 channelId:   createChannelId('123'),
@@ -303,7 +389,7 @@ describe('CatchUpSessionRunner', () => {
 
             runner.interrupt(message);
 
-            expect(mockStateManager.setState).toHaveBeenCalledWith('catching_up_interrupted');
+            expect(mockStateManager.interrupt).toHaveBeenCalled();
         });
 
         it('should abort current session', async () => {
@@ -328,7 +414,9 @@ describe('CatchUpSessionRunner', () => {
 
             // Advance time to allow session to start (uses fake timers)
             jest.advanceTimersByTime(10);
-            // Allow promise microtasks to settle
+            // Allow promise microtasks to settle - need multiple cycles for async chain
+            await Promise.resolve();
+            await Promise.resolve();
             await Promise.resolve();
 
             // Interrupt it
@@ -352,22 +440,24 @@ describe('CatchUpSessionRunner', () => {
 
     describe('resumeAfterInterruption', () => {
         it('should return early when NOT in catching_up_interrupted state', async () => {
-            // Set state to idle (not catching_up_interrupted)
-            mockStateManager.getState = mock(() => 'idle' as CatchUpState);
+            // Set mode to idle (not catching_up + interrupted)
+            mockMode = 'idle';
+            mockInterrupted = false;
 
             const runner = createCatchUpSessionRunner(deps);
             await runner.resumeAfterInterruption();
 
             // Should not run agent session or change state
             expect(mockRunAgentSession).not.toHaveBeenCalled();
-            expect(mockStateManager.setState).not.toHaveBeenCalled();
+            expect(mockStateManager.resume).not.toHaveBeenCalled();
             // Should not create abort controller or check inbox
             expect(mockInboxManager.getUnreadOverview).not.toHaveBeenCalled();
         });
 
         it('should complete when totalUnread === 0', async () => {
-            // Set up state as catching_up_interrupted
-            mockStateManager.getState = mock(() => 'catching_up_interrupted' as CatchUpState);
+            // Set up state as catching_up + interrupted
+            mockMode = 'catching_up';
+            mockInterrupted = true;
             mockInboxManager.getUnreadOverview = mock().mockReturnValue({
                 totalUnread: 0,
                 channels:    [],
@@ -380,13 +470,14 @@ describe('CatchUpSessionRunner', () => {
             expect(mockRunAgentSession).not.toHaveBeenCalled();
             expect(mockStoreCompletionSignal).toHaveBeenCalled();
             expect(mockDeleteInProgressSignal).toHaveBeenCalled();
-            expect(mockStateManager.setState).toHaveBeenCalledWith('idle');
+            expect(mockStateManager.goIdle).toHaveBeenCalled();
         });
 
         it('should use fallback values when no interrupting message', async () => {
-            // Set up state as catching_up_interrupted
-            mockStateManager.getState = mock(() => 'catching_up_interrupted' as CatchUpState);
-            mockStateManager.getViewedChannels = mock((): Set<ChannelId> => new Set<ChannelId>());
+            // Set up state as catching_up + interrupted
+            mockMode = 'catching_up';
+            mockInterrupted = true;
+            mockModeContext.viewedChannels = new Set<ChannelId>();
             mockInboxManager.getUnreadOverview = mock().mockReturnValue({
                 totalUnread: 3,
                 channels:    [{ channelId: createChannelId('123'), channelName: 'support', messageCount: 3 }],
@@ -407,13 +498,14 @@ describe('CatchUpSessionRunner', () => {
         });
 
         it('should use buildCatchUpInterruptedPrompt with viewed channels and interrupting message', async () => {
-            // Set up state as catching_up_interrupted
-            mockStateManager.getState = mock(() => 'catching_up_interrupted' as CatchUpState);
+            // Set up state as catching_up + interrupted
+            mockMode = 'catching_up';
+            mockInterrupted = true;
 
             // Mock viewed channels
             const viewedChannel1 = createChannelId('111');
             const viewedChannel2 = createChannelId('222');
-            mockStateManager.getViewedChannels = mock(() => new Set([viewedChannel1, viewedChannel2]));
+            mockModeContext.viewedChannels = new Set([viewedChannel1, viewedChannel2]);
 
             // Mock channel name resolution
             const mockResolveChannelName = mock((channelId: ChannelId) => {
@@ -445,9 +537,6 @@ describe('CatchUpSessionRunner', () => {
             };
             runner.interrupt(interruptMessage);
 
-            // Set state back to interrupted for resumeAfterInterruption
-            mockStateManager.getState = mock(() => 'catching_up_interrupted' as CatchUpState);
-
             // Now resume
             await runner.resumeAfterInterruption();
 
@@ -464,8 +553,9 @@ describe('CatchUpSessionRunner', () => {
         });
 
         it('should continue catch-up when unread > 0', async () => {
-            // Set up state as catching_up_interrupted
-            mockStateManager.getState = mock(() => 'catching_up_interrupted' as CatchUpState);
+            // Set up state as catching_up + interrupted
+            mockMode = 'catching_up';
+            mockInterrupted = true;
             mockInboxManager.getUnreadOverview = mock().mockReturnValue({
                 totalUnread: 3,
                 channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 3 }],
@@ -475,16 +565,17 @@ describe('CatchUpSessionRunner', () => {
             const runner = createCatchUpSessionRunner(deps);
             await runner.resumeAfterInterruption();
 
-            expect(mockStateManager.setState).toHaveBeenCalledWith('catching_up');
+            expect(mockStateManager.resume).toHaveBeenCalled();
             expect(mockRunAgentSession).toHaveBeenCalled();
             // Should call completeCatchUp when completed
             expect(mockStoreCompletionSignal).toHaveBeenCalled();
-            expect(mockStateManager.setState).toHaveBeenCalledWith('idle');
+            expect(mockStateManager.goIdle).toHaveBeenCalled();
         });
 
         it('should complete when unread == 0', async () => {
-            // Set up state as catching_up_interrupted
-            mockStateManager.getState = mock(() => 'catching_up_interrupted' as CatchUpState);
+            // Set up state as catching_up + interrupted
+            mockMode = 'catching_up';
+            mockInterrupted = true;
             mockInboxManager.getUnreadOverview = mock().mockReturnValue({
                 totalUnread: 0,
                 channels:    [],
@@ -494,12 +585,13 @@ describe('CatchUpSessionRunner', () => {
             await runner.resumeAfterInterruption();
 
             expect(mockStoreCompletionSignal).toHaveBeenCalled();
-            expect(mockStateManager.setState).toHaveBeenCalledWith('idle');
+            expect(mockStateManager.goIdle).toHaveBeenCalled();
         });
 
         it('should NOT call completeCatchUp when session is interrupted during resume', async () => {
-            // Set up state as catching_up_interrupted
-            mockStateManager.getState = mock(() => 'catching_up_interrupted' as CatchUpState);
+            // Set up state as catching_up + interrupted
+            mockMode = 'catching_up';
+            mockInterrupted = true;
             mockInboxManager.getUnreadOverview = mock().mockReturnValue({
                 totalUnread: 3,
                 channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 3 }],
@@ -512,9 +604,9 @@ describe('CatchUpSessionRunner', () => {
 
             // completeCatchUp should NOT be called
             expect(mockStoreCompletionSignal).not.toHaveBeenCalled();
-            // setState should have been called with 'catching_up' but NOT 'idle'
-            expect(mockStateManager.setState).toHaveBeenCalledWith('catching_up');
-            expect(mockStateManager.setState).not.toHaveBeenCalledWith('idle');
+            // resume should have been called but NOT goIdle
+            expect(mockStateManager.resume).toHaveBeenCalled();
+            expect(mockStateManager.goIdle).not.toHaveBeenCalled();
         });
     });
 
@@ -537,18 +629,11 @@ describe('CatchUpSessionRunner', () => {
             expect(signal.completedAt).toBeDefined();
         });
 
-        it('should clear viewed channels', async () => {
+        it('should transition to idle', async () => {
             const runner = createCatchUpSessionRunner(deps);
             await runner.completeCatchUp(2, 5);
 
-            expect(mockStateManager.clearViewedChannels).toHaveBeenCalled();
-        });
-
-        it('should set state to idle', async () => {
-            const runner = createCatchUpSessionRunner(deps);
-            await runner.completeCatchUp(2, 5);
-
-            expect(mockStateManager.setState).toHaveBeenCalledWith('idle');
+            expect(mockStateManager.goIdle).toHaveBeenCalled();
         });
     });
 
@@ -579,7 +664,9 @@ describe('CatchUpSessionRunner', () => {
 
             // Advance time to allow session to start (uses fake timers)
             jest.advanceTimersByTime(10);
-            // Allow promise microtasks to settle
+            // Allow promise microtasks to settle - need multiple cycles for async chain
+            await Promise.resolve();
+            await Promise.resolve();
             await Promise.resolve();
 
             const controller = runner.getAbortController();

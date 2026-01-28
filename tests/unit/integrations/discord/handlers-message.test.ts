@@ -368,16 +368,33 @@ describe('Discord Event Handlers', () => {
             expect(mockOnMessage).toHaveBeenCalled();
         });
 
+        const mockBotStateManager = {
+            shouldUpdatePresence:   mock(() => true),
+            updateActivityPhase:    mock(() => undefined),
+            clearActivityPhase:     mock(() => undefined),
+            getMode:                mock(() => 'idle' as const),
+            goIdle:                 mock(() => undefined),
+            startProcessingMessage: mock(() => undefined),
+        };
+
         it('should accept optional presenceManager and agent in options', async () => {
             const mockPresenceManager = {
-                start:        mock(() => undefined),
-                stop:         mock(() => undefined),
-                shouldUpdate: mock(() => true),
-                updatePhase:  mock(async () => undefined),
+                start:       mock(() => undefined),
+                stop:        mock(() => undefined),
+                updatePhase: mock(async () => undefined),
             };
 
             const mockAgent = {
                 chat: mock(async () => 'agent response'),
+            };
+
+            const mockBotStateManager = {
+                shouldUpdatePresence:   mock(() => true),
+                updateActivityPhase:    mock(() => undefined),
+                clearActivityPhase:     mock(() => undefined),
+                getMode:                mock(() => 'idle' as const),
+                goIdle:                 mock(() => undefined),
+                startProcessingMessage: mock(() => undefined),
             };
 
             const handler = createMessageHandler({
@@ -388,6 +405,8 @@ describe('Discord Event Handlers', () => {
                 presenceManager:     mockPresenceManager as any,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
                 agent:               mockAgent as any,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+                botStateManager:     mockBotStateManager as any,
             });
 
             await handler(mockMessage);
@@ -431,10 +450,9 @@ describe('Discord Event Handlers', () => {
 
             it('should pass dynamicStatusGenerator to statusMiddleware when all deps present', async () => {
                 const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
+                    start:       mock(() => undefined),
+                    stop:        mock(() => undefined),
+                    updatePhase: mock(async () => undefined),
                 };
 
                 const mockAgent = {
@@ -455,6 +473,8 @@ describe('Discord Event Handlers', () => {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
                     agent:                  mockAgent as any,
                     dynamicStatusGenerator: mockDynamicStatusGenerator,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+                    botStateManager:        mockBotStateManager as any,
                 });
 
                 await handler(mockMessage);
@@ -466,10 +486,9 @@ describe('Discord Event Handlers', () => {
 
             it('should work without dynamicStatusGenerator (backward compatible)', async () => {
                 const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
+                    start:       mock(() => undefined),
+                    stop:        mock(() => undefined),
+                    updatePhase: mock(async () => undefined),
                 };
 
                 const mockAgent = {
@@ -485,6 +504,8 @@ describe('Discord Event Handlers', () => {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
                     agent:               mockAgent as any,
                     // dynamicStatusGenerator NOT provided
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+                    botStateManager:     mockBotStateManager as any,
                 });
 
                 await handler(mockMessage);
@@ -497,10 +518,9 @@ describe('Discord Event Handlers', () => {
         describe('statusMiddleware creation (logical AND behavior)', () => {
             it('should NOT use statusMiddleware when only presenceManager is provided (no agent)', async () => {
                 const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
+                    start:       mock(() => undefined),
+                    stop:        mock(() => undefined),
+                    updatePhase: mock(async () => undefined),
                 };
 
                 // Create onMessage mock that returns a value so we can verify it was called
@@ -553,10 +573,9 @@ describe('Discord Event Handlers', () => {
                 // This test specifically kills the && vs || mutant by verifying
                 // that agent.chat is ONLY called when BOTH are present
                 const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
+                    start:       mock(() => undefined),
+                    stop:        mock(() => undefined),
+                    updatePhase: mock(async () => undefined),
                 };
 
                 const mockAgent = {
@@ -573,6 +592,8 @@ describe('Discord Event Handlers', () => {
                     presenceManager:     mockPresenceManager as any,
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
                     agent:               mockAgent as any,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+                    botStateManager:     mockBotStateManager as any,
                 });
 
                 await handler(mockMessage);
@@ -600,6 +621,8 @@ describe('Discord Event Handlers', () => {
                     presenceManager:     undefined,
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
                     agent:               mockAgent as any,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+                    botStateManager:     mockBotStateManager as any,
                 });
 
                 await handler(mockMessage);
@@ -614,10 +637,9 @@ describe('Discord Event Handlers', () => {
                 // This test ensures that having ONLY presenceManager doesn't trigger middleware
                 // If && was mutated to ||, this test would fail because middleware would be truthy
                 const mockPresenceManager = {
-                    start:        mock(() => undefined),
-                    stop:         mock(() => undefined),
-                    shouldUpdate: mock(() => true),
-                    updatePhase:  mock(async () => undefined),
+                    start:       mock(() => undefined),
+                    stop:        mock(() => undefined),
+                    updatePhase: mock(async () => undefined),
                 };
 
                 const onMessageMock = mock(async () => 'onMessage response');
@@ -629,6 +651,8 @@ describe('Discord Event Handlers', () => {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
                     presenceManager:     mockPresenceManager as any,
                     agent:               undefined,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
+                    botStateManager:     mockBotStateManager as any,
                 });
 
                 await handler(mockMessage);

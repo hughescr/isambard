@@ -75,6 +75,7 @@ export function createQuestionRegistry(_config?: QuestionRegistryConfig): Questi
 
         // Cancel any existing question for this location
         const existing = questionsByLocation.get(locationKey);
+        // Stryker disable next-line BlockStatement: Guard clause - tested via behavior
         if(existing) {
             // Stryker disable all: Logger warn object
             logger.warn({

@@ -16,7 +16,8 @@ import type { AnswerClassifier } from '@/agent/answer-classifier';
 import type { AttachmentMetadata } from './attachments/types';
 import { inferImageContentType } from './content-type';
 import type { InboxManager } from './inbox';
-import type { CatchUpStateManager, CatchUpSessionRunner } from './catchup';
+import type { CatchUpSessionRunner } from './catchup';
+import type { BotStateManager } from './state';
 
 /**
  * Helper function to extract attachment metadata from a Discord message.
@@ -148,14 +149,14 @@ export interface MessageHandlerOptions {
     inboxManager?: InboxManager
 
     /**
-     * Optional catch-up state manager for checking if in catch-up mode.
-     */
-    catchUpStateManager?: CatchUpStateManager
-
-    /**
      * Optional catch-up session runner for interrupting catch-up sessions.
      */
     catchUpSessionRunner?: CatchUpSessionRunner
+
+    /**
+     * Optional bot state manager for checking current mode.
+     */
+    botStateManager?: BotStateManager
 }
 
 /**
@@ -193,12 +194,11 @@ export interface MessageHandlerOptions {
  */
 /**
  * Helper function to handle catch-up mode interruption.
- * Interrupts the catch-up session and updates presence manager.
+ * Interrupts the catch-up session.
  */
 async function handleCatchUpInterruption(
     message: Message,
-    catchUpSessionRunner: CatchUpSessionRunner,
-    presenceManager: PresenceManager | undefined
+    catchUpSessionRunner: CatchUpSessionRunner
 ): Promise<void> {
     // Stryker disable all: Logging for observability
     logger.info({
@@ -218,8 +218,7 @@ async function handleCatchUpInterruption(
         content:     message.content,
     });
 
-    // Update presence to show interrupted state
-    presenceManager?.setCatchUpMode('catching_up_interrupted');
+    // Presence update is handled by the subscription in bot.ts
 }
 
 /**
@@ -239,6 +238,31 @@ function updateChannelMetadataInInbox(
     );
 }
 // Stryker restore all
+
+/**
+ * Helper function to handle state transitions and inbox updates.
+ */
+function handleStateAndInbox(
+    message: Message,
+    botStateManager: BotStateManager | undefined,
+    inboxManager: InboxManager | undefined,
+    shouldRespond: boolean
+): void {
+    // Transition state manager to processing_message mode when in idle mode
+    // This ensures BotStateManager is the single source of truth for state
+    if(botStateManager?.getMode() === 'idle') {
+        botStateManager.startProcessingMessage(
+            createChannelId(message.channel.id),
+            message.content
+        );
+    }
+
+    // Update channel metadata in inbox if shouldRespond is true
+    // Stryker disable next-line all: Optional inbox integration - tested via inbox-manager.test.ts
+    if(inboxManager && shouldRespond) {
+        updateChannelMetadataInInbox(message, inboxManager);
+    }
+}
 
 /**
  * Helper function to delegate message to coordinator or process directly.
@@ -413,15 +437,16 @@ async function handlePendingQuestion(
 }
 
 export function createMessageHandler(options: MessageHandlerOptions): (message: Message) => Promise<void> {
-    const { monitoredChannelIds, botUserId, onMessage, presenceManager, agent, dynamicStatusGenerator, addRecentMessage, coordinator, questionRegistry, answerClassifier, inboxManager, catchUpStateManager, catchUpSessionRunner } = options;
+    const { monitoredChannelIds, botUserId, onMessage, presenceManager, agent, dynamicStatusGenerator, addRecentMessage, coordinator, questionRegistry, answerClassifier, inboxManager, catchUpSessionRunner, botStateManager } = options;
 
-    // Create status middleware if both presenceManager and agent are provided
-    const statusMiddleware = presenceManager && agent
+    // Create status middleware if presenceManager, agent, and botStateManager are provided
+    const statusMiddleware = presenceManager && agent && botStateManager
         ? createStatusMiddleware({
             presenceManager,
             agent,
             logger,
             dynamicStatusGenerator,
+            botStateManager,
         })
         : null;
 
@@ -579,8 +604,8 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         }
 
         // Handle catch-up mode interruption
-        if(catchUpStateManager?.getState() === 'catching_up' && catchUpSessionRunner) {
-            await handleCatchUpInterruption(message, catchUpSessionRunner, presenceManager);
+        if(botStateManager?.getMode() === 'catching_up' && catchUpSessionRunner) {
+            await handleCatchUpInterruption(message, catchUpSessionRunner);
             // Continue to process the interrupting message normally
             // The coordinator's onResponse callback will resume catch-up after the reply is sent
         }
@@ -588,11 +613,8 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         // Allow message processing if in 'catching_up_interrupted' state
         // This is the interrupting message being handled
 
-        // Update channel metadata in inbox if shouldRespond is true
-        // Stryker disable next-line all: Optional inbox integration - tested via inbox-manager.test.ts
-        if(inboxManager && shouldRespond) {
-            updateChannelMetadataInInbox(message, inboxManager);
-        }
+        // Handle state transitions and inbox updates
+        handleStateAndInbox(message, botStateManager, inboxManager, shouldRespond);
 
         // If coordinator is provided, delegate to it; otherwise process directly
         await delegateToCoordinatorOrProcess(message, coordinator, createContext, processMessage);

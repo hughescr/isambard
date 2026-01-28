@@ -42,28 +42,90 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { constant as _constant, endsWith as _endsWith, filter as _filter, find as _find, keys as _keys, repeat as _repeat, some as _some, startsWith as _startsWith } from 'lodash';
 import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
+import { shouldGenerateSynopsis } from '@/integrations/discord/presence/stream-event-handler';
 import type { PresencePhase, SynopsisContext } from '@/integrations/discord/presence/types';
 import type { AgentStreamEvent } from '@/agent/types';
 import type { DiscordMessageContext } from '@/integrations/discord/types';
 import type { DynamicStatusGenerator } from '@/integrations/discord/presence/status-generator-dynamic';
+import type { BotStateManager } from '@/integrations/discord/state/types';
 
 // Helper to wait for async safeUpdatePhase promises to settle
 // Using queueMicrotask instead of setImmediate for faster promise resolution
 const flushPromises = (): Promise<void> => new Promise((resolve) => { queueMicrotask(resolve); });
 
+describe('shouldGenerateSynopsis', () => {
+    test('should return false when dynamicStatusGenerator is undefined even if shouldUpdatePresence returns true', () => {
+        const mockBotStateManager = {
+            shouldUpdatePresence: mock(_constant(true)),
+        } as unknown as BotStateManager;
+
+        const result = shouldGenerateSynopsis(undefined, mockBotStateManager);
+
+        expect(result).toBe(false);
+        // Verify shouldUpdatePresence was NOT called (short-circuit)
+        expect(mockBotStateManager.shouldUpdatePresence).not.toHaveBeenCalled();
+    });
+
+    test('should return false when shouldUpdatePresence returns false even if dynamicStatusGenerator exists', () => {
+        const mockDynamicStatusGenerator = {
+            generateSynopsis: mock(_constant(Promise.resolve('test'))),
+        } as unknown as DynamicStatusGenerator;
+
+        const mockBotStateManager = {
+            shouldUpdatePresence: mock(_constant(false)),
+        } as unknown as BotStateManager;
+
+        const result = shouldGenerateSynopsis(mockDynamicStatusGenerator, mockBotStateManager);
+
+        expect(result).toBe(false);
+        expect(mockBotStateManager.shouldUpdatePresence).toHaveBeenCalled();
+    });
+
+    test('should return false when botStateManager is undefined even if dynamicStatusGenerator exists', () => {
+        const mockDynamicStatusGenerator = {
+            generateSynopsis: mock(_constant(Promise.resolve('test'))),
+        } as unknown as DynamicStatusGenerator;
+
+        const result = shouldGenerateSynopsis(mockDynamicStatusGenerator, undefined);
+
+        expect(result).toBe(false);
+    });
+
+    test('should return true ONLY when BOTH dynamicStatusGenerator exists AND shouldUpdatePresence returns true', () => {
+        const mockDynamicStatusGenerator = {
+            generateSynopsis: mock(_constant(Promise.resolve('test'))),
+        } as unknown as DynamicStatusGenerator;
+
+        const mockBotStateManager = {
+            shouldUpdatePresence: mock(_constant(true)),
+        } as unknown as BotStateManager;
+
+        const result = shouldGenerateSynopsis(mockDynamicStatusGenerator, mockBotStateManager);
+
+        expect(result).toBe(true);
+        expect(mockBotStateManager.shouldUpdatePresence).toHaveBeenCalled();
+    });
+
+    test('should return false when both are undefined', () => {
+        const result = shouldGenerateSynopsis(undefined, undefined);
+
+        expect(result).toBe(false);
+    });
+});
+
 describe('StatusMiddleware', () => {
     let mockPresenceManager: any;
     let mockAgent: any;
     let mockLogger: any;
+    let mockBotStateManager: any;
     let messageContext: DiscordMessageContext;
 
     beforeEach(() => {
         mockPresenceManager = {
-            shouldUpdate:   mock(_constant(true)),
-            updatePhase:    mock(async () => undefined),
-            setCatchUpMode: mock(() => undefined),
-            start:          mock(() => undefined),
-            stop:           mock(() => undefined),
+            updatePhase:           mock(async () => undefined),
+            transitionCatchUpMode: mock(() => undefined),
+            start:                 mock(() => undefined),
+            stop:                  mock(() => undefined),
         };
 
         mockAgent = {
@@ -75,6 +137,15 @@ describe('StatusMiddleware', () => {
             warn:  mock(() => undefined),
             error: mock(() => undefined),
             info:  mock(() => undefined),
+        };
+
+        mockBotStateManager = {
+            shouldUpdatePresence: mock(_constant(true)),
+            updateActivityPhase:  mock(() => undefined),
+            clearActivityPhase:   mock(() => undefined),
+            recordPresenceUpdate: mock(() => undefined),
+            getMode:              mock(_constant('idle' as const)),
+            goIdle:               mock(() => undefined),
         };
 
         messageContext = {
@@ -105,12 +176,13 @@ describe('StatusMiddleware', () => {
                 presenceManager: mockPresenceManager,
                 agent:           wrappedAgent as any,
                 logger:          mockLogger,
+                botStateManager: mockBotStateManager,
             });
 
             await middleware(messageContext);
 
-            // Should update to thinking phase when assistant event occurs
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledWith(
+            // Should update activity phase to thinking when assistant event occurs
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledWith(
                 expect.objectContaining({ type: 'thinking' })
             );
         });
@@ -129,11 +201,12 @@ describe('StatusMiddleware', () => {
                 presenceManager: mockPresenceManager,
                 agent:           wrappedAgent as any,
                 logger:          mockLogger,
+                botStateManager: mockBotStateManager,
             });
 
             await middleware(messageContext);
 
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledWith(
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledWith(
                 expect.objectContaining({
                     type:     'using_tool',
                     toolName: 'mcp__memory__search'
@@ -155,16 +228,17 @@ describe('StatusMiddleware', () => {
                 presenceManager: mockPresenceManager,
                 agent:           wrappedAgent as any,
                 logger:          mockLogger,
+                botStateManager: mockBotStateManager,
             });
 
             await middleware(messageContext);
 
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledWith(
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledWith(
                 expect.objectContaining({ type: 'responding' })
             );
         });
 
-        test('should map result event to idle phase', async () => {
+        test('should map result event to clear activity phase', async () => {
             const wrappedAgent = {
                 chat: mock(async (_ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
                     if(onEvent) {
@@ -178,13 +252,13 @@ describe('StatusMiddleware', () => {
                 presenceManager: mockPresenceManager,
                 agent:           wrappedAgent as any,
                 logger:          mockLogger,
+                botStateManager: mockBotStateManager,
             });
 
             await middleware(messageContext);
 
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledWith(
-                expect.objectContaining({ type: 'idle' })
-            );
+            // Result event triggers clearActivityPhase (idle transition)
+            expect(mockBotStateManager.clearActivityPhase).toHaveBeenCalled();
         });
     });
 
@@ -198,6 +272,7 @@ describe('StatusMiddleware', () => {
                 presenceManager: mockPresenceManager,
                 agent:           mockAgent,
                 logger:          mockLogger,
+                botStateManager: mockBotStateManager,
             });
 
             await middleware(messageContext, mockChannel as any);
@@ -223,6 +298,7 @@ describe('StatusMiddleware', () => {
                 presenceManager: mockPresenceManager,
                 agent:           wrappedAgent as any,
                 logger:          mockLogger,
+                botStateManager: mockBotStateManager,
             });
 
             await middleware(messageContext, mockChannel as any);
@@ -230,10 +306,8 @@ describe('StatusMiddleware', () => {
             // Typing started
             expect(mockChannel.sendTyping).toHaveBeenCalled();
 
-            // Should transition to idle after result event (which stops typing)
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledWith(
-                expect.objectContaining({ type: 'idle' })
-            );
+            // Should clear activity phase after completion
+            expect(mockBotStateManager.clearActivityPhase).toHaveBeenCalled();
         });
     });
 
@@ -249,6 +323,7 @@ describe('StatusMiddleware', () => {
                 presenceManager: mockPresenceManager,
                 agent:           errorAgent as any,
                 logger:          mockLogger,
+                botStateManager: mockBotStateManager,
             });
 
             const result = await middleware(messageContext);
@@ -259,10 +334,11 @@ describe('StatusMiddleware', () => {
             // Should log error
             expect(mockLogger.error).toHaveBeenCalled();
 
-            // Should transition to idle on error
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledWith(
-                expect.objectContaining({ type: 'idle' })
-            );
+            // Verify cleanup: should clear activity phase when using botStateManager
+            expect(mockBotStateManager.clearActivityPhase).toHaveBeenCalled();
+
+            // Should check mode to determine if goIdle should be called
+            expect(mockBotStateManager.getMode).toHaveBeenCalled();
         });
 
         test('should handle stream callback errors without crashing', async () => {
@@ -276,26 +352,72 @@ describe('StatusMiddleware', () => {
                 }),
             };
 
+            // Bot state manager that throws on updateActivityPhase
+            const errorBotStateManager = {
+                shouldUpdatePresence: mock(_constant(true)),
+                updateActivityPhase:  mock(() => {
+                    throw new Error('Bot state update failed');
+                }),
+                clearActivityPhase:   mock(() => undefined),
+                recordPresenceUpdate: mock(() => undefined),
+                getMode:              mock(_constant('idle' as const)),
+                goIdle:               mock(() => undefined),
+            };
+
             // Presence manager that throws
             const errorPresenceManager = {
-                shouldUpdate: mock(_constant(true)),
-                updatePhase:  mock(async () => {
+                updatePhase: mock(async () => {
                     throw new Error('Presence update failed');
                 }),
-                start:          mock(() => undefined),
-                stop:           mock(() => undefined),
-                setCatchUpMode: mock(() => undefined),
+                start:                 mock(() => undefined),
+                stop:                  mock(() => undefined),
+                transitionCatchUpMode: mock(() => undefined),
             };
 
             const middleware = createStatusMiddleware({
                 presenceManager: errorPresenceManager,
                 agent:           wrappedAgent as any,
                 logger:          mockLogger,
+                botStateManager: errorBotStateManager as unknown as BotStateManager,
             });
 
             // Should not throw (errors caught internally)
             const result = await middleware(messageContext);
             expect(result).toBe('Response');
+
+            // Verify cleanup still happens even when stream callback errors occur
+            expect(errorBotStateManager.clearActivityPhase).toHaveBeenCalled();
+            expect(mockLogger.error).toHaveBeenCalled();
+        });
+
+        test('should safely ignore unknown event types without crashing or triggering presence updates', async () => {
+            const wrappedAgent = {
+                chat: mock(async (_ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Send an unknown event type that the middleware doesn't recognize
+                        onEvent({ type: 'unexpected_event_type' } as any);
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager: mockPresenceManager,
+                agent:           wrappedAgent as any,
+                logger:          mockLogger,
+                botStateManager: mockBotStateManager,
+            });
+
+            // Should not crash
+            const result = await middleware(messageContext);
+            expect(result).toBe('Response');
+
+            // Verify NO presence update was triggered for the unknown event
+            // (updateActivityPhase should not be called for unknown events)
+            expect(mockBotStateManager.updateActivityPhase).not.toHaveBeenCalled();
+
+            // Verify cleanup still happens normally
+            expect(mockBotStateManager.clearActivityPhase).toHaveBeenCalled();
         });
     });
 
@@ -316,6 +438,7 @@ describe('StatusMiddleware', () => {
                 presenceManager: mockPresenceManager,
                 agent:           wrappedAgent as any,
                 logger:          mockLogger,
+                botStateManager: mockBotStateManager,
             });
 
             const context2 = { ...messageContext, messageId: 'msg-456' as any };
@@ -343,6 +466,7 @@ describe('StatusMiddleware', () => {
                 presenceManager: mockPresenceManager,
                 agent:           legacyAgent as any,
                 logger:          mockLogger,
+                botStateManager: mockBotStateManager,
             });
 
             const result = await middleware(messageContext);
@@ -365,6 +489,18 @@ describe('StatusMiddleware', () => {
                 }),
             };
 
+            const capturingBotStateManager = {
+                shouldUpdatePresence: mock(_constant(true)),
+                updateActivityPhase:  mock((phase: any) => {
+                    if(phase.type === 'using_tool') {
+                        toolNames.push(phase.toolName);
+                    }
+                }),
+                clearActivityPhase: mock(() => undefined),
+                getMode:            mock(_constant('idle' as const)),
+                goIdle:             mock(() => undefined),
+            };
+
             const capturingPresenceManager = {
                 updatePhase: mock(async (phase: PresencePhase) => {
                     if(phase.type === 'using_tool') {
@@ -379,6 +515,7 @@ describe('StatusMiddleware', () => {
                 presenceManager: capturingPresenceManager as any,
                 agent:           wrappedAgent as any,
                 logger:          mockLogger,
+                botStateManager: capturingBotStateManager as unknown as BotStateManager,
             });
 
             await middleware(messageContext);
@@ -401,13 +538,14 @@ describe('StatusMiddleware', () => {
                 presenceManager: mockPresenceManager,
                 agent:           wrappedAgent as any,
                 logger:          mockLogger,
+                botStateManager: mockBotStateManager,
             });
 
             // Should not crash
             await middleware(messageContext);
 
-            // Should still update to using_tool with 'unknown' as fallback
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledWith(
+            // Should still update activity phase with 'unknown' as fallback
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledWith(
                 expect.objectContaining({
                     type:     'using_tool',
                     toolName: 'unknown'
@@ -422,6 +560,7 @@ describe('StatusMiddleware', () => {
                 presenceManager: mockPresenceManager,
                 agent:           mockAgent,
                 logger:          mockLogger,
+                botStateManager: mockBotStateManager,
             });
 
             // Call without channel argument
@@ -447,6 +586,16 @@ describe('StatusMiddleware', () => {
                 }),
             };
 
+            const capturingBotStateManager = {
+                shouldUpdatePresence: mock(_constant(true)),
+                updateActivityPhase:  mock((phase: any) => {
+                    phases.push(phase);
+                }),
+                clearActivityPhase: mock(() => undefined),
+                getMode:            mock(_constant('idle' as const)),
+                goIdle:             mock(() => undefined),
+            };
+
             const capturingPresenceManager = {
                 updatePhase: mock(async (phase: PresencePhase) => {
                     phases.push(phase);
@@ -459,13 +608,13 @@ describe('StatusMiddleware', () => {
                 presenceManager: capturingPresenceManager as any,
                 agent:           wrappedAgent as any,
                 logger:          mockLogger,
+                botStateManager: capturingBotStateManager as unknown as BotStateManager,
             });
 
             await middleware(messageContext); // No channel
 
-            // Should still update presence phases
+            // Should still update activity phases
             expect(_some(phases, ['type', 'responding'])).toBe(true);
-            expect(_some(phases, ['type', 'idle'])).toBe(true);
         });
     });
 
@@ -474,34 +623,25 @@ describe('StatusMiddleware', () => {
             { scenario: 'after successful completion', agent: { chat: mock(_constant(Promise.resolve('Response'))) } },
             { scenario: 'after error', agent: { chat: mock(async () => { throw new Error('Test error'); }) } },
         ])('should transition to idle with Date $scenario', async ({ agent }) => {
-            const phases: PresencePhase[] = [];
-
-            const capturingPresenceManager = {
-                updatePhase: mock(async (phase: PresencePhase) => {
-                    phases.push(phase);
-                }),
-                start: mock(() => undefined),
-                stop:  mock(() => undefined),
+            const capturingBotStateManager = {
+                shouldUpdatePresence: mock(_constant(true)),
+                updateActivityPhase:  mock(() => undefined),
+                clearActivityPhase:   mock(() => undefined),
+                getMode:              mock(_constant('idle' as const)),
+                goIdle:               mock(() => undefined),
             };
 
             const middleware = createStatusMiddleware({
-                presenceManager: capturingPresenceManager as any,
+                presenceManager: mockPresenceManager,
                 agent:           agent as any,
                 logger:          mockLogger,
+                botStateManager: capturingBotStateManager as unknown as BotStateManager,
             });
 
             await middleware(messageContext);
 
-            // Should have at least one idle phase
-            const idlePhases = _filter(phases, ['type', 'idle']);
-            expect(idlePhases.length).toBeGreaterThanOrEqual(1);
-
-            // Last phase should be idle with Date
-            const lastPhase = phases[phases.length - 1];
-            expect(lastPhase?.type).toBe('idle');
-            if(lastPhase?.type === 'idle') {
-                expect(lastPhase.since).toBeInstanceOf(Date);
-            }
+            // Should clear activity phase on completion
+            expect(capturingBotStateManager.clearActivityPhase).toHaveBeenCalled();
         });
     });
 
@@ -518,6 +658,7 @@ describe('StatusMiddleware', () => {
                 presenceManager: mockPresenceManager,
                 agent:           mockAgent,
                 logger:          mockLogger,
+                botStateManager: mockBotStateManager,
             });
 
             // Error is caught in try/catch, returns null
@@ -528,6 +669,9 @@ describe('StatusMiddleware', () => {
                 { error: typingError, messageId: 'msg-123' },
                 'Error processing message in status middleware'
             );
+
+            // Verify cleanup: should clear activity phase on error
+            expect(mockBotStateManager.clearActivityPhase).toHaveBeenCalled();
         });
     });
 
@@ -546,21 +690,33 @@ describe('StatusMiddleware', () => {
                 }),
             };
 
+            const errorBotStateManager = {
+                shouldUpdatePresence: mock(_constant(true)),
+                updateActivityPhase:  mock(() => {
+                    callCount++;
+                    throw new Error(`Bot state error ${callCount}`);
+                }),
+                clearActivityPhase:   mock(() => undefined),
+                recordPresenceUpdate: mock(() => undefined),
+                getMode:              mock(_constant('idle' as const)),
+                goIdle:               mock(() => undefined),
+            };
+
             const errorPresenceManager = {
-                shouldUpdate: mock(_constant(true)),
-                updatePhase:  mock(async () => {
+                updatePhase: mock(async () => {
                     callCount++;
                     throw new Error(`Presence error ${callCount}`);
                 }),
-                start:          mock(() => undefined),
-                stop:           mock(() => undefined),
-                setCatchUpMode: mock(() => undefined),
+                start:                 mock(() => undefined),
+                stop:                  mock(() => undefined),
+                transitionCatchUpMode: mock(() => undefined),
             };
 
             const middleware = createStatusMiddleware({
                 presenceManager: errorPresenceManager,
                 agent:           wrappedAgent as any,
                 logger:          mockLogger,
+                botStateManager: errorBotStateManager as unknown as BotStateManager,
             });
 
             const result = await middleware(messageContext);
@@ -570,6 +726,8 @@ describe('StatusMiddleware', () => {
             expect(result).toBe('Response');
             // Errors should be logged
             expect(mockLogger.error).toHaveBeenCalled();
+            // Cleanup should still happen
+            expect(errorBotStateManager.clearActivityPhase).toHaveBeenCalled();
         });
 
         test('should still attempt idle transition when agent throws after events', async () => {
@@ -581,6 +739,16 @@ describe('StatusMiddleware', () => {
                     }
                     throw new Error('Agent failed mid-stream');
                 }),
+            };
+
+            const capturingBotStateManager = {
+                shouldUpdatePresence: mock(_constant(true)),
+                updateActivityPhase:  mock((phase: any) => {
+                    phases.push(phase);
+                }),
+                clearActivityPhase: mock(() => undefined),
+                getMode:            mock(_constant('idle' as const)),
+                goIdle:             mock(() => undefined),
             };
 
             const capturingPresenceManager = {
@@ -595,6 +763,7 @@ describe('StatusMiddleware', () => {
                 presenceManager: capturingPresenceManager as any,
                 agent:           wrappedAgent as any,
                 logger:          mockLogger,
+                botStateManager: capturingBotStateManager as unknown as BotStateManager,
             });
 
             const result = await middleware(messageContext);
@@ -603,8 +772,8 @@ describe('StatusMiddleware', () => {
             expect(result).toBe(null);
             // Should have responding phase from before error
             expect(_some(phases, ['type', 'responding'])).toBe(true);
-            // Should have idle phase from error recovery
-            expect(_some(phases, ['type', 'idle'])).toBe(true);
+            // Should clear activity phase from error recovery
+            expect(capturingBotStateManager.clearActivityPhase).toHaveBeenCalled();
         });
 
         test('should return null and log when sendTyping fails before agent.chat', async () => {
@@ -619,6 +788,7 @@ describe('StatusMiddleware', () => {
                 presenceManager: mockPresenceManager,
                 agent:           mockAgent,
                 logger:          mockLogger,
+                botStateManager: mockBotStateManager,
             });
 
             const result = await middleware(messageContext, mockChannel as any);
@@ -630,6 +800,9 @@ describe('StatusMiddleware', () => {
                 expect.objectContaining({ error: typingError }),
                 'Error processing message in status middleware'
             );
+
+            // Verify cleanup: should clear activity phase on error
+            expect(mockBotStateManager.clearActivityPhase).toHaveBeenCalled();
         });
     });
 
@@ -672,10 +845,12 @@ describe('StatusMiddleware', () => {
                 agent:                  wrappedAgent as any,
                 logger:                 mockLogger,
                 dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+                botStateManager:        mockBotStateManager,
             });
 
             await middleware(messageContext);
             await flushPromises();
+            await flushPromises(); // Extra flush for nested async synopsis generation
 
             // Verify thinking content accumulation
             const thinkingContexts = _filter(capturedContexts, ['phase', 'thinking']);
@@ -720,10 +895,12 @@ describe('StatusMiddleware', () => {
                 agent:                  wrappedAgent as any,
                 logger:                 mockLogger,
                 dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+                botStateManager:        mockBotStateManager,
             });
 
             await middleware(messageContext);
             await flushPromises();
+            await flushPromises(); // Extra flush for nested async synopsis generation
 
             const thinkingContext = _find(capturedContexts, ['phase', 'thinking']);
             expect(thinkingContext?.thinkingContent).toBeUndefined();
@@ -749,6 +926,7 @@ describe('StatusMiddleware', () => {
                 presenceManager: mockPresenceManager,
                 agent:           mockAgent,
                 logger:          localMockLogger as any,
+                botStateManager: mockBotStateManager,
             });
 
             await middleware(messageContext, mockChannel as any);
@@ -784,6 +962,16 @@ describe('StatusMiddleware', () => {
                 }),
             };
 
+            const capturingBotStateManager = {
+                shouldUpdatePresence: mock(_constant(true)),
+                updateActivityPhase:  mock((phase: any) => {
+                    phases.push(phase);
+                }),
+                clearActivityPhase: mock(() => undefined),
+                getMode:            mock(_constant('idle' as const)),
+                goIdle:             mock(() => undefined),
+            };
+
             const capturingPresenceManager = {
                 updatePhase: mock(async (phase: PresencePhase) => {
                     phases.push(phase);
@@ -796,6 +984,7 @@ describe('StatusMiddleware', () => {
                 presenceManager: capturingPresenceManager as any,
                 agent:           wrappedAgent as any,
                 logger:          mockLogger,
+                botStateManager: capturingBotStateManager as unknown as BotStateManager,
             });
 
             await middleware(messageContext);
@@ -805,12 +994,43 @@ describe('StatusMiddleware', () => {
             const thinkingPhases = _filter(phases, ['type', 'thinking']);
             const respondingPhases = _filter(phases, ['type', 'responding']);
             const toolPhases = _filter(phases, ['type', 'using_tool']);
-            const idlePhases = _filter(phases, ['type', 'idle']);
 
             expect(thinkingPhases.length).toBe(1);
             expect(respondingPhases.length).toBe(1);
             expect(toolPhases.length).toBe(1);
-            expect(idlePhases.length).toBeGreaterThanOrEqual(2); // From result and final
+            // With botStateManager, clearActivityPhase is called instead of idle transitions
+            expect(capturingBotStateManager.clearActivityPhase).toHaveBeenCalled();
+        });
+
+        test('should deduplicate consecutive events with the same phase (line 275 mutant killer)', async () => {
+            const wrappedAgent = {
+                chat: mock(async (_ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                    if(onEvent) {
+                        // Send multiple consecutive responding phase events
+                        onEvent({ type: 'assistant', delta: { text: 'Hello' } });
+                        onEvent({ type: 'assistant', delta: { text: ' world' } });
+                        onEvent({ type: 'assistant', delta: { text: '!' } });
+                    }
+                    return 'Response';
+                }),
+            };
+
+            const middleware = createStatusMiddleware({
+                presenceManager: mockPresenceManager,
+                agent:           wrappedAgent as any,
+                logger:          mockLogger,
+                botStateManager: mockBotStateManager,
+            });
+
+            await middleware(messageContext);
+            await flushPromises();
+
+            // Should only call updateActivityPhase once for the first responding event
+            // The conditional on line 275 prevents redundant updates for the same phase
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledTimes(1);
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledWith(
+                expect.objectContaining({ type: 'responding' })
+            );
         });
     });
 
@@ -856,10 +1076,12 @@ describe('StatusMiddleware', () => {
                     agent:                  wrappedAgent as any,
                     logger:                 mockLogger,
                     dynamicStatusGenerator: mockDynamicStatusGenerator,
+                    botStateManager:        mockBotStateManager,
                 });
 
                 await middleware(messageContext);
                 await flushPromises();
+                await flushPromises(); // Extra flush for nested async synopsis generation
 
                 expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(
                     expect.objectContaining(expectedContext)
@@ -900,12 +1122,22 @@ describe('StatusMiddleware', () => {
                 };
 
                 const capturingPresenceManager = {
-                    shouldUpdate: mock(_constant(true)),
-                    updatePhase:  mock(async (phase: PresencePhase) => {
+                    updatePhase: mock(async (phase: PresencePhase) => {
                         phases.push(phase);
                     }),
                     start: mock(() => undefined),
                     stop:  mock(() => undefined),
+                };
+
+                // Capture phases from botStateManager instead
+                const capturingBotStateManager = {
+                    shouldUpdatePresence: mock(_constant(true)),
+                    updateActivityPhase:  mock((phase: any) => {
+                        phases.push(phase);
+                    }),
+                    clearActivityPhase: mock(() => undefined),
+                    getMode:            mock(_constant('idle' as const)),
+                    goIdle:             mock(() => undefined),
                 };
 
                 const middleware = createStatusMiddleware({
@@ -913,14 +1145,128 @@ describe('StatusMiddleware', () => {
                     agent:                  wrappedAgent as any,
                     logger:                 mockLogger,
                     dynamicStatusGenerator: mockDynamicStatusGenerator,
+                    botStateManager:        capturingBotStateManager as unknown as BotStateManager,
                 });
 
                 await middleware(messageContext);
                 await flushPromises();
+                await flushPromises(); // Extra flush for nested async synopsis generation
 
                 const targetPhase = _find(phases, ['type', phaseType]);
                 expect(targetPhase).toBeDefined();
                 expect(targetPhase && 'generatedStatus' in targetPhase ? targetPhase.generatedStatus : undefined).toBe(generatedStatus);
+            });
+        });
+
+        describe('generateSynopsis edge cases', () => {
+            test('should handle empty string return from generateSynopsis gracefully', async () => {
+                const phases: PresencePhase[] = [];
+                (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
+                    _constant(Promise.resolve(''))
+                );
+
+                const wrappedAgent = {
+                    chat: mock(async (_ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'assistant' });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const capturingBotStateManager = {
+                    shouldUpdatePresence: mock(_constant(true)),
+                    updateActivityPhase:  mock((phase: any) => {
+                        phases.push(phase);
+                    }),
+                    clearActivityPhase: mock(() => undefined),
+                    getMode:            mock(_constant('idle' as const)),
+                    goIdle:             mock(() => undefined),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        mockPresenceManager,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                    botStateManager:        capturingBotStateManager as unknown as BotStateManager,
+                });
+
+                // Should not crash
+                await middleware(messageContext);
+                await flushPromises();
+                await flushPromises(); // Extra flush for nested async synopsis generation
+
+                // Should have thinking phase with empty generatedStatus
+                const thinkingPhase = _find(phases, ['type', 'thinking']);
+                expect(thinkingPhase).toBeDefined();
+                if(thinkingPhase?.type === 'thinking') {
+                    expect(thinkingPhase.generatedStatus).toBe('');
+                }
+
+                // Verify updateActivityPhase was called with empty string (not crashed)
+                expect(capturingBotStateManager.updateActivityPhase).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        type:            'thinking',
+                        generatedStatus: ''
+                    })
+                );
+            });
+
+            test('should handle very long string (1000+ chars) return from generateSynopsis gracefully', async () => {
+                const phases: PresencePhase[] = [];
+                const veryLongStatus = _repeat('A', 1500);
+                (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
+                    _constant(Promise.resolve(veryLongStatus))
+                );
+
+                const wrappedAgent = {
+                    chat: mock(async (_ctx: DiscordMessageContext, onEvent?: (e: AgentStreamEvent) => void) => {
+                        if(onEvent) {
+                            onEvent({ type: 'assistant', delta: { text: 'Hello' } });
+                        }
+                        return 'Response';
+                    }),
+                };
+
+                const capturingBotStateManager = {
+                    shouldUpdatePresence: mock(_constant(true)),
+                    updateActivityPhase:  mock((phase: any) => {
+                        phases.push(phase);
+                    }),
+                    clearActivityPhase: mock(() => undefined),
+                    getMode:            mock(_constant('idle' as const)),
+                    goIdle:             mock(() => undefined),
+                };
+
+                const middleware = createStatusMiddleware({
+                    presenceManager:        mockPresenceManager,
+                    agent:                  wrappedAgent as any,
+                    logger:                 mockLogger,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator,
+                    botStateManager:        capturingBotStateManager as unknown as BotStateManager,
+                });
+
+                // Should not crash
+                await middleware(messageContext);
+                await flushPromises();
+                await flushPromises(); // Extra flush for nested async synopsis generation
+
+                // Should have responding phase with very long generatedStatus
+                const respondingPhase = _find(phases, ['type', 'responding']);
+                expect(respondingPhase).toBeDefined();
+                if(respondingPhase?.type === 'responding') {
+                    expect(respondingPhase.generatedStatus).toBe(veryLongStatus);
+                    expect(respondingPhase.generatedStatus!.length).toBe(1500);
+                }
+
+                // Verify updateActivityPhase was called with long string (not crashed)
+                expect(capturingBotStateManager.updateActivityPhase).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        type:            'responding',
+                        generatedStatus: veryLongStatus
+                    })
+                );
             });
         });
 
@@ -941,12 +1287,22 @@ describe('StatusMiddleware', () => {
                 };
 
                 const capturingPresenceManager = {
-                    shouldUpdate: mock(_constant(true)),
-                    updatePhase:  mock(async (phase: PresencePhase) => {
+                    updatePhase: mock(async (phase: PresencePhase) => {
                         phases.push(phase);
                     }),
                     start: mock(() => undefined),
                     stop:  mock(() => undefined),
+                };
+
+                // Capture phases from botStateManager instead
+                const capturingBotStateManager = {
+                    shouldUpdatePresence: mock(_constant(true)),
+                    updateActivityPhase:  mock((phase: any) => {
+                        phases.push(phase);
+                    }),
+                    clearActivityPhase: mock(() => undefined),
+                    getMode:            mock(_constant('idle' as const)),
+                    goIdle:             mock(() => undefined),
                 };
 
                 const middleware = createStatusMiddleware({
@@ -954,6 +1310,7 @@ describe('StatusMiddleware', () => {
                     agent:                  wrappedAgent as any,
                     logger:                 mockLogger,
                     dynamicStatusGenerator: mockDynamicStatusGenerator,
+                    botStateManager:        capturingBotStateManager as unknown as BotStateManager,
                 });
 
                 await middleware(messageContext);
@@ -982,9 +1339,18 @@ describe('StatusMiddleware', () => {
                     }),
                 };
 
+                const capturingBotStateManager = {
+                    shouldUpdatePresence: mock(_constant(true)),
+                    updateActivityPhase:  mock((phase: any) => {
+                        phases.push(phase);
+                    }),
+                    clearActivityPhase: mock(() => undefined),
+                    getMode:            mock(_constant('idle' as const)),
+                    goIdle:             mock(() => undefined),
+                };
+
                 const capturingPresenceManager = {
-                    shouldUpdate: mock(_constant(true)),
-                    updatePhase:  mock(async (phase: PresencePhase) => {
+                    updatePhase: mock(async (phase: PresencePhase) => {
                         phases.push(phase);
                     }),
                     start: mock(() => undefined),
@@ -996,6 +1362,7 @@ describe('StatusMiddleware', () => {
                     presenceManager: capturingPresenceManager as any,
                     agent:           wrappedAgent as any,
                     logger:          mockLogger,
+                    botStateManager: capturingBotStateManager as unknown as BotStateManager,
                 });
 
                 await middleware(messageContext);
@@ -1026,12 +1393,22 @@ describe('StatusMiddleware', () => {
                 };
 
                 const capturingPresenceManager = {
-                    shouldUpdate: mock(_constant(true)),
-                    updatePhase:  mock(async (phase: PresencePhase) => {
+                    updatePhase: mock(async (phase: PresencePhase) => {
                         phases.push(phase);
                     }),
                     start: mock(() => undefined),
                     stop:  mock(() => undefined),
+                };
+
+                // Capture phases from botStateManager instead
+                const capturingBotStateManager = {
+                    shouldUpdatePresence: mock(_constant(true)),
+                    updateActivityPhase:  mock((phase: any) => {
+                        phases.push(phase);
+                    }),
+                    clearActivityPhase: mock(() => undefined),
+                    getMode:            mock(_constant('idle' as const)),
+                    goIdle:             mock(() => undefined),
                 };
 
                 const middleware = createStatusMiddleware({
@@ -1039,6 +1416,7 @@ describe('StatusMiddleware', () => {
                     agent:                  wrappedAgent as any,
                     logger:                 mockLogger,
                     dynamicStatusGenerator: mockDynamicStatusGenerator,
+                    botStateManager:        capturingBotStateManager as unknown as BotStateManager,
                 });
 
                 await middleware(messageContext);
@@ -1095,10 +1473,12 @@ describe('StatusMiddleware', () => {
                     agent:                  wrappedAgent as any,
                     logger:                 mockLogger,
                     dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+                    botStateManager:        mockBotStateManager,
                 });
 
                 await middleware(messageContext);
                 await flushPromises();
+                await flushPromises(); // Extra flush for nested async synopsis generation
 
                 // Verify responding phase has accumulatedText (captured at first text delta)
                 const respondingContext = _find(capturedContexts, ['phase', 'responding']);
@@ -1152,10 +1532,12 @@ describe('StatusMiddleware', () => {
                     agent:                  wrappedAgent as any,
                     logger:                 mockLogger,
                     dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+                    botStateManager:        mockBotStateManager,
                 });
 
                 await middleware(messageContext);
                 await flushPromises();
+                await flushPromises(); // Extra flush for nested async synopsis generation
 
                 const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
                 expect(toolContext).toBeDefined();
@@ -1195,10 +1577,12 @@ describe('StatusMiddleware', () => {
                     agent:                  wrappedAgent as any,
                     logger:                 mockLogger,
                     dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+                    botStateManager:        mockBotStateManager,
                 });
 
                 await middleware(messageContext);
                 await flushPromises();
+                await flushPromises(); // Extra flush for nested async synopsis generation
 
                 const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
                 expect(toolContext).toBeDefined();
@@ -1234,10 +1618,12 @@ describe('StatusMiddleware', () => {
                     agent:                  wrappedAgent as any,
                     logger:                 mockLogger,
                     dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+                    botStateManager:        mockBotStateManager,
                 });
 
                 await middleware(messageContext);
                 await flushPromises();
+                await flushPromises(); // Extra flush for nested async synopsis generation
 
                 const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
                 expect(toolContext).toBeDefined();

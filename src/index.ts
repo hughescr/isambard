@@ -25,7 +25,7 @@ import { createMessageSummarizer } from './integrations/discord/message-history/
 import { createMessageSearchService } from './integrations/discord/message-history/search';
 import { CheckpointManager, InboxManager } from './integrations/discord/inbox';
 import { createInboxMCPServer } from './agent/inbox-mcp-server';
-import { createCatchUpStateManager, type CatchUpStateManager } from './integrations/discord/catchup';
+import { createBotStateManager, type BotStateManager } from './integrations/discord/state';
 import { logger } from '@hughescr/logger';
 
 export interface App {
@@ -80,7 +80,7 @@ export async function createApp(): Promise<App> {
     let inboxMcpServer: McpServerConfig | undefined;
     let inboxManager: InboxManager | undefined;
     let memoryBackend: MemoryToolBackend | undefined;
-    let catchUpStateManager: CatchUpStateManager | undefined;
+    let botStateManager: BotStateManager | undefined;
 
     try {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- SST Resource type is complex
@@ -131,11 +131,14 @@ export async function createApp(): Promise<App> {
             config:              config.discord.inbox,  // Optional inbox config from Discord config
         });
 
-        // Create catch-up state manager (needed by both inbox MCP server and bot)
-        catchUpStateManager = createCatchUpStateManager(logger);
+        // Create bot state manager (shared between inbox MCP server and bot)
+        botStateManager = createBotStateManager({
+            logger,
+            updateThrottleMs: config.discord.presence?.updateThrottleMs,
+        });
 
-        // Create inbox MCP server with state manager for tracking viewed channels
-        inboxMcpServer = createInboxMCPServer(inboxManager, catchUpStateManager);
+        // Create inbox MCP server with bot state manager for tracking viewed channels
+        inboxMcpServer = createInboxMCPServer(inboxManager, botStateManager);
 
         // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
         logger.info('Inbox system initialized');
@@ -196,7 +199,7 @@ export async function createApp(): Promise<App> {
         client:        discordClient,
         questionRegistry,
         inboxManager,
-        catchUpStateManager,
+        botStateManager,
         memoryBackend: memoryBackend
             ? {
                 storeCompletionSignal: async (signal: CatchUpCompletionSignal) => {

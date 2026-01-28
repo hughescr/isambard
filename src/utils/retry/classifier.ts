@@ -105,6 +105,7 @@ function classifyNetworkError(error: object & { code?: unknown, message?: unknow
 
     // Stryker disable next-line ConditionalExpression,BlockStatement: Network error classification
     if(_.isString(error.code) && networkErrorCodes.includes(error.code)) {
+        // Stryker disable next-line StringLiteral: Fallback error message for network errors
         const message = 'message' in error && _.isString(error.message) && error.message
             ? error.message
             : 'Unknown error';

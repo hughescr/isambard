@@ -2,16 +2,6 @@
 
 ## Current Focus
 
-### Session Gap Tracking
-Catch up on messages posted while offline when connecting to any service.
-
-**Implementation:**
-- [ ] Detect connection events (Discord ready, future: email connect, calendar sync, etc.)
-- [ ] Query for messages/events since last known timestamp
-- [ ] Summarize missed activity and present context to agent
-- [ ] Update "last seen" markers per channel/service
-
-**Scope:** Initially Discord, but design for extensibility to email, calendar, Bluesky, RSS feeds.
 
 ### Perch Time (Autonomous Activity)
 Allow Isambard to wake up and pursue its own interests and goals.

@@ -7,7 +7,7 @@ import type { InboxManager } from '../integrations/discord/inbox/inbox-manager';
 import type { ChannelSummaryResponse, MessageMetadata } from '../integrations/discord/inbox/types';
 import { createChannelId } from '../integrations/discord/types';
 import { generateTextWithSystemPrompt } from './text-generator';
-import type { CatchUpStateManager } from '../integrations/discord/catchup/state-manager';
+import type { BotStateManager } from '@/integrations/discord/state';
 
 /**
  * System prompt for generating channel summaries.
@@ -54,11 +54,11 @@ function textResult(text: string, isError = false): CallToolResult {
  * loaded on startup by fetching messages since the last checkpoint.
  *
  * @param inboxManager - Inbox manager for accessing unread messages
- * @param stateManager - Optional catch-up state manager for tracking viewed channels
+ * @param stateManager - Optional bot state manager for tracking viewed channels
  */
 export function createInboxMCPServer(
     inboxManager: InboxManager,
-    stateManager?: CatchUpStateManager
+    stateManager?: BotStateManager
 ) {
     return createSdkMcpServer({
         name:    'inbox',

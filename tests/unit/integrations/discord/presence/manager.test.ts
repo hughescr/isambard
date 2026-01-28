@@ -8,6 +8,7 @@ import type { Client } from 'discord.js';
 import { ActivityType } from 'discord.js';
 import { createPresenceManager } from '@/integrations/discord/presence/manager';
 import type { PresencePhase, PresenceConfig } from '@/integrations/discord/presence/types';
+import { mockWithDiscordRetry, originalWithDiscordRetry } from '../../../../setup';
 
 describe('PresenceManager', () => {
     let mockClient: any;
@@ -65,58 +66,7 @@ describe('PresenceManager', () => {
         jest.useRealTimers();
     });
 
-    describe('shouldUpdate', () => {
-        it('should return true when throttle cooldown has expired', () => {
-            const manager = createPresenceManager({
-                discordClient:         mockClient,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // First call - no updates yet, cooldown is expired (lastActiveUpdateTime=0, now=1000)
-            expect(manager.shouldUpdate()).toBe(true);
-        });
-
-        it('should return false when within throttle cooldown', async () => {
-            const manager = createPresenceManager({
-                discordClient:         mockClient,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // First update - applies immediately
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
-
-            // shouldUpdate should now return false (within 100ms cooldown)
-            expect(manager.shouldUpdate()).toBe(false);
-        });
-
-        it('should return true after throttle cooldown expires', async () => {
-            const manager = createPresenceManager({
-                discordClient:         mockClient,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // First update
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-
-            // Advance past throttle cooldown
-            jest.advanceTimersByTime(101);
-
-            // shouldUpdate should return true again
-            expect(manager.shouldUpdate()).toBe(true);
-        });
-    });
-
-    describe('updatePhase - leading-edge throttle', () => {
+    describe('updatePhase - immediate updates (no internal throttling)', () => {
         it('should update presence immediately for first active phase', async () => {
             const manager = createPresenceManager({
                 discordClient:         mockClient,
@@ -134,7 +84,7 @@ describe('PresenceManager', () => {
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
         });
 
-        it('should drop subsequent updates within throttle cooldown', async () => {
+        it('should apply all updates immediately (throttling handled upstream)', async () => {
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -147,18 +97,18 @@ describe('PresenceManager', () => {
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
 
-            // Second update immediately after - should be dropped
+            // Second update immediately after - also goes through (no throttle in PresenceManager)
             await manager.updatePhase({ type: 'responding', startedAt: new Date() });
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
+            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
 
-            // Verify throttle skip was logged
-            expect(mockLogger.debug).toHaveBeenCalledWith(
+            // No throttle skip should be logged (throttling is upstream)
+            expect(mockLogger.debug).not.toHaveBeenCalledWith(
                 expect.objectContaining({ throttleMs: 100 }),
                 'Skipping presence update due to throttle cooldown'
             );
         });
 
-        it('should allow update after throttle cooldown expires', async () => {
+        it('should apply updates regardless of timing (no internal throttle)', async () => {
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -171,17 +121,17 @@ describe('PresenceManager', () => {
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
 
-            // Advance past throttle cooldown
+            // Advance time (not needed anymore, but kept for test clarity)
             jest.advanceTimersByTime(101);
 
-            // Second update - should go through
+            // Second update - goes through (throttling is upstream)
             await manager.updatePhase({ type: 'responding', startedAt: new Date() });
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
         });
     });
 
     describe('updatePhase - idle transitions', () => {
-        it('should transition to idle immediately (bypasses throttle)', async () => {
+        it('should transition to idle immediately', async () => {
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -194,10 +144,10 @@ describe('PresenceManager', () => {
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
 
-            // Immediately transition to idle - should apply despite being within throttle
+            // Immediately transition to idle - always applies
             await manager.updatePhase({ type: 'idle', since: new Date() });
 
-            // Idle update should have happened (idle bypasses throttle)
+            // Idle update should have happened
             expect(mockIdleGenerator.generate).toHaveBeenCalled();
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
         });
@@ -270,24 +220,23 @@ describe('PresenceManager', () => {
             expect(mockLogger.error).toHaveBeenCalled();
         });
 
-        it('should retry setActivity with maxAttempts: 2 on transient error', async () => {
+        it('should not retry setActivity for permanent (non-network) errors', async () => {
+            // This test verifies that the retry configuration is properly integrated
+            // by confirming that permanent errors (non-network/non-transient) result
+            // in exactly 1 attempt with no retries.
+            //
+            // This indirectly validates that:
+            // 1. The retry wrapper is being called with the correct config (maxAttempts: 2)
+            // 2. The error classifier correctly identifies permanent vs. transient errors
+            // 3. Permanent errors short-circuit the retry logic
+            //
             // This test kills the mutant on lines 148-149:
             // { policy: { maxAttempts: 2 } }
             //
-            // The retry config object must have exactly maxAttempts: 2.
-            // If mutated to maxAttempts: 1, no retry would occur.
-            // If mutated to maxAttempts: 3, too many retries would occur.
-
-            // Note: This test verifies the maxAttempts config is set correctly.
-            // The retry logic itself is tested separately. Here we only verify
-            // that the manager passes the correct config to the retry wrapper.
-            //
-            // Since the retry logic uses exponential backoff with sleep(),
-            // and we're using fake timers, we can't easily test actual retries
-            // without mocking the entire retry infrastructure. Instead, we verify
-            // the config is correct by checking that a permanent error (non-network)
-            // results in exactly 1 attempt (no retries), confirming the retry
-            // wrapper is being called with the expected config.
+            // If the retry config were incorrectly set (maxAttempts: 1), transient errors
+            // would not retry at all. If set to maxAttempts: 3, transient errors would
+            // retry too many times. By verifying permanent errors result in exactly 1 call,
+            // we confirm the retry wrapper is integrated correctly.
 
             let callCount = 0;
             const retryClient = {
@@ -323,10 +272,81 @@ describe('PresenceManager', () => {
                 'Failed to update Discord presence'
             );
         });
+
+        it('should retry setActivity for transient (network) errors', async () => {
+            // This test verifies that transient errors (network errors)
+            // properly trigger retry logic according to the maxAttempts configuration.
+            //
+            // This validates that:
+            // 1. The retry wrapper is called with maxAttempts: 2
+            // 2. The error classifier correctly identifies transient errors (ECONNRESET, ETIMEDOUT, ECONNREFUSED)
+            // 3. Transient errors trigger exactly 1 retry (2 total attempts)
+
+            // Restore original retry implementation but inject instant sleep for fast test execution
+            mockWithDiscordRetry.mockImplementation(async <T>(
+                operation: () => Promise<T>,
+                _operationName: string,
+                _options?: unknown
+            ): Promise<T> => {
+                // Call real implementation but inject instant sleep
+
+                const options = _options as any;
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- Test mock with dynamic options
+                return originalWithDiscordRetry(operation, _operationName, {
+                    ...options,
+                    deps: {
+                        ...options?.deps,
+                        // eslint-disable-next-line @typescript-eslint/no-empty-function -- No-op sleep for instant test execution
+                        sleep: async () => {},
+                    },
+                });
+            });
+
+            let callCount = 0;
+            const networkError: any = new Error('Connection reset');
+            networkError.code = 'ECONNRESET';
+
+            const retryClient = {
+                user: {
+                    setActivity: mock(() => {
+                        callCount++;
+                        // Throw network error (ECONNRESET is a transient error code)
+                        // This will be retried according to maxAttempts config
+                        throw networkError;
+                    }),
+                },
+            } as unknown as Client;
+
+            const manager = createPresenceManager({
+                discordClient:         retryClient,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            // Update phase - transient error should retry
+            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+
+            // Restore mock behavior for other tests
+            mockWithDiscordRetry.mockReset();
+            mockWithDiscordRetry.mockImplementation(async <T>(operation: () => Promise<T>) => operation());
+
+            // Should have been called exactly 2 times (1 initial + 1 retry)
+            expect(callCount).toBe(2);
+            // eslint-disable-next-line @typescript-eslint/unbound-method -- Test mock method reference
+            expect(retryClient.user!.setActivity).toHaveBeenCalledTimes(2);
+
+            // Should have logged error
+            expect(mockLogger.error).toHaveBeenCalledWith(
+                expect.objectContaining({ error: expect.any(Error), activity: expect.any(Object) }),
+                'Failed to update Discord presence'
+            );
+        });
     });
 
-    describe('throttle boundary tests', () => {
-        it('should skip update at exactly throttleMs - 1 milliseconds', async () => {
+    describe('immediate updates - no internal throttle boundaries', () => {
+        it('should apply all updates immediately (throttling moved to BotStateManager)', async () => {
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -339,23 +359,21 @@ describe('PresenceManager', () => {
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
 
-            // Advance system time to just before throttle expires (99ms < 100ms throttle)
-            // Note: In Bun, jest.advanceTimersByTime() doesn't affect Date.now(),
-            // only jest.setSystemTime() does
+            // Advance system time to just before old throttle would expire
             jest.setSystemTime(1099); // 1000 + 99 = 1099
 
-            // Second update - should be skipped (99ms < 100ms cooldown)
+            // Second update - goes through immediately (no throttle in PresenceManager)
             await manager.updatePhase({ type: 'responding', startedAt: new Date() });
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
+            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
 
-            // Verify throttle skip was logged
-            expect(mockLogger.debug).toHaveBeenCalledWith(
+            // No throttle skip should be logged
+            expect(mockLogger.debug).not.toHaveBeenCalledWith(
                 expect.objectContaining({ throttleMs: 100 }),
                 'Skipping presence update due to throttle cooldown'
             );
         });
 
-        it('should allow update at exactly throttleMs milliseconds', async () => {
+        it('should allow immediate consecutive updates (no internal throttle)', async () => {
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -364,41 +382,19 @@ describe('PresenceManager', () => {
                 logger:                mockLogger,
             });
 
-            // First update (at t=1000 from beforeEach)
+            // At t=1000, first update
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
 
-            // Advance system time to exactly throttle time (100ms)
-            jest.setSystemTime(1100); // 1000 + 100 = 1100
-
-            // Second update - should go through (cooldown expired)
+            // Immediately (no time advance) try second update - goes through
             await manager.updatePhase({ type: 'responding', startedAt: new Date() });
+
+            // Both updates should have been applied
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
-        });
 
-        it('should correctly compute time since last update using subtraction not addition', async () => {
-            // This test kills the mutant: now - lastActiveUpdateTime → now + lastActiveUpdateTime
-            const manager = createPresenceManager({
-                discordClient:         mockClient,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // At t=1000 (set by beforeEach), first update sets lastActiveUpdateTime=1000
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
-
-            // Immediately (no time advance) try second update
-            // - With subtraction: 1000 - 1000 = 0 < 100 → SKIP (correct)
-            // - With addition: 1000 + 1000 = 2000 >= 100 → ALLOW (mutation fails test)
-            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
-
-            // The update should have been SKIPPED because 0ms < 100ms throttle
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
-            expect(mockLogger.debug).toHaveBeenCalledWith(
-                expect.objectContaining({ timeSinceLastUpdate: 0, throttleMs: 100 }),
+            // No throttle logging (throttling is upstream in BotStateManager)
+            expect(mockLogger.debug).not.toHaveBeenCalledWith(
+                expect.objectContaining({ timeSinceLastUpdate: expect.anything(), throttleMs: 100 }),
                 'Skipping presence update due to throttle cooldown'
             );
         });
@@ -629,7 +625,7 @@ describe('PresenceManager', () => {
         });
     });
 
-    describe('setCatchUpMode edge cases', () => {
+    describe('transitionCatchUpMode edge cases', () => {
         it('should generate catch-up status when entering catch-up mode with null currentPhase', async () => {
             const manager = createPresenceManager({
                 discordClient:         mockClient,
@@ -641,7 +637,7 @@ describe('PresenceManager', () => {
 
             // At startup, currentPhase is null
             // Enter catch-up mode - should trigger idle status generation with 📥 prefix
-            manager.setCatchUpMode('catching_up');
+            manager.transitionCatchUpMode('catching_up');
 
             // Wait for async status generation
             await Promise.resolve();
@@ -662,14 +658,14 @@ describe('PresenceManager', () => {
             });
 
             // Start in catch-up mode
-            manager.setCatchUpMode('catching_up');
+            manager.transitionCatchUpMode('catching_up');
             await Promise.resolve();
             await Promise.resolve();
 
             const callCountAfterEntry = mockIdleGenerator.generate.mock.calls.length;
 
             // Exit catch-up mode - should NOT trigger idle status
-            manager.setCatchUpMode('none');
+            manager.transitionCatchUpMode('none');
             await Promise.resolve();
 
             // No additional calls to idle generator
@@ -690,7 +686,7 @@ describe('PresenceManager', () => {
             const initialSetActivityCount = mockClient.user.setActivity.mock.calls.length;
 
             // Change catch-up mode - should trigger immediate status update
-            manager.setCatchUpMode('catching_up');
+            manager.transitionCatchUpMode('catching_up');
             await Promise.resolve();
 
             // Should have updated status
@@ -698,6 +694,94 @@ describe('PresenceManager', () => {
             expect(mockActiveGenerator.generate).toHaveBeenCalledWith(
                 expect.objectContaining({ type: 'thinking' }),
                 'catching_up'
+            );
+        });
+
+        it('should discard stale idle status when mode changes during async generation', async () => {
+            // This test verifies the race condition handling in refreshIdleStatus()
+            // where the catch-up mode might change while idle status generation is in progress.
+            //
+            // The code at lines 168-179 in manager.ts captures the mode at the start,
+            // then checks if it changed during the async generation, and discards stale results.
+
+            // Track which promises we can control
+            const idleGeneratePromises: { resolve: (value: any) => void, mode: string }[] = [];
+
+            // Override idle generator to return controllable promises
+            mockIdleGenerator.generate = mock((_includeEmoji: boolean, mode: string) => {
+                return new Promise((resolve) => {
+                    idleGeneratePromises.push({ resolve, mode });
+                });
+            });
+
+            const manager = createPresenceManager({
+                discordClient:         mockClient,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            // Start in catch-up mode
+            manager.transitionCatchUpMode('catching_up');
+            await Promise.resolve();
+
+            // Go to idle phase - this triggers idle generation with catch-up mode
+            await manager.updatePhase({ type: 'idle', since: new Date() });
+            await Promise.resolve();
+
+            // Complete the first generation (entering catch-up while idle)
+            expect(idleGeneratePromises.length).toBe(1);
+            idleGeneratePromises[0].resolve({
+                name: 'Initial catch-up idle status',
+                type: ActivityType.Custom,
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+
+            const setActivityCountAfterInitial = mockClient.user.setActivity.mock.calls.length;
+
+            // Now exit catch-up mode to 'none' - this triggers refreshIdleStatus()
+            // which starts async idle status generation
+            manager.transitionCatchUpMode('none');
+            await Promise.resolve();
+
+            // Idle generator should have been called for the second time (async generation started)
+            expect(idleGeneratePromises.length).toBe(2);
+            expect(idleGeneratePromises[1].mode).toBe('none');
+
+            // NOW change the mode WHILE the generation is still in progress
+            // This will also trigger another generation (entering catch-up while idle)
+            manager.transitionCatchUpMode('catching_up');
+            await Promise.resolve();
+
+            // Complete the third generation (re-entering catch-up)
+            expect(idleGeneratePromises.length).toBe(3);
+            idleGeneratePromises[2].resolve({
+                name: 'Re-entered catch-up idle status',
+                type: ActivityType.Custom,
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+
+            const setActivityCountBeforeStale = mockClient.user.setActivity.mock.calls.length;
+            expect(setActivityCountBeforeStale).toBe(setActivityCountAfterInitial + 1); // One more for re-entering catch-up
+
+            // NOW complete the stale generation (the one from exiting catch-up to 'none')
+            idleGeneratePromises[1].resolve({
+                name: 'Stale idle status (mode was "none")',
+                type: ActivityType.Custom,
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // The stale result should have been DISCARDED (no additional setActivity call)
+            expect(mockClient.user.setActivity.mock.calls.length).toBe(setActivityCountBeforeStale);
+
+            // Should have logged that stale status was discarded
+            expect(mockLogger.debug).toHaveBeenCalledWith(
+                { modeAtStart: 'none', currentMode: 'catching_up' },
+                'Discarding stale idle status (mode changed during generation)'
             );
         });
     });

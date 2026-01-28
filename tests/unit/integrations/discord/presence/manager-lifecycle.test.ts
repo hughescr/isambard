@@ -302,8 +302,8 @@ describe('PresenceManager Lifecycle', () => {
             );
         });
 
-        it('should log throttle skip with timing parameters', async () => {
-            // Test that throttle skip is logged with correct parameters
+        it('should apply all updates (no throttle logging)', async () => {
+            // Test that updates are applied without internal throttling
             const manager = createPresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
@@ -312,15 +312,16 @@ describe('PresenceManager Lifecycle', () => {
                 logger:                mockLogger,
             });
 
-            // First active update - goes through immediately
+            // First active update - goes through
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
 
-            // Second active update immediately - should be throttled
+            // Second active update immediately - also goes through (no internal throttle)
             await manager.updatePhase({ type: 'responding', startedAt: new Date() });
+            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
 
-            // Should have logged the throttle skip
-            expect(mockLogger.debug).toHaveBeenCalledWith(
+            // Should NOT have logged throttle skip (throttling is upstream)
+            expect(mockLogger.debug).not.toHaveBeenCalledWith(
                 expect.objectContaining({
                     timeSinceLastUpdate: expect.any(Number),
                     throttleMs:          config.updateThrottleMs,

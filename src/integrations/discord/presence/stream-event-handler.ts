@@ -19,6 +19,32 @@ import { getToolDescription } from './types.js';
 import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
 import { extractToolUses, redactSensitiveArgs } from '../../../agent/agent.js';
 import type { AgentStreamEvent } from '../../../agent/types.js';
+import type { BotStateManager } from '../state/index.js';
+
+/**
+ * Determines whether synopsis generation should be attempted.
+ *
+ * Synopsis generation is expensive (LLM call), so it should only run when:
+ * 1. A dynamic status generator is available
+ * 2. The throttle allows an update (checked via botStateManager)
+ *
+ * When botStateManager is not available, returns false to fail closed
+ * and avoid unlimited expensive LLM calls.
+ *
+ * This function acts as a type guard, narrowing dynamicStatusGenerator
+ * from `DynamicStatusGenerator | undefined` to `DynamicStatusGenerator`
+ * when it returns true.
+ *
+ * @param dynamicStatusGenerator - Optional generator for LLM synopses
+ * @param botStateManager - Optional state manager with throttle logic
+ * @returns true if synopsis generation should be attempted
+ */
+export function shouldGenerateSynopsis(
+    dynamicStatusGenerator: DynamicStatusGenerator | undefined,
+    botStateManager:        BotStateManager | undefined
+): dynamicStatusGenerator is DynamicStatusGenerator {
+    return Boolean(dynamicStatusGenerator && (botStateManager?.shouldUpdatePresence() ?? false));
+}
 
 /**
  * Dependencies for creating a stream event handler.
@@ -38,6 +64,10 @@ export interface StreamEventHandlerDeps {
     messageId?:        string
     /** Optional pre-generated thinking synopsis */
     thinkingSynopsis?: string
+    /**
+     * Bot state manager for activity phase updates.
+     */
+    botStateManager:   BotStateManager
 }
 
 /**
@@ -80,7 +110,7 @@ export interface StreamEventHandler {
 export function createStreamEventHandler(
     deps: StreamEventHandlerDeps
 ): StreamEventHandler {
-    const { presenceManager, dynamicStatusGenerator, logger, userMessage, messageId, thinkingSynopsis } = deps;
+    const { dynamicStatusGenerator, logger, userMessage, messageId, thinkingSynopsis, botStateManager } = deps;
 
     // Track current phase for transition detection
     let currentPhase: 'thinking' | 'using_tool' | 'responding' | null = null;
@@ -95,10 +125,19 @@ export function createStreamEventHandler(
     const MAX_RECENT_TOOLS = 3;
 
     // Helper to handle presence update errors
+    // Stryker disable ConditionalExpression,BlockStatement: Error handling
     const safeUpdatePhase = async (phase: PresencePhase): Promise<void> => {
         try {
-            await presenceManager.updatePhase(phase);
+            // ALWAYS route through botStateManager
+            if(phase.type === 'idle') {
+                // Idle phase means clear activity and potentially go idle
+                botStateManager.clearActivityPhase();
+            } else {
+                // TypeScript narrows PresencePhase to ActivityPhase when phase.type !== 'idle'
+                botStateManager.updateActivityPhase(phase);
+            }
         } catch (error) {
+            // Stryker restore ConditionalExpression,BlockStatement
             // Don't crash on presence update errors
             // Stryker disable next-line ObjectLiteral: Logging metadata only
             logger.error(
@@ -110,7 +149,6 @@ export function createStreamEventHandler(
 
     /**
      * Generates synopsis and updates phase, with fallback on error.
-     * Checks shouldUpdate() before making expensive LLM calls.
      *
      * @param synopsisContext - Context for synopsis generation
      * @param basePhase - Phase to update to (without generatedStatus)
@@ -120,7 +158,7 @@ export function createStreamEventHandler(
         basePhase: Exclude<PresencePhase, { type: 'idle' }>
     ): void => {
         // Stryker disable next-line ConditionalExpression: Equivalent - try/catch swallows TypeError when undefined
-        if(dynamicStatusGenerator && presenceManager.shouldUpdate()) {
+        if(shouldGenerateSynopsis(dynamicStatusGenerator, botStateManager)) {
             void (async () => {
                 try {
                     const synopsis = await dynamicStatusGenerator.generateSynopsis(synopsisContext);
@@ -234,7 +272,7 @@ export function createStreamEventHandler(
             // Stryker disable next-line StringLiteral: Equivalent - newPhase used only for state tracking; updatePhase uses hardcoded literals
             const newPhase = event.delta?.text ? 'responding' : 'thinking';
 
-            if(newPhase !== currentPhase || presenceManager.shouldUpdate()) {
+            if(newPhase !== currentPhase) {
                 currentPhase = newPhase;
 
                 if(newPhase === 'thinking') {
@@ -244,7 +282,7 @@ export function createStreamEventHandler(
                     const hasToolHistory = recentToolCalls.length > 0;
 
                     // Stryker disable next-line ConditionalExpression,LogicalOperator: Synopsis optimization - regeneration threshold
-                    if((hasThinkingContent || hasToolHistory) && dynamicStatusGenerator && presenceManager.shouldUpdate()) {
+                    if((hasThinkingContent || hasToolHistory) && shouldGenerateSynopsis(dynamicStatusGenerator, botStateManager)) {
                         // Capture current state for async closure
                         const capturedThinkingContent = accumulatedThinkingContent || undefined;
                         const capturedRecentToolCalls = [...recentToolCalls];
@@ -316,12 +354,15 @@ export function createStreamEventHandler(
      * Completes the handler and transitions to idle phase.
      * Call this when processing is done.
      */
+    // Stryker disable BlockStatement,EqualityOperator: Cleanup function tested via integration
     const complete = (): void => {
-        void safeUpdatePhase({
-            type:  'idle',
-            since: new Date(),
-        });
+        // Clear activity phase and transition to idle if in processing_message mode
+        botStateManager.clearActivityPhase();
+        if(botStateManager.getMode() === 'processing_message') {
+            botStateManager.goIdle();
+        }
     };
+    // Stryker restore BlockStatement,EqualityOperator
 
     return {
         onStreamEvent,

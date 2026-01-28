@@ -2,7 +2,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks */
-/* eslint-disable @typescript-eslint/unbound-method -- Test assertions */
 
 /**
  * Stream Event Handler Test Suite
@@ -35,14 +34,14 @@ describe('StreamEventHandler', () => {
     let mockPresenceManager: PresenceManager;
     let mockDynamicStatusGenerator: DynamicStatusGenerator;
     let mockLogger: any;
+    let mockBotStateManager: any;
     let baseDeps: StreamEventHandlerDeps;
 
     beforeEach(() => {
         mockPresenceManager = {
-            shouldUpdate: mock(constant(true)),
-            updatePhase:  mock(async () => undefined),
-            start:        mock(constant(undefined)),
-            stop:         mock(constant(undefined)),
+            updatePhase: mock(async () => undefined),
+            start:       mock(constant(undefined)),
+            stop:        mock(constant(undefined)),
         } as any;
 
         mockDynamicStatusGenerator = {
@@ -56,6 +55,15 @@ describe('StreamEventHandler', () => {
             error: mock(constant(undefined)),
         };
 
+        mockBotStateManager = {
+            shouldUpdatePresence: mock(constant(true)),
+            updateActivityPhase:  mock(() => undefined),
+            clearActivityPhase:   mock(() => undefined),
+            recordPresenceUpdate: mock(() => undefined),
+            getMode:              mock(constant('idle' as const)),
+            goIdle:               mock(() => undefined),
+        };
+
         baseDeps = {
             presenceManager:        mockPresenceManager,
             dynamicStatusGenerator: mockDynamicStatusGenerator,
@@ -63,6 +71,7 @@ describe('StreamEventHandler', () => {
             userMessage:            'Test message',
             messageId:              'msg-123',
             thinkingSynopsis:       'Pre-generated thinking synopsis',
+            botStateManager:        mockBotStateManager,
         };
     });
 
@@ -74,7 +83,7 @@ describe('StreamEventHandler', () => {
                 return 'Test status';
             });
 
-            const { onStreamEvent } = createStreamEventHandler(baseDeps);
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager });
 
             // Send assistant event with text block (NOT thinking)
             onStreamEvent({
@@ -102,7 +111,7 @@ describe('StreamEventHandler', () => {
                 return 'Test status';
             });
 
-            const { onStreamEvent } = createStreamEventHandler(baseDeps);
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager });
 
             // Send assistant event with thinking blocks
             onStreamEvent({
@@ -147,8 +156,8 @@ describe('StreamEventHandler', () => {
             } as AgentStreamEvent);
             await flushPromises();
 
-            // Verify updatePhase was called with 'using_tool' phase
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledWith(
+            // Verify updateActivityPhase was called with 'using_tool' phase
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledWith(
                 expect.objectContaining({
                     type:     'using_tool',
                     toolName: 'Read',
@@ -160,7 +169,7 @@ describe('StreamEventHandler', () => {
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
 
             // Reset mock to count calls
-            (mockPresenceManager.updatePhase as any).mockClear();
+            mockBotStateManager.updateActivityPhase.mockClear();
 
             // Send assistant event with BOTH tool_use blocks AND delta.text
             onStreamEvent({
@@ -181,8 +190,8 @@ describe('StreamEventHandler', () => {
 
             // Verify updatePhase was called ONLY ONCE with 'using_tool'
             // The early return should prevent thinking/responding phase detection
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledTimes(1);
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledWith(
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledTimes(1);
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledWith(
                 expect.objectContaining({
                     type:     'using_tool',
                     toolName: 'Bash',
@@ -190,7 +199,7 @@ describe('StreamEventHandler', () => {
             );
 
             // Verify it was NOT called with 'responding' phase (due to early return)
-            const calls = (mockPresenceManager.updatePhase as any).mock.calls;
+            const calls = mockBotStateManager.updateActivityPhase.mock.calls;
             const respondingCalls = filter(calls, (call: unknown[]) => (call[0] as { type?: string })?.type === 'responding');
             expect(respondingCalls.length).toBe(0);
         });
@@ -200,7 +209,7 @@ describe('StreamEventHandler', () => {
         it('should NOT update thinking/responding phase when hadToolUseUpdate is true', async () => {
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
 
-            (mockPresenceManager.updatePhase as any).mockClear();
+            mockBotStateManager.updateActivityPhase.mockClear();
 
             // Send assistant event with BOTH tool_use blocks AND no delta.text (would be thinking)
             onStreamEvent({
@@ -219,15 +228,15 @@ describe('StreamEventHandler', () => {
             await flushPromises();
 
             // Should ONLY have 'using_tool' update, NOT 'thinking'
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledTimes(1);
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledWith(
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledTimes(1);
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledWith(
                 expect.objectContaining({
                     type:     'using_tool',
                     toolName: 'Grep',
                 })
             );
 
-            const calls = (mockPresenceManager.updatePhase as any).mock.calls;
+            const calls = mockBotStateManager.updateActivityPhase.mock.calls;
             const thinkingCalls = filter(calls, (call: unknown[]) => (call[0] as { type?: string })?.type === 'thinking');
             expect(thinkingCalls.length).toBe(0);
         });
@@ -235,7 +244,7 @@ describe('StreamEventHandler', () => {
         it('should verify early return happens before responding phase detection', async () => {
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
 
-            (mockPresenceManager.updatePhase as any).mockClear();
+            mockBotStateManager.updateActivityPhase.mockClear();
 
             // Send assistant event with tool_use AND delta.text (would normally be responding)
             onStreamEvent({
@@ -255,9 +264,9 @@ describe('StreamEventHandler', () => {
             await flushPromises();
 
             // Verify ONLY 'using_tool' update happened (early return prevented 'responding')
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledTimes(1);
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledTimes(1);
 
-            const calls = (mockPresenceManager.updatePhase as any).mock.calls;
+            const calls = mockBotStateManager.updateActivityPhase.mock.calls;
             expect((calls[0]?.[0] as { type?: string })?.type).toBe('using_tool');
 
             const respondingCalls = filter(calls, (call: unknown[]) => (call[0] as { type?: string })?.type === 'responding');
@@ -265,125 +274,25 @@ describe('StreamEventHandler', () => {
         });
     });
 
-    describe('Mutant 2670 - Phase change gate (newPhase !== currentPhase || shouldUpdate())', () => {
-        it('should force updatePhase when phase changes even if shouldUpdate() returns false', async () => {
-            // Configure presenceManager.shouldUpdate to return false
-            mockPresenceManager.shouldUpdate = mock(constant(false));
-
-            const { onStreamEvent } = createStreamEventHandler(baseDeps);
-
-            (mockPresenceManager.updatePhase as any).mockClear();
-
-            // First event: thinking phase
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
-            await flushPromises();
-
-            // Verify thinking phase was set (first transition always happens)
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledWith(
-                expect.objectContaining({ type: 'thinking' })
-            );
-
-            (mockPresenceManager.updatePhase as any).mockClear();
-
-            // Second event: transition to responding phase (phase change)
-            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
-            await flushPromises();
-
-            // Verify responding phase update happened DESPITE shouldUpdate() returning false
-            // This is because newPhase !== currentPhase (thinking -> responding)
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledWith(
-                expect.objectContaining({ type: 'responding' })
-            );
-        });
-
-        it('should call updatePhase when staying in same phase if shouldUpdate() returns true', async () => {
-            // Configure presenceManager.shouldUpdate to alternate between true and false
-            let shouldUpdateCallCount = 0;
-            mockPresenceManager.shouldUpdate = mock(() => {
-                shouldUpdateCallCount++;
-                // First two calls return true, then alternate
-                return shouldUpdateCallCount <= 2 || shouldUpdateCallCount % 2 === 1;
-            });
-
-            const { onStreamEvent } = createStreamEventHandler(baseDeps);
-
-            (mockPresenceManager.updatePhase as any).mockClear();
-
-            // First thinking event
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
-            await flushPromises();
-
-            const firstCallCount = (mockPresenceManager.updatePhase as any).mock.calls.length;
-            expect(firstCallCount).toBeGreaterThan(0);
-
-            (mockPresenceManager.updatePhase as any).mockClear();
-
-            // Second thinking event (same phase)
-            // shouldUpdate() returns true, so update should happen
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
-            await flushPromises();
-
-            // Verify updatePhase was called again (same phase but shouldUpdate() returned true)
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledWith(
-                expect.objectContaining({ type: 'thinking' })
-            );
-        });
-
-        it('should NOT call updatePhase when staying in same phase AND shouldUpdate() returns false', async () => {
-            // Configure presenceManager.shouldUpdate to return false
-            mockPresenceManager.shouldUpdate = mock(constant(false));
-
-            const { onStreamEvent } = createStreamEventHandler(baseDeps);
-
-            (mockPresenceManager.updatePhase as any).mockClear();
-
-            // First event: thinking phase (initial transition always happens)
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
-            await flushPromises();
-
-            // Verify thinking phase was set
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledWith(
-                expect.objectContaining({ type: 'thinking' })
-            );
-
-            (mockPresenceManager.updatePhase as any).mockClear();
-
-            // Second event: still thinking phase (no delta.text)
-            // Both conditions false: newPhase === currentPhase AND shouldUpdate() returns false
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
-            await flushPromises();
-
-            // Verify NO update happened because:
-            // - newPhase === currentPhase (both 'thinking')
-            // - shouldUpdate() returns false
-            // With the mutation (condition becomes true), this would call updatePhase
-            // Without mutation (condition is correctly evaluated), no call should happen
-            expect(mockPresenceManager.updatePhase).not.toHaveBeenCalled();
-        });
-    });
-
     describe('Mutant 2727 - Result event completion check (event.type === "result")', () => {
         it('should transition to idle phase when event.type is "result"', async () => {
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
 
-            (mockPresenceManager.updatePhase as any).mockClear();
+            mockBotStateManager.clearActivityPhase.mockClear();
 
             // Send result event
             onStreamEvent({ type: 'result', subtype: 'success' } as AgentStreamEvent);
             await flushPromises();
 
-            // Verify idle phase transition
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    type: 'idle',
-                })
-            );
+            // Verify idle phase transition (clears activity)
+            expect(mockBotStateManager.clearActivityPhase).toHaveBeenCalled();
         });
 
         it('should NOT transition to idle for non-result events', async () => {
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
 
-            (mockPresenceManager.updatePhase as any).mockClear();
+            mockBotStateManager.clearActivityPhase.mockClear();
+            mockBotStateManager.updateActivityPhase.mockClear();
 
             // Send various non-result events
             onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
@@ -392,11 +301,10 @@ describe('StreamEventHandler', () => {
             await flushPromises();
 
             // Verify NO idle phase transitions occurred
-            const calls = (mockPresenceManager.updatePhase as any).mock.calls;
-            const idleCalls = filter(calls, (call: unknown[]) => (call[0] as { type?: string })?.type === 'idle');
-            expect(idleCalls.length).toBe(0);
+            expect(mockBotStateManager.clearActivityPhase).not.toHaveBeenCalled();
 
             // Verify we got thinking, responding, and using_tool instead
+            const calls = mockBotStateManager.updateActivityPhase.mock.calls;
             expect(some(calls, (call: unknown[]) => (call[0] as { type?: string })?.type === 'thinking')).toBe(true);
             expect(some(calls, (call: unknown[]) => (call[0] as { type?: string })?.type === 'responding')).toBe(true);
             expect(some(calls, (call: unknown[]) => (call[0] as { type?: string })?.type === 'using_tool')).toBe(true);
@@ -405,7 +313,7 @@ describe('StreamEventHandler', () => {
         it('should NOT transition to idle for other event types (tool_result, user, system)', async () => {
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
 
-            (mockPresenceManager.updatePhase as any).mockClear();
+            mockBotStateManager.clearActivityPhase.mockClear();
 
             // Send events that would reach the else-if but are NOT 'result' type
             // These events don't match 'assistant' or 'tool_progress', so they reach the final else-if
@@ -417,33 +325,27 @@ describe('StreamEventHandler', () => {
             // Verify NO idle phase transitions occurred
             // With the mutation (event.type === 'result' replaced with true), these would trigger idle
             // Without mutation, they should be ignored
-            const calls = (mockPresenceManager.updatePhase as any).mock.calls;
-            const idleCalls = filter(calls, (call: unknown[]) => (call[0] as { type?: string })?.type === 'idle');
-            expect(idleCalls.length).toBe(0);
+            expect(mockBotStateManager.clearActivityPhase).not.toHaveBeenCalled();
         });
 
         it('should verify complete() method also transitions to idle', async () => {
             const { complete } = createStreamEventHandler(baseDeps);
 
-            (mockPresenceManager.updatePhase as any).mockClear();
+            mockBotStateManager.clearActivityPhase.mockClear();
 
             // Call complete()
             complete();
             await flushPromises();
 
-            // Verify idle transition
-            expect(mockPresenceManager.updatePhase).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    type: 'idle',
-                })
-            );
+            // Verify idle transition (clears activity)
+            expect(mockBotStateManager.clearActivityPhase).toHaveBeenCalled();
         });
     });
 
     describe('Error handling', () => {
-        it('should handle presenceManager.updatePhase errors gracefully', async () => {
-            // Configure presenceManager to throw
-            mockPresenceManager.updatePhase = mock(async () => {
+        it('should handle botStateManager.updateActivityPhase errors gracefully', async () => {
+            // Configure botStateManager to throw
+            mockBotStateManager.updateActivityPhase = mock(() => {
                 throw new Error('Update phase failed');
             });
 
@@ -475,7 +377,7 @@ describe('StreamEventHandler', () => {
                 return 'Test status';
             });
 
-            const { onStreamEvent } = createStreamEventHandler(baseDeps);
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager });
 
             // Send assistant event with tool_use containing sensitive data
             onStreamEvent({
@@ -538,7 +440,7 @@ describe('StreamEventHandler', () => {
             await flushPromises();
 
             // Verify fallback to thinkingSynopsis was used
-            const calls = (mockPresenceManager.updatePhase as any).mock.calls;
+            const calls = mockBotStateManager.updateActivityPhase.mock.calls;
             const thinkingCalls = filter(calls, (call: unknown[]) => (call[0] as { type?: string })?.type === 'thinking');
 
             // Find a call that used the fallback thinkingSynopsis
@@ -557,7 +459,7 @@ describe('StreamEventHandler', () => {
                 return 'Test status';
             });
 
-            const { onStreamEvent } = createStreamEventHandler(baseDeps);
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager });
 
             // Send multiple text chunks exceeding 200 chars
             const longText1 = repeat('X', 150);
@@ -584,7 +486,7 @@ describe('StreamEventHandler', () => {
                 return 'Test status';
             });
 
-            const { onStreamEvent } = createStreamEventHandler(baseDeps);
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager });
 
             // Send 5 tool calls (exceeds MAX_RECENT_TOOLS of 3)
             onStreamEvent({ type: 'tool_progress', tool_name: 'Tool1' } as AgentStreamEvent);

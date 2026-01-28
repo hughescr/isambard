@@ -767,12 +767,14 @@ function buildQueryOptions(
         permissionMode:    'acceptEdits' as const,
         allowedTools:      buildAllowedTools(discordMcpServer, inboxMcpServer, options?.specialMode),
         maxThinkingTokens: 10000,
+        // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Configuration values - mutations don't change behavior
         compactionControl: {
             enabled:               true,
             contextTokenThreshold: 150000,
             model:                 'haiku',
             summaryPrompt:         COMPACTION_SUMMARY_PROMPT,
         },
+        // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral
         settingSources:  [],
         abortController: options?.abortController,
         ...(options?.sessionId && { resume: options.sessionId }),

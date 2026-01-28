@@ -7,8 +7,7 @@ import type { UnreadMessage, UnreadOverview, ChannelSummaryResponse } from '@/in
 import { createChannelId } from '@/integrations/discord/types';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import * as textGenerator from '@/agent/text-generator';
-import type { CatchUpStateManager } from '@/integrations/discord/catchup/state-manager';
-import type { ChannelId } from '@/integrations/discord/types';
+import type { BotStateManager } from '@/integrations/discord/state';
 
 describe.concurrent('createInboxMCPServer', () => {
     let mockInboxManager: InboxManager;
@@ -607,7 +606,7 @@ describe.concurrent('createInboxMCPServer', () => {
         });
     });
 
-    describe('CatchUpStateManager integration', () => {
+    describe('BotStateManager integration', () => {
         test('getChannelSummary should mark channel as viewed when state manager provided', async () => {
             const messages: UnreadMessage[] = [
                 {
@@ -626,13 +625,9 @@ describe.concurrent('createInboxMCPServer', () => {
             const spy = spyOn(textGenerator, 'generateTextWithSystemPrompt').mockResolvedValue('Test summary');
             spies.push(spy);
 
-            const mockStateManager: CatchUpStateManager = {
-                getState:            mock(_.constant('catching_up' as const)),
-                setState:            mock(_.noop),
-                getViewedChannels:   mock(() => new Set<ChannelId>()),
-                markChannelViewed:   mock(_.noop),
-                clearViewedChannels: mock(_.noop),
-            };
+            const mockStateManager: BotStateManager = {
+                markChannelViewed: mock(_.noop),
+            } as unknown as BotStateManager;
 
             const server = createInboxMCPServer(mockInboxManager, mockStateManager);
             const handler = getToolHandler(server, 'getChannelSummary');
@@ -684,13 +679,9 @@ describe.concurrent('createInboxMCPServer', () => {
 
             mockInboxManager.getMessage = mock(() => message);
 
-            const mockStateManager: CatchUpStateManager = {
-                getState:            mock(_.constant('catching_up' as const)),
-                setState:            mock(_.noop),
-                getViewedChannels:   mock(() => new Set<ChannelId>()),
-                markChannelViewed:   mock(_.noop),
-                clearViewedChannels: mock(_.noop),
-            };
+            const mockStateManager: BotStateManager = {
+                markChannelViewed: mock(_.noop),
+            } as unknown as BotStateManager;
 
             const server = createInboxMCPServer(mockInboxManager, mockStateManager);
             const handler = getToolHandler(server, 'fetchMessages');

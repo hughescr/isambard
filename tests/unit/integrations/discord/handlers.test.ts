@@ -864,8 +864,8 @@ describe('Discord Event Handlers', () => {
         };
 
         it('should call handleCatchUpInterruption when state is catching_up and runner exists', async () => {
-            const mockCatchUpStateManager = {
-                getState: mock(_.constant('catching_up' as const)),
+            const mockBotStateManager = {
+                getMode: mock(_.constant('catching_up' as const)),
             };
 
             const mockCatchUpSessionRunner = {
@@ -874,9 +874,9 @@ describe('Discord Event Handlers', () => {
 
             const mockPresenceManager = {
                 // Stryker disable next-line all: Mock functions for testing only
-                setPhase:       mock(() => _.noop()),
+                setPhase:              mock(() => _.noop()),
                 // Stryker disable next-line all: Mock functions for testing only
-                setCatchUpMode: mock(() => _.noop()),
+                transitionCatchUpMode: mock(() => _.noop()),
             };
 
             const onMessage = mock(_.constant(Promise.resolve(null)));
@@ -885,9 +885,9 @@ describe('Discord Event Handlers', () => {
                 monitoredChannelIds:  [monitoredChannelId],
                 botUserId,
                 onMessage,
-                catchUpStateManager:  mockCatchUpStateManager as unknown as import('@/integrations/discord/catchup').CatchUpStateManager,
                 catchUpSessionRunner: mockCatchUpSessionRunner as unknown as import('@/integrations/discord/catchup').CatchUpSessionRunner,
                 presenceManager:      mockPresenceManager as unknown as import('@/integrations/discord/presence').PresenceManager,
+                botStateManager:      mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
             });
 
             const message = createMockMessageForCatchUp();
@@ -898,8 +898,9 @@ describe('Discord Event Handlers', () => {
         });
 
         it('should NOT call handleCatchUpInterruption when state is NOT catching_up', async () => {
-            const mockCatchUpStateManager = {
-                getState: mock(_.constant('idle' as const)),
+            const mockBotStateManager = {
+                getMode:                mock(_.constant('idle' as const)),
+                startProcessingMessage: mock(() => _.noop()),
             };
 
             const mockCatchUpSessionRunner = {
@@ -908,9 +909,9 @@ describe('Discord Event Handlers', () => {
 
             const mockPresenceManager = {
                 // Stryker disable next-line all: Mock functions for testing only
-                setPhase:       mock(() => _.noop()),
+                setPhase:              mock(() => _.noop()),
                 // Stryker disable next-line all: Mock functions for testing only
-                setCatchUpMode: mock(() => _.noop()),
+                transitionCatchUpMode: mock(() => _.noop()),
             };
 
             const onMessage = mock(_.constant(Promise.resolve(null)));
@@ -919,9 +920,9 @@ describe('Discord Event Handlers', () => {
                 monitoredChannelIds:  [monitoredChannelId],
                 botUserId,
                 onMessage,
-                catchUpStateManager:  mockCatchUpStateManager as unknown as import('@/integrations/discord/catchup').CatchUpStateManager,
                 catchUpSessionRunner: mockCatchUpSessionRunner as unknown as import('@/integrations/discord/catchup').CatchUpSessionRunner,
                 presenceManager:      mockPresenceManager as unknown as import('@/integrations/discord/presence').PresenceManager,
+                botStateManager:      mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
             });
 
             const message = createMockMessageForCatchUp();
@@ -932,15 +933,16 @@ describe('Discord Event Handlers', () => {
         });
 
         it('should NOT call handleCatchUpInterruption when catchUpSessionRunner is undefined', async () => {
-            const mockCatchUpStateManager = {
-                getState: mock(_.constant('catching_up' as const)),
-            };
-
             const mockPresenceManager = {
                 // Stryker disable next-line all: Mock functions for testing only
-                setPhase:       mock(() => _.noop()),
+                setPhase:              mock(() => _.noop()),
                 // Stryker disable next-line all: Mock functions for testing only
-                setCatchUpMode: mock(() => _.noop()),
+                transitionCatchUpMode: mock(() => _.noop()),
+            };
+
+            const mockBotStateManager = {
+                getMode:                mock(_.constant('idle' as const)),
+                startProcessingMessage: mock(() => _.noop()),
             };
 
             const onMessage = mock(_.constant(Promise.resolve(null)));
@@ -949,9 +951,9 @@ describe('Discord Event Handlers', () => {
                 monitoredChannelIds: [monitoredChannelId],
                 botUserId,
                 onMessage,
-                catchUpStateManager: mockCatchUpStateManager as unknown as import('@/integrations/discord/catchup').CatchUpStateManager,
                 // catchUpSessionRunner is undefined
                 presenceManager:     mockPresenceManager as unknown as import('@/integrations/discord/presence').PresenceManager,
+                botStateManager:     mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
             });
 
             const message = createMockMessageForCatchUp();
@@ -959,6 +961,119 @@ describe('Discord Event Handlers', () => {
             await handler(message);
 
             // No exception should be thrown when catchUpSessionRunner is undefined
+            expect(onMessage).toHaveBeenCalled();
+        });
+    });
+
+    describe('State manager idle mode transition', () => {
+        const botUserId = createUserId('bot-123');
+        const monitoredChannelId = createChannelId('channel-456');
+
+        const createMockMessageForState = (): Message => {
+            return {
+                id:     'msg-123',
+                author: {
+                    id:  'user-789',
+                    tag: 'TestUser#1234',
+                    bot: false,
+                },
+                content: 'Test message content',
+                channel: {
+                    id:         monitoredChannelId,
+                    // Stryker disable next-line all: Mock function for testing only
+                    sendTyping: mock(async () => { return; }),
+                },
+                guild: {
+                    id: 'guild-123',
+                },
+                attachments: new Map(),
+                createdAt:   new Date(),
+            } as unknown as Message;
+        };
+
+        it('should call startProcessingMessage when bot state is idle', async () => {
+            const mockBotStateManager = {
+                getMode:                mock(_.constant('idle' as const)),
+                startProcessingMessage: mock(() => _.noop()),
+            };
+
+            const onMessage = mock(_.constant(Promise.resolve(null)));
+
+            const handler = createMessageHandler({
+                monitoredChannelIds: [monitoredChannelId],
+                botUserId,
+                onMessage,
+                botStateManager:     mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
+            });
+
+            const message = createMockMessageForState();
+            await handler(message);
+
+            // Verify startProcessingMessage was called when mode is idle
+            expect(mockBotStateManager.startProcessingMessage).toHaveBeenCalled();
+            expect(mockBotStateManager.startProcessingMessage).toHaveBeenCalledWith(
+                monitoredChannelId,
+                'Test message content'
+            );
+        });
+
+        it('should NOT call startProcessingMessage when bot state is not idle', async () => {
+            const mockBotStateManager = {
+                getMode:                mock(_.constant('processing_message' as const)),
+                startProcessingMessage: mock(() => _.noop()),
+            };
+
+            const onMessage = mock(_.constant(Promise.resolve(null)));
+
+            const handler = createMessageHandler({
+                monitoredChannelIds: [monitoredChannelId],
+                botUserId,
+                onMessage,
+                botStateManager:     mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
+            });
+
+            const message = createMockMessageForState();
+            await handler(message);
+
+            // Verify startProcessingMessage was NOT called when mode is not idle
+            expect(mockBotStateManager.startProcessingMessage).not.toHaveBeenCalled();
+        });
+
+        it('should NOT call startProcessingMessage when bot state is catching_up', async () => {
+            const mockBotStateManager = {
+                getMode:                mock(_.constant('catching_up' as const)),
+                startProcessingMessage: mock(() => _.noop()),
+            };
+
+            const onMessage = mock(_.constant(Promise.resolve(null)));
+
+            const handler = createMessageHandler({
+                monitoredChannelIds: [monitoredChannelId],
+                botUserId,
+                onMessage,
+                botStateManager:     mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
+            });
+
+            const message = createMockMessageForState();
+            await handler(message);
+
+            // Verify startProcessingMessage was NOT called when mode is catching_up
+            expect(mockBotStateManager.startProcessingMessage).not.toHaveBeenCalled();
+        });
+
+        it('should handle undefined botStateManager gracefully', async () => {
+            const onMessage = mock(_.constant(Promise.resolve(null)));
+
+            const handler = createMessageHandler({
+                monitoredChannelIds: [monitoredChannelId],
+                botUserId,
+                onMessage,
+                // botStateManager is undefined
+            });
+
+            const message = createMockMessageForState();
+            // Should not throw when botStateManager is undefined
+            await handler(message);
             expect(onMessage).toHaveBeenCalled();
         });
     });

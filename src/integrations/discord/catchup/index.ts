@@ -1,12 +1,10 @@
 /**
- * Catch-up state management module.
+ * Catch-up session management module.
  *
- * Manages Discord bot catch-up mode state transitions and tracking.
+ * Manages Discord bot catch-up sessions, including running agent catch-up,
+ * handling interruptions, and tracking completion.
  */
 
-export type { CatchUpState } from './types';
-export type { CatchUpStateManager } from './state-manager';
-export { createCatchUpStateManager } from './state-manager';
 export { buildCatchUpPrompt, buildCatchUpInterruptedPrompt } from './prompts';
 export type { CatchUpInterruptedOptions } from './prompts';
 export type {

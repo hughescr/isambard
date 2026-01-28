@@ -1,3 +1,4 @@
+// Stryker disable StringLiteral: Prompt template content - mutations don't change behavior
 export const COMPACTION_SUMMARY_PROMPT = `## Isambard-Specific Context
 
 In addition to the standard summary sections above, include these Isambard-specific details:
@@ -22,3 +23,4 @@ In addition to the standard summary sections above, include these Isambard-speci
 - What the user will expect when the conversation continues
 - Any context that would be confusing if lost (e.g., "we decided to call it X")
 - Implicit understanding established during this session`;
+// Stryker restore StringLiteral

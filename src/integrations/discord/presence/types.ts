@@ -7,26 +7,29 @@
 
 import { z } from 'zod';
 import type { ActivitiesOptions } from 'discord.js';
+import type { ActivityPhase } from '../state/types.js';
 
 // ============================================================================
 // Presence Phase - State Machine
 // ============================================================================
 
 /**
- * Discriminated union representing the current activity phase of the bot.
- * Each phase maps to a different Discord presence status.
+ * Discriminated union representing the current presence phase of the bot.
+ * Extends ActivityPhase with an additional 'idle' state for Discord presence.
+ *
+ * ActivityPhase represents active processing states (thinking, using_tool, responding).
+ * PresencePhase adds the 'idle' state to represent when the bot is not actively processing.
  *
  * @example
  * ```typescript
+ * const idlePhase: PresencePhase = { type: 'idle', since: new Date() };
  * const thinkingPhase: PresencePhase = { type: 'thinking', startedAt: new Date() };
  * const toolPhase: PresencePhase = { type: 'using_tool', toolName: 'memory_tool', startedAt: new Date() };
  * ```
  */
 export type PresencePhase
-    = | { type: 'idle', since: Date }
-      | { type: 'thinking', startedAt: Date, userMessage?: string, generatedStatus?: string }
-      | { type: 'using_tool', toolName: string, startedAt: Date, generatedStatus?: string }
-      | { type: 'responding', startedAt: Date, generatedStatus?: string };
+    = | ActivityPhase
+      | { type: 'idle', since: Date };
 
 // ============================================================================
 // Catch-Up Mode - For status prefix generation
@@ -34,11 +37,51 @@ export type PresencePhase
 
 /**
  * Catch-up mode state for presence status prefix generation.
+ *
+ * ## Simplified Type System for Presence Display
+ *
+ * This type combines catching-up state with interruption into single enum values
+ * for simplified Discord presence status generation. This differs from BotStateManager's
+ * orthogonal design which models mode and interruption as separate concerns.
+ *
+ * ## Design Rationale
+ *
+ * PresenceManager needs simple enum values to:
+ * - Generate status emoji prefixes (📥, 💬, 📥💬)
+ * - Map directly to status text templates
+ * - Avoid complex conditional logic in status generation
+ *
+ * BotStateManager models these as orthogonal flags to:
+ * - Support interruption across all modes without state explosion
+ * - Maintain clean state machine transitions
+ * - Allow future modes to inherit interruption behavior
+ *
+ * ## Mapping from BotStateManager
+ *
+ * The bot.ts integration layer maps BotState to CatchUpMode:
+ * - `mode='catching_up', interrupted=false` → `'catching_up'` (📥 prefix)
+ * - `mode='catching_up', interrupted=true` → `'catching_up_interrupted'` (📥💬 prefix)
+ * - `mode='processing_message'` → `'processing_message'` (💬 prefix)
+ * - `mode!='catching_up' && mode!='processing_message'` → `'none'` (no prefix)
+ *
+ * ## Discord Status Mapping
+ *
  * Maps to emoji prefixes shown in Discord status:
- * - 'none': No special prefix (normal operation)
- * - 'catching_up': 📥 prefix (processing backlog)
- * - 'catching_up_interrupted': 📥💬 prefix (handling new message during catch-up)
- * - 'processing_message': 💬 prefix (normal message handling)
+ * - `'none'`: No special prefix (normal operation)
+ * - `'catching_up'`: 📥 prefix (processing backlog)
+ * - `'catching_up_interrupted'`: 📥💬 prefix (handling new message during catch-up)
+ * - `'processing_message'`: 💬 prefix (normal message handling)
+ *
+ * @see BotState in src/integrations/discord/state/types.ts for the authoritative state model
+ * @see bot.ts for the mapping logic between these type systems
+ *
+ * @example
+ * ```typescript
+ * // In bot.ts mapping logic:
+ * const catchUpMode: CatchUpMode = state.mode === 'catching_up'
+ *   ? (state.interrupted ? 'catching_up_interrupted' : 'catching_up')
+ *   : (state.mode === 'processing_message' ? 'processing_message' : 'none');
+ * ```
  */
 export type CatchUpMode = 'none' | 'catching_up' | 'catching_up_interrupted' | 'processing_message';
 
