@@ -869,7 +869,8 @@ describe('Discord Event Handlers', () => {
             };
 
             const mockCatchUpSessionRunner = {
-                interrupt: mock(async () => { /* intentionally empty */ }),
+                interrupt:               mock(async () => { /* intentionally empty */ }),
+                resumeAfterInterruption: mock(async () => { /* intentionally empty */ }),
             };
 
             const mockPresenceManager = {
@@ -895,6 +896,9 @@ describe('Discord Event Handlers', () => {
 
             // Verify handleCatchUpInterruption was called (which calls interrupt)
             expect(mockCatchUpSessionRunner.interrupt).toHaveBeenCalled();
+
+            // CRITICAL: Verify resumeAfterInterruption was called to resume catch-up
+            expect(mockCatchUpSessionRunner.resumeAfterInterruption).toHaveBeenCalled();
 
             // CRITICAL: Verify message was NOT processed separately (would cause duplicate)
             // The resume will handle the message via the interrupted prompt
@@ -974,7 +978,8 @@ describe('Discord Event Handlers', () => {
             };
 
             const mockCatchUpSessionRunner = {
-                interrupt: mock(async () => { /* intentionally empty */ }),
+                interrupt:               mock(async () => { /* intentionally empty */ }),
+                resumeAfterInterruption: mock(async () => { /* intentionally empty */ }),
             };
 
             const mockCoordinator = {
@@ -997,6 +1002,9 @@ describe('Discord Event Handlers', () => {
 
             // Verify interrupt was called
             expect(mockCatchUpSessionRunner.interrupt).toHaveBeenCalled();
+
+            // CRITICAL: Verify resumeAfterInterruption was called to resume catch-up
+            expect(mockCatchUpSessionRunner.resumeAfterInterruption).toHaveBeenCalled();
 
             // CRITICAL: Verify coordinator was NOT called (would cause duplicate processing)
             expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
