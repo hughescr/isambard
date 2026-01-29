@@ -462,12 +462,12 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         // Stryker restore all
     }
 
-    // Register clientReady handler for logging
-    client.on('clientReady', createReadyHandler());
-
     // Register clientReady handler for messageCreate setup
     // This runs after the client is authenticated and ready
-    client.on('clientReady', (readyClient: Client): void => {
+    // Use .once() to ensure this setup only runs once, even on reconnects
+    client.once('clientReady', (readyClient: Client): void => {
+        // Log that the bot is ready (preserving functionality from removed logging handler)
+        createReadyHandler()(readyClient);
         // At this point, readyClient.user is guaranteed to be non-null
         // because the 'clientReady' event only fires after successful authentication
 

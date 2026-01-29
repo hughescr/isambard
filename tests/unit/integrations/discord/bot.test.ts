@@ -57,6 +57,7 @@ describe.concurrent('createDiscordBot', () => {
     test('should call client.login with bot token when start() is called', async () => {
         const mockClient = {
             on:      mock(() => mockClient),
+            once:    mock(() => mockClient),
             login:   mock(async () => 'mock-token'),
             destroy: mock(async () => undefined),
             user:    { id: '999999999999999999', tag: 'TestBot#1234' },
@@ -78,6 +79,7 @@ describe.concurrent('createDiscordBot', () => {
     test('should call client.destroy when stop() is called', async () => {
         const mockClient = {
             on:      mock(() => mockClient),
+            once:    mock(() => mockClient),
             login:   mock(async () => 'mock-token'),
             destroy: mock(async () => undefined),
             user:    { id: '999999999999999999', tag: 'TestBot#1234' },
@@ -100,6 +102,7 @@ describe.concurrent('createDiscordBot', () => {
         const loginError = new Error('Invalid bot token');
         const mockClient = {
             on:      mock(() => mockClient),
+            once:    mock(() => mockClient),
             login:   mock(async () => { throw loginError; }),
             destroy: mock(async () => undefined),
             user:    { id: '999999999999999999', tag: 'TestBot#1234' },
@@ -120,6 +123,7 @@ describe.concurrent('createDiscordBot', () => {
         const destroyError = new Error('Destroy failed');
         const mockClient = {
             on:      mock(() => mockClient),
+            once:    mock(() => mockClient),
             login:   mock(async () => 'mock-token'),
             destroy: mock(async () => { throw destroyError; }),
             user:    { id: '999999999999999999', tag: 'TestBot#1234' },
@@ -139,6 +143,7 @@ describe.concurrent('createDiscordBot', () => {
     test('should allow multiple start/stop cycles', async () => {
         const mockClient = {
             on:      mock(() => mockClient),
+            once:    mock(() => mockClient),
             login:   mock(async () => 'mock-token'),
             destroy: mock(async () => undefined),
             user:    { id: '999999999999999999', tag: 'TestBot#1234' },
@@ -165,6 +170,7 @@ describe.concurrent('createDiscordBot', () => {
         test('should NOT call presenceManager.updatePhase when shouldUpdatePresence returns false', async () => {
             const mockClient = {
                 on:      mock(() => mockClient),
+                once:    mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
                 destroy: mock(async () => undefined),
                 user:    { id: '999999999999999999', tag: 'TestBot#1234' },
@@ -218,9 +224,9 @@ describe.concurrent('createDiscordBot', () => {
 
             // Trigger clientReady to set up subscriptions
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-            const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandlers[1]?.[1]; // Second handler is for message setup
+            const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
                 messageSetupHandler(mockClient);
             }
@@ -262,6 +268,7 @@ describe.concurrent('createDiscordBot', () => {
         test('should set up activity phase subscription when presence manager is created', async () => {
             const mockClient = {
                 on:      mock(() => mockClient),
+                once:    mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
                 destroy: mock(async () => undefined),
                 user:    { id: '999999999999999999', tag: 'TestBot#1234' },
@@ -319,9 +326,9 @@ describe.concurrent('createDiscordBot', () => {
 
             // Trigger clientReady to set up subscriptions
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-            const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandlers[1]?.[1]; // Second handler is for message setup
+            const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
                 messageSetupHandler(mockClient);
             }
@@ -333,6 +340,7 @@ describe.concurrent('createDiscordBot', () => {
         test('should complete full presence flow: state update → subscription → throttle check → presence update', async () => {
             const mockClient = {
                 on:      mock(() => mockClient),
+                once:    mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
                 destroy: mock(async () => undefined),
                 user:    { id: '999999999999999999', tag: 'TestBot#1234' },
@@ -384,9 +392,9 @@ describe.concurrent('createDiscordBot', () => {
 
             // Trigger clientReady to set up subscriptions
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-            const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandlers[1]?.[1]; // Second handler is for message setup
+            const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
                 messageSetupHandler(mockClient);
             }
@@ -451,6 +459,7 @@ describe.concurrent('createDiscordBot', () => {
 
             const mockClient = {
                 on:      mock(() => mockClient),
+                once:    mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
                 destroy: mock(async () => undefined),
                 user:    { id: '999999999999999999', tag: 'TestBot#1234' },
@@ -501,9 +510,9 @@ describe.concurrent('createDiscordBot', () => {
 
             // Trigger clientReady to set up subscriptions
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-            const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandlers[1]?.[1];
+            const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
                 messageSetupHandler(mockClient);
             }
@@ -546,6 +555,7 @@ describe.concurrent('createDiscordBot', () => {
         test('should verify subscription fires on activity phase updates', async () => {
             const mockClient = {
                 on:      mock(() => mockClient),
+                once:    mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
                 destroy: mock(async () => undefined),
                 user:    { id: '999999999999999999', tag: 'TestBot#1234' },
@@ -597,9 +607,9 @@ describe.concurrent('createDiscordBot', () => {
 
             // Trigger clientReady to set up subscriptions
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-            const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandlers[1]?.[1]; // Second handler is for message setup
+            const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
                 messageSetupHandler(mockClient);
             }
@@ -632,10 +642,163 @@ describe.concurrent('createDiscordBot', () => {
         });
     });
 
+    describe('Reconnection Handler Safety', () => {
+        test('should use client.once() for clientReady to prevent duplicate handler registration on reconnects', () => {
+            const mockClient = {
+                on:      mock(() => mockClient),
+                once:    mock(() => mockClient),
+                login:   mock(async () => 'mock-token'),
+                destroy: mock(async () => undefined),
+                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:    null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            createDiscordBot({
+                config:    mockConfig,
+                onMessage: mockOnMessage,
+            });
+
+            // Verify client.once() was called with 'clientReady' (not client.on())
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (...args: unknown[]) => void][];
+            const clientReadyCalls = _filter(onceCalls, ([event]) => event === 'clientReady');
+
+            // Should have at least one clientReady handler registered with once()
+            expect(clientReadyCalls.length).toBeGreaterThan(0);
+        });
+
+        test('should verify clientReady handler uses once() to prevent re-registration on reconnect', () => {
+            let messageCreateHandlerCount = 0;
+            let interactionCreateHandlerCount = 0;
+            let clientReadyHandlerCallCount = 0;
+
+            // Track registered handlers
+            const registeredHandlers = new Map<string, ((...args: unknown[]) => void)[]>();
+
+            // Create a mock client that behaves like the real Discord client
+            const mockClient = {
+                on: mock((event: string, handler: (...args: unknown[]) => void) => {
+                    if(!registeredHandlers.has(event)) {
+                        registeredHandlers.set(event, []);
+                    }
+                    registeredHandlers.get(event)!.push(handler);
+
+                    if(event === 'messageCreate') {
+                        messageCreateHandlerCount++;
+                    }
+                    if(event === 'interactionCreate') {
+                        interactionCreateHandlerCount++;
+                    }
+                    return mockClient;
+                }),
+                once: mock((event: string, handler: (...args: unknown[]) => void) => {
+                    // once() should only fire the handler once
+                    const wrappedHandler = (...args: unknown[]) => {
+                        clientReadyHandlerCallCount++;
+                        handler(...args);
+                    };
+                    if(!registeredHandlers.has(event)) {
+                        registeredHandlers.set(event, []);
+                    }
+                    registeredHandlers.get(event)!.push(wrappedHandler);
+                    return mockClient;
+                }),
+                login:   mock(async () => 'mock-token'),
+                destroy: mock(async () => undefined),
+                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:    null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            createDiscordBot({
+                config:    mockConfig,
+                onMessage: mockOnMessage,
+            });
+
+            // Verify that clientReady was registered with once()
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (...args: unknown[]) => void][];
+            const clientReadyOnceCalls = _filter(onceCalls, ([event]) => event === 'clientReady');
+            expect(clientReadyOnceCalls.length).toBeGreaterThan(0);
+
+            // Simulate the first clientReady event
+            const clientReadyHandlers = registeredHandlers.get('clientReady') ?? [];
+            expect(clientReadyHandlers.length).toBeGreaterThan(0);
+
+            // Fire the clientReady handler once
+            for(const handler of clientReadyHandlers) {
+                handler(mockClient);
+            }
+
+            // After first clientReady, should have handlers registered
+            expect(messageCreateHandlerCount).toBe(1);
+            expect(interactionCreateHandlerCount).toBe(1);
+            expect(clientReadyHandlerCallCount).toBe(1);
+
+            // Verify that the fix prevents duplicate registrations
+            // With once(), the handler shouldn't be called again on reconnect
+            // But even if Discord.js allowed it, we verify the pattern is correct
+            // The key protection is using once() instead of on()
+        });
+
+        test('should verify messageCreate and interactionCreate handlers are registered inside clientReady', () => {
+            let messageCreateRegistered = false;
+            let interactionCreateRegistered = false;
+
+            const mockClient = {
+                on: mock((event: string) => {
+                    if(event === 'messageCreate') {
+                        messageCreateRegistered = true;
+                    }
+                    if(event === 'interactionCreate') {
+                        interactionCreateRegistered = true;
+                    }
+                    return mockClient;
+                }),
+                once:    mock(() => mockClient),
+                login:   mock(async () => 'mock-token'),
+                destroy: mock(async () => undefined),
+                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:    null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            createDiscordBot({
+                config:    mockConfig,
+                onMessage: mockOnMessage,
+            });
+
+            // Before clientReady fires, handlers should NOT be registered
+            expect(messageCreateRegistered).toBe(false);
+            expect(interactionCreateRegistered).toBe(false);
+
+            // Get and fire the clientReady handler
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+
+            expect(clientReadyHandler).toBeDefined();
+
+            if(clientReadyHandler) {
+                clientReadyHandler(mockClient);
+            }
+
+            // After clientReady fires, handlers SHOULD be registered
+            expect(messageCreateRegistered).toBe(true);
+            expect(interactionCreateRegistered).toBe(true);
+        });
+    });
+
     describe('Presence Manager Lifecycle', () => {
         test('should create presence manager when identityContext and config.presence provided', () => {
             const mockClient = {
                 on:      mock(() => mockClient),
+                once:    mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
                 destroy: mock(async () => undefined),
                 user:    { id: '999999999999999999', tag: 'TestBot#1234' },
@@ -677,11 +840,11 @@ describe.concurrent('createDiscordBot', () => {
                 identityContext: 'Test identity',
             });
 
-            // Simulate clientReady event (find the SECOND clientReady handler)
+            // Simulate clientReady event
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-            const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandlers[1]?.[1]; // Second handler is for message setup
+            const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
                 messageSetupHandler(mockClient);
             }
@@ -698,6 +861,7 @@ describe.concurrent('createDiscordBot', () => {
 
             const mockClient = {
                 on:      mock(() => mockClient),
+                once:    mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
                 destroy: mock(async () => undefined),
                 user:    { id: '999999999999999999', tag: 'TestBot#1234' },
@@ -723,7 +887,7 @@ describe.concurrent('createDiscordBot', () => {
 
             // Simulate clientReady event - call ALL handlers to avoid order dependency
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-            const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             for(const [, handler] of readyHandlers) {
                 handler(mockClient);
@@ -735,6 +899,7 @@ describe.concurrent('createDiscordBot', () => {
         test('should call presenceManager.stop() on bot stop() when manager exists', async () => {
             const mockClient = {
                 on:      mock(() => mockClient),
+                once:    mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
                 destroy: mock(async () => undefined),
                 user:    { id: '999999999999999999', tag: 'TestBot#1234' },
@@ -775,11 +940,11 @@ describe.concurrent('createDiscordBot', () => {
                 identityContext: 'Test identity',
             });
 
-            // Simulate clientReady event to create presenceManager (find the SECOND clientReady handler)
+            // Simulate clientReady event to create presenceManager
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-            const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandlers[1]?.[1]; // Second handler is for message setup
+            const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
                 messageSetupHandler(mockClient);
             }
@@ -795,6 +960,7 @@ describe.concurrent('createDiscordBot', () => {
 
             const mockClient = {
                 on:      mock(() => mockClient),
+                once:    mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
                 destroy: mock(async () => { callOrder.push('destroy'); }),
                 user:    { id: '999999999999999999', tag: 'TestBot#1234' },
@@ -835,11 +1001,11 @@ describe.concurrent('createDiscordBot', () => {
                 identityContext: 'Test identity',
             });
 
-            // Simulate clientReady event to create presenceManager (find the SECOND clientReady handler)
+            // Simulate clientReady event to create presenceManager
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-            const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandlers[1]?.[1]; // Second handler is for message setup
+            const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
                 messageSetupHandler(mockClient);
             }
