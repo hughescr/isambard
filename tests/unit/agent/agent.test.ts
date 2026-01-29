@@ -19,7 +19,7 @@ describe('parseToolName', () => {
         // Standard tools
         ['Read', { module: 'claude', tool: 'Read' }],
         ['WebFetch', { module: 'claude', tool: 'WebFetch' }],
-        ['TodoWrite', { module: 'claude', tool: 'TodoWrite' }],
+        ['TaskCreate', { module: 'claude', tool: 'TaskCreate' }],
         // Non-MCP patterns (should NOT be treated as MCP)
         ['regular_tool', { module: 'claude', tool: 'regular_tool' }],
         ['some__other__tool', { module: 'claude', tool: 'some__other__tool' }],
@@ -383,7 +383,10 @@ describe('createClaudeAgent', () => {
                 'WebSearch',
                 'Bash',
                 'Task',
-                'TodoWrite',
+                'TaskCreate',
+                'TaskUpdate',
+                'TaskGet',
+                'TaskList',
                 'EnterPlanMode',
                 'ExitPlanMode',
             ]);
@@ -408,7 +411,10 @@ describe('createClaudeAgent', () => {
             expect(tools).toContain('WebSearch');
             expect(tools).toContain('Bash');
             expect(tools).toContain('Task');
-            expect(tools).toContain('TodoWrite');
+            expect(tools).toContain('TaskCreate');
+            expect(tools).toContain('TaskUpdate');
+            expect(tools).toContain('TaskGet');
+            expect(tools).toContain('TaskList');
             expect(tools).toContain('EnterPlanMode');
             expect(tools).toContain('ExitPlanMode');
 
@@ -586,7 +592,10 @@ describe('createClaudeAgent', () => {
                 'Grep',
                 'WebFetch',
                 'WebSearch',
-                'TodoWrite',
+                'TaskCreate',
+                'TaskUpdate',
+                'TaskGet',
+                'TaskList',
                 'EnterPlanMode',
                 'ExitPlanMode',
                 'Task',
@@ -617,7 +626,10 @@ describe('createClaudeAgent', () => {
                 'Grep',
                 'WebFetch',
                 'WebSearch',
-                'TodoWrite',
+                'TaskCreate',
+                'TaskUpdate',
+                'TaskGet',
+                'TaskList',
                 'EnterPlanMode',
                 'ExitPlanMode',
                 'Task',

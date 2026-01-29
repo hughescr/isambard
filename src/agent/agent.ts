@@ -41,8 +41,11 @@ const EXPLICIT_TOOLS = [
     'Bash',
     // Agent spawning
     'Task',
-    // Task management
-    'TodoWrite',
+    // Task management (new task system)
+    'TaskCreate',
+    'TaskUpdate',
+    'TaskGet',
+    'TaskList',
     // Plan mode
     'EnterPlanMode',
     'ExitPlanMode',
@@ -401,7 +404,11 @@ function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: 
         'Grep',
         'WebFetch',
         'WebSearch',
-        'TodoWrite',
+        // Task management (new task system)
+        'TaskCreate',
+        'TaskUpdate',
+        'TaskGet',
+        'TaskList',
         'EnterPlanMode',
         'ExitPlanMode',
         'Task',
@@ -778,8 +785,12 @@ function buildQueryOptions(
         settingSources:  [],
         abortController: options?.abortController,
         ...(options?.sessionId && { resume: options.sessionId }),
+        env:             {
+            ...process.env,
+            CLAUDE_CODE_ENABLE_TASKS: 'true',
+        },
         // Stryker disable all: Observability - stderr logging doesn't affect behavior
-        stderr:          (data: string) => {
+        stderr: (data: string) => {
             logger.error({ stderr: data }, 'Agent SDK stderr');
         },
         // Stryker restore all
