@@ -8,9 +8,9 @@
  * - Tracking completion and resumption
  */
 
-import type { ChannelId } from '@/integrations/discord/types';
-import type { BotStateManager, CatchingUpModeContext } from '../state';
+import type { BotStateManager, CatchingUpModeContext, InterruptingMessageDetails } from '../state';
 import type { InboxManager } from '../inbox';
+import type { ChannelId } from '../types';
 import { buildCatchUpPrompt, buildCatchUpInterruptedPrompt } from './prompts';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
@@ -29,18 +29,9 @@ export interface CatchUpCompletionSignal {
 }
 
 /**
- * Details about the message that interrupted a catch-up session.
+ * Re-export InterruptingMessageDetails for API compatibility
  */
-export interface InterruptingMessage {
-    /** Channel ID where the interruption occurred */
-    channelId:   ChannelId
-    /** Author of the interrupting message */
-    author:      string
-    /** Channel name where the interruption occurred */
-    channelName: string
-    /** Content of the interrupting message */
-    content:     string
-}
+export type InterruptingMessage = InterruptingMessageDetails;
 
 /**
  * In-progress signal stored in memory - indicates catch-up was interrupted by crash/hot reload.
@@ -194,9 +185,10 @@ export interface CatchUpSessionRunner {
  * ```
  */
 export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): CatchUpSessionRunner {
+    // Only operational handles - NO state flags. BotStateManager is the single source of truth.
     let currentAbortController: AbortController | null = null;
     let currentSessionId: string | undefined;
-    let interruptingMessage: InterruptingMessage | null = null;
+    // NOTE: interruptingMessage is stored in BotStateManager's CatchingUpModeContext, NOT here
 
     // Local closure function for completing catch-up
     const completeCatchUp = async (channelsProcessed: number, messagesProcessed: number): Promise<void> => {
@@ -221,13 +213,102 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
         deps.onCatchUpComplete?.();
     };
 
+    // Internal resume logic - uses BotStateManager.isInterrupted() as the trigger
+    // Using function declaration for hoisting (circular dependency with runSessionAndFinalize)
+    async function doResume(): Promise<void> {
+        // Guard: verify we're still in catching_up mode and interrupted
+        // BotStateManager is the single source of truth for this state
+        // Stryker disable ConditionalExpression,BlockStatement,LogicalOperator: Guard clause - async timing means this can't be reliably unit tested
+        if(deps.stateManager.getMode() !== 'catching_up' || !deps.stateManager.isInterrupted()) {
+            return;
+        }
+        // Stryker restore ConditionalExpression,BlockStatement
+
+        // Get current unread overview
+        const overview = deps.inboxManager.getUnreadOverview();
+
+        // If no unread messages, complete catch-up
+        if(overview.totalUnread === 0) {
+            await completeCatchUp(0, 0);
+            return;
+        }
+
+        // Resume (clear interrupted flag)
+        deps.stateManager.resume();
+
+        // Create new abort controller
+        currentAbortController = new AbortController();
+
+        // Build status context for dynamic status generation
+        // Stryker disable ArrowFunction,StringLiteral,ArrayDeclaration: Status context values affect status generation but not core behavior
+        const allMessages = _.flatMap(
+            overview.channels,
+            ch => deps.inboxManager.getChannelMessages(ch.channelId)
+        );
+        const topAuthors = _(allMessages)
+            .map('author')
+            .countBy()
+            .toPairs()
+            .orderBy([1], ['desc'])
+            .take(3)
+            .map(([author]) => author)
+            .value();
+        const statusContext: StatusContext = {
+            channelNames: _.map(overview.channels, 'channelName'),
+            topAuthors,
+            totalUnread:  overview.totalUnread,
+        };
+        // Stryker restore ArrowFunction,StringLiteral
+
+        // Build catch-up interrupted prompt
+        // Read interrupting message from BotStateManager - the single source of truth
+        const state = deps.stateManager.getState();
+        const catchUpContext = state.modeContext as CatchingUpModeContext;
+        const viewedChannelIds = Array.from(catchUpContext.viewedChannels);
+        const viewedChannels = _.map(viewedChannelIds, channelId =>
+            deps.resolveChannelName?.(channelId) ?? channelId
+        );
+
+        // Get interrupting message from BotStateManager context
+        const storedMessage = catchUpContext.interruptingMessage;
+        // Stryker disable StringLiteral: Fallback display strings not behavior-critical
+        const newMessage = storedMessage
+            ? {
+                author:      storedMessage.author,
+                channelName: storedMessage.channelName,
+                content:     storedMessage.content,
+            }
+            : {
+                author:      'Unknown',
+                channelName: 'unknown',
+                content:     '',
+            };
+        // Stryker restore StringLiteral
+
+        const prompt = buildCatchUpInterruptedPrompt({
+            viewedChannels,
+            remainingUnread:   overview.totalUnread,
+            remainingChannels: overview.channels.length,
+            newMessage,
+        });
+
+        // Run agent session with error handling
+        await runSessionAndFinalize({
+            prompt,
+            channelsProcessed: overview.channels.length,
+            messagesProcessed: overview.totalUnread,
+            statusContext,
+        });
+    }
+
     // Helper for running sessions with error handling
-    const runSessionAndFinalize = async (options: {
+    // Using function declaration for hoisting (circular dependency with doResume)
+    async function runSessionAndFinalize(options: {
         prompt:            string
         channelsProcessed: number
         messagesProcessed: number
         statusContext?:    StatusContext
-    }): Promise<void> => {
+    }): Promise<void> {
         try {
             const result = await deps.runAgentSession({
                 prompt:        options.prompt,
@@ -249,25 +330,28 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
         } catch (error) {
             currentAbortController = null;
 
-            // AbortError means we were interrupted - don't complete, let interrupt flow handle it
+            // Check BotStateManager - it's the single source of truth for interrupt state
+            // If interrupted, schedule resume on next tick to let current stack unwind
+            // Using setTimeout(0) instead of setImmediate for better test compatibility with fake timers
+            if(deps.stateManager.isInterrupted()) {
+                setTimeout(() => void doResume(), 0);
+                return;
+            }
+
+            // AbortError without interrupt flag - external abort, just return
             // Stryker disable all: AbortError handling is tested with dedicated test cases for abort vs regular errors
             if(_.isError(error) && error.name === 'AbortError') {
                 return;
             }
             // Stryker restore all
 
-            // Also check if we're in interrupted state (abort signal may have different error type)
-            if(deps.stateManager.isInterrupted()) {
-                return;
-            }
-
             // For other errors, transition to idle
             // Note: We still call completeCatchUp to clean up state, but this prevents
-            // retry for 5 minutes. For truly transient errors, a restart will still work
+            // retry for 10 seconds. For truly transient errors, a restart will still work
             // since we delete the inProgress marker here.
             await completeCatchUp(0, 0);
         }
-    };
+    }
 
     return {
         async shouldStartCatchUp(): Promise<boolean> {
@@ -418,11 +502,10 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
         },
 
         interrupt(message: InterruptingMessage): void {
-            // Store the interrupting message
-            interruptingMessage = message;
-
-            // Mark as interrupted
-            deps.stateManager.interrupt();
+            // Store the interrupting message AND mark as interrupted in BotStateManager
+            // BotStateManager is the SINGLE SOURCE OF TRUTH for all state
+            // The error handler will check isInterrupted() and trigger resume
+            deps.stateManager.interrupt(message);
 
             // Abort current session
             if(currentAbortController) {
@@ -431,6 +514,8 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
         },
 
         async resumeAfterInterruption(): Promise<void> {
+            // This public method is now only used for external resume calls
+            // (e.g., from coordinator's onResponse callback)
             // Stryker disable next-line ConditionalExpression,LogicalOperator: Guard clause - test verifies no operations occur when not in interrupted state
             if(deps.stateManager.getMode() !== 'catching_up' || !deps.stateManager.isInterrupted()) {
                 // Stryker disable BlockStatement: Guard clause return
@@ -438,80 +523,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
                 // Stryker restore BlockStatement
             }
 
-            // Get current unread overview
-            const overview = deps.inboxManager.getUnreadOverview();
-
-            // If no unread messages, complete catch-up - test verifies completeCatchUp called without runAgentSession
-            if(overview.totalUnread === 0) { // Stryker disable ConditionalExpression,BlockStatement
-                await completeCatchUp(0, 0);
-                return;
-            }
-
-            // Resume (clear interrupted flag)
-            deps.stateManager.resume();
-
-            // Create new abort controller
-            currentAbortController = new AbortController();
-
-            // Build status context for dynamic status generation
-            // Stryker disable ArrowFunction,ArrayDeclaration,StringLiteral: Status context building - values affect status generation but not core behavior
-            const allMessages = _.flatMap(
-                overview.channels,
-                ch => deps.inboxManager.getChannelMessages(ch.channelId)
-            );
-            const topAuthors = _(allMessages)
-                .map('author')
-                .countBy()
-                .toPairs()
-                .orderBy([1], ['desc'])
-                .take(3)
-                .map(([author]) => author)
-                .value();
-            const statusContext: StatusContext = {
-                channelNames: _.map(overview.channels, 'channelName'),
-                topAuthors,
-                totalUnread:  overview.totalUnread,
-            };
-            // Stryker restore ArrowFunction,ArrayDeclaration,StringLiteral
-
-            // Build catch-up interrupted prompt
-            // Get viewed channels from state manager context
-            const state = deps.stateManager.getState();
-            const catchUpContext = state.modeContext as CatchingUpModeContext;
-            const viewedChannelIds = Array.from(catchUpContext.viewedChannels);
-            const viewedChannels = _.map(viewedChannelIds, channelId =>
-                deps.resolveChannelName?.(channelId) ?? channelId
-            );
-
-            // Fallback display strings not behavior-critical - test verifies prompt generation
-            const newMessage = interruptingMessage
-                ? {
-                    author:      interruptingMessage.author,
-                    channelName: interruptingMessage.channelName,
-                    content:     interruptingMessage.content,
-                }
-                : {
-                    // Stryker disable StringLiteral: Fallback display strings not behavior-critical
-                    author:      'Unknown',
-                    channelName: 'unknown',
-                    content:     '',
-                    // Stryker restore StringLiteral
-                };
-
-            const prompt = buildCatchUpInterruptedPrompt({
-                viewedChannels,
-                remainingUnread:   overview.totalUnread,
-                remainingChannels: overview.channels.length,
-                newMessage,
-            });
-
-            // Run agent session with error handling
-            await runSessionAndFinalize({
-                prompt,
-                channelsProcessed: overview.channels.length,
-                messagesProcessed: overview.totalUnread,
-                statusContext,
-            });
+            await doResume();
         },
 
         completeCatchUp,

@@ -691,6 +691,11 @@ describe.concurrent('createDiscordBot', () => {
         });
 
         test('should NOT create presence manager when identityContext is missing', () => {
+            // Spy on createPresenceManager FIRST and clear any stale calls
+            const presenceManagerSpy = spyOn(presenceModule, 'createPresenceManager');
+            presenceManagerSpy.mockClear();
+            spies.push(presenceManagerSpy);
+
             const mockClient = {
                 on:      mock(() => mockClient),
                 login:   mock(async () => 'mock-token'),
@@ -709,8 +714,6 @@ describe.concurrent('createDiscordBot', () => {
             };
 
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-            const presenceManagerSpy = spyOn(presenceModule, 'createPresenceManager');
-            spies.push(presenceManagerSpy);
 
             createDiscordBot({
                 config:    configWithPresence,
@@ -718,13 +721,12 @@ describe.concurrent('createDiscordBot', () => {
                 // identityContext missing
             });
 
-            // Simulate clientReady event (find the SECOND clientReady handler)
+            // Simulate clientReady event - call ALL handlers to avoid order dependency
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
             const calls = (mockClient.on as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandlers[1]?.[1]; // Second handler is for message setup
-            if(messageSetupHandler) {
-                messageSetupHandler(mockClient);
+            for(const [, handler] of readyHandlers) {
+                handler(mockClient);
             }
 
             expect(presenceManagerSpy).not.toHaveBeenCalled();

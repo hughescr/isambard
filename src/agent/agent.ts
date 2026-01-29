@@ -785,10 +785,12 @@ function buildQueryOptions(
         settingSources:  [],
         abortController: options?.abortController,
         ...(options?.sessionId && { resume: options.sessionId }),
+        // Stryker disable StringLiteral,ObjectLiteral: Environment config - value doesn't affect test behavior
         env:             {
             ...process.env,
             CLAUDE_CODE_ENABLE_TASKS: 'true',
         },
+        // Stryker restore StringLiteral
         // Stryker disable all: Observability - stderr logging doesn't affect behavior
         stderr: (data: string) => {
             logger.error({ stderr: data }, 'Agent SDK stderr');

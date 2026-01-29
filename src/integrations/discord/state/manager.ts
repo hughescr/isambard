@@ -16,6 +16,7 @@ import {
     type ProcessingMessageModeContext,
     type PerchingModeContext,
     type ModeContext,
+    type InterruptingMessageDetails,
     createDefaultBotState
 } from './types';
 import { type ChannelId } from '../types';
@@ -284,7 +285,7 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
     // Within-Mode Operations
     // ========================================================================
 
-    function interrupt(): void {
+    function interrupt(message?: InterruptingMessageDetails): void {
         assertNotStopped();
         const previousState = cloneState(currentState);
 
@@ -300,9 +301,20 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
         }
         // Stryker restore BlockStatement
 
+        // If in catching_up mode and message provided, store it in the context
+        let modeContext = currentState.modeContext;
+        if(message && currentState.mode === 'catching_up') {
+            const catchUpContext = currentState.modeContext as CatchingUpModeContext;
+            modeContext = {
+                ...catchUpContext,
+                interruptingMessage: message,
+            };
+        }
+
         currentState = {
             ...currentState,
             interrupted: true,
+            modeContext,
         };
 
         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability

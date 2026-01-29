@@ -118,6 +118,20 @@ export type IdleModeContext = Record<string, never>;
 export const idleModeContextSchema = z.object({}).strict();
 
 /**
+ * Details about a message that interrupted a catch-up session.
+ */
+export interface InterruptingMessageDetails {
+    /** Channel ID where the interruption occurred */
+    channelId:   ChannelId
+    /** Author of the interrupting message */
+    author:      string
+    /** Channel name where the interruption occurred */
+    channelName: string
+    /** Content of the interrupting message */
+    content:     string
+}
+
+/**
  * Context for catch-up mode.
  * Contains state for processing unread message backlog.
  *
@@ -130,39 +144,55 @@ export const idleModeContextSchema = z.object({}).strict();
  *   unreadCount: 42,
  *   channelNames: ['general', 'random'],
  *   topAuthors: ['Alice', 'Bob', 'Charlie'],
- *   timeSinceLastActive: '3 hours'
+ *   timeSinceLastActive: '3 hours',
+ *   interruptingMessage: null
  * };
  * ```
  */
 export interface CatchingUpModeContext {
     /** Channels that have been viewed during this catch-up session */
-    viewedChannels:      Set<ChannelId>
+    viewedChannels:       Set<ChannelId>
     /** Claude agent session ID for this catch-up session */
-    sessionId:           string | null
+    sessionId:            string | null
     /** When catch-up mode was entered */
-    startedAt:           Date
+    startedAt:            Date
     /** Initial count of unread messages when catch-up started */
-    unreadCount:         number
+    unreadCount:          number
     /** Names of channels with unread messages */
-    channelNames:        string[]
+    channelNames:         string[]
     /** Top authors who sent messages (up to 3) */
-    topAuthors:          string[]
+    topAuthors:           string[]
     /** Human-readable time since last active (e.g., "3 hours", "overnight") */
-    timeSinceLastActive: string | null
+    timeSinceLastActive:  string | null
+    /** Details of the message that interrupted catch-up, if any */
+    interruptingMessage?: InterruptingMessageDetails
 }
+
+/**
+ * Zod schema for interrupting message details.
+ */
+// Stryker disable ObjectLiteral: Zod schema definition - structure tested through usage
+export const interruptingMessageDetailsSchema = z.object({
+    channelId:   channelIdSchema,
+    author:      z.string(),
+    channelName: z.string(),
+    content:     z.string(),
+});
+// Stryker restore ObjectLiteral
 
 /**
  * Zod schema for catching_up mode context.
  */
 // Stryker disable ObjectLiteral: Zod schema definition - structure tested through usage
 export const catchingUpModeContextSchema = z.object({
-    viewedChannels:      z.set(channelIdSchema),
-    sessionId:           z.string().nullable(),
-    startedAt:           z.date(),
-    unreadCount:         z.number().int().nonnegative(),
-    channelNames:        z.array(z.string()),
-    topAuthors:          z.array(z.string()),
-    timeSinceLastActive: z.string().nullable(),
+    viewedChannels:       z.set(channelIdSchema),
+    sessionId:            z.string().nullable(),
+    startedAt:            z.date(),
+    unreadCount:          z.number().int().nonnegative(),
+    channelNames:         z.array(z.string()),
+    topAuthors:           z.array(z.string()),
+    timeSinceLastActive:  z.string().nullable(),
+    interruptingMessage:  interruptingMessageDetailsSchema.optional(),
 });
 // Stryker restore ObjectLiteral
 
@@ -471,8 +501,11 @@ export interface BotStateManager {
     /**
      * Mark the bot as interrupted (e.g., new message during catch-up).
      * Does not change mode, only sets interrupted flag.
+     * If in catching_up mode, stores the interrupting message details.
+     *
+     * @param message - Optional details of the interrupting message
      */
-    interrupt(): void
+    interrupt(message?: InterruptingMessageDetails): void
 
     /**
      * Clear the interrupted flag.

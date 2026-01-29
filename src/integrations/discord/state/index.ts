@@ -47,7 +47,8 @@ export type {
     ProcessingMessageModeContext,
     PerchingModeContext,
     ModeContext,
-    BotStateManager
+    BotStateManager,
+    InterruptingMessageDetails
 } from './types';
 
 // Schemas from types.ts
@@ -60,7 +61,8 @@ export {
     idleModeContextSchema,
     catchingUpModeContextSchema,
     processingMessageModeContextSchema,
-    perchingModeContextSchema
+    perchingModeContextSchema,
+    interruptingMessageDetailsSchema
 } from './types';
 
 // Type guards and factories from types.ts

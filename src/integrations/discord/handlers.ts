@@ -606,9 +606,7 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         // Handle catch-up mode interruption
         if(botStateManager?.getMode() === 'catching_up' && catchUpSessionRunner) {
             await handleCatchUpInterruption(message, catchUpSessionRunner);
-            // Resume catch-up with the interrupting message injected into the prompt
-            // Don't await - let it run in background while we return
-            void catchUpSessionRunner.resumeAfterInterruption();
+            // Don't call resumeAfterInterruption here - the session runner handles it internally
             return;
         }
 

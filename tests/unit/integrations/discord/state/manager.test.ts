@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import _ from 'lodash';
 import { createBotStateManager, type BotStateManager, type BotStateManagerDeps } from '@/integrations/discord/state/manager';
-import { type StateChange, type CatchingUpModeContext } from '@/integrations/discord/state/types';
+import { type StateChange, type CatchingUpModeContext, type InterruptingMessageDetails } from '@/integrations/discord/state/types';
 import { type ChannelId, createChannelId } from '@/integrations/discord/types';
 import { TransitionError } from '@/integrations/discord/state/transitions';
 
@@ -223,6 +223,67 @@ describe('BotStateManager', () => {
                 manager.interrupt();
 
                 expect(manager.isInterrupted()).toBe(false);
+            });
+
+            it('should store interrupting message in context when in catching_up mode', () => {
+                const context: CatchingUpModeContext = {
+                    viewedChannels:      new Set(),
+                    sessionId:           null,
+                    startedAt:           new Date(),
+                    unreadCount:         5,
+                    channelNames:        [],
+                    topAuthors:          [],
+                    timeSinceLastActive: null,
+                };
+                manager.startCatchUp(context);
+
+                const message: InterruptingMessageDetails = {
+                    channelId:   testChannelId,
+                    author:      'TestUser',
+                    channelName: 'general',
+                    content:     'Hello!',
+                };
+                manager.interrupt(message);
+
+                const state = manager.getState();
+                const catchUpContext = state.modeContext as CatchingUpModeContext;
+                expect(catchUpContext.interruptingMessage).toEqual(message);
+            });
+
+            it('should NOT store message in context when NOT in catching_up mode', () => {
+                manager.startProcessingMessage(testChannelId, 'Test');
+
+                const message: InterruptingMessageDetails = {
+                    channelId:   testChannelId,
+                    author:      'TestUser',
+                    channelName: 'general',
+                    content:     'Hello!',
+                };
+                manager.interrupt(message);
+
+                const state = manager.getState();
+                // The message should NOT be stored since we're not in catching_up mode
+                expect(state.modeContext).not.toHaveProperty('interruptingMessage');
+            });
+
+            it('should NOT store message when message is undefined in catching_up mode', () => {
+                const context: CatchingUpModeContext = {
+                    viewedChannels:      new Set(),
+                    sessionId:           null,
+                    startedAt:           new Date(),
+                    unreadCount:         5,
+                    channelNames:        [],
+                    topAuthors:          [],
+                    timeSinceLastActive: null,
+                };
+                manager.startCatchUp(context);
+
+                // Call interrupt WITHOUT a message
+                manager.interrupt();
+
+                const state = manager.getState();
+                const catchUpContext = state.modeContext as CatchingUpModeContext;
+                expect(catchUpContext.interruptingMessage).toBeUndefined();
             });
         });
 

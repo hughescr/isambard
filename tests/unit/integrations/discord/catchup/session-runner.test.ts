@@ -9,7 +9,7 @@ import type {
     AgentSessionResult,
     InterruptingMessage
 } from '@/integrations/discord/catchup/session-runner';
-import type { BotStateManager, OperationalMode, CatchingUpModeContext } from '@/integrations/discord/state';
+import type { BotStateManager, OperationalMode, CatchingUpModeContext, InterruptingMessageDetails } from '@/integrations/discord/state';
 import type { InboxManager } from '@/integrations/discord/inbox';
 import { createChannelId, type ChannelId } from '@/integrations/discord/types';
 
@@ -53,7 +53,12 @@ describe('CatchUpSessionRunner', () => {
                 mockMode        = 'catching_up';
                 mockModeContext = context;
             }),
-            interrupt: mock(() => { mockInterrupted = true; }),
+            interrupt: mock((message?: InterruptingMessageDetails) => {
+                mockInterrupted = true;
+                if(message) {
+                    mockModeContext.interruptingMessage = message;
+                }
+            }),
             resume:    mock(() => { mockInterrupted = false; }),
             goIdle:    mock(() => {
                 mockMode        = 'idle';
@@ -480,6 +485,85 @@ describe('CatchUpSessionRunner', () => {
             jest.advanceTimersByTime(10000);
             await startPromise;
         });
+
+        it('should automatically schedule resume when abort error is caught after interrupt', async () => {
+            // Set up inbox with unread messages
+            mockInboxManager.getUnreadOverview = mock().mockReturnValue({
+                totalUnread: 5,
+                channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 5 }],
+            });
+
+            // Track when resume logic runs by checking when state.resume() is called
+            let resumeCalled = false;
+            mockStateManager.resume = mock(() => {
+                resumeCalled = true;
+                mockInterrupted = false;
+            });
+
+            // First call (startCatchUp) waits for abort signal, then throws AbortError
+            // Second call (internal resume) succeeds
+            let callCount = 0;
+            mockRunAgentSession.mockImplementation((options: RunAgentSessionOptions) => {
+                callCount++;
+                if(callCount === 1) {
+                    // First call: wait for abort signal, then reject
+                    return new Promise((_resolve, reject) => {
+                        if(options.abortSignal.aborted) {
+                            const abortError = new Error('Aborted');
+                            abortError.name = 'AbortError';
+                            reject(abortError);
+                        } else {
+                            options.abortSignal.addEventListener('abort', () => {
+                                const abortError = new Error('Aborted');
+                                abortError.name = 'AbortError';
+                                reject(abortError);
+                            });
+                        }
+                    });
+                } else {
+                    // Second call: resume succeeds
+                    return Promise.resolve({ completed: true, sessionId: 'session-resumed' } as AgentSessionResult);
+                }
+            });
+
+            const runner = createCatchUpSessionRunner(deps);
+
+            // Start catch-up
+            const startPromise = runner.startCatchUp();
+
+            // Allow async chain to start
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Interrupt with a message
+            const message: InterruptingMessage = {
+                channelId:   createChannelId('456'),
+                author:      'TestUser',
+                channelName: 'random',
+                content:     'Urgent question!',
+            };
+            runner.interrupt(message);
+
+            // Wait for the first session to abort
+            await startPromise;
+
+            // The resume is scheduled via setTimeout(0) - flush timers to allow doResume() to execute
+            const flushAsync = async (iterations = 10): Promise<void> => {
+                // eslint-disable-next-line no-unmodified-loop-condition -- resumeCalled is modified by mock callback
+                for(let i = 0; i < iterations && !resumeCalled; i++) {
+                    jest.runAllTimers();
+                    await Promise.resolve();
+                    await Promise.resolve();
+                }
+            };
+            await flushAsync();
+
+            // Verify resume was called (indicating the internal resume ran)
+            expect(resumeCalled).toBe(true);
+
+            // Verify runAgentSession was called twice (initial + resume)
+            expect(callCount).toBe(2);
+        });
     });
 
     describe('resumeAfterInterruption', () => {
@@ -495,6 +579,21 @@ describe('CatchUpSessionRunner', () => {
             expect(mockRunAgentSession).not.toHaveBeenCalled();
             expect(mockStateManager.resume).not.toHaveBeenCalled();
             // Should not create abort controller or check inbox
+            expect(mockInboxManager.getUnreadOverview).not.toHaveBeenCalled();
+        });
+
+        it('should return early when in catching_up mode but NOT interrupted', async () => {
+            // Set mode to catching_up but NOT interrupted
+            mockMode = 'catching_up';
+            mockInterrupted = false;
+
+            const runner = createCatchUpSessionRunner(deps);
+            await runner.resumeAfterInterruption();
+
+            // Should not run agent session or change state
+            expect(mockRunAgentSession).not.toHaveBeenCalled();
+            expect(mockStateManager.resume).not.toHaveBeenCalled();
+            // Should not check inbox
             expect(mockInboxManager.getUnreadOverview).not.toHaveBeenCalled();
         });
 
