@@ -566,6 +566,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     // Map BotState mode to CatchUpMode for presence
                     if(mode === 'idle') {
                         presenceManager!.transitionCatchUpMode('none');
+                        // Explicitly transition presence to idle phase
+                        void presenceManager!.updatePhase({ type: 'idle', since: new Date() });
                     } else if(mode === 'catching_up') {
                         presenceManager!.transitionCatchUpMode(interrupted ? 'catching_up_interrupted' : 'catching_up');
                     } else if(mode === 'processing_message') {

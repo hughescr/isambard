@@ -895,6 +895,10 @@ describe('Discord Event Handlers', () => {
 
             // Verify handleCatchUpInterruption was called (which calls interrupt)
             expect(mockCatchUpSessionRunner.interrupt).toHaveBeenCalled();
+
+            // CRITICAL: Verify message was NOT processed separately (would cause duplicate)
+            // The resume will handle the message via the interrupted prompt
+            expect(onMessage).not.toHaveBeenCalled();
         });
 
         it('should NOT call handleCatchUpInterruption when state is NOT catching_up', async () => {
@@ -962,6 +966,43 @@ describe('Discord Event Handlers', () => {
 
             // No exception should be thrown when catchUpSessionRunner is undefined
             expect(onMessage).toHaveBeenCalled();
+        });
+
+        it('should NOT call coordinator when interrupting catch-up (prevents duplicate processing)', async () => {
+            const mockBotStateManager = {
+                getMode: mock(_.constant('catching_up' as const)),
+            };
+
+            const mockCatchUpSessionRunner = {
+                interrupt: mock(async () => { /* intentionally empty */ }),
+            };
+
+            const mockCoordinator = {
+                handleMessage: mock(() => _.noop()),
+            };
+
+            const onMessage = mock(_.constant(Promise.resolve(null)));
+
+            const handler = createMessageHandler({
+                monitoredChannelIds:  [monitoredChannelId],
+                botUserId,
+                onMessage,
+                catchUpSessionRunner: mockCatchUpSessionRunner as unknown as import('@/integrations/discord/catchup').CatchUpSessionRunner,
+                coordinator:          mockCoordinator as unknown as import('@/integrations/discord/message-coordinator').MessageCoordinator,
+                botStateManager:      mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
+            });
+
+            const message = createMockMessageForCatchUp();
+            await handler(message);
+
+            // Verify interrupt was called
+            expect(mockCatchUpSessionRunner.interrupt).toHaveBeenCalled();
+
+            // CRITICAL: Verify coordinator was NOT called (would cause duplicate processing)
+            expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
+
+            // CRITICAL: Verify onMessage was NOT called (would cause duplicate processing)
+            expect(onMessage).not.toHaveBeenCalled();
         });
     });
 

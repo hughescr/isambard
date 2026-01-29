@@ -160,4 +160,37 @@ describe('buildCatchUpInterruptedPrompt', () => {
         expect(prompt).toContain('3 channels');
         expect(prompt).not.toContain('5 unread message remains across');  // verify plural (message vs messages)
     });
+
+    it('should present new message for prioritization', () => {
+        const options: CatchUpInterruptedOptions = {
+            viewedChannels:    ['general'],
+            remainingUnread:   5,
+            remainingChannels: 2,
+            newMessage:        {
+                author:      'Alice',
+                channelName: 'general',
+                content:     'Hello!',
+            },
+        };
+        const prompt = buildCatchUpInterruptedPrompt(options);
+        expect(prompt).toContain('NEW MESSAGE');
+        expect(prompt).toContain('not necessarily more important');
+        expect(prompt).toContain('Possible approaches');
+    });
+
+    it('should tell agent to continue catching up after handling', () => {
+        const options: CatchUpInterruptedOptions = {
+            viewedChannels:    ['general'],
+            remainingUnread:   3,
+            remainingChannels: 1,
+            newMessage:        {
+                author:      'Bob',
+                channelName: 'help',
+                content:     'Need help',
+            },
+        };
+        const prompt = buildCatchUpInterruptedPrompt(options);
+        expect(prompt).toContain('Continue catching up after handling this appropriately');
+        expect(prompt).toContain('inbox tools are still available');
+    });
 });

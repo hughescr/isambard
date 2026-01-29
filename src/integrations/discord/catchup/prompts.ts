@@ -102,7 +102,7 @@ The sender is clearly online right now, which you can factor into your prioritiz
 Possible approaches:
 - If higher-priority items exist in your inbox, acknowledge the new message briefly ("Give me just a moment!") then handle the priority items first
 - If this message is urgent or the sender is high-priority, handle it immediately
-- Use your task-tracking tools to remember to circle back if you defer
+- Use TaskCreate to track tasks you need to complete (both inbox items and the new message), then work through them systematically
 
 Your inbox tools are still available. Continue catching up after handling this appropriately.`;
 }

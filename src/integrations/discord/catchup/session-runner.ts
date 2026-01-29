@@ -242,8 +242,8 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             // Clear abort controller
             currentAbortController = null;
 
-            // If completed, call completeCatchUp
-            if(result.completed) {
+            // If completed, call completeCatchUp (but not if we were interrupted)
+            if(result.completed && !deps.stateManager.isInterrupted()) {
                 await completeCatchUp(options.channelsProcessed, options.messagesProcessed);
             }
         } catch (error) {
@@ -255,6 +255,11 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
                 return;
             }
             // Stryker restore all
+
+            // Also check if we're in interrupted state (abort signal may have different error type)
+            if(deps.stateManager.isInterrupted()) {
+                return;
+            }
 
             // For other errors, transition to idle
             // Note: We still call completeCatchUp to clean up state, but this prevents

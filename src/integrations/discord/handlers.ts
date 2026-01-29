@@ -606,8 +606,10 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         // Handle catch-up mode interruption
         if(botStateManager?.getMode() === 'catching_up' && catchUpSessionRunner) {
             await handleCatchUpInterruption(message, catchUpSessionRunner);
-            // Continue to process the interrupting message normally
-            // The coordinator's onResponse callback will resume catch-up after the reply is sent
+            // Return early - do NOT process the message separately
+            // The catch-up resume (via onResponse callback in bot.ts) will include this message
+            // in the interrupted prompt, preventing duplicate processing
+            return;
         }
 
         // Allow message processing if in 'catching_up_interrupted' state

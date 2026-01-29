@@ -335,6 +335,29 @@ describe('CatchUpSessionRunner', () => {
             expect(mockStateManager.goIdle).not.toHaveBeenCalled();
         });
 
+        it('should NOT call completeCatchUp when session returns completed=true but isInterrupted is true', async () => {
+            mockInboxManager.getUnreadOverview = mock().mockReturnValue({
+                totalUnread: 5,
+                channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 5 }],
+            });
+            // Session returns completed=true (agent session catches abort internally)
+            // But state manager shows we were interrupted
+            mockRunAgentSession.mockResolvedValue({ completed: true, sessionId: 'session-123' } as AgentSessionResult);
+            mockInterrupted = true; // Set interrupted flag
+
+            const runner = createCatchUpSessionRunner(deps);
+            await runner.startCatchUp();
+
+            // completeCatchUp should NOT be called even though result.completed is true
+            // because stateManager.isInterrupted() returns true
+            expect(mockStoreCompletionSignal).not.toHaveBeenCalled();
+            expect(mockDeleteInProgressSignal).not.toHaveBeenCalled();
+            expect(mockStateManager.goIdle).not.toHaveBeenCalled();
+
+            // startCatchUp should have been called
+            expect(mockStateManager.startCatchUp).toHaveBeenCalled();
+        });
+
         it('should return without completing when AbortError is thrown', async () => {
             mockInboxManager.getUnreadOverview = mock().mockReturnValue({
                 totalUnread: 5,
@@ -374,6 +397,27 @@ describe('CatchUpSessionRunner', () => {
             const signal = mockStoreCompletionSignal.mock.calls[0][0] as CatchUpCompletionSignal;
             expect(signal.channelsProcessed).toBe(0);
             expect(signal.messagesProcessed).toBe(0);
+        });
+
+        it('should NOT call completeCatchUp when non-AbortError is thrown but state is interrupted', async () => {
+            mockInboxManager.getUnreadOverview = mock().mockReturnValue({
+                totalUnread: 5,
+                channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 5 }],
+            });
+            // Simulate the agent session throwing a non-AbortError (like "Claude Code process aborted by user")
+            const abortLikeError = new Error('Claude Code process aborted by user');
+            mockRunAgentSession.mockRejectedValue(abortLikeError);
+
+            // Set the state to interrupted (simulating interrupt() was called)
+            mockInterrupted = true;
+
+            const runner = createCatchUpSessionRunner(deps);
+            await runner.startCatchUp();
+
+            // Should NOT call completeCatchUp (storeCompletionSignal is part of completeCatchUp)
+            expect(mockStoreCompletionSignal).not.toHaveBeenCalled();
+            expect(mockDeleteInProgressSignal).not.toHaveBeenCalled();
+            expect(mockStateManager.goIdle).not.toHaveBeenCalled();
         });
     });
 
