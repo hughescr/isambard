@@ -150,14 +150,14 @@ describe('CatchUpSessionRunner', () => {
             expect(result).toBe(true);
         });
 
-        it('should return true when completed > 5 minutes ago', async () => {
+        it('should return true when completed > 10 seconds ago', async () => {
             mockTotalUnread = 5;
             mockLoadInProgressSignal.mockResolvedValue(null);
 
-            // 10 minutes ago from fixed time (12:00:00 - 10 minutes = 11:50:00)
-            const tenMinutesAgo = new Date('2025-01-25T11:50:00.000Z');
+            // 30 seconds ago from fixed time (12:00:00 - 30 seconds = 11:59:30)
+            const thirtySecondsAgo = new Date('2025-01-25T11:59:30.000Z');
             mockLoadCompletionSignal.mockResolvedValue({
-                completedAt:       tenMinutesAgo.toISOString(),
+                completedAt:       thirtySecondsAgo.toISOString(),
                 channelsProcessed: 2,
                 messagesProcessed: 5,
             } as CatchUpCompletionSignal);
@@ -168,14 +168,14 @@ describe('CatchUpSessionRunner', () => {
             expect(result).toBe(true);
         });
 
-        it('should return false when completed < 5 minutes ago', async () => {
+        it('should return false when completed < 10 seconds ago', async () => {
             mockTotalUnread = 5;
             mockLoadInProgressSignal.mockResolvedValue(null);
 
-            // 2 minutes ago from fixed time (12:00:00 - 2 minutes = 11:58:00)
-            const twoMinutesAgo = new Date('2025-01-25T11:58:00.000Z');
+            // 5 seconds ago from fixed time (12:00:00 - 5 seconds = 11:59:55)
+            const fiveSecondsAgo = new Date('2025-01-25T11:59:55.000Z');
             mockLoadCompletionSignal.mockResolvedValue({
-                completedAt:       twoMinutesAgo.toISOString(),
+                completedAt:       fiveSecondsAgo.toISOString(),
                 channelsProcessed: 2,
                 messagesProcessed: 5,
             } as CatchUpCompletionSignal);

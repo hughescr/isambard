@@ -120,7 +120,7 @@ export interface CatchUpSessionRunner {
      * Check if catch-up should be started on startup.
      * Returns true if:
      * - There are unread messages in the inbox (already loaded by bot.ts)
-     * - AND (inProgress marker exists OR lastCompleted was > 5 minutes ago OR never completed)
+     * - AND (inProgress marker exists OR lastCompleted was > 10 seconds ago OR never completed)
      */
     shouldStartCatchUp(): Promise<boolean>
 
@@ -325,25 +325,25 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
                 return true;  // Never completed before
             }
 
-            // Skip if completed < 5 minutes ago
-            const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
+            // Skip if completed < 10 seconds ago
+            const tenSecondsAgo = Date.now() - (10 * 1000);
             const completedAt = new Date(completion.completedAt).getTime();
             // Stryker disable ArithmeticOperator: Logging calculation only
-            const minutesSinceCompletion = (Date.now() - completedAt) / (60 * 1000);
+            const secondsSinceCompletion = (Date.now() - completedAt) / 1000;
             // Stryker restore ArithmeticOperator
-            // Stryker disable next-line EqualityOperator: Boundary condition < vs <= at exact 5 minutes makes no practical difference
-            const shouldStart = completedAt < fiveMinutesAgo;
+            // Stryker disable next-line EqualityOperator: Boundary condition < vs <= at exact 10 seconds makes no practical difference
+            const shouldStart = completedAt < tenSecondsAgo;
 
             // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
             logger.debug({
-                completedAt:            completion.completedAt,
-                minutesSinceCompletion: minutesSinceCompletion.toFixed(1),
+                completedAt:             completion.completedAt,
+                secondsSinceCompletion:  secondsSinceCompletion.toFixed(1),
                 shouldStart,
-                msg:                    `Completion check: ${shouldStart ? 'starting' : 'skipping'} catch-up (${minutesSinceCompletion.toFixed(1)} minutes since last completion)`,
+                msg:                     `Completion check: ${shouldStart ? 'starting' : 'skipping'} catch-up (${secondsSinceCompletion.toFixed(1)} seconds since last completion)`,
             });
             // Stryker restore ObjectLiteral,StringLiteral
 
-            // Stryker disable next-line EqualityOperator,ArithmeticOperator: Boundary condition < vs <= at exact 5 minutes makes no practical difference
+            // Stryker disable next-line EqualityOperator,ArithmeticOperator: Boundary condition < vs <= at exact 10 seconds makes no practical difference
             return shouldStart;
         },
 
