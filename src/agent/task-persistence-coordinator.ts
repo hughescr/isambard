@@ -1,0 +1,111 @@
+/**
+ * Task Persistence Coordinator
+ *
+ * Orchestrates task directory persistence across Claude Agent SDK sessions.
+ * Coordinates between DynamoDB session tracking and filesystem task directory copying.
+ *
+ * Flow:
+ * 1. Load previous session ID from DynamoDB
+ * 2. Copy task directory from previous session to new session
+ * 3. Update DynamoDB with new session ID
+ *
+ * Note: Task directory cleanup is handled by user's hooks, not this module.
+ */
+
+import type { Logger } from '@hughescr/logger';
+import _ from 'lodash';
+import type { TaskSessionBackend } from '../storage/task-session/backend';
+import { createSessionId } from '../storage/task-session/types';
+import type { TaskDirectoryCopier } from './task-directory-copier';
+
+export interface TaskPersistenceCoordinatorOptions {
+    backend: TaskSessionBackend
+    copier:  TaskDirectoryCopier
+    logger:  Logger
+}
+
+export interface TaskPersistenceCoordinator {
+    /**
+     * Prepare a new session by copying tasks from the previous session.
+     *
+     * This method:
+     * 1. Loads the previous session ID from DynamoDB
+     * 2. Copies task directory from previous to new session (if previous exists)
+     * 3. Updates DynamoDB with the new session ID
+     *
+     * Errors are logged but never thrown - the agent continues with a fresh session if persistence fails.
+     *
+     * @param newSessionId - The UUID string for the new session
+     * @returns true if tasks were copied, false if not (no previous session or copy failed)
+     */
+    prepareNewSession: (newSessionId: string) => Promise<boolean>
+}
+
+/**
+ * Creates a task persistence coordinator instance.
+ *
+ * @param options - Coordinator configuration
+ * @returns TaskPersistenceCoordinator instance
+ */
+export function createTaskPersistenceCoordinator(
+    options: TaskPersistenceCoordinatorOptions
+): TaskPersistenceCoordinator {
+    const { backend, copier, logger } = options;
+
+    return {
+        prepareNewSession: async (newSessionId: string): Promise<boolean> => {
+            try {
+                // Validate and create branded SessionId
+                const validatedNewSessionId = createSessionId(newSessionId);
+
+                // 1. Load previous session ID from DynamoDB
+                const previousSessionId = await backend.getCurrentSessionId();
+
+                if(!previousSessionId) {
+                    // No previous session - just store the new one
+                    /* istanbul ignore next - logging only */ // Stryker disable next-line all
+                    logger.debug({
+                        newSessionId,
+                        msg: 'No previous session found, starting fresh',
+                    });
+                    await backend.setCurrentSessionId(validatedNewSessionId);
+                    return false;
+                }
+
+                // 2. Copy task directory from previous session to new session
+                const copied = await copier.copyTaskDirectory(previousSessionId, validatedNewSessionId);
+
+                // 3. Update DynamoDB with new session ID
+                await backend.setCurrentSessionId(validatedNewSessionId);
+
+                if(copied) {
+                    /* istanbul ignore next - logging only */ // Stryker disable next-line all
+                    logger.info({
+                        previousSessionId,
+                        newSessionId,
+                        msg: 'Task persistence complete - tasks copied to new session',
+                    });
+                } else {
+                    /* istanbul ignore next - logging only */ // Stryker disable next-line all
+                    logger.debug({
+                        previousSessionId,
+                        newSessionId,
+                        msg: 'Task persistence complete - no tasks to copy',
+                    });
+                }
+
+                return copied;
+            } catch (error) {
+                // Task persistence is optional - log and continue
+                const errorMsg = _.isError(error) ? error.message : String(error);
+                /* istanbul ignore next - logging only */ // Stryker disable next-line all
+                logger.warn({
+                    newSessionId,
+                    error: errorMsg,
+                    msg:   'Task persistence failed (continuing with fresh session)',
+                });
+                return false;
+            }
+        },
+    };
+}

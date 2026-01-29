@@ -323,6 +323,11 @@ const originalUnlinkImpl = async (path: string) => {
     mockFs.delete(path);
 };
 
+const originalCpImpl = async (_source: string, _dest: string, _options?: unknown) => {
+    // cp copies files/directories - for test purposes, just succeed
+    return Promise.resolve();
+};
+
 export const mockFsPromises = {
     access:    mock(originalAccessImpl),
     stat:      mock(originalStatImpl),
@@ -332,6 +337,7 @@ export const mockFsPromises = {
     mkdir:     mock(originalMkdirImpl),
     rm:        mock(originalRmImpl),
     unlink:    mock(originalUnlinkImpl),
+    cp:        mock(originalCpImpl),
 };
 
 // Export a helper to reset the mock filesystem between tests
@@ -354,6 +360,8 @@ export function resetMockFs(): void {
     mockFsPromises.rm.mockImplementation(originalRmImpl);
     mockFsPromises.unlink.mockReset();
     mockFsPromises.unlink.mockImplementation(originalUnlinkImpl);
+    mockFsPromises.cp.mockReset();
+    mockFsPromises.cp.mockImplementation(originalCpImpl);
 }
 
 // Reset only paths matching a prefix - for test isolation
@@ -380,6 +388,8 @@ export function resetMockFsPrefix(prefix: string): void {
     mockFsPromises.rm.mockImplementation(originalRmImpl);
     mockFsPromises.unlink.mockReset();
     mockFsPromises.unlink.mockImplementation(originalUnlinkImpl);
+    mockFsPromises.cp.mockReset();
+    mockFsPromises.cp.mockImplementation(originalCpImpl);
 }
 
 // Note: Tests should call resetMockFs() or resetMockFsPrefix() in their own afterEach hooks

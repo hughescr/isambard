@@ -185,14 +185,14 @@ export const interruptingMessageDetailsSchema = z.object({
  */
 // Stryker disable ObjectLiteral: Zod schema definition - structure tested through usage
 export const catchingUpModeContextSchema = z.object({
-    viewedChannels:       z.set(channelIdSchema),
-    sessionId:            z.string().nullable(),
-    startedAt:            z.date(),
-    unreadCount:          z.number().int().nonnegative(),
-    channelNames:         z.array(z.string()),
-    topAuthors:           z.array(z.string()),
-    timeSinceLastActive:  z.string().nullable(),
-    interruptingMessage:  interruptingMessageDetailsSchema.optional(),
+    viewedChannels:      z.set(channelIdSchema),
+    sessionId:           z.string().nullable(),
+    startedAt:           z.date(),
+    unreadCount:         z.number().int().nonnegative(),
+    channelNames:        z.array(z.string()),
+    topAuthors:          z.array(z.string()),
+    timeSinceLastActive: z.string().nullable(),
+    interruptingMessage: interruptingMessageDetailsSchema.optional(),
 });
 // Stryker restore ObjectLiteral
 

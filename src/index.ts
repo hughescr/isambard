@@ -8,6 +8,7 @@ import { loadConfig, loadDynamoDBConfig } from './config/loader';
 import { createDynamoDBClient } from './storage/client';
 import { MemoryToolBackend } from './storage/memory-tool';
 import { MessageCache } from './storage/message-cache/cache';
+import { TaskSessionBackend } from './storage/task-session';
 import { createContextBuilder } from './agent/context-builder';
 import { createMemoryMCPServer } from './agent/memory-mcp-server';
 import { createDiscordMCPServer } from './agent/discord-mcp-server';
@@ -15,6 +16,9 @@ import { createClaudeAgent } from './agent/agent';
 import { loadPlugins } from './agent/plugin-loader';
 import { createQuestionRegistry } from './agent/question-registry';
 import { cleanupAllStaleSessions } from './agent/session-cleanup';
+import { createTaskDirectoryCopier } from './agent/task-directory-copier';
+import { createTaskPersistenceCoordinator, type TaskPersistenceCoordinator } from './agent/task-persistence-coordinator';
+import { createTaskCleanupProcessor } from './agent/task-cleanup-processor';
 import { createDiscordBot } from './integrations/discord/bot';
 import type { DiscordBot } from './integrations/discord/bot';
 import type { CatchUpCompletionSignal, CatchUpInProgressSignal } from './integrations/discord/catchup';
@@ -81,6 +85,7 @@ export async function createApp(): Promise<App> {
     let inboxManager: InboxManager | undefined;
     let memoryBackend: MemoryToolBackend | undefined;
     let botStateManager: BotStateManager | undefined;
+    let taskPersistenceCoordinator: TaskPersistenceCoordinator | undefined;
 
     try {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- SST Resource type is complex
@@ -142,6 +147,21 @@ export async function createApp(): Promise<App> {
 
         // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
         logger.info('Inbox system initialized');
+
+        // Create task persistence system (requires DynamoDB)
+        const taskSessionBackend = new TaskSessionBackend(docClient, tableName);
+        const taskCleanupProcessor = createTaskCleanupProcessor({ logger });
+        const taskDirectoryCopier = createTaskDirectoryCopier({
+            logger,
+            cleanupProcessor: taskCleanupProcessor,
+        });
+        taskPersistenceCoordinator = createTaskPersistenceCoordinator({
+            backend: taskSessionBackend,
+            copier:  taskDirectoryCopier,
+            logger,
+        });
+        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+        logger.info('Task persistence system initialized');
     // Stryker disable next-line BlockStatement: Catch block continues execution regardless - equivalent mutant
     } catch (error) {
         const errorMessage = _.isError(error) ? error.message : String(error);
@@ -160,6 +180,7 @@ export async function createApp(): Promise<App> {
         discordMcpServer,
         inboxMcpServer,
         plugins,
+        taskPersistenceCoordinator,
     });
 
     // Load identity context for presence idle status generation (if API key available)

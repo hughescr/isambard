@@ -16,6 +16,7 @@ import type { ResumeContext } from './resume-prompt-builder';
 import { createStreamTracker } from './stream-tracker';
 import { buildResumePrompt } from './resume-prompt-builder';
 import { buildMultimodalContent, hasImages } from './multimodal-message-builder';
+import type { TaskPersistenceCoordinator } from './task-persistence-coordinator';
 
 const CLAUDE_MODEL = 'opus';
 
@@ -287,15 +288,17 @@ export function extractToolUses(message: { type: string, message?: { content?: u
 
 export interface ClaudeAgentOptions {
     /** Context builder for loading memory (core identity + recent context) */
-    contextBuilder?:   ContextBuilder
+    contextBuilder?:             ContextBuilder
     /** Memory MCP server instance for deep memory access */
-    memoryMcpServer?:  McpServerConfig
+    memoryMcpServer?:            McpServerConfig
     /** Discord MCP server instance for message history access */
-    discordMcpServer?: McpServerConfig
+    discordMcpServer?:           McpServerConfig
     /** Inbox MCP server instance for inbox management */
-    inboxMcpServer?:   McpServerConfig
+    inboxMcpServer?:             McpServerConfig
     /** Plugins to load (from plugin-loader.ts) */
-    plugins?:          SdkPluginConfig[]
+    plugins?:                    SdkPluginConfig[]
+    /** Task persistence coordinator for maintaining tasks across sessions */
+    taskPersistenceCoordinator?: TaskPersistenceCoordinator
 }
 
 /** Options for chatBatch processing */
@@ -678,16 +681,19 @@ async function* buildPromptForSdk(
  * @param response Async iterable stream from Agent SDK
  * @param tracker Stream tracker to update with progress
  * @param options Optional batch processing options
+ * @param taskPersistenceCoordinator Optional task persistence coordinator for immediate task copying
  * @returns Object with last assistant text and whether processing was interrupted
  */
 async function processStreamEvents(
     response: AsyncIterable<unknown>,
     tracker: StreamTracker,
-    options?: ChatBatchOptions
+    options?: ChatBatchOptions,
+    taskPersistenceCoordinator?: TaskPersistenceCoordinator
 ): Promise<{ lastAssistantText: string, wasInterrupted: boolean, capturedSessionId?: string }> {
     let lastAssistantText = '';
     let wasInterrupted = false;
     let capturedSessionId: string | undefined;
+    let taskPersistenceCompleted = false;  // Track if we've done persistence
 
     try {
         for await (const message of response) {
@@ -695,6 +701,18 @@ async function processStreamEvents(
             const extractedSessionId = extractSessionId(message);
             if(extractedSessionId) {
                 capturedSessionId = extractedSessionId;
+
+                // IMMEDIATELY copy tasks from previous session when we get the session ID
+                // This ensures TaskList calls during the stream see the copied tasks
+                if(taskPersistenceCoordinator && !taskPersistenceCompleted) {
+                    taskPersistenceCompleted = true;
+                    try {
+                        await taskPersistenceCoordinator.prepareNewSession(capturedSessionId);
+                    } catch (error) {
+                        const errorMessage = _.isError(error) ? error.message : String(error);
+                        logger.warn({ error, sessionId: capturedSessionId }, `Task persistence failed: ${errorMessage}`);
+                    }
+                }
             }
 
             // Update tracker with stream progress
@@ -822,7 +840,7 @@ function buildChatBatchResult(
 }
 
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
-    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins } = options;
+    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, taskPersistenceCoordinator } = options;
 
     // Load retry configuration
     const retryConfig = loadRetryConfig();
@@ -876,7 +894,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
 
                 // 5. Process stream events and track progress
                 const { lastAssistantText, wasInterrupted, capturedSessionId: sessionId }
-                    = await processStreamEvents(response, tracker, options);
+                    = await processStreamEvents(response, tracker, options, taskPersistenceCoordinator);
                 capturedSessionId = sessionId;
 
                 // 6. Clean up session only on completion (not on interrupt)

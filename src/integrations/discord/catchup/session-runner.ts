@@ -420,10 +420,10 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
             // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
             logger.debug({
-                completedAt:             completion.completedAt,
-                secondsSinceCompletion:  secondsSinceCompletion.toFixed(1),
+                completedAt:            completion.completedAt,
+                secondsSinceCompletion: secondsSinceCompletion.toFixed(1),
                 shouldStart,
-                msg:                     `Completion check: ${shouldStart ? 'starting' : 'skipping'} catch-up (${secondsSinceCompletion.toFixed(1)} seconds since last completion)`,
+                msg:                    `Completion check: ${shouldStart ? 'starting' : 'skipping'} catch-up (${secondsSinceCompletion.toFixed(1)} seconds since last completion)`,
             });
             // Stryker restore ObjectLiteral,StringLiteral
 

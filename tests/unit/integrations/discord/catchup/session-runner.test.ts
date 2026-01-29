@@ -59,8 +59,8 @@ describe('CatchUpSessionRunner', () => {
                     mockModeContext.interruptingMessage = message;
                 }
             }),
-            resume:    mock(() => { mockInterrupted = false; }),
-            goIdle:    mock(() => {
+            resume: mock(() => { mockInterrupted = false; }),
+            goIdle: mock(() => {
                 mockMode        = 'idle';
                 mockModeContext = { viewedChannels: new Set(), sessionId: null, startedAt: new Date(), unreadCount: 0, channelNames: [], topAuthors: [], timeSinceLastActive: null };
             }),

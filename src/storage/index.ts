@@ -24,5 +24,8 @@ export {
     type QueryResult
 } from './repositories/memory';
 
+// Task Session
+export { TaskSessionBackend, sessionIdSchema, createSessionId, isSessionId, type SessionId, type TaskSessionItem } from './task-session';
+
 // Utils
 export { stripDynamoKeys } from './utils/index.js';

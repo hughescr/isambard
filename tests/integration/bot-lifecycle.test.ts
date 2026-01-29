@@ -250,11 +250,12 @@ describe('Bot Lifecycle Integration', () => {
             expect(createContextBuilderSpy).toHaveBeenCalled();
             expect(createMemoryMCPServerSpy).toHaveBeenCalled();
             expect(createClaudeAgentSpy).toHaveBeenCalledWith({
-                contextBuilder:   mockContextBuilder,
-                memoryMcpServer:  mockMemoryMcp,
-                discordMcpServer: expect.any(Object),
-                inboxMcpServer:   expect.any(Object),
-                plugins:          expect.any(Array),
+                contextBuilder:             mockContextBuilder,
+                memoryMcpServer:            mockMemoryMcp,
+                discordMcpServer:           expect.any(Object),
+                inboxMcpServer:             expect.any(Object),
+                plugins:                    expect.any(Array),
+                taskPersistenceCoordinator: expect.any(Object),
             });
         }, { timeout: process.env.CI ? 150 : 15 });
 
