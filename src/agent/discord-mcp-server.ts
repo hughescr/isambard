@@ -547,10 +547,17 @@ export function createDiscordMCPServer(
 
             tool(
                 'sendDiscordMessage',
-                'Send a message to a Discord channel. Use this to communicate with users during processing.',
+                `Send a message to a Discord channel. Use this to communicate with users.
+
+CRITICAL: Only use channel IDs from:
+1. The channelId in a message you're responding to (preferred)
+2. Your memory (/state/discord-channels)
+3. Default: 1451694737026449581 (#general)
+
+NEVER invent or guess channel IDs. If unsure, use #general.`,
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    channelId:        z.string().describe('Target channel ID'),
+                    channelId:        z.string().describe('Target channel ID - use from message context, memory, or default: 1451694737026449581 (#general)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     content:          z.string().describe('Message content (max 2000 chars)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
