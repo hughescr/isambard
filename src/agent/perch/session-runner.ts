@@ -208,8 +208,15 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 partialWork = result.partialWork;
             }
 
-            // If completed, transition to idle
-            if(result.completed && !stateManager.isInterrupted()) {
+            // Check interrupt state FIRST - state manager is single source of truth
+            // The result.completed flag can be incorrect when abort errors are caught
+            if(stateManager.isInterrupted()) {
+                // Session was interrupted by a message
+                // Schedule resume on next tick to let current stack unwind
+                logger.debug({ slot: options.slot }, 'Session interrupted - scheduling resume');
+                setTimeout(() => void doResume(), 0);
+            } else if(result.completed) {
+                // Session completed normally, transition to idle
                 logger.info({ slot: options.slot }, 'Perch session completed');
                 if(stateManager.getMode() === 'perching') {
                     stateManager.goIdle();

@@ -26,8 +26,9 @@ describe('buildCatchUpPrompt', () => {
 
     it('should include workflow guidance', () => {
         const prompt = buildCatchUpPrompt(10, 2);
-        expect(prompt).toContain('Recommended workflow');
+        expect(prompt).toContain('Recommended Workflow');
         expect(prompt).toContain('Mark as read LAST');
+        expect(prompt).toContain('Task Tracking');
     });
 
     it('should handle singular counts', () => {
@@ -174,8 +175,8 @@ describe('buildCatchUpInterruptedPrompt', () => {
         };
         const prompt = buildCatchUpInterruptedPrompt(options);
         expect(prompt).toContain('NEW MESSAGE');
-        expect(prompt).toContain('not necessarily more important');
-        expect(prompt).toContain('Possible approaches');
+        expect(prompt).toContain('What To Do');
+        expect(prompt).toContain('Create a task for this incoming message');
     });
 
     it('should tell agent to continue catching up after handling', () => {

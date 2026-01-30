@@ -108,7 +108,14 @@ describe.concurrent('createDiscordMCPServer', () => {
             ['searchMessages', 'Search Discord message history by text, time range, or both. Returns messages with overflow summaries if results exceed limit.'],
             ['getRecentMessages', 'Get the most recent messages from a Discord channel'],
             ['getMessageById', 'Fetch a specific Discord message by its ID, or multiple messages by an array of IDs'],
-            ['sendDiscordMessage', 'Send a message to a Discord channel. Use this to communicate with users during processing.'],
+            ['sendDiscordMessage', `Send a message to a Discord channel. Use this to communicate with users.
+
+CRITICAL: Only use channel IDs from:
+1. The channelId in a message you're responding to (preferred)
+2. Your memory (/state/discord-channels)
+3. Default: 1451694737026449581 (#general)
+
+NEVER invent or guess channel IDs. If unsure, use #general.`],
             ['addReaction', 'Add one or more emoji reactions to a Discord message'],
             ['askUserQuestion', 'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit).'],
         ])('should have %s tool with description', (toolName, expectedDescription) => {
@@ -585,7 +592,14 @@ describe.concurrent('createDiscordMCPServer', () => {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing registered tools
             const tool = (server.instance as any)._registeredTools.sendDiscordMessage;
 
-            expect(tool.description).toBe('Send a message to a Discord channel. Use this to communicate with users during processing.');
+            expect(tool.description).toBe(`Send a message to a Discord channel. Use this to communicate with users.
+
+CRITICAL: Only use channel IDs from:
+1. The channelId in a message you're responding to (preferred)
+2. Your memory (/state/discord-channels)
+3. Default: 1451694737026449581 (#general)
+
+NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should have correct input schema fields', () => {
