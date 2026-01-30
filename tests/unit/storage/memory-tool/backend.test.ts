@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
-import { assign as _assign, isError as _isError, some as _some, filter as _filter, startsWith as _startsWith, size as _size, find as _find, repeat as _repeat } from 'lodash';
+import { assign as _assign, isError as _isError, some as _some, filter as _filter, startsWith as _startsWith, size as _size, find as _find, repeat as _repeat, isObject as _isObject, map as _map, padStart as _padStart } from 'lodash';
 import {
     DynamoDBDocumentClient,
     GetCommand,
@@ -155,6 +155,8 @@ describe('MemoryToolBackend', () => {
     });
 
     describe('update', () => {
+        // Note: testPath is /test/file.md which doesn't match any layer (identity, state, events)
+        // so pruneVersions won't be called for these tests. But we mock QueryCommand just in case.
         const testPath = '/test/file.md' as MemoryPath;
         const existingItem: MemoryToolItem = {
             PK:          'DIR#/test',
@@ -173,6 +175,7 @@ describe('MemoryToolBackend', () => {
         test('should update existing item', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions (if called)
 
             const result = await backend.update(testPath, {
                 content: 'Updated content',
@@ -201,6 +204,7 @@ describe('MemoryToolBackend', () => {
             const conditionalError = new Error('Conditional check failed');
             _assign(conditionalError, { name: 'ConditionalCheckFailedException' });
             ddbMock.on(PutCommand).resolvesOnce({}).rejectsOnce(conditionalError); // Version snapshot succeeds, main item fails
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions (if called)
 
             expect(
                 backend.update(testPath, { content: 'Updated' })
@@ -215,6 +219,7 @@ describe('MemoryToolBackend', () => {
             };
             ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
             ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions (if called)
 
             // Test 1: Update only content
             const result1 = await backend.update(testPath, {
@@ -228,6 +233,7 @@ describe('MemoryToolBackend', () => {
             ddbMock.reset();
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({});
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions (if called)
 
             // Test 2: Update only metadata
             const result2 = await backend.update(testPath, {
@@ -240,6 +246,7 @@ describe('MemoryToolBackend', () => {
             ddbMock.reset();
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({});
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions (if called)
 
             // Test 3: Update only tags
             const result3 = await backend.update(testPath, {
@@ -252,6 +259,7 @@ describe('MemoryToolBackend', () => {
         test('should create GSI2 keys when tags are added in update', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolves({}); // All PutCommand calls succeed
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions (if called)
 
             await backend.update(testPath, {
                 tags: ['important', 'work'],
@@ -274,6 +282,7 @@ describe('MemoryToolBackend', () => {
         test('should verify conditional expression attributes are set correctly', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolvesOnce({}).resolvesOnce({}); // Version snapshot + main item
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions (if called)
 
             await backend.update(testPath, {
                 content: 'Updated content',
@@ -299,6 +308,7 @@ describe('MemoryToolBackend', () => {
             const conditionalError = new Error('Conditional check failed');
             _assign(conditionalError, { name: 'ConditionalCheckFailedException' });
             ddbMock.on(PutCommand).resolvesOnce({}).rejectsOnce(conditionalError); // Version snapshot succeeds, main item fails
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions (if called)
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(
@@ -316,6 +326,7 @@ describe('MemoryToolBackend', () => {
             const otherError = new Error('Network timeout');
             _assign(otherError, { name: 'NetworkError' });
             ddbMock.on(PutCommand).resolvesOnce({}).rejectsOnce(otherError); // Version snapshot succeeds, main item fails
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions (if called)
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(
@@ -331,12 +342,13 @@ describe('MemoryToolBackend', () => {
             // Spy on the backend's docClient.send method directly to test actual rejection behavior
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Need to bypass type safety to access private docClient
             const sendSpy = spyOn((backend as any).docClient, 'send');
-            // Calls: 1) Facade GetCommand for tags, 2) coreOps.update GetCommand, 3) version PutCommand, 4) main PutCommand throws
+            // Calls: 1) Facade GetCommand for tags, 2) coreOps.update GetCommand, 3) version PutCommand, 4) main PutCommand throws, 5) pruneVersions QueryCommand
             sendSpy
                 .mockResolvedValueOnce({ Item: existingItem }) // Facade get for tags
                 .mockResolvedValueOnce({ Item: existingItem }) // coreOps.update get
                 .mockResolvedValueOnce({}) // Version snapshot succeeds
-                .mockRejectedValueOnce(value); // Main item fails
+                .mockRejectedValueOnce(value) // Main item fails
+                .mockResolvedValueOnce({ Items: [] }); // pruneVersions QueryCommand (if called)
 
             try {
                 const error = await backend.update(testPath, { content: 'Updated' }).catch((e: unknown) => e);
@@ -350,6 +362,7 @@ describe('MemoryToolBackend', () => {
 
         test('should throw ValidationError on invalid update data', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions (if called)
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
             await expect(
@@ -418,6 +431,7 @@ describe('MemoryToolBackend', () => {
                 .resolvesOnce({ Item: existingItem })
                 .resolvesOnce({ Item: registryItem });
             ddbMock.on(PutCommand).resolves({});
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions (if called)
 
             await backend.update('/test/file.md' as MemoryPath, {
                 tags: ['newtag'],
@@ -613,6 +627,7 @@ describe('MemoryToolBackend', () => {
             ])('should NOT update registry when tags is undefined ($updateType only updates)', async ({ updateData }) => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
                 ddbMock.on(PutCommand).resolves({});
+                ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions
 
                 await backend.update('/state/tags-undefined-test' as MemoryPath, updateData);
 
@@ -656,6 +671,7 @@ describe('MemoryToolBackend', () => {
                     .resolvesOnce({ Item: existingNoTags })  // coreOps.update
                     .resolvesOnce({ Item: undefined });      // Registry doesn't exist
                 ddbMock.on(PutCommand).resolves({});
+                ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions
 
                 await backend.update('/state/add-tags-test' as MemoryPath, {
                     tags: ['newly-added-tag'],
@@ -692,6 +708,7 @@ describe('MemoryToolBackend', () => {
 
                 ddbMock.on(GetCommand).resolves({ Item: existingWithTags });
                 ddbMock.on(PutCommand).resolves({});
+                ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions
 
                 // Same tags - no additions
                 await backend.update('/state/same-tags-test' as MemoryPath, {
@@ -723,6 +740,7 @@ describe('MemoryToolBackend', () => {
 
                 ddbMock.on(GetCommand).resolves({ Item: existingWithTags });
                 ddbMock.on(PutCommand).resolves({});
+                ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions
 
                 // Update with same tags - no changes (removed.length === 0)
                 await backend.update('/state/unchanged-tags' as MemoryPath, {
@@ -784,6 +802,7 @@ describe('MemoryToolBackend', () => {
                     .resolvesOnce({ Item: registryItem })
                     .resolvesOnce({ Item: registryItem });
                 ddbMock.on(PutCommand).resolves({});
+                ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions
 
                 await backend.update('/state/remove-tags-test' as MemoryPath, {
                     tags: ['keep'], // Remove 'remove' tag
@@ -940,6 +959,7 @@ describe('MemoryToolBackend', () => {
         test('should regenerate contentPreview when content is updated', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolves({});
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions
 
             await backend.update('/state/preview-test' as MemoryPath, {
                 content: 'New content that should have new preview',
@@ -955,6 +975,7 @@ describe('MemoryToolBackend', () => {
         test('should preserve existing contentPreview when content is NOT updated', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolves({});
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions
 
             // Update only metadata, not content
             await backend.update('/state/preview-test' as MemoryPath, {
@@ -987,6 +1008,7 @@ describe('MemoryToolBackend', () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
             }
             ddbMock.on(PutCommand).resolves({});
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions
 
             const longContent = _repeat(char, contentLength);
 
@@ -1016,6 +1038,207 @@ describe('MemoryToolBackend', () => {
             });
 
             expect(item.contentPreview).toBe('Content for new item');
+        });
+    });
+
+    /**
+     * Version snapshot GSI1 key tests
+     *
+     * Tests that verify version snapshots do NOT have GSI1PK/GSI1SK keys.
+     * Version history should not appear in layer queries - only main items should be indexed by layer.
+     */
+    describe('version snapshot GSI1 keys', () => {
+        const testPath = '/identity/core-values.md' as MemoryPath;
+        const existingItem: MemoryToolItem = {
+            PK:          'DIR#/identity',
+            SK:          'FILE#core-values.md',
+            GSI1PK:      'LAYER#identity',
+            GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+            path:        testPath,
+            content:     'Original content',
+            contentType: 'text/markdown',
+            metadata:    {},
+            version:     1,
+            createdAt:   '2024-01-01T00:00:00.000Z',
+            updatedAt:   '2024-01-01T00:00:00.000Z',
+        };
+
+        test('should NOT set GSI1 keys on version snapshots', async () => {
+            ddbMock.on(GetCommand)
+                .resolvesOnce({ Item: existingItem })  // Facade get for tags
+                .resolvesOnce({ Item: existingItem }); // coreOps.update get
+            ddbMock.on(PutCommand).resolves({});
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions
+
+            await backend.update(testPath, {
+                content: 'Updated content',
+            });
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls.length).toBeGreaterThanOrEqual(2);
+
+            // First put is the version snapshot
+            const versionSnapshot = putCalls[0].args[0].input.Item as MemoryToolItem;
+            expect(versionSnapshot.SK).toMatch(/^VERSION#/);
+            expect(versionSnapshot.GSI1PK).toBeUndefined();
+            expect(versionSnapshot.GSI1SK).toBeUndefined();
+
+            // Second put is the main item update (should have GSI1 keys)
+            const mainItem = putCalls[1].args[0].input.Item as MemoryToolItem;
+            expect(mainItem.SK).not.toMatch(/^VERSION#/);
+            expect(mainItem.GSI1PK).toBe('LAYER#identity');
+            expect(mainItem.GSI1SK).toMatch(/^UPDATED#/);
+        });
+
+        test('should preserve GSI2 keys on version snapshots if tags exist', async () => {
+            const itemWithTags = {
+                ...existingItem,
+                tags:   ['important'],
+                GSI2PK: 'TAG#important',
+                GSI2SK: 'LAYER#identity#UPDATED#2024-01-01T00:00:00.000Z',
+            };
+
+            ddbMock.on(GetCommand)
+                .resolvesOnce({ Item: itemWithTags })  // Facade get for tags
+                .resolvesOnce({ Item: itemWithTags }); // coreOps.update get
+            ddbMock.on(PutCommand).resolves({});
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions
+
+            await backend.update(testPath, {
+                content: 'Updated content',
+            });
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls.length).toBeGreaterThanOrEqual(2);
+
+            // Version snapshot should have GSI2 keys (for tag queries) but NOT GSI1 keys
+            const versionSnapshot = putCalls[0].args[0].input.Item as MemoryToolItem;
+            expect(versionSnapshot.SK).toMatch(/^VERSION#/);
+            expect(versionSnapshot.GSI1PK).toBeUndefined();
+            expect(versionSnapshot.GSI1SK).toBeUndefined();
+            expect(versionSnapshot.GSI2PK).toBe('TAG#important');
+            expect(versionSnapshot.GSI2SK).toMatch(/^LAYER#identity#UPDATED#/);
+        });
+    });
+
+    /**
+     * Mutation Testing: Version pruning after update
+     *
+     * Tests that verify version pruning is called after update operations
+     * to prevent accumulation of old version snapshots beyond layer config limits.
+     */
+    describe('version pruning after update', () => {
+        const testPath = '/identity/core-values.md' as MemoryPath;
+        const existingItem: MemoryToolItem = {
+            PK:          'DIR#/identity',
+            SK:          'FILE#core-values.md',
+            GSI1PK:      'LAYER#identity',
+            GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+            path:        testPath,
+            content:     'Original content',
+            contentType: 'text/markdown',
+            metadata:    {},
+            version:     1,
+            createdAt:   '2024-01-01T00:00:00.000Z',
+            updatedAt:   '2024-01-01T00:00:00.000Z',
+        };
+
+        test('should call pruneVersions after update with correct parameters', async () => {
+            // GetCommand calls:
+            // 1. Facade fetches existing for tag comparison
+            // 2. coreOps.update fetches existing
+            ddbMock.on(GetCommand)
+                .resolvesOnce({ Item: existingItem })  // Facade get for tags
+                .resolvesOnce({ Item: existingItem }); // coreOps.update get
+            ddbMock.on(PutCommand).resolves({});
+            // Mock QueryCommand for pruneVersions (returns no old versions to prune)
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await backend.update(testPath, {
+                content: 'Updated content',
+            });
+
+            // Verify QueryCommand was called (pruneVersions queries for old versions)
+            const queryCalls = ddbMock.commandCalls(QueryCommand);
+            expect(queryCalls.length).toBeGreaterThanOrEqual(1);
+
+            // Verify the query was for versions (SK begins_with ':skPrefix')
+            const versionQuery = _find(queryCalls, (call) => {
+                const expr = call.args[0].input.KeyConditionExpression;
+                const values = call.args[0].input.ExpressionAttributeValues;
+                // Check if this is the pruneVersions query (begins_with SK and :skPrefix = 'VERSION#')
+                const isVersionQuery = !_isObject(expr)
+                  && (expr!).includes('begins_with(SK')
+                  && (values![':skPrefix'] as string | undefined) === 'VERSION#';
+                return isVersionQuery;
+            });
+            expect(versionQuery).toBeDefined();
+        });
+
+        test('should prune old versions when count exceeds layer maxVersions', async () => {
+            // Create multiple old versions to prune (in descending order - newest first)
+            // DynamoDB returns them with ScanIndexForward: false
+            const oldVersions: MemoryToolItem[] = [];
+            for(let i = 15; i >= 1; i--) {
+                oldVersions.push({
+                    ...existingItem,
+                    PK:        'DIR#/identity',
+                    SK:        `VERSION#${i}#2024-01-${_padStart(String(i), 2, '0')}T00:00:00.000Z`,
+                    version:   i,
+                    updatedAt: `2024-01-${_padStart(String(i), 2, '0')}T00:00:00.000Z`,
+                });
+            }
+
+            // GetCommand calls:
+            // 1. Facade fetches existing for tag comparison
+            // 2. coreOps.update fetches existing
+            ddbMock.on(GetCommand)
+                .resolvesOnce({ Item: existingItem })  // Facade get for tags
+                .resolvesOnce({ Item: existingItem }); // coreOps.update get
+            ddbMock.on(PutCommand).resolves({});
+            // QueryCommand returns 15 old versions (maxVersions for identity layer is 10)
+            ddbMock.on(QueryCommand).resolves({ Items: oldVersions });
+            ddbMock.on(DeleteCommand).resolves({});
+
+            await backend.update(testPath, {
+                content: 'Updated content',
+            });
+
+            // Verify DeleteCommand was called to prune old versions
+            // Should delete 5 oldest versions (15 - 10 = 5)
+            const deleteCalls = ddbMock.commandCalls(DeleteCommand);
+            expect(deleteCalls).toHaveLength(5);
+
+            // Verify the oldest versions were deleted
+            const deletedKeys = _map(deleteCalls, call => call.args[0].input.Key?.SK as string);
+            expect(_some(deletedKeys, sk => sk === 'VERSION#1#2024-01-01T00:00:00.000Z')).toBe(true);
+            expect(_some(deletedKeys, sk => sk === 'VERSION#5#2024-01-05T00:00:00.000Z')).toBe(true);
+        });
+
+        test('should not prune when version count is within layer limits', async () => {
+            // Create only 3 old versions (maxVersions for identity is 10)
+            const oldVersions: MemoryToolItem[] = [];
+            for(let i = 1; i <= 3; i++) {
+                oldVersions.push({
+                    ...existingItem,
+                    PK:        'DIR#/identity',
+                    SK:        `VERSION#${i}#2024-01-${_padStart(String(i), 2, '0')}T00:00:00.000Z`,
+                    version:   i,
+                    updatedAt: `2024-01-${_padStart(String(i), 2, '0')}T00:00:00.000Z`,
+                });
+            }
+
+            ddbMock.on(GetCommand).resolves({ Item: existingItem });
+            ddbMock.on(PutCommand).resolves({});
+            ddbMock.on(QueryCommand).resolves({ Items: oldVersions });
+
+            await backend.update(testPath, {
+                content: 'Updated content',
+            });
+
+            // Verify no DeleteCommand was called (version count within limits)
+            const deleteCalls = ddbMock.commandCalls(DeleteCommand);
+            expect(deleteCalls).toHaveLength(0);
         });
     });
 });

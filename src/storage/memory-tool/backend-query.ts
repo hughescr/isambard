@@ -119,8 +119,10 @@ export class MemoryToolBackendQuery {
         const queryParams: Record<string, unknown> = {
             KeyConditionExpression:    'PK = :pk',
             ExpressionAttributeValues: {
-                ':pk': `DIR#${directoryPath}`,
+                ':pk':            `DIR#${directoryPath}`,
+                ':versionPrefix': 'VERSION#',
             },
+            FilterExpression: 'NOT begins_with(SK, :versionPrefix)',
             ScanIndexForward: true, // Alphabetical order
         };
 
@@ -174,8 +176,10 @@ export class MemoryToolBackendQuery {
         const queryParams: Record<string, unknown> = {
             IndexName:                 'GSI1',
             ExpressionAttributeValues: {
-                ':pk': `LAYER#${layer}`,
+                ':pk':            `LAYER#${layer}`,
+                ':versionPrefix': 'VERSION#',
             },
+            FilterExpression: 'NOT begins_with(SK, :versionPrefix)',
             ScanIndexForward: false, // Newest first (descending by GSI1SK)
         };
 

@@ -87,7 +87,7 @@ export const PerchSlotConfigSchema = z.object({
  */
 export interface PerchTestModeConfig {
     /** Whether test mode is enabled */
-    enabled:   boolean
+    enabled:    boolean
     /** Force a specific slot instead of cycling */
     forceSlot?: PerchSlot
 }

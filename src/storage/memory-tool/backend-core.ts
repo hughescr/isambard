@@ -41,14 +41,12 @@ export class MemoryToolBackendCore {
 
     private createVersionSnapshot(existing: MemoryToolItemData): MemoryToolItem {
         const versionKeys = MemoryToolKeyGenerator.createVersionKeys(existing.path, existing.version, existing.updatedAt);
-        const existingKeys = MemoryToolKeyGenerator.createKeys(existing.path, existing.createdAt);
         const existingTagKeys = MemoryToolKeyGenerator.createTagKeys(existing.path, existing.tags, existing.updatedAt);
 
         return {
             ...existing,
             ...versionKeys,
-            GSI1PK: existingKeys.GSI1PK,
-            GSI1SK: existingKeys.GSI1SK,
+            // GSI1 removed - version snapshots should not appear in layer queries
             ...(existingTagKeys && { GSI2PK: existingTagKeys.GSI2PK, GSI2SK: existingTagKeys.GSI2SK }),
         };
     }

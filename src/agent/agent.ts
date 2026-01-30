@@ -504,6 +504,108 @@ export function resetLogStreamState(): void {
 }
 
 /**
+ * Logs user events - either tool responses or normal message sends.
+ * @param _message User stream event (unused - logic based on pendingToolRequests state)
+ */
+function logUserEvent(_message: AgentStreamEvent): void {
+    if(pendingToolRequests.length > 0) {
+        // Log all pending tool responses
+        for(const toolName of pendingToolRequests) {
+            logger.debug({
+                eventType: 'tool_response',
+                toolName,
+                msg:       `Tool result for LLM: ${toolName}`,
+            });
+        }
+        // Clear pending tools after logging
+        pendingToolRequests = [];
+    } else {
+        logger.debug({
+            eventType: 'user',
+            msg:       'Sending message to Claude LLM',
+        });
+    }
+}
+
+/**
+ * Logs assistant events - either tool requests or thinking/responding.
+ * @param message Assistant stream event
+ */
+function logAssistantEvent(message: AgentStreamEvent): void {
+    const toolUses = extractToolUses(message);
+    if(toolUses.length > 0) {
+        // Log each tool request and track for response correlation
+        for(const toolUse of toolUses) {
+            logger.debug({
+                eventType: 'tool_request',
+                toolName:  toolUse.name,
+                msg:       `LLM requesting tool: ${toolUse.name}`,
+            });
+            // Track ALL pending tools (not just the last one)
+            pendingToolRequests.push(toolUse.name);
+        }
+    } else {
+        // No tool use - log thinking/responding
+        const hasText = Boolean(extractAssistantText(message));
+        logger.debug({
+            eventType: 'assistant',
+            hasText,
+            msg:       hasText ? 'Claude LLM responding' : 'Claude LLM thinking',
+        });
+    }
+}
+
+/**
+ * Logs tool progress events.
+ * @param message Tool progress stream event
+ */
+function logToolProgressEvent(message: AgentStreamEvent & { tool_name?: string }): void {
+    const parsed = parseToolName(message.tool_name);
+    logger.debug({
+        eventType: 'tool_progress',
+        module:    parsed.module,
+        tool:      parsed.tool,
+        msg:       'Tool execution started',
+    });
+}
+
+/**
+ * Logs tool result events.
+ * @param message Tool result stream event
+ */
+function logToolResultEvent(message: AgentStreamEvent & { tool_name?: string }): void {
+    const parsed = parseToolName(message.tool_name);
+    logger.debug({
+        eventType: 'tool_result',
+        module:    parsed.module,
+        tool:      parsed.tool,
+        msg:       'Tool execution complete',
+    });
+}
+
+/**
+ * Logs system events, particularly compaction boundaries.
+ * @param message System stream event
+ */
+function logSystemEvent(message: AgentStreamEvent): void {
+    // Type guard: Only SystemEvent has subtype property
+    if(message.type === 'system' && 'subtype' in message && message.subtype === 'compact_boundary') {
+        const compactMessage = message as SDKCompactBoundaryMessage;
+        const preTokens = compactMessage.compact_metadata?.pre_tokens;
+        const trigger = compactMessage.compact_metadata?.trigger;
+        const tokenInfo = preTokens
+            ? ` (pre-compaction: ${preTokens.toLocaleString()} tokens)`
+            : '';
+        logger.info({
+            eventType: 'compaction',
+            trigger,
+            preTokens,
+            msg:       `Context compaction completed${tokenInfo}`,
+        });
+    }
+}
+
+/**
  * Logs stream events with descriptive messages based on event type.
  *
  * Provides enhanced logging for tool request/response flow:
@@ -517,97 +619,33 @@ export function resetLogStreamState(): void {
 export function logStreamEvent(message: AgentStreamEvent): void {
     switch(message.type) {
         case 'user':
-            // User events after tool requests are tool responses
-            if(pendingToolRequests.length > 0) {
-                // Log all pending tool responses
-                for(const toolName of pendingToolRequests) {
-                    logger.debug({
-                        eventType: 'tool_response',
-                        toolName,
-                        msg:       `Tool result for LLM: ${toolName}`,
-                    });
-                }
-                // Clear pending tools after logging
-                pendingToolRequests = [];
-            } else {
-                logger.debug({
-                    eventType: 'user',
-                    msg:       'Sending message to Claude LLM',
-                });
-            }
+            logUserEvent(message);
             break;
 
-        case 'assistant': {
-            // Check for tool_use blocks first
-            const toolUses = extractToolUses(message);
-            if(toolUses.length > 0) {
-                // Log each tool request and track for response correlation
-                for(const toolUse of toolUses) {
-                    logger.debug({
-                        eventType: 'tool_request',
-                        toolName:  toolUse.name,
-                        msg:       `LLM requesting tool: ${toolUse.name}`,
-                    });
-                    // Track ALL pending tools (not just the last one)
-                    pendingToolRequests.push(toolUse.name);
-                }
-            } else {
-                // No tool use - log thinking/responding
-                const hasText = Boolean(extractAssistantText(message));
-                logger.debug({
-                    eventType: 'assistant',
-                    hasText,
-                    msg:       hasText ? 'Claude LLM responding' : 'Claude LLM thinking',
-                });
-            }
+        case 'assistant':
+            logAssistantEvent(message);
             break;
-        }
 
-        case 'tool_progress': {
-            const parsed = parseToolName(message.tool_name);
-            logger.debug({
-                eventType: 'tool_progress',
-                module:    parsed.module,
-                tool:      parsed.tool,
-                msg:       'Tool execution started',
-            });
+        case 'tool_progress':
+            logToolProgressEvent(message as AgentStreamEvent & { tool_name?: string });
             break;
-        }
 
-        case 'tool_result': {
-            const parsed = parseToolName(message.tool_name);
-            logger.debug({
-                eventType: 'tool_result',
-                module:    parsed.module,
-                tool:      parsed.tool,
-                msg:       'Tool execution complete',
-            });
+        case 'tool_result':
+            logToolResultEvent(message as AgentStreamEvent & { tool_name?: string });
             break;
-        }
 
-        case 'result':
+        case 'result': {
+            const resultMessage = message as { type: 'result', subtype?: 'success' | 'error_during_execution' | 'error_max_turns' };
             logger.debug({
                 eventType: 'result',
-                status:    message.subtype,
+                status:    resultMessage.subtype,
                 msg:       'Claude LLM stream complete',
             });
             break;
+        }
 
         case 'system':
-            if(message.subtype === 'compact_boundary') {
-                const compactMessage = message as SDKCompactBoundaryMessage;
-                const preTokens = compactMessage.compact_metadata?.pre_tokens;
-                const trigger = compactMessage.compact_metadata?.trigger;
-                const tokenInfo = preTokens
-                    ? ` (pre-compaction: ${preTokens.toLocaleString()} tokens)`
-                    : '';
-                logger.info({
-                    eventType: 'compaction',
-                    trigger,
-                    preTokens,
-                    msg:       `Context compaction completed${tokenInfo}`,
-                });
-            }
+            logSystemEvent(message);
             break;
     }
 }
@@ -690,6 +728,86 @@ async function* buildPromptForSdk(
 // Stryker restore all
 
 /**
+ * Handles session ID extraction and task persistence setup.
+ * @param message Stream message to check for session ID
+ * @param taskPersistenceCoordinator Optional coordinator for task copying
+ * @param taskPersistenceCompleted Whether persistence has already been performed
+ * @returns Object with extracted session ID and whether persistence was completed
+ */
+async function handleSessionIdExtraction(
+    message: unknown,
+    taskPersistenceCoordinator: TaskPersistenceCoordinator | undefined,
+    taskPersistenceCompleted: boolean
+): Promise<{ sessionId?: string, persistenceCompleted: boolean }> {
+    const extractedSessionId = extractSessionId(message);
+    if(!extractedSessionId) {
+        return { sessionId: undefined, persistenceCompleted: taskPersistenceCompleted };
+    }
+
+    // IMMEDIATELY copy tasks from previous session when we get the session ID
+    // This ensures TaskList calls during the stream see the copied tasks
+    if(taskPersistenceCoordinator && !taskPersistenceCompleted) {
+        try {
+            await taskPersistenceCoordinator.prepareNewSession(extractedSessionId);
+        } catch (error) {
+            const errorMessage = _.isError(error) ? error.message : String(error);
+            logger.warn({ error, sessionId: extractedSessionId }, `Task persistence failed: ${errorMessage}`);
+        }
+        return { sessionId: extractedSessionId, persistenceCompleted: true };
+    }
+
+    return { sessionId: extractedSessionId, persistenceCompleted: taskPersistenceCompleted };
+}
+
+/**
+ * Processes a single stream message.
+ * @param message Stream message to process
+ * @param tracker Stream tracker to update
+ * @param options Optional batch processing options
+ */
+function processSingleStreamMessage(
+    message: unknown,
+    tracker: StreamTracker,
+    options?: ChatBatchOptions
+): void {
+    // Update tracker with stream progress
+    tracker.update(message as AgentStreamEvent);
+
+    // Log descriptive stream events
+    logStreamEvent(message as AgentStreamEvent);
+
+    // Log errors from stream events
+    logResultErrors(message as { type: string, is_error?: boolean, subtype?: string, errors?: unknown[] });
+    logAssistantErrors(message as { type: string, error?: unknown });
+    logToolUsage(message as { type: string, message?: { content?: unknown } });
+
+    // Invoke stream event callback if provided
+    if(options?.onStreamEvent) {
+        options.onStreamEvent(message as AgentStreamEvent);
+    }
+}
+
+/**
+ * Checks if processing should be aborted.
+ * @param options Optional batch processing options
+ * @param capturedSessionId Current session ID
+ * @returns true if processing should abort, false otherwise
+ */
+function shouldAbortProcessing(
+    options: ChatBatchOptions | undefined,
+    capturedSessionId: string | undefined
+): boolean {
+    if(options?.abortController?.signal.aborted) {
+        logger.info({
+            sessionId: capturedSessionId,
+            msg:       'Batch processing interrupted by abort signal',
+        });
+        return true;
+    }
+    return false;
+}
+
+/**
  * Process stream events from Agent SDK response.
  * Handles session ID extraction, tracker updates, logging, callbacks, and abort checking.
  * @param response Async iterable stream from Agent SDK
@@ -707,54 +825,31 @@ async function processStreamEvents(
     let lastAssistantText = '';
     let wasInterrupted = false;
     let capturedSessionId: string | undefined;
-    let taskPersistenceCompleted = false;  // Track if we've done persistence
+    let taskPersistenceCompleted = false;
 
     try {
         for await (const message of response) {
-            // Capture session ID from system init event
-            const extractedSessionId = extractSessionId(message);
-            if(extractedSessionId) {
-                capturedSessionId = extractedSessionId;
-
-                // IMMEDIATELY copy tasks from previous session when we get the session ID
-                // This ensures TaskList calls during the stream see the copied tasks
-                if(taskPersistenceCoordinator && !taskPersistenceCompleted) {
-                    taskPersistenceCompleted = true;
-                    try {
-                        await taskPersistenceCoordinator.prepareNewSession(capturedSessionId);
-                    } catch (error) {
-                        const errorMessage = _.isError(error) ? error.message : String(error);
-                        logger.warn({ error, sessionId: capturedSessionId }, `Task persistence failed: ${errorMessage}`);
-                    }
-                }
+            // Handle session ID extraction and task persistence
+            const { sessionId, persistenceCompleted } = await handleSessionIdExtraction(
+                message,
+                taskPersistenceCoordinator,
+                taskPersistenceCompleted
+            );
+            if(sessionId) {
+                capturedSessionId = sessionId;
+                taskPersistenceCompleted = persistenceCompleted;
             }
 
-            // Update tracker with stream progress
-            tracker.update(message as AgentStreamEvent);
-
-            // Log descriptive stream events
-            logStreamEvent(message as AgentStreamEvent);
-
-            // Log errors from stream events
-            logResultErrors(message as { type: string, is_error?: boolean, subtype?: string, errors?: unknown[] });
-            logAssistantErrors(message as { type: string, error?: unknown });
-            logToolUsage(message as { type: string, message?: { content?: unknown } });
-
-            // Invoke stream event callback if provided
-            if(options?.onStreamEvent) {
-                options.onStreamEvent(message as AgentStreamEvent);
-            }
+            // Process the stream message
+            processSingleStreamMessage(message, tracker, options);
 
             // Check for abort signal
-            if(options?.abortController?.signal.aborted) {
+            if(shouldAbortProcessing(options, capturedSessionId)) {
                 wasInterrupted = true;
-                logger.info({
-                    sessionId: capturedSessionId,
-                    msg:       'Batch processing interrupted by abort signal',
-                });
                 break;
             }
 
+            // Extract assistant text
             const text = extractAssistantText(message as { type: string, message?: { content?: unknown } });
             // Stryker disable next-line ConditionalExpression: Empty text assignment produces same result due to || null coercion in return
             if(text) {

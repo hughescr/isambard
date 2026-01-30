@@ -273,6 +273,72 @@ describe.concurrent('createMemoryMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
+        describe('upsert behavior', () => {
+            test('should call backend.update when item already exists', async () => {
+                // Mock existing item
+                mockBackend.get = mock(async () => ({
+                    path:        '/identity/core-values' as MemoryPath,
+                    content:     'Old values',
+                    contentType: 'text/plain' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                }));
+                mockBackend.update = mock(async () => createMockItem({
+                    path:    '/identity/core-values' as MemoryPath,
+                    content: 'Updated values',
+                }));
+
+                const server = createMemoryMCPServer(mockBackend);
+                const handler = getToolHandler(server, 'storeSelf');
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+                const result = await handler({ layer: 'identity', name: 'core-values', content: 'Updated values', tags: ['core'] });
+
+                // Should call update, not create
+                expect(mockBackend.update).toHaveBeenCalledWith('/identity/core-values', {
+                    content: 'Updated values',
+                    tags:    ['core'],
+                });
+                expect(mockBackend.create).not.toHaveBeenCalled();
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+                expect(result.content[0].text).toBe('Memory stored at /identity/core-values');
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+                expect(result.isError).toBeUndefined();
+            });
+
+            test('should call backend.create when item does not exist', async () => {
+                // Mock no existing item
+                mockBackend.get = mock(async () => undefined);
+                mockBackend.create = mock(async () => createMockItem({
+                    path:    '/state/current-goals' as MemoryPath,
+                    content: 'New goals',
+                }));
+
+                const server = createMemoryMCPServer(mockBackend);
+                const handler = getToolHandler(server, 'storeSelf');
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+                const result = await handler({ layer: 'state', name: 'current-goals', content: 'New goals' });
+
+                // Should call create, not update
+                expect(mockBackend.create).toHaveBeenCalledWith({
+                    path:        '/state/current-goals',
+                    content:     'New goals',
+                    contentType: 'text/plain',
+                    tags:        undefined,
+                });
+                expect(mockBackend.update).not.toHaveBeenCalled();
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+                expect(result.content[0].text).toBe('Memory stored at /state/current-goals');
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+                expect(result.isError).toBeUndefined();
+            });
+        });
+
         describe('layer enum validation', () => {
             test.each([
                 ['identity', true],
@@ -387,6 +453,72 @@ describe.concurrent('createMemoryMCPServer', () => {
             expect(result.content[0].text).toBe('Error storing user memory: Network error');
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBe(true);
+        });
+
+        describe('upsert behavior', () => {
+            test('should call backend.update when item already exists', async () => {
+                // Mock existing item
+                mockBackend.get = mock(async () => ({
+                    path:        '/users/alice/preferences' as MemoryPath,
+                    content:     'Old preferences',
+                    contentType: 'text/plain' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:   '2025-01-01T00:00:00.000Z',
+                }));
+                mockBackend.update = mock(async () => createMockItem({
+                    path:    '/users/alice/preferences' as MemoryPath,
+                    content: 'Updated preferences',
+                }));
+
+                const server = createMemoryMCPServer(mockBackend);
+                const handler = getToolHandler(server, 'storeUserMemory');
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+                const result = await handler({ userId: 'alice', name: 'preferences', content: 'Updated preferences', tags: ['personal'] });
+
+                // Should call update, not create
+                expect(mockBackend.update).toHaveBeenCalledWith('/users/alice/preferences', {
+                    content: 'Updated preferences',
+                    tags:    ['personal'],
+                });
+                expect(mockBackend.create).not.toHaveBeenCalled();
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+                expect(result.content[0].text).toBe('User memory stored at /users/alice/preferences');
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+                expect(result.isError).toBeUndefined();
+            });
+
+            test('should call backend.create when item does not exist', async () => {
+                // Mock no existing item
+                mockBackend.get = mock(async () => undefined);
+                mockBackend.create = mock(async () => createMockItem({
+                    path:    '/users/bob/notes' as MemoryPath,
+                    content: 'New notes',
+                }));
+
+                const server = createMemoryMCPServer(mockBackend);
+                const handler = getToolHandler(server, 'storeUserMemory');
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+                const result = await handler({ userId: 'bob', name: 'notes', content: 'New notes' });
+
+                // Should call create, not update
+                expect(mockBackend.create).toHaveBeenCalledWith({
+                    path:        '/users/bob/notes',
+                    content:     'New notes',
+                    contentType: 'text/plain',
+                    tags:        undefined,
+                });
+                expect(mockBackend.update).not.toHaveBeenCalled();
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+                expect(result.content[0].text).toBe('User memory stored at /users/bob/notes');
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+                expect(result.isError).toBeUndefined();
+            });
         });
     });
 

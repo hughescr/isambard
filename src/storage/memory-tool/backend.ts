@@ -5,7 +5,8 @@ import {
     type MemoryPath,
     type MemoryToolItemData,
     type ContentType,
-    type LayerName
+    type LayerName,
+    extractLayerFromPath
 } from './types';
 import { MemoryToolBackendCore, type CreateMemoryToolItemInput, type UpdateMemoryToolItemInput } from './backend-core';
 import { MemoryToolBackendQuery, type ListOptions, type ListResult } from './backend-query';
@@ -17,6 +18,7 @@ import {
     computeTagChanges,
     type TagRegistryCallbacks
 } from './backend-tag-registry';
+import { getLayerConfig } from './layer-config';
 
 // Re-export types for public API
 export type { CreateMemoryToolItemInput, UpdateMemoryToolItemInput } from './backend-core';
@@ -101,6 +103,13 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         const oldTags = existing?.tags;
 
         const result = await this.coreOps.update(path, input);
+
+        // Prune old versions based on layer config
+        const layer = extractLayerFromPath(path);
+        if(layer) {
+            const config = getLayerConfig(layer);
+            await this.pruneVersions(path, config.maxVersions);
+        }
 
         // Only update registry if tags were explicitly changed
         // Stryker disable next-line ConditionalExpression: Optimization - skip tag processing when tags not in input

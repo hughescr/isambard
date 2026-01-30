@@ -270,8 +270,10 @@ describe.concurrent('MemoryToolBackend - Version Operations', () => {
             const input = calls[0].args[0].input;
             expect(input.KeyConditionExpression).toBe('PK = :pk');
             expect(input.ExpressionAttributeValues).toEqual({
-                ':pk': 'DIR#/test',
+                ':pk':            'DIR#/test',
+                ':versionPrefix': 'VERSION#',
             });
+            expect(input.FilterExpression).toBe('NOT begins_with(SK, :versionPrefix)');
             expect(input.ScanIndexForward).toBe(true);
         });
 

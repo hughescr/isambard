@@ -51,12 +51,13 @@ export type MemoryToolItemData = z.infer<typeof memoryToolItemSchema>;
 
 /**
  * DynamoDB item structure with keys.
+ * Note: GSI1PK/GSI1SK are optional because version snapshots should not appear in layer queries.
  */
 export interface MemoryToolItem extends MemoryToolItemData {
     PK:      string   // DIR#{parentPath} - groups files by directory
-    SK:      string   // FILE#{filename} - identifies file within directory
-    GSI1PK:  string   // LAYER#{layer} - allows lookup by layer
-    GSI1SK:  string   // UPDATED#{timestamp} - time-based sorting within layer
+    SK:      string   // FILE#{filename} or VERSION#{version}#{timestamp} for snapshots
+    GSI1PK?: string   // LAYER#{layer} - allows lookup by layer (optional, not set on version snapshots)
+    GSI1SK?: string   // UPDATED#{timestamp} - time-based sorting within layer (optional, not set on version snapshots)
     GSI2PK?: string   // TAG#{tag} - allows lookup by tag (optional)
     GSI2SK?: string   // LAYER#{layer}#UPDATED#{timestamp} - tag queries with layer and time filtering (optional)
 }

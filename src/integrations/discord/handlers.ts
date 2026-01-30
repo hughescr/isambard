@@ -324,6 +324,51 @@ async function delegateToCoordinatorOrProcess(
 }
 
 /**
+ * Helper function to handle mode-based interruptions (catch-up or perch).
+ * Returns true if the message triggered an interruption (caller should return early).
+ */
+async function handleModeInterruptions(
+    message: Message,
+    botStateManager: BotStateManager | undefined,
+    catchUpSessionRunner: CatchUpSessionRunner | undefined,
+    perchSessionRunner: import('@/agent/perch').PerchSessionRunner | undefined
+): Promise<boolean> {
+    // Handle catch-up mode interruption
+    if(botStateManager?.getMode() === 'catching_up' && catchUpSessionRunner) {
+        await handleCatchUpInterruption(message, catchUpSessionRunner);
+        return true;
+    }
+
+    // Handle perch mode interruption
+    if(botStateManager?.getMode() === 'perching' && perchSessionRunner) {
+        await handlePerchInterruption(message, perchSessionRunner);
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Helper function to update inbox checkpoint after message processing.
+ */
+async function updateInboxCheckpoint(
+    message: Message,
+    inboxManager: InboxManager | undefined,
+    shouldRespond: boolean
+): Promise<void> {
+    // Stryker disable all: Optional inbox integration - checkpoint update for catch-up tracking
+    if(inboxManager && shouldRespond) {
+        await inboxManager.recordActivity(
+            createChannelId(message.channel.id),
+            createGuildId(message.guild?.id ?? 'DM'),
+            message.id,
+            message.createdAt.toISOString()
+        );
+    }
+    // Stryker restore all
+}
+
+/**
  * Helper function to check if a message should be ignored.
  * Returns true if the message is from a bot or from the bot itself.
  */
@@ -637,22 +682,16 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
             return;
         }
 
-        // Handle catch-up mode interruption
-        if(botStateManager?.getMode() === 'catching_up' && catchUpSessionRunner) {
-            await handleCatchUpInterruption(message, catchUpSessionRunner);
-            // Don't call resumeAfterInterruption here - the session runner handles it internally
+        // Handle mode-based interruptions (catch-up or perch)
+        const wasInterrupted = await handleModeInterruptions(
+            message,
+            botStateManager,
+            catchUpSessionRunner,
+            perchSessionRunner
+        );
+        if(wasInterrupted) {
             return;
         }
-
-        // Handle perch mode interruption
-        if(botStateManager?.getMode() === 'perching' && perchSessionRunner) {
-            await handlePerchInterruption(message, perchSessionRunner);
-            // Don't process here - the resumed perch session handles the message
-            return;
-        }
-
-        // Allow message processing if in 'perching_interrupted' or 'catching_up_interrupted' state
-        // This is the interrupting message being handled by the resumed session
 
         // Handle state transitions and inbox updates
         handleStateAndInbox(message, botStateManager, inboxManager, shouldRespond);
@@ -661,15 +700,6 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         await delegateToCoordinatorOrProcess(message, coordinator, createContext, processMessage);
 
         // Update checkpoint to mark this message as "seen" for catch-up purposes
-        // Stryker disable all: Optional inbox integration - checkpoint update for catch-up tracking
-        if(inboxManager && shouldRespond) {
-            await inboxManager.recordActivity(
-                createChannelId(message.channel.id),
-                createGuildId(message.guild?.id ?? 'DM'),
-                message.id,
-                message.createdAt.toISOString()
-            );
-        }
-        // Stryker restore all
+        await updateInboxCheckpoint(message, inboxManager, shouldRespond);
     };
 }

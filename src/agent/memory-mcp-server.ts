@@ -69,12 +69,17 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                 async (args): Promise<CallToolResult> => {
                     try {
                         const path = createMemoryPath(`/${args.layer}/${args.name}`);
-                        await backend.create({
-                            path,
-                            content:     args.content,
-                            contentType: 'text/plain' as ContentType,
-                            tags:        args.tags,
-                        });
+                        const existing = await backend.get(path);
+                        if(existing) {
+                            await backend.update(path, { content: args.content, tags: args.tags });
+                        } else {
+                            await backend.create({
+                                path,
+                                content:     args.content,
+                                contentType: 'text/plain' as ContentType,
+                                tags:        args.tags,
+                            });
+                        }
                         return {
                             content: [{ type: 'text' as const, text: `Memory stored at ${path}` }],
                         };
@@ -104,12 +109,17 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                 async (args): Promise<CallToolResult> => {
                     try {
                         const path = createMemoryPath(`/users/${args.userId}/${args.name}`);
-                        await backend.create({
-                            path,
-                            content:     args.content,
-                            contentType: 'text/plain' as ContentType,
-                            tags:        args.tags,
-                        });
+                        const existing = await backend.get(path);
+                        if(existing) {
+                            await backend.update(path, { content: args.content, tags: args.tags });
+                        } else {
+                            await backend.create({
+                                path,
+                                content:     args.content,
+                                contentType: 'text/plain' as ContentType,
+                                tags:        args.tags,
+                            });
+                        }
                         return {
                             content: [{ type: 'text' as const, text: `User memory stored at ${path}` }],
                         };
