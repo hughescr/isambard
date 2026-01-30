@@ -83,6 +83,16 @@ export const PerchSlotConfigSchema = z.object({
 });
 
 /**
+ * Test mode configuration for perch time.
+ */
+export interface PerchTestModeConfig {
+    /** Whether test mode is enabled */
+    enabled:   boolean
+    /** Force a specific slot instead of cycling */
+    forceSlot?: PerchSlot
+}
+
+/**
  * Global perch configuration.
  */
 export interface PerchConfig {
@@ -96,6 +106,8 @@ export interface PerchConfig {
     jitterMinutes:     number
     /** Maximum session duration in minutes (default: 45) */
     maxSessionMinutes: number
+    /** Test mode configuration for manual testing */
+    testMode?:         PerchTestModeConfig
 }
 
 /**

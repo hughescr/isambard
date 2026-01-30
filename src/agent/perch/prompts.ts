@@ -69,6 +69,32 @@ ${config.hint}`;
 }
 
 /**
+ * Build the test perch prompt for a given time slot.
+ * Wraps buildPerchPrompt with a test mode disclaimer.
+ *
+ * @param slot - The current time slot
+ * @returns Complete test prompt string
+ *
+ * @example
+ * ```typescript
+ * const prompt = buildTestPerchPrompt('pre-dawn');
+ * // Returns test disclaimer + base prompt + pre-dawn hint
+ * ```
+ */
+export function buildTestPerchPrompt(slot: PerchSlot): string {
+    const slotName = formatSlotName(slot);
+    const basePrompt = buildPerchPrompt(slot);
+
+    return `--- TEST MODE ---
+This perch time is being triggered for testing purposes, not at its normal scheduled time.
+Please behave as though this is a real perch trigger at the appropriate time for the "${slotName}" window.
+Craig knows this is a test and has asked you to try out each time slot's suggestions.
+--- END TEST MODE ---
+
+${basePrompt}`;
+}
+
+/**
  * Format a slot name for display in prompts.
  * Converts kebab-case to Title Case with context.
  *

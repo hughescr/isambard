@@ -72,6 +72,13 @@ export const perchConfigSchema = z.object({
     jitterMinutes:     z.number().int().nonnegative().default(15),
     /** Maximum session duration in minutes (default: 45) */
     maxSessionMinutes: z.number().int().positive().default(45),
+    /** Test mode configuration for manual testing */
+    testMode:          z.object({
+        /** Whether test mode is enabled */
+        enabled:   z.boolean().default(false),
+        /** Force a specific slot instead of cycling */
+        forceSlot: z.enum(['pre-dawn', 'mid-morning', 'afternoon', 'evening', 'late-night']).optional(),
+    }).optional(),
 }).optional();
 
 // Full config schema (all sections required)

@@ -702,6 +702,12 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 onCatchUpComplete: () => {
                     // Reset presence mode when catch-up completes
                     presenceManager?.transitionPresenceDisplayMode('none');
+
+                    // Trigger test perch if test mode is enabled
+                    if(options.perchConfig?.testMode?.enabled && perchScheduler) {
+                        logger.info({ msg: 'Catch-up complete - triggering test perch' });
+                        perchScheduler.triggerTestPerch();
+                    }
                 },
             });
         }

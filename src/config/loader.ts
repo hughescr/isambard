@@ -21,6 +21,9 @@ export interface ResourceProvider {
     DiscordMonitoredChannels: { value: string | undefined }
     BoxClientId:              { value: string | undefined }
     BoxClientSecret:          { value: string | undefined }
+    PerchEnabled:             { value: string | undefined }
+    PerchTestModeEnabled:     { value: string | undefined }
+    PerchTestModeForceSlot:   { value: string | undefined }
 }
 
 export interface DynamoDBResourceProvider {
@@ -75,6 +78,17 @@ export function loadConfig(resources: ResourceProvider = Resource as unknown as 
             clientId:     resources.BoxClientId.value,
             clientSecret: resources.BoxClientSecret.value,
         },
+        perch: resources.PerchEnabled?.value === 'true' ? {
+            enabled:           true,
+            timezone:          'America/Los_Angeles',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 45,
+            testMode:          resources.PerchTestModeEnabled?.value === 'true' ? {
+                enabled:   true,
+                forceSlot: resources.PerchTestModeForceSlot?.value as 'pre-dawn' | 'mid-morning' | 'afternoon' | 'evening' | 'late-night' | undefined,
+            } : undefined,
+        } : undefined,
     };
 
     const result = configSchema.safeParse(rawConfig);

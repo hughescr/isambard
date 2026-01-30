@@ -211,8 +211,9 @@ export async function createApp(): Promise<App> {
     // Create Discord bot with agent as message handler
     // Use the pre-created client if available (shared with message fetcher)
     const bot: DiscordBot = createDiscordBot({
-        config:    config.discord,
-        onMessage: async (context) => {
+        config:      config.discord,
+        perchConfig: config.perch,
+        onMessage:   async (context) => {
             return await agent.chat(context);
         },
         identityContext,

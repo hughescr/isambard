@@ -75,4 +75,17 @@ export const config = {
             properties: { value: $app.stage === 'development' ? 'http://localhost:8000' : undefined },
         }),
     },
+
+    // Perch Time (autonomous scheduling)
+    perch: {
+        enabled: new sst.Linkable('PerchEnabled', {
+            properties: { value: 'true' },
+        }),
+        testModeEnabled: new sst.Linkable('PerchTestModeEnabled', {
+            properties: { value: 'true' },
+        }),
+        testModeForceSlot: new sst.Linkable('PerchTestModeForceSlot', {
+            properties: { value: 'afternoon' },
+        }),
+    },
 };

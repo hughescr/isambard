@@ -12,6 +12,7 @@ export {
     type PerchSlot,
     type SuggestionLevel,
     type PerchSlotConfig,
+    type PerchTestModeConfig,
     type PerchConfig,
     type PerchSchedulerState,
     PerchSlotSchema,
@@ -32,6 +33,7 @@ export {
 export {
     BASE_PROMPT,
     buildPerchPrompt,
+    buildTestPerchPrompt,
     getSuggestionLevelDescription
 } from './prompts';
 

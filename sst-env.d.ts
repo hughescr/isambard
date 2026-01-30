@@ -2,6 +2,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /* deno-fmt-ignore-file */
+/* biome-ignore-all lint: auto-generated */
 
 declare module "sst" {
   export interface Resource {
@@ -77,6 +78,18 @@ declare module "sst" {
       "value": string
     }
     "NodeEnv": {
+      "type": "sst.sst.Linkable"
+      "value": string
+    }
+    "PerchEnabled": {
+      "type": "sst.sst.Linkable"
+      "value": string
+    }
+    "PerchTestModeEnabled": {
+      "type": "sst.sst.Linkable"
+      "value": string
+    }
+    "PerchTestModeForceSlot": {
       "type": "sst.sst.Linkable"
       "value": string
     }

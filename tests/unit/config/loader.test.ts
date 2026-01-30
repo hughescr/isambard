@@ -28,6 +28,9 @@ function createMockResources(
         BoxClientId:              { value: 'box-client-id' },
         BoxClientSecret:          { value: 'box-secret' },
         ClaudeCodeOAuthToken:     { value: 'test-oauth-token-12345' },
+        PerchEnabled:             { value: undefined },
+        PerchTestModeEnabled:     { value: undefined },
+        PerchTestModeForceSlot:   { value: undefined },
     };
     return { ...defaults, ...overrides };
 }
@@ -314,6 +317,64 @@ describe.concurrent('loadConfig', () => {
             expect(presence.idleTimeoutMs).toBeLessThan(120000);
             expect(presence.idleRefreshIntervalMs).toBeGreaterThan(0);
             expect(presence.idleRefreshIntervalMs).toBeLessThan(600000);
+        });
+    });
+
+    describe('Perch Config', () => {
+        test('should load perch config when PerchEnabled is true', () => {
+            const resources = createMockResources({
+                PerchEnabled: { value: 'true' },
+            });
+            const config = loadConfig(resources);
+
+            expect(config.perch).toBeDefined();
+            expect(config.perch?.enabled).toBe(true);
+            expect(config.perch?.timezone).toBe('America/Los_Angeles');
+            expect(config.perch?.intervalMinutes).toBe(60);
+            expect(config.perch?.jitterMinutes).toBe(15);
+            expect(config.perch?.maxSessionMinutes).toBe(45);
+            expect(config.perch?.testMode).toBeUndefined();
+        });
+
+        test('should load perch test mode when enabled', () => {
+            const resources = createMockResources({
+                PerchEnabled:         { value: 'true' },
+                PerchTestModeEnabled: { value: 'true' },
+            });
+            const config = loadConfig(resources);
+
+            expect(config.perch?.testMode).toBeDefined();
+            expect(config.perch?.testMode?.enabled).toBe(true);
+            expect(config.perch?.testMode?.forceSlot).toBeUndefined();
+        });
+
+        test('should load perch test mode with forceSlot', () => {
+            const resources = createMockResources({
+                PerchEnabled:           { value: 'true' },
+                PerchTestModeEnabled:   { value: 'true' },
+                PerchTestModeForceSlot: { value: 'pre-dawn' },
+            });
+            const config = loadConfig(resources);
+
+            expect(config.perch?.testMode?.forceSlot).toBe('pre-dawn');
+        });
+
+        test('should set perch to undefined when not enabled', () => {
+            const resources = createMockResources({
+                PerchEnabled: { value: undefined },
+            });
+            const config = loadConfig(resources);
+
+            expect(config.perch).toBeUndefined();
+        });
+
+        test('should set perch to undefined when PerchEnabled is false', () => {
+            const resources = createMockResources({
+                PerchEnabled: { value: 'false' },
+            });
+            const config = loadConfig(resources);
+
+            expect(config.perch).toBeUndefined();
         });
     });
 

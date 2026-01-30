@@ -39,6 +39,8 @@ export interface PerchScheduler {
     getState(): Readonly<PerchSchedulerState>
     /** Manually trigger a perch check (for testing) */
     triggerNow(): void
+    /** Trigger a test perch (cycles through slots or uses forceSlot) */
+    triggerTestPerch(): void
 }
 
 /**
@@ -92,6 +94,10 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
     };
     let unsubscribe: (() => void) | null = null;
     let schedulerTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    // Test mode: track next slot index for cycling
+    let nextTestSlotIndex = 0;
+    const TEST_SLOTS: PerchSlot[] = ['pre-dawn', 'mid-morning', 'afternoon', 'evening', 'late-night'];
 
     /**
      * Handle the actual perch trigger.
@@ -223,6 +229,13 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
             // Subscribe to state changes
             unsubscribe = stateManager.subscribe(onStateChange);
 
+            // Skip cron scheduling if test mode is enabled
+            if(config.testMode?.enabled) {
+                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+                logger.info('Perch scheduler in test mode - cron scheduling disabled');
+                return;
+            }
+
             // Schedule first trigger using cron-parser's H option
             scheduleNextTrigger();
 
@@ -262,6 +275,35 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
             const hour = getCurrentPacificHour();
             const slot = getSlotForHour(hour);
 
+            if(stateManager.getMode() === 'idle') {
+                doTrigger(slot);
+            } else {
+                state = {
+                    perchPending:       true,
+                    pendingSlot:        slot,
+                    pendingTriggerTime: new Date(),
+                };
+            }
+        },
+
+        triggerTestPerch(): void {
+            // Determine which slot to use
+            let slot: PerchSlot;
+
+            if(config.testMode?.forceSlot) {
+                // Use forced slot
+                slot = config.testMode.forceSlot;
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                logger.info({ slot }, 'Triggering test perch with forced slot');
+            } else {
+                // Cycle through slots
+                slot = TEST_SLOTS[nextTestSlotIndex];
+                nextTestSlotIndex = (nextTestSlotIndex + 1) % TEST_SLOTS.length;
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                logger.info({ slot, nextIndex: nextTestSlotIndex }, 'Triggering test perch with cycling slot');
+            }
+
+            // Trigger immediately if idle, otherwise defer
             if(stateManager.getMode() === 'idle') {
                 doTrigger(slot);
             } else {

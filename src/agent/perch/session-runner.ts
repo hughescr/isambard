@@ -12,7 +12,7 @@
 import type { Logger } from '@hughescr/logger';
 import type { BotStateManager, PerchingModeContext, InterruptingMessageDetails } from '@/integrations/discord/state';
 import { type PerchSlot, type PerchConfig } from './types';
-import { buildPerchPrompt, buildPerchInterruptedPrompt, buildPerchTimeoutPrompt, getSuggestionLevelDescription } from './prompts';
+import { buildPerchPrompt, buildTestPerchPrompt, buildPerchInterruptedPrompt, buildPerchTimeoutPrompt, getSuggestionLevelDescription } from './prompts';
 import type { StreamProgress } from '@/agent/stream-tracker';
 import _ from 'lodash';
 
@@ -336,11 +336,14 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 slot,
                 suggestionLevel: getSuggestionLevelDescription(slot),
                 timeoutMinutes:  config.maxSessionMinutes,
+                testMode:        config.testMode?.enabled ?? false,
                 msg:             'Starting perch session with timeout',
             });
 
-            // Build prompt for this slot
-            const prompt = buildPerchPrompt(slot);
+            // Build prompt for this slot (use test prompt if test mode enabled)
+            const prompt = config.testMode?.enabled
+                ? buildTestPerchPrompt(slot)
+                : buildPerchPrompt(slot);
 
             // Run agent session with error handling
             await runSessionAndFinalize({
