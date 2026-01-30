@@ -13,7 +13,7 @@
 
 import _ from 'lodash';
 import type { Client as DiscordClient, ActivitiesOptions } from 'discord.js';
-import type { PresenceConfig, PresencePhase, CatchUpMode, CatchUpSynopsisContext } from './types.js';
+import type { PresenceConfig, PresencePhase, PresenceDisplayMode, CatchUpSynopsisContext } from './types.js';
 import type { ActiveStatusGenerator } from './status-generator-active.js';
 import type { IdleStatusGenerator } from './status-generator-idle.js';
 import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
@@ -32,14 +32,14 @@ export interface PresenceManager {
     updatePhase(phase: PresencePhase): Promise<void>
 
     /**
-     * Transition to a new catch-up mode, managing status updates and lifecycle.
+     * Transition to a new presence display mode, managing status updates and lifecycle.
      * This method has side effects: generates LLM-powered status updates,
      * manages idle refresh loop lifecycle, and handles complex state transitions.
      *
-     * @param mode - Catch-up mode state
+     * @param mode - Presence display mode state
      * @param catchUpContext - Optional rich context for catch-up status generation
      */
-    transitionCatchUpMode(mode: CatchUpMode, catchUpContext?: CatchUpSynopsisContext): void
+    transitionPresenceDisplayMode(mode: PresenceDisplayMode, catchUpContext?: CatchUpSynopsisContext): void
 
     /**
      * Start the presence manager (enables idle refresh if idle).
@@ -123,7 +123,7 @@ export function createPresenceManager(
 
     let currentPhase: PresencePhase | null = null; // Start uninitialized
     let idleRefreshInterval: NodeJS.Timeout | null = null;
-    let catchUpMode: CatchUpMode = 'none'; // Track catch-up mode for status prefixes
+    let presenceDisplayMode: PresenceDisplayMode = 'none'; // Track presence display mode for status prefixes
 
     /**
      * Actually update Discord presence.
@@ -165,16 +165,16 @@ export function createPresenceManager(
         }
 
         // Capture current mode at start to detect stale results
-        const modeAtStart = catchUpMode;
+        const modeAtStart = presenceDisplayMode;
 
         // Stryker disable next-line BooleanLiteral: includeEmoji parameter - always true for idle status generation
-        const activity = await idleStatusGenerator.generate(true, catchUpMode);
+        const activity = await idleStatusGenerator.generate(true, presenceDisplayMode);
 
         // Check if mode changed while generating - if so, discard stale result
         // Stryker disable BlockStatement,ObjectLiteral,StringLiteral: Logging for observability and race condition guard
         // Stryker disable next-line ConditionalExpression: Guard clause - prevents stale status when mode changes during generation
-        if(catchUpMode !== modeAtStart) {
-            logger.debug({ modeAtStart, currentMode: catchUpMode }, 'Discarding stale idle status (mode changed during generation)');
+        if(presenceDisplayMode !== modeAtStart) {
+            logger.debug({ modeAtStart, currentMode: presenceDisplayMode }, 'Discarding stale idle status (mode changed during generation)');
             return;
         }
         // Stryker restore BlockStatement,ObjectLiteral,StringLiteral
@@ -217,11 +217,11 @@ export function createPresenceManager(
     }
 
     return {
-        // Stryker disable all: transitionCatchUpMode integration tested via bot lifecycle, not unit tested
-        transitionCatchUpMode(mode: CatchUpMode, catchUpContext?: CatchUpSynopsisContext): void {
-            logger.debug({ mode, previousMode: catchUpMode }, 'Setting catch-up mode');
-            const previousMode = catchUpMode;
-            catchUpMode = mode;
+        // Stryker disable all: transitionPresenceDisplayMode integration tested via bot lifecycle, not unit tested
+        transitionPresenceDisplayMode(mode: PresenceDisplayMode, catchUpContext?: CatchUpSynopsisContext): void {
+            logger.debug({ mode, previousMode: presenceDisplayMode }, 'Setting presence display mode');
+            const previousMode = presenceDisplayMode;
+            presenceDisplayMode = mode;
 
             // When ENTERING catch-up mode (from 'none'), generate ONE initial status update
             // to show the 📥 prefix. The catch-up agent session's stream handler will then
@@ -298,10 +298,10 @@ export function createPresenceManager(
             // Handle idle state transitions
             // Transition TO idle: always immediate (bypasses cooldown)
             if(nowIdle && !wasIdle) {
-                // If catch-up mode is active, don't start idle refresh yet.
-                // The transitionCatchUpMode('none') call will trigger idle refresh with correct mode.
+                // If presence display mode is active, don't start idle refresh yet.
+                // The transitionPresenceDisplayMode('none') call will trigger idle refresh with correct mode.
                 // Stryker disable next-line ConditionalExpression: Mode check - prevents idle refresh during catch-up
-                if(catchUpMode === 'none') {
+                if(presenceDisplayMode === 'none') {
                     await startIdleRefresh();
                 }
                 return;
@@ -322,7 +322,7 @@ export function createPresenceManager(
             // Handle active phases (throttling is now done upstream by BotStateManager)
             // Stryker disable next-line ConditionalExpression: Guard clause - active phase handling
             if(!nowIdle) {
-                const activity = activeStatusGenerator.generate(phase, catchUpMode);
+                const activity = activeStatusGenerator.generate(phase, presenceDisplayMode);
                 await applyPresenceUpdate(activity);
             }
         },

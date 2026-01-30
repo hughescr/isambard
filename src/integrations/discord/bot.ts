@@ -39,6 +39,13 @@ import {
     type BotStateManager,
     type StateChange
 } from './state';
+import {
+    createPerchScheduler,
+    createPerchSessionRunner,
+    type PerchScheduler,
+    type PerchSessionRunner,
+    type PerchConfig
+} from '@/agent/perch';
 
 /**
  * Result of processing Discord message attachments
@@ -355,6 +362,12 @@ export interface DiscordBotOptions {
      * Useful when the state manager needs to be shared with other components.
      */
     botStateManager?: BotStateManager
+
+    /**
+     * Optional perch time configuration.
+     * If provided along with agent, enables autonomous perch time.
+     */
+    perchConfig?: PerchConfig
 }
 
 /**
@@ -427,6 +440,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     let coordinator: MessageCoordinator | undefined;
     let rateLimiter: DiscordRateLimiter | undefined;
     let catchUpSessionRunner: CatchUpSessionRunner | undefined;
+    let perchScheduler: PerchScheduler | undefined;
+    let perchSessionRunner: PerchSessionRunner | undefined;
     // Use provided registry or create a new one
     const questionRegistry: QuestionRegistry = options.questionRegistry ?? createQuestionRegistry();
 
@@ -563,17 +578,18 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     const mode = change.newState.mode;
                     const interrupted = change.newState.interrupted;
 
-                    // Map BotState mode to CatchUpMode for presence
+                    // Map BotState mode to PresenceDisplayMode for presence
                     if(mode === 'idle') {
-                        presenceManager!.transitionCatchUpMode('none');
+                        presenceManager!.transitionPresenceDisplayMode('none');
                         // Explicitly transition presence to idle phase
                         void presenceManager!.updatePhase({ type: 'idle', since: new Date() });
                     } else if(mode === 'catching_up') {
-                        presenceManager!.transitionCatchUpMode(interrupted ? 'catching_up_interrupted' : 'catching_up');
+                        presenceManager!.transitionPresenceDisplayMode(interrupted ? 'catching_up_interrupted' : 'catching_up');
                     } else if(mode === 'processing_message') {
-                        presenceManager!.transitionCatchUpMode('processing_message');
+                        presenceManager!.transitionPresenceDisplayMode('processing_message');
+                    } else if(mode === 'perching') {
+                        presenceManager!.transitionPresenceDisplayMode(interrupted ? 'perching_interrupted' : 'perching');
                     }
-                    // perching mode will be handled when implemented
                 }
 
                 // Sync interrupted flag changes
@@ -581,7 +597,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     const mode = change.newState.mode;
                     const interrupted = change.newState.interrupted;
                     if(mode === 'catching_up') {
-                        presenceManager!.transitionCatchUpMode(interrupted ? 'catching_up_interrupted' : 'catching_up');
+                        presenceManager!.transitionPresenceDisplayMode(interrupted ? 'catching_up_interrupted' : 'catching_up');
+                    } else if(mode === 'perching') {
+                        presenceManager!.transitionPresenceDisplayMode(interrupted ? 'perching_interrupted' : 'perching');
                     }
                 }
             });
@@ -683,9 +701,67 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 },
                 onCatchUpComplete: () => {
                     // Reset presence mode when catch-up completes
-                    presenceManager?.transitionCatchUpMode('none');
+                    presenceManager?.transitionPresenceDisplayMode('none');
                 },
             });
+        }
+
+        // Create perch session runner and scheduler if config provided
+        if(agent && options.perchConfig?.enabled) {
+            perchSessionRunner = createPerchSessionRunner({
+                stateManager:    botStateManager,
+                logger,
+                config:          options.perchConfig,
+                runAgentSession: async (runOptions) => {
+                    // Create abort controller from signal
+                    const abortController = new AbortController();
+                    runOptions.abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
+
+                    // Create stream event handler for presence updates during perch
+                    const streamEventHandler = createPresenceStreamHandler(
+                        presenceManager,
+                        dynamicStatusGenerator,
+                        `Perch time: ${runOptions.slot}`,
+                        botStateManager
+                    );
+
+                    // Call agent.chatBatch with specialMode: 'perching' and the perch prompt
+                    const result = await agent.chatBatch([], {
+                        specialMode:   'perching',
+                        abortController,
+                        perchPrompt:   runOptions.prompt,
+                        onStreamEvent: streamEventHandler?.onStreamEvent,
+                    });
+
+                    // Complete presence updates
+                    if(streamEventHandler) {
+                        streamEventHandler.complete();
+                    }
+
+                    return {
+                        completed: !result.wasInterrupted,
+                        sessionId: result.sessionId,
+                    };
+                },
+            });
+
+            perchScheduler = createPerchScheduler({
+                stateManager:   botStateManager,
+                logger,
+                config:         options.perchConfig,
+                onPerchTrigger: (slot) => {
+                    if(perchSessionRunner) {
+                        void perchSessionRunner.startPerch(slot).catch((error) => {
+                            const errorMsg = _.isError(error) ? error.message : String(error);
+                            logger.error({ error: errorMsg, slot, msg: 'Failed to start perch session' });
+                        });
+                    }
+                },
+            });
+
+            // Start the perch scheduler
+            perchScheduler.start();
+            logger.info({ msg: 'Perch scheduler initialized and started' });
         }
 
         // Initialize inbox on startup and then check for catch-up
@@ -723,7 +799,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                             const catchUpContext = await buildCatchUpContext(inboxManager, memoryBackend!);
 
                             // Update presence to show catching up with rich context
-                            presenceManager?.transitionCatchUpMode('catching_up', catchUpContext);
+                            presenceManager?.transitionPresenceDisplayMode('catching_up', catchUpContext);
                             await runner.startCatchUp();
                         } else {
                             // Not doing catch-up, transition to idle mode
@@ -788,13 +864,24 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     if(botStateManager.getMode() === 'catching_up' && botStateManager.isInterrupted() && catchUpSessionRunner) {
                         logger.info({ msg: 'Resuming catch-up after interruption' });
                         // Update presence back to catching_up
-                        presenceManager?.transitionCatchUpMode('catching_up');
+                        presenceManager?.transitionPresenceDisplayMode('catching_up');
                         // Resume catch-up (async, don't await)
                         void catchUpSessionRunner.resumeAfterInterruption().catch((error) => {
                             const errorMsg = _.isError(error) ? error.message : String(error);
                             logger.error({ error: errorMsg, msg: 'Failed to resume catch-up after interruption' });
                             // Reset presence on failure
-                            presenceManager?.transitionCatchUpMode('none');
+                            presenceManager?.transitionPresenceDisplayMode('none');
+                        });
+                    }
+
+                    // Resume perch if we were interrupted
+                    if(botStateManager.getMode() === 'perching' && botStateManager.isInterrupted() && perchSessionRunner) {
+                        logger.info({ msg: 'Resuming perch after interruption' });
+                        presenceManager?.transitionPresenceDisplayMode('perching');
+                        void perchSessionRunner.resumeAfterInterruption().catch((error) => {
+                            const errorMsg = _.isError(error) ? error.message : String(error);
+                            logger.error({ error: errorMsg, msg: 'Failed to resume perch after interruption' });
+                            presenceManager?.transitionPresenceDisplayMode('none');
                         });
                     }
                 },
@@ -803,7 +890,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             // Helper to update presence when starting to process a user message
             const updatePresenceForMessageStart = (): void => {
                 if(botStateManager.getMode() === 'idle') {
-                    presenceManager?.transitionCatchUpMode('processing_message');
+                    presenceManager?.transitionPresenceDisplayMode('processing_message');
                 }
             };
 
@@ -821,7 +908,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
                 // Reset presence mode back to none if we were in idle mode
                 if(currentMode === 'idle') {
-                    presenceManager?.transitionCatchUpMode('none');
+                    presenceManager?.transitionPresenceDisplayMode('none');
                 }
 
                 // Transition state manager to idle when message processing completes
@@ -899,6 +986,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             inboxManager,
             catchUpSessionRunner,
             botStateManager,
+            perchSessionRunner,
         }));
     });
 
@@ -909,13 +997,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         },
 
         async stop(): Promise<void> {
-            // Abort any running catch-up session FIRST to prevent race conditions
-            if(catchUpSessionRunner) {
-                const controller = catchUpSessionRunner.getAbortController();
-                if(controller) {
-                    controller.abort();
-                }
-            }
             // Stop coordinator if it exists
             if(coordinator) {
                 coordinator.stop();
@@ -929,8 +1010,28 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             if(unsubscribeActivityPhase) {
                 unsubscribeActivityPhase();
             }
-            // Stop unified state manager
+            // Stop unified state manager BEFORE stopping schedulers
+            // This ensures state manager rejects new sessions even if scheduler callbacks fire
             botStateManager.stop();
+            // NOW safe to stop schedulers and abort sessions
+            // Abort any running catch-up session
+            if(catchUpSessionRunner) {
+                const controller = catchUpSessionRunner.getAbortController();
+                if(controller) {
+                    controller.abort();
+                }
+            }
+            // Stop perch scheduler if it exists
+            if(perchScheduler) {
+                perchScheduler.stop();
+            }
+            // Abort any running perch session
+            if(perchSessionRunner) {
+                const controller = perchSessionRunner.getAbortController();
+                if(controller) {
+                    controller.abort();
+                }
+            }
             // Stop presence manager if it exists
             if(presenceManager) {
                 presenceManager.stop();

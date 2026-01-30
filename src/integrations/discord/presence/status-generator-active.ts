@@ -6,7 +6,7 @@
  */
 
 import type { ActivitiesOptions, ActivityType } from 'discord.js';
-import type { PresencePhase, CatchUpMode } from './types.js';
+import type { PresencePhase, PresenceDisplayMode } from './types.js';
 import { ToolStatusMap } from './types.js';
 
 /**
@@ -18,20 +18,20 @@ export interface ActiveStatusGenerator {
    * This is fast and synchronous - uses pre-defined mappings.
    *
    * @param phase - Current presence phase
-   * @param catchUpMode - Current catch-up mode for prefix generation
+   * @param presenceDisplayMode - Current presence display mode for prefix generation
    * @returns Discord activity configuration
    */
-    generate(phase: PresencePhase, catchUpMode?: CatchUpMode): ActivitiesOptions
+    generate(phase: PresencePhase, presenceDisplayMode?: PresenceDisplayMode): ActivitiesOptions
 
     /**
-     * Format a status text with the appropriate catch-up prefix.
+     * Format a status text with the appropriate presence display mode prefix.
      * Use this when you have a pre-generated status text (e.g., from LLM).
      *
      * @param statusText - The status text to format
-     * @param catchUpMode - Current catch-up mode for prefix generation
+     * @param presenceDisplayMode - Current presence display mode for prefix generation
      * @returns Discord activity configuration
      */
-    formatStatus(statusText: string, catchUpMode?: CatchUpMode): ActivitiesOptions
+    formatStatus(statusText: string, presenceDisplayMode?: PresenceDisplayMode): ActivitiesOptions
 }
 
 /**
@@ -52,26 +52,30 @@ export interface ActiveStatusGeneratorDeps {
 }
 
 /**
- * Returns the emoji prefix for the given catch-up mode.
+ * Returns the emoji prefix for the given presence display mode.
  *
- * @param catchUpMode - Current catch-up mode
+ * @param presenceDisplayMode - Current presence display mode
  * @returns Emoji prefix string (with trailing space if applicable)
  */
-function getCatchUpPrefix(catchUpMode: CatchUpMode | undefined): string {
+function getPresencePrefix(presenceDisplayMode: PresenceDisplayMode | undefined): string {
     // Stryker disable BlockStatement,ConditionalExpression,LogicalOperator: Early return and default case have same behavior ('') - tested in integration
-    if(!catchUpMode || catchUpMode === 'none') {
+    if(!presenceDisplayMode || presenceDisplayMode === 'none') {
         return '';
     }
     // Stryker restore BlockStatement,ConditionalExpression,LogicalOperator
 
     // Switch case emojis are tested in test file
-    switch(catchUpMode) { // Stryker disable ConditionalExpression,StringLiteral
+    switch(presenceDisplayMode) { // Stryker disable ConditionalExpression,StringLiteral
         case 'catching_up':
             return '📥 ';
         case 'catching_up_interrupted':
             return '📥💬 ';
         case 'processing_message':
             return '💬 ';
+        case 'perching':
+            return '🦉 ';
+        case 'perching_interrupted':
+            return '🦉💬 ';
         default:
             return '';
     }
@@ -84,7 +88,7 @@ function getCatchUpPrefix(catchUpMode: CatchUpMode | undefined): string {
  * For tool usage, it looks up the tool name in ToolStatusMap and falls back to "Working..."
  * for unknown tools.
  *
- * When catch-up mode is provided, adds appropriate emoji prefixes:
+ * When presence display mode is provided, adds appropriate emoji prefixes:
  * - catching_up: 📥
  * - catching_up_interrupted: 📥💬
  * - processing_message: 💬
@@ -115,10 +119,10 @@ export function createActiveStatusGenerator(
     const { logger, activityType } = deps;
 
     return {
-        generate(phase: PresencePhase, catchUpMode?: CatchUpMode): ActivitiesOptions {
-            logger.debug({ phase, catchUpMode }, 'Generating active status');
+        generate(phase: PresencePhase, presenceDisplayMode?: PresenceDisplayMode): ActivitiesOptions {
+            logger.debug({ phase, presenceDisplayMode }, 'Generating active status');
 
-            const prefix = getCatchUpPrefix(catchUpMode);
+            const prefix = getPresencePrefix(presenceDisplayMode);
             let baseStatus: string;
 
             switch(phase.type) {
@@ -151,8 +155,8 @@ export function createActiveStatusGenerator(
             return { name: `${prefix}${baseStatus}`, type: activityType };
         },
 
-        formatStatus(statusText: string, catchUpMode?: CatchUpMode): ActivitiesOptions {
-            const prefix = getCatchUpPrefix(catchUpMode);
+        formatStatus(statusText: string, presenceDisplayMode?: PresenceDisplayMode): ActivitiesOptions {
+            const prefix = getPresencePrefix(presenceDisplayMode);
             return { name: `${prefix}${statusText}`, type: activityType };
         },
     };

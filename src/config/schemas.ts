@@ -60,6 +60,20 @@ export const dynamoDBConfigSchema = z.object({
     endpoint:  z.string().url().optional(),
 });
 
+// Perch time configuration schema
+export const perchConfigSchema = z.object({
+    /** Whether perch time is enabled */
+    enabled:           z.boolean().default(false),
+    /** Timezone for schedule (default: America/Los_Angeles) */
+    timezone:          z.string().default('America/Los_Angeles'),
+    /** Minutes between perch triggers (default: 60) */
+    intervalMinutes:   z.number().int().positive().default(60),
+    /** Jitter range in minutes (default: 15) */
+    jitterMinutes:     z.number().int().nonnegative().default(15),
+    /** Maximum session duration in minutes (default: 45) */
+    maxSessionMinutes: z.number().int().positive().default(45),
+}).optional();
+
 // Full config schema (all sections required)
 export const configSchema = z.object({
     app:     appConfigSchema,
@@ -68,6 +82,7 @@ export const configSchema = z.object({
     email:   emailConfigSchema,
     discord: discordConfigSchema,
     box:     boxConfigSchema,
+    perch:   perchConfigSchema,
 });
 
 // Type exports
@@ -79,4 +94,5 @@ export type EmailConfig = z.infer<typeof emailConfigSchema>;
 export type DiscordConfig = z.infer<typeof discordConfigSchema>;
 export type BoxConfig = z.infer<typeof boxConfigSchema>;
 export type DynamoDBConfig = z.infer<typeof dynamoDBConfigSchema>;
+export type PerchConfig = z.infer<typeof perchConfigSchema>;
 export type Config = z.infer<typeof configSchema>;

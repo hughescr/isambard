@@ -2,22 +2,6 @@
 
 ## Current Focus
 
-
-### Perch Time (Autonomous Activity)
-Allow Isambard to wake up and pursue its own interests and goals.
-
-**Implementation:**
-- [ ] Timer/scheduler for autonomous wake-up cycles
-- [ ] Design system prompt for autonomous mode
-  - Encourage exploration and self-directed activity
-  - Avoid prescribing specific activities
-  - Discourage sloth/inaction without being directive
-  - Strike balance between initiative and restraint
-- [ ] Define boundaries for autonomous actions (what requires human approval)
-- [ ] Logging/journaling of autonomous activity for transparency
-
-**Note:** Prompt design is critical - must encourage agency without undue influence on direction.
-
 ### Calendar Access (Read-Only)
 Read-only access to Apple Calendar for scheduling context.
 
@@ -87,6 +71,36 @@ The current presence/status system is a confused mess with ad-hoc state tracking
 ---
 
 ## Previously Completed
+
+### Perch Time Phase 1 (Completed January 2026)
+Autonomous activity system allowing Isambard to wake up and pursue its own interests.
+
+**What was implemented:**
+- 5 time slots with graduated suggestion levels:
+  - Early Morning (5-7am): gentle nudge (10% chance)
+  - Morning (8am-12pm): moderate suggestion (30% chance)
+  - Afternoon (1-5pm): strong suggestion (50% chance)
+  - Evening (6-9pm): very strong suggestion (70% chance)
+  - Late Evening (10pm-12am): moderate suggestion (30% chance)
+- Hourly triggers with random jitter (0-14 minutes, using cron-parser `H` syntax)
+- Deferral when busy (checks inbox queue and recent conversation activity)
+- Interruption handling (graceful pause/resume when user sends message)
+- Presence indicators:
+  - 🦉 - Autonomous perch mode
+  - 🦉💬 - Perch interrupted by user message
+- System prompt encouraging exploration and self-directed activity
+- Logging and transparency for autonomous actions
+
+**Future work (Phase 2):**
+- External integrations for richer content:
+  - News feeds and current events
+  - Weather conditions
+  - RSS feed aggregation
+  - Bluesky timeline
+- Digest generation with real content from external sources
+- Enhanced perch activities beyond simple musings
+
+### Earlier Completed Features
 - Project scaffolding (Bun + TypeScript)
 - Configuration system with Zod validation
 - DynamoDB memory repository

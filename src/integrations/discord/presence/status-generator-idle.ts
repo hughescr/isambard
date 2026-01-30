@@ -8,7 +8,7 @@
 import type { ActivitiesOptions, ActivityType } from 'discord.js';
 import _ from 'lodash';
 import { generateTextWithSystemPrompt } from '@/agent/text-generator';
-import type { CatchUpMode } from './types.js';
+import type { PresenceDisplayMode } from './types.js';
 
 /**
  * Interface for generating idle status text using AI.
@@ -19,10 +19,10 @@ export interface IdleStatusGenerator {
    * This is async and may fail - returns fallback "Idle" on error.
    *
    * @param includeIdleEmoji - Whether to include the 💤 emoji prefix (default: true)
-   * @param catchUpMode - Catch-up mode for emoji prefix selection (default: 'none')
+   * @param presenceDisplayMode - Presence display mode for emoji prefix selection (default: 'none')
    * @returns Discord activity configuration
    */
-    generate(includeIdleEmoji?: boolean, catchUpMode?: import('./types.js').CatchUpMode): Promise<ActivitiesOptions>
+    generate(includeIdleEmoji?: boolean, presenceDisplayMode?: PresenceDisplayMode): Promise<ActivitiesOptions>
 }
 
 /**
@@ -122,13 +122,13 @@ const CATCH_UP_USER_PROMPT = 'Status text (first person, max 128 chars):';
 // Stryker restore StringLiteral
 
 /**
- * Gets the emoji prefix based on catch-up mode.
- * @param catchUpMode - Current catch-up mode
+ * Gets the emoji prefix based on presence display mode.
+ * @param presenceDisplayMode - Current presence display mode
  * @returns Emoji prefix string
  */
 // Stryker disable all: Emoji constants and switch cases for status display - simple lookup
-function getEmojiPrefix(catchUpMode: CatchUpMode): string {
-    switch(catchUpMode) {
+function getEmojiPrefix(presenceDisplayMode: PresenceDisplayMode): string {
+    switch(presenceDisplayMode) {
         case 'catching_up':
             return '📥 ';
         case 'catching_up_interrupted':
@@ -140,17 +140,17 @@ function getEmojiPrefix(catchUpMode: CatchUpMode): string {
 // Stryker restore all
 
 /**
- * Gets the fallback status based on catch-up mode.
- * @param catchUpMode - Current catch-up mode
+ * Gets the fallback status based on presence display mode.
+ * @param presenceDisplayMode - Current presence display mode
  * @param includeEmoji - Whether to include emoji prefix
  * @returns Fallback status string
  */
 // Stryker disable all: Fallback status text constants and switch cases - simple lookup
-function getFallbackStatus(catchUpMode: CatchUpMode, includeEmoji: boolean): string {
+function getFallbackStatus(presenceDisplayMode: PresenceDisplayMode, includeEmoji: boolean): string {
     if(!includeEmoji) {
         return 'Idle';
     }
-    switch(catchUpMode) {
+    switch(presenceDisplayMode) {
         case 'catching_up':
             return '📥 Catching up';
         case 'catching_up_interrupted':
@@ -190,15 +190,15 @@ export function createIdleStatusGenerator(
 
     return {
         // Stryker disable StringLiteral,ObjectLiteral: Prompt template building and logging for status generation
-        async generate(includeIdleEmoji = true, catchUpMode: CatchUpMode = 'none'): Promise<ActivitiesOptions> {
+        async generate(includeIdleEmoji = true, presenceDisplayMode: PresenceDisplayMode = 'none'): Promise<ActivitiesOptions> {
             try {
-                logger.debug({ includeIdleEmoji, catchUpMode }, 'Generating idle status with Haiku');
+                logger.debug({ includeIdleEmoji, presenceDisplayMode }, 'Generating idle status with Haiku');
 
                 // Determine if we're in catch-up mode
                 // Stryker disable next-line ConditionalExpression: Mode detection - tested through different prompt usage
-                const isCatchUp = catchUpMode === 'catching_up' || catchUpMode === 'catching_up_interrupted';
+                const isCatchUp = presenceDisplayMode === 'catching_up' || presenceDisplayMode === 'catching_up_interrupted';
 
-                // Build system and user prompts based on catch-up mode
+                // Build system and user prompts based on presence display mode
                 let systemPrompt: string;
                 let userPrompt: string;
 
@@ -222,8 +222,8 @@ export function createIdleStatusGenerator(
 
                 const text = await generateTextWithSystemPrompt(systemPrompt, userPrompt, { stripMarkdown: true });
 
-                // Determine emoji prefix based on catch-up mode
-                const emojiPrefix = includeIdleEmoji ? getEmojiPrefix(catchUpMode) : '';
+                // Determine emoji prefix based on presence display mode
+                const emojiPrefix = includeIdleEmoji ? getEmojiPrefix(presenceDisplayMode) : '';
 
                 // Reserve space for emoji prefix based on actual prefix length
                 // Discord limit is 128 code units (.length property)
@@ -233,14 +233,14 @@ export function createIdleStatusGenerator(
                 // Add emoji prefix if requested
                 const finalStatus = includeIdleEmoji ? `${emojiPrefix}${statusText}` : statusText;
 
-                logger.info({ statusText: finalStatus, catchUpMode }, 'Generated idle status');
+                logger.info({ statusText: finalStatus, presenceDisplayMode }, 'Generated idle status');
                 return { name: finalStatus, type: activityType };
             } catch (error) {
                 // Stryker disable all: Error fallback - tested only via integration, difficult to trigger in unit tests
                 logger.error({ error }, 'Failed to generate idle status, using fallback');
 
-                // Determine fallback prefix based on catch-up mode
-                const fallback = getFallbackStatus(catchUpMode, includeIdleEmoji);
+                // Determine fallback prefix based on presence display mode
+                const fallback = getFallbackStatus(presenceDisplayMode, includeIdleEmoji);
 
                 return { name: fallback, type: activityType };
                 // Stryker restore all

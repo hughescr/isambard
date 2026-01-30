@@ -301,12 +301,18 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
         }
         // Stryker restore BlockStatement
 
-        // If in catching_up mode and message provided, store it in the context
+        // If in catching_up or perching mode and message provided, store it in the context
         let modeContext = currentState.modeContext;
         if(message && currentState.mode === 'catching_up') {
             const catchUpContext = currentState.modeContext as CatchingUpModeContext;
             modeContext = {
                 ...catchUpContext,
+                interruptingMessage: message,
+            };
+        } else if(message && currentState.mode === 'perching') {
+            const perchContext = currentState.modeContext as PerchingModeContext;
+            modeContext = {
+                ...perchContext,
                 interruptingMessage: message,
             };
         }

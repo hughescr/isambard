@@ -72,8 +72,8 @@ describe('ActiveStatusGenerator', () => {
         });
     });
 
-    describe('catchUpMode prefixes', () => {
-        test('undefined catchUpMode -> no prefix', () => {
+    describe('presenceDisplayMode prefixes', () => {
+        test('undefined presenceDisplayMode -> no prefix', () => {
             const generator = createActiveStatusGenerator({
                 logger:       createMockLogger(),
                 activityType: ActivityType.Custom,
@@ -85,7 +85,7 @@ describe('ActiveStatusGenerator', () => {
             expect(result.name).not.toContain('💬');
         });
 
-        test('none catchUpMode -> no prefix', () => {
+        test('none presenceDisplayMode -> no prefix', () => {
             const generator = createActiveStatusGenerator({
                 logger:       createMockLogger(),
                 activityType: ActivityType.Custom,

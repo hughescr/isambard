@@ -314,9 +314,11 @@ export interface ChatBatchOptions {
     /** Optional images to include in the first message */
     images?:          FetchedImage[]
     /** Special mode for the session (affects tool availability) */
-    specialMode?:     'catchup'
+    specialMode?:     'catchup' | 'perching'
     /** Optional catch-up prompt to use instead of building from contexts */
     catchUpPrompt?:   string
+    /** Optional perch prompt for autonomous perch time */
+    perchPrompt?:     string
 }
 
 /** Result from chatBatch processing */
@@ -373,7 +375,7 @@ export interface ClaudeAgent {
 /**
  * Builds the mcpServers configuration object based on provided servers.
  */
-function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, specialMode?: 'catchup'): Record<string, McpServerConfig> | undefined {
+function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, specialMode?: 'catchup' | 'perching'): Record<string, McpServerConfig> | undefined {
     if(!memoryMcpServer && !discordMcpServer && !inboxMcpServer) {
         return undefined;
     }
@@ -397,7 +399,7 @@ function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: M
 /**
  * Builds the allowedTools list based on which MCP servers are configured.
  */
-function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, specialMode?: 'catchup'): string[] {
+function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, specialMode?: 'catchup' | 'perching'): string[] {
     const baseTools = [
         // Memory MCP tools (auto-approved)
         'mcp__memory__*',
@@ -608,18 +610,20 @@ export function logStreamEvent(message: AgentStreamEvent): void {
 
 /**
  * Build user message content for batch processing.
- * Handles resume context, catch-up prompts, and normal message formatting.
+ * Handles resume context, catch-up prompts, perch prompts, and normal message formatting.
  * @param contexts Array of Discord message contexts
  * @param contextBuilder Context builder for loading memories
  * @param resumeContext Optional resume context from interruption
  * @param catchUpPrompt Optional catch-up prompt (used in catch-up mode)
+ * @param perchPrompt Optional perch prompt (used in perching mode)
  * @returns Formatted user message text
  */
 async function buildUserMessageTextForBatch(
     contexts: DiscordMessageContext[],
     contextBuilder: ContextBuilder | undefined,
     resumeContext?: ResumeContext,
-    catchUpPrompt?: string
+    catchUpPrompt?: string,
+    perchPrompt?: string
 ): Promise<string> {
     if(resumeContext) {
         // Use resume prompt when resuming after interruption
@@ -629,6 +633,11 @@ async function buildUserMessageTextForBatch(
     if(catchUpPrompt) {
         // Use catch-up prompt when in catch-up mode
         return catchUpPrompt;
+    }
+
+    if(perchPrompt) {
+        // Use perch prompt when in perching mode
+        return perchPrompt;
     }
 
     // Build context prefix from memories and events
@@ -868,7 +877,8 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                     contexts,
                     contextBuilder,
                     options?.resumeContext,
-                    options?.catchUpPrompt
+                    options?.catchUpPrompt,
+                    options?.perchPrompt
                 );
 
                 // 3. Build prompt (string for text-only, async generator for images or text)

@@ -226,7 +226,7 @@ describe('IdleStatusGenerator', () => {
             await generator.generate();
 
             expect(localMockLogger.info).toHaveBeenCalledWith(
-                { statusText: '💤 Generated status text', catchUpMode: 'none' },
+                { statusText: '💤 Generated status text', presenceDisplayMode: 'none' },
                 'Generated idle status'
             );
         });
@@ -434,7 +434,7 @@ describe('IdleStatusGenerator', () => {
             const debugCalls = localMockLogger.debug.mock.calls;
             expect(debugCalls.length).toBeGreaterThan(0);
             const firstCall = debugCalls[0];
-            expect(firstCall[0]).toEqual({ includeIdleEmoji: true, catchUpMode: 'none' });
+            expect(firstCall[0]).toEqual({ includeIdleEmoji: true, presenceDisplayMode: 'none' });
             expect(firstCall[1]).toBe('Generating idle status with Haiku');
             expect(firstCall[1]).not.toBe('');
         });

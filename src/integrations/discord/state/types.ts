@@ -243,9 +243,11 @@ export const processingMessageModeContextSchema = z.object({
  */
 export interface PerchingModeContext {
     /** Type of perching activity (e.g., "Observing", "Listening") */
-    activityType: string
+    activityType:         string
     /** Claude agent session ID if applicable */
-    sessionId:    string | null
+    sessionId:            string | null
+    /** Details of the message that interrupted perch, if any */
+    interruptingMessage?: InterruptingMessageDetails
 }
 
 /**
@@ -253,8 +255,9 @@ export interface PerchingModeContext {
  */
 // Stryker disable ObjectLiteral: Zod schema definition - structure tested through usage
 export const perchingModeContextSchema = z.object({
-    activityType: z.string(),
-    sessionId:    z.string().nullable(),
+    activityType:        z.string(),
+    sessionId:           z.string().nullable(),
+    interruptingMessage: interruptingMessageDetailsSchema.optional(),
 });
 // Stryker restore ObjectLiteral
 
@@ -301,16 +304,16 @@ export const modeContextSchema = z.union([
  *
  * PresenceManager uses a simplified type system for Discord presence display that combines
  * these orthogonal flags into single enum values. The mapping logic in bot.ts combines:
- * - `mode='catching_up', interrupted=false` → `CatchUpMode='catching_up'`
- * - `mode='catching_up', interrupted=true` → `CatchUpMode='catching_up_interrupted'`
- * - `mode!='catching_up'` → `CatchUpMode='none'`
+ * - `mode='catching_up', interrupted=false` → `PresenceDisplayMode='catching_up'`
+ * - `mode='catching_up', interrupted=true` → `PresenceDisplayMode='catching_up_interrupted'`
+ * - `mode!='catching_up'` → `PresenceDisplayMode='none'`
  *
  * This separation allows:
  * - BotStateManager to model state naturally with orthogonal flags
  * - PresenceManager to generate status text from simplified enum values
  * - Future modes to support interruption without changing PresenceManager
  *
- * @see CatchUpMode in src/integrations/discord/presence/types.ts for the presence enum
+ * @see PresenceDisplayMode in src/integrations/discord/presence/types.ts for the presence enum
  * @see bot.ts for the mapping logic between these type systems
  *
  * @example

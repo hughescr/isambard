@@ -157,6 +157,11 @@ export interface MessageHandlerOptions {
      * Optional bot state manager for checking current mode.
      */
     botStateManager?: BotStateManager
+
+    /**
+     * Optional perch session runner for interrupting autonomous perch sessions.
+     */
+    perchSessionRunner?: import('@/agent/perch').PerchSessionRunner
 }
 
 /**
@@ -214,6 +219,35 @@ async function handleCatchUpInterruption(
         channelId,
         author:      message.author.username,
         // Stryker disable next-line LogicalOperator: Fallback for DM channels where name is null
+        channelName: channel.name ?? message.channel.id,
+        content:     message.content,
+    });
+
+    // Presence update is handled by the subscription in bot.ts
+}
+
+/**
+ * Helper function to handle perch mode interruption.
+ * Interrupts the perch session with message details.
+ */
+async function handlePerchInterruption(
+    message: Message,
+    perchSessionRunner: import('@/agent/perch').PerchSessionRunner
+): Promise<void> {
+    // Stryker disable all: Logging for observability
+    logger.info({
+        channelId: message.channel.id,
+        msg:       'Interrupting perch mode for new message',
+    });
+    // Stryker restore all
+
+    // Get channel name for interruption context
+    const channel = message.channel as TextChannel;
+
+    // Interrupt the perch session with message details
+    perchSessionRunner.interrupt({
+        channelId:   createChannelId(message.channel.id),
+        author:      message.author.username,
         channelName: channel.name ?? message.channel.id,
         content:     message.content,
     });
@@ -437,7 +471,7 @@ async function handlePendingQuestion(
 }
 
 export function createMessageHandler(options: MessageHandlerOptions): (message: Message) => Promise<void> {
-    const { monitoredChannelIds, botUserId, onMessage, presenceManager, agent, dynamicStatusGenerator, addRecentMessage, coordinator, questionRegistry, answerClassifier, inboxManager, catchUpSessionRunner, botStateManager } = options;
+    const { monitoredChannelIds, botUserId, onMessage, presenceManager, agent, dynamicStatusGenerator, addRecentMessage, coordinator, questionRegistry, answerClassifier, inboxManager, catchUpSessionRunner, botStateManager, perchSessionRunner } = options;
 
     // Create status middleware if presenceManager, agent, and botStateManager are provided
     const statusMiddleware = presenceManager && agent && botStateManager
@@ -608,6 +642,12 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
             await handleCatchUpInterruption(message, catchUpSessionRunner);
             // Don't call resumeAfterInterruption here - the session runner handles it internally
             return;
+        }
+
+        // Handle perch mode interruption
+        if(botStateManager?.getMode() === 'perching' && perchSessionRunner) {
+            await handlePerchInterruption(message, perchSessionRunner);
+            // Continue to process the interrupting message normally
         }
 
         // Allow message processing if in 'catching_up_interrupted' state

@@ -32,11 +32,11 @@ export type PresencePhase
       | { type: 'idle', since: Date };
 
 // ============================================================================
-// Catch-Up Mode - For status prefix generation
+// Presence Display Mode - For status prefix generation
 // ============================================================================
 
 /**
- * Catch-up mode state for presence status prefix generation.
+ * Presence display mode state for presence status prefix generation.
  *
  * ## Simplified Type System for Presence Display
  *
@@ -47,7 +47,7 @@ export type PresencePhase
  * ## Design Rationale
  *
  * PresenceManager needs simple enum values to:
- * - Generate status emoji prefixes (📥, 💬, 📥💬)
+ * - Generate status emoji prefixes (📥, 💬, 📥💬, 🦅)
  * - Map directly to status text templates
  * - Avoid complex conditional logic in status generation
  *
@@ -58,11 +58,12 @@ export type PresencePhase
  *
  * ## Mapping from BotStateManager
  *
- * The bot.ts integration layer maps BotState to CatchUpMode:
+ * The bot.ts integration layer maps BotState to PresenceDisplayMode:
  * - `mode='catching_up', interrupted=false` → `'catching_up'` (📥 prefix)
  * - `mode='catching_up', interrupted=true` → `'catching_up_interrupted'` (📥💬 prefix)
  * - `mode='processing_message'` → `'processing_message'` (💬 prefix)
- * - `mode!='catching_up' && mode!='processing_message'` → `'none'` (no prefix)
+ * - `mode='perching'` → `'perching'` (🦅 prefix)
+ * - `mode!='catching_up' && mode!='processing_message' && mode!='perching'` → `'none'` (no prefix)
  *
  * ## Discord Status Mapping
  *
@@ -71,6 +72,8 @@ export type PresencePhase
  * - `'catching_up'`: 📥 prefix (processing backlog)
  * - `'catching_up_interrupted'`: 📥💬 prefix (handling new message during catch-up)
  * - `'processing_message'`: 💬 prefix (normal message handling)
+ * - `'perching'`: 🦉 prefix (autonomous perch time)
+ * - `'perching_interrupted'`: 🦉💬 prefix (handling new message during perch)
  *
  * @see BotState in src/integrations/discord/state/types.ts for the authoritative state model
  * @see bot.ts for the mapping logic between these type systems
@@ -78,12 +81,12 @@ export type PresencePhase
  * @example
  * ```typescript
  * // In bot.ts mapping logic:
- * const catchUpMode: CatchUpMode = state.mode === 'catching_up'
+ * const presenceDisplayMode: PresenceDisplayMode = state.mode === 'catching_up'
  *   ? (state.interrupted ? 'catching_up_interrupted' : 'catching_up')
  *   : (state.mode === 'processing_message' ? 'processing_message' : 'none');
  * ```
  */
-export type CatchUpMode = 'none' | 'catching_up' | 'catching_up_interrupted' | 'processing_message';
+export type PresenceDisplayMode = 'none' | 'catching_up' | 'catching_up_interrupted' | 'processing_message' | 'perching' | 'perching_interrupted';
 
 // ============================================================================
 // Synopsis Context - For LLM status generation

@@ -874,9 +874,9 @@ describe('Discord Event Handlers', () => {
 
             const mockPresenceManager = {
                 // Stryker disable next-line all: Mock functions for testing only
-                setPhase:              mock(() => _.noop()),
+                setPhase:                      mock(() => _.noop()),
                 // Stryker disable next-line all: Mock functions for testing only
-                transitionCatchUpMode: mock(() => _.noop()),
+                transitionPresenceDisplayMode: mock(() => _.noop()),
             };
 
             const onMessage = mock(_.constant(Promise.resolve(null)));
@@ -913,9 +913,9 @@ describe('Discord Event Handlers', () => {
 
             const mockPresenceManager = {
                 // Stryker disable next-line all: Mock functions for testing only
-                setPhase:              mock(() => _.noop()),
+                setPhase:                      mock(() => _.noop()),
                 // Stryker disable next-line all: Mock functions for testing only
-                transitionCatchUpMode: mock(() => _.noop()),
+                transitionPresenceDisplayMode: mock(() => _.noop()),
             };
 
             const onMessage = mock(_.constant(Promise.resolve(null)));
@@ -939,9 +939,9 @@ describe('Discord Event Handlers', () => {
         it('should NOT call handleCatchUpInterruption when catchUpSessionRunner is undefined', async () => {
             const mockPresenceManager = {
                 // Stryker disable next-line all: Mock functions for testing only
-                setPhase:              mock(() => _.noop()),
+                setPhase:                      mock(() => _.noop()),
                 // Stryker disable next-line all: Mock functions for testing only
-                transitionCatchUpMode: mock(() => _.noop()),
+                transitionPresenceDisplayMode: mock(() => _.noop()),
             };
 
             const mockBotStateManager = {

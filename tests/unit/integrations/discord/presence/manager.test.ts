@@ -625,7 +625,7 @@ describe('PresenceManager', () => {
         });
     });
 
-    describe('transitionCatchUpMode edge cases', () => {
+    describe('transitionPresenceDisplayMode edge cases', () => {
         it('should generate catch-up status when entering catch-up mode with null currentPhase', async () => {
             const manager = createPresenceManager({
                 discordClient:         mockClient,
@@ -637,7 +637,7 @@ describe('PresenceManager', () => {
 
             // At startup, currentPhase is null
             // Enter catch-up mode - should trigger idle status generation with 📥 prefix
-            manager.transitionCatchUpMode('catching_up');
+            manager.transitionPresenceDisplayMode('catching_up');
 
             // Wait for async status generation
             await Promise.resolve();
@@ -658,14 +658,14 @@ describe('PresenceManager', () => {
             });
 
             // Start in catch-up mode
-            manager.transitionCatchUpMode('catching_up');
+            manager.transitionPresenceDisplayMode('catching_up');
             await Promise.resolve();
             await Promise.resolve();
 
             const callCountAfterEntry = mockIdleGenerator.generate.mock.calls.length;
 
             // Exit catch-up mode - should NOT trigger idle status
-            manager.transitionCatchUpMode('none');
+            manager.transitionPresenceDisplayMode('none');
             await Promise.resolve();
 
             // No additional calls to idle generator
@@ -686,7 +686,7 @@ describe('PresenceManager', () => {
             const initialSetActivityCount = mockClient.user.setActivity.mock.calls.length;
 
             // Change catch-up mode - should trigger immediate status update
-            manager.transitionCatchUpMode('catching_up');
+            manager.transitionPresenceDisplayMode('catching_up');
             await Promise.resolve();
 
             // Should have updated status
@@ -723,7 +723,7 @@ describe('PresenceManager', () => {
             });
 
             // Start in catch-up mode
-            manager.transitionCatchUpMode('catching_up');
+            manager.transitionPresenceDisplayMode('catching_up');
             await Promise.resolve();
 
             // Go to idle phase - this triggers idle generation with catch-up mode
@@ -743,7 +743,7 @@ describe('PresenceManager', () => {
 
             // Now exit catch-up mode to 'none' - this triggers refreshIdleStatus()
             // which starts async idle status generation
-            manager.transitionCatchUpMode('none');
+            manager.transitionPresenceDisplayMode('none');
             await Promise.resolve();
 
             // Idle generator should have been called for the second time (async generation started)
@@ -752,7 +752,7 @@ describe('PresenceManager', () => {
 
             // NOW change the mode WHILE the generation is still in progress
             // This will also trigger another generation (entering catch-up while idle)
-            manager.transitionCatchUpMode('catching_up');
+            manager.transitionPresenceDisplayMode('catching_up');
             await Promise.resolve();
 
             // Complete the third generation (re-entering catch-up)
