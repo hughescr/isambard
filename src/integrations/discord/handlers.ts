@@ -647,11 +647,12 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         // Handle perch mode interruption
         if(botStateManager?.getMode() === 'perching' && perchSessionRunner) {
             await handlePerchInterruption(message, perchSessionRunner);
-            // Continue to process the interrupting message normally
+            // Don't process here - the resumed perch session handles the message
+            return;
         }
 
-        // Allow message processing if in 'catching_up_interrupted' state
-        // This is the interrupting message being handled
+        // Allow message processing if in 'perching_interrupted' or 'catching_up_interrupted' state
+        // This is the interrupting message being handled by the resumed session
 
         // Handle state transitions and inbox updates
         handleStateAndInbox(message, botStateManager, inboxManager, shouldRespond);
