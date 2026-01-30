@@ -51,7 +51,14 @@ Your inbox tools are available for this session:
 - fetchMessages: Get full content of specific messages
 - markAsRead / markChannelRead: Mark as processed
 
-Recommended workflow:
+## Task Tracking (Important)
+Sessions are ephemeral but your TaskList is durable across sessions.
+- Start by checking TaskList to see what's in progress
+- Create tasks for any work you begin (so you can resume if interrupted)
+- Update task status as you work; mark completed when done
+- You can work on multiple tasks in parallel using sub-agents
+
+## Recommended Workflow
 1. Start with getUnreadOverview to see the landscape
 2. Use getChannelSummary for each channel to understand the gist
 3. Only fetchMessages when you need full detail
@@ -96,13 +103,14 @@ From: ${newMessage.author} in #${newMessage.channelName}
 ${newMessage.content}
 ---
 
-This new message is not necessarily more important than items still in your inbox.
-The sender is clearly online right now, which you can factor into your prioritization.
+## What To Do
+1. Create a task for this incoming message (so it doesn't get lost)
+2. Check TaskList to see what catch-up work was in progress
+3. Prioritize: handle the message now, or finish catch-up work first - your call
+4. Work through tasks systematically, updating status as you go
 
-Possible approaches:
-- If higher-priority items exist in your inbox, acknowledge the new message briefly ("Give me just a moment!") then handle the priority items first
-- If this message is urgent or the sender is high-priority, handle it immediately
-- Use TaskCreate to track tasks you need to complete (both inbox items and the new message), then work through them systematically
+The sender is online right now, which you can factor into prioritization.
+Trust TaskList as your source of truth - sessions are transient, tasks are durable.
 
 Your inbox tools are still available. Continue catching up after handling this appropriately.`;
 }

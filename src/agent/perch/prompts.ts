@@ -24,7 +24,15 @@ You have latitude to: explore your memories, follow up on open threads,
 research topics of interest, check on tasks, or simply observe.
 There's no obligation to produce output visible to users.
 
-Current hints (if any) are suggestions, not requirements.`;
+Current hints (if any) are suggestions, not requirements.
+
+## Task Tracking (Important)
+Sessions are ephemeral but your TaskList is durable across sessions.
+- Start by checking TaskList to see what's in progress
+- Create tasks for any work you begin (so you can resume if interrupted)
+- Update task status as you work; mark completed when done
+- You can work on multiple tasks in parallel using sub-agents
+- If interrupted, your work will be saved in TaskList for later`;
 
 /**
  * Build the complete perch prompt for a given time slot.
@@ -120,7 +128,7 @@ export function getSuggestionLevelDescription(slot: PerchSlot): string {
 export interface PerchInterruptedOptions {
     /** Partial work captured when perch was interrupted */
     partialWork: StreamProgress
-    /** New message that interrupted the perch */
+    /** New message that interrupted the perch (for context only - already handled) */
     newMessage:  {
         author:      string
         channelName: string
@@ -178,13 +186,14 @@ export function buildPerchInterruptedPrompt(options: PerchInterruptedOptions): s
     sections.push(options.newMessage.content);
     sections.push('---');
     sections.push('');
-
-    sections.push('You have options:');
-    sections.push('- Acknowledge briefly and continue your exploration');
-    sections.push('- Handle the message immediately if it needs attention');
-    sections.push('- Address both in whatever order makes sense');
+    sections.push('## What To Do');
+    sections.push('1. Create a task for this incoming message (so it doesn\'t get lost)');
+    sections.push('2. Check TaskList to see what you were working on before the interruption');
+    sections.push('3. Prioritize: handle the message now, or finish perch work first - your call');
+    sections.push('4. Work through tasks systematically, updating status as you go');
     sections.push('');
-    sections.push('The choice is yours based on your judgment of priorities.');
+    sections.push('The sender is online right now, which you can factor into prioritization.');
+    sections.push('Trust TaskList as your source of truth - sessions are transient, tasks are durable.');
 
     return sections.join('\n');
 }
