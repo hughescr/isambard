@@ -489,17 +489,18 @@ function logToolUsage(message: { type: string, message?: { content?: unknown } }
 // Stryker restore all
 
 /**
- * Module-level state for tracking the last tool requested by the LLM.
- * Used to correlate user events (tool responses) with the tool that was invoked.
+ * Module-level state for tracking pending tool requests by the LLM.
+ * Used to correlate user events (tool responses) with the tools that were invoked.
+ * Tracks ALL pending tools since multiple tools can be requested in a single turn.
  */
-let lastRequestedTool: string | undefined;
+let pendingToolRequests: string[] = [];
 
 /**
  * Resets the log stream event state for testing purposes.
  */
 // Stryker disable next-line BlockStatement: Test helper function body is simple assignment, tested in agent.test.ts
 export function resetLogStreamState(): void {
-    lastRequestedTool = undefined;
+    pendingToolRequests = [];
 }
 
 /**
@@ -516,14 +517,18 @@ export function resetLogStreamState(): void {
 export function logStreamEvent(message: AgentStreamEvent): void {
     switch(message.type) {
         case 'user':
-            // User events after a tool request are tool responses
-            if(lastRequestedTool) {
-                logger.debug({
-                    eventType: 'tool_response',
-                    toolName:  lastRequestedTool,
-                    msg:       `Tool result for LLM: ${lastRequestedTool}`,
-                });
-                lastRequestedTool = undefined;
+            // User events after tool requests are tool responses
+            if(pendingToolRequests.length > 0) {
+                // Log all pending tool responses
+                for(const toolName of pendingToolRequests) {
+                    logger.debug({
+                        eventType: 'tool_response',
+                        toolName,
+                        msg:       `Tool result for LLM: ${toolName}`,
+                    });
+                }
+                // Clear pending tools after logging
+                pendingToolRequests = [];
             } else {
                 logger.debug({
                     eventType: 'user',
@@ -536,15 +541,15 @@ export function logStreamEvent(message: AgentStreamEvent): void {
             // Check for tool_use blocks first
             const toolUses = extractToolUses(message);
             if(toolUses.length > 0) {
-                // Log each tool request
+                // Log each tool request and track for response correlation
                 for(const toolUse of toolUses) {
                     logger.debug({
                         eventType: 'tool_request',
                         toolName:  toolUse.name,
                         msg:       `LLM requesting tool: ${toolUse.name}`,
                     });
-                    // Track the last tool for correlating with the response
-                    lastRequestedTool = toolUse.name;
+                    // Track ALL pending tools (not just the last one)
+                    pendingToolRequests.push(toolUse.name);
                 }
             } else {
                 // No tool use - log thinking/responding

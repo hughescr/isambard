@@ -59,6 +59,7 @@ export function clearConversationContext(): void {
  */
 function validateThreadCreation(createThread?: boolean, threadName?: string): CallToolResult | null {
     if(createThread && !threadName) {
+        logger.warn({ createThread, threadName }, 'Discord tool returned error: threadName required when createThread is true');
         return {
             content: [{ type: 'text' as const, text: 'Error: threadName is required when createThread is true' }],
             isError: true,
@@ -82,6 +83,7 @@ async function fetchAndValidateChannel(
     );
 
     if(!channel) {
+        logger.warn({ channelId }, 'Discord tool returned error: Channel not found');
         return {
             error: {
                 content: [{ type: 'text' as const, text: 'Error: Channel not found' }],
@@ -92,6 +94,7 @@ async function fetchAndValidateChannel(
 
     // Stryker disable all: Integration code - Discord channel validation
     if(!channel.isTextBased()) {
+        logger.warn({ channelId }, 'Discord tool returned error: Channel is not text-based');
         return {
             error: {
                 content: [{ type: 'text' as const, text: 'Error: Channel is not a text-based channel' }],
@@ -168,6 +171,7 @@ async function createThreadIfRequested(
 function validateQuestionOptions(options?: { label: string, value: string }[]): CallToolResult | null {
     // Stryker disable next-line EqualityOperator: 25 options is valid max
     if(options && options.length > 25) {
+        logger.warn({ optionCount: options.length }, 'Discord tool returned error: Too many options (max 25)');
         return {
             content: [{ type: 'text' as const, text: 'Error: Too many options. Discord allows a maximum of 25 buttons (5 rows × 5 buttons per row).' }],
             isError: true,
@@ -195,6 +199,7 @@ async function normalizeChannelId(
     );
 
     if(!fetchedChannel) {
+        logger.warn({ channelId }, 'Discord tool returned error: Channel not found in normalizeChannelId');
         return {
             error: {
                 content: [{ type: 'text' as const, text: 'Error: Channel not found' }],
@@ -220,6 +225,7 @@ async function normalizeChannelId(
         : fetchedChannel;
 
     if(!channel) {
+        logger.warn({ normalizedChannelId }, 'Discord tool returned error: Parent channel not found');
         return {
             error: {
                 content: [{ type: 'text' as const, text: 'Error: Parent channel not found' }],
@@ -229,6 +235,7 @@ async function normalizeChannelId(
     }
 
     if(!channel.isTextBased()) {
+        logger.warn({ normalizedChannelId }, 'Discord tool returned error: Parent channel is not text-based');
         return {
             error: {
                 content: [{ type: 'text' as const, text: 'Error: Channel is not a text-based channel' }],
@@ -453,6 +460,7 @@ export function createDiscordMCPServer(
                         };
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);
+                        logger.warn({ tool: 'searchMessages', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
                             content: [{ type: 'text' as const, text: `Error: ${message}` }],
                             isError: true,
@@ -482,6 +490,7 @@ export function createDiscordMCPServer(
                         };
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);
+                        logger.warn({ tool: 'getRecentMessages', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
                             content: [{ type: 'text' as const, text: `Error: ${message}` }],
                             isError: true,
@@ -527,6 +536,7 @@ export function createDiscordMCPServer(
                         };
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);
+                        logger.warn({ tool: 'getMessageById', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
                             content: [{ type: 'text' as const, text: `Error: ${message}` }],
                             isError: true,
@@ -603,6 +613,7 @@ export function createDiscordMCPServer(
                         };
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);
+                        logger.warn({ tool: 'sendDiscordMessage', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
                             content: [{ type: 'text' as const, text: `Error: ${message}` }],
                             isError: true,
@@ -702,6 +713,7 @@ export function createDiscordMCPServer(
                     } catch (error) {
                         // Stryker disable all: Error handling path
                         const message = _.isError(error) ? error.message : String(error);
+                        logger.warn({ tool: 'askUserQuestion', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
                             content: [{ type: 'text' as const, text: `Error: ${message}` }],
                             isError: true,
@@ -738,6 +750,7 @@ export function createDiscordMCPServer(
                         );
 
                         if(!message) {
+                            logger.warn({ tool: 'addReaction', channelId: args.channelId, messageId: args.messageId }, 'Discord tool returned error: Message not found');
                             return {
                                 content: [{ type: 'text' as const, text: 'Error: Message not found' }],
                                 isError: true,
@@ -773,12 +786,17 @@ export function createDiscordMCPServer(
                             messageId:    args.messageId,
                         };
 
+                        if(failedEmojis.length > 0) {
+                            logger.warn({ tool: 'addReaction', channelId: args.channelId, messageId: args.messageId, failedEmojis }, 'Discord tool returned partial error: Some reactions failed');
+                        }
+
                         return {
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                             ...(failedEmojis.length > 0 && { isError: true }),
                         };
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);
+                        logger.warn({ tool: 'addReaction', error: message, channelId: args.channelId, messageId: args.messageId }, 'Discord tool returned error');
                         return {
                             content: [{ type: 'text' as const, text: `Error: ${message}` }],
                             isError: true,
