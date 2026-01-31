@@ -75,10 +75,10 @@ export const perchConfigSchema = z.object({
     maxSessionMinutes: z.number().int().positive().default(45),
     /** Test mode configuration for manual testing */
     testMode:          z.object({
-        /** Whether test mode is enabled */
-        enabled:   z.boolean().default(false),
-        /** Force a specific slot instead of cycling */
-        forceSlot: z.enum(['pre-dawn', 'mid-morning', 'afternoon', 'evening', 'late-night']).optional(),
+        /** Whether to trigger perch immediately on startup (enables test mode) */
+        triggerOnStartup: z.boolean().default(false),
+        /** Force a specific slot instead of calculating from time */
+        forceSlot:        z.enum(['pre-dawn', 'mid-morning', 'afternoon', 'evening', 'late-night']).optional(),
     }).optional(),
 }).optional();
 /* Stryker restore BooleanLiteral,StringLiteral */

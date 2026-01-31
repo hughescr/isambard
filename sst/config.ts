@@ -81,11 +81,11 @@ export const config = {
         enabled: new sst.Linkable('PerchEnabled', {
             properties: { value: 'true' },
         }),
-        testModeEnabled: new sst.Linkable('PerchTestModeEnabled', {
-            properties: { value: 'true' },
-        }),
         testModeForceSlot: new sst.Linkable('PerchTestModeForceSlot', {
             properties: { value: 'afternoon' },
+        }),
+        testModeTriggerOnStartup: new sst.Linkable('PerchTestModeTriggerOnStartup', {
+            properties: { value: 'true' },
         }),
     },
 };

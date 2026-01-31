@@ -214,7 +214,7 @@ describe('PerchSessionRunner - Basic Lifecycle', () => {
         const testConfig: PerchConfig = {
             ...config,
             testMode: {
-                enabled: true,
+                triggerOnStartup: true,
             },
         };
 

@@ -92,10 +92,10 @@ export const PerchSlotConfigSchema = z.object({
  * Test mode configuration for perch time.
  */
 export interface PerchTestModeConfig {
-    /** Whether test mode is enabled */
-    enabled:    boolean
-    /** Force a specific slot instead of cycling */
-    forceSlot?: PerchSlot
+    /** Whether to trigger perch immediately on startup (enables test mode) */
+    triggerOnStartup?: boolean
+    /** Force a specific slot instead of calculating from time */
+    forceSlot?:        PerchSlot
 }
 
 /**

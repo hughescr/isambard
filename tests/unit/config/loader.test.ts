@@ -10,27 +10,27 @@ function createMockResources(
     overrides?: Partial<Record<keyof ResourceProvider, { value: string | undefined }>>
 ): ResourceProvider {
     const defaults: ResourceProvider = {
-        NodeEnv:                  { value: 'development' },
-        LogLevel:                 { value: 'info' },
-        Port:                     { value: '3000' },
-        CaldavUrl:                { value: 'https://caldav.example.com' },
-        CaldavUsername:           { value: 'user' },
-        CaldavPassword:           { value: 'password' },
-        ImapHost:                 { value: 'mail.example.com' },
-        ImapPort:                 { value: '993' },
-        SmtpHost:                 { value: 'mail.example.com' },
-        SmtpPort:                 { value: '587' },
-        EmailUser:                { value: 'user@example.com' },
-        EmailPassword:            { value: 'emailpass' },
-        DiscordBotToken:          { value: 'bot-token-123' },
-        DiscordApplicationId:     { value: 'app-id-456' },
-        DiscordMonitoredChannels: { value: undefined },
-        BoxClientId:              { value: 'box-client-id' },
-        BoxClientSecret:          { value: 'box-secret' },
-        ClaudeCodeOAuthToken:     { value: 'test-oauth-token-12345' },
-        PerchEnabled:             { value: undefined },
-        PerchTestModeEnabled:     { value: undefined },
-        PerchTestModeForceSlot:   { value: undefined },
+        NodeEnv:                       { value: 'development' },
+        LogLevel:                      { value: 'info' },
+        Port:                          { value: '3000' },
+        CaldavUrl:                     { value: 'https://caldav.example.com' },
+        CaldavUsername:                { value: 'user' },
+        CaldavPassword:                { value: 'password' },
+        ImapHost:                      { value: 'mail.example.com' },
+        ImapPort:                      { value: '993' },
+        SmtpHost:                      { value: 'mail.example.com' },
+        SmtpPort:                      { value: '587' },
+        EmailUser:                     { value: 'user@example.com' },
+        EmailPassword:                 { value: 'emailpass' },
+        DiscordBotToken:               { value: 'bot-token-123' },
+        DiscordApplicationId:          { value: 'app-id-456' },
+        DiscordMonitoredChannels:      { value: undefined },
+        BoxClientId:                   { value: 'box-client-id' },
+        BoxClientSecret:               { value: 'box-secret' },
+        ClaudeCodeOAuthToken:          { value: 'test-oauth-token-12345' },
+        PerchEnabled:                  { value: undefined },
+        PerchTestModeForceSlot:        { value: undefined },
+        PerchTestModeTriggerOnStartup: { value: undefined },
     };
     return { ...defaults, ...overrides };
 }
@@ -336,23 +336,23 @@ describe.concurrent('loadConfig', () => {
             expect(config.perch?.testMode).toBeUndefined();
         });
 
-        test('should load perch test mode when enabled', () => {
+        test('should load perch test mode when triggerOnStartup is true', () => {
             const resources = createMockResources({
-                PerchEnabled:         { value: 'true' },
-                PerchTestModeEnabled: { value: 'true' },
+                PerchEnabled:                  { value: 'true' },
+                PerchTestModeTriggerOnStartup: { value: 'true' },
             });
             const config = loadConfig(resources);
 
             expect(config.perch?.testMode).toBeDefined();
-            expect(config.perch?.testMode?.enabled).toBe(true);
+            expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
             expect(config.perch?.testMode?.forceSlot).toBeUndefined();
         });
 
         test('should load perch test mode with forceSlot', () => {
             const resources = createMockResources({
-                PerchEnabled:           { value: 'true' },
-                PerchTestModeEnabled:   { value: 'true' },
-                PerchTestModeForceSlot: { value: 'pre-dawn' },
+                PerchEnabled:                  { value: 'true' },
+                PerchTestModeTriggerOnStartup: { value: 'true' },
+                PerchTestModeForceSlot:        { value: 'pre-dawn' },
             });
             const config = loadConfig(resources);
 
@@ -395,12 +395,12 @@ describe.concurrent('loadConfig', () => {
             expect(config.perch).toBeUndefined();
         });
 
-        test('should handle undefined PerchTestModeEnabled resource (missing optional chaining)', () => {
-            // This tests the optionalChaining mutant on line 88
+        test('should handle undefined PerchTestModeTriggerOnStartup resource (missing optional chaining)', () => {
+            // This tests the optionalChaining mutant
             // If ?? is removed, accessing undefined.value would throw
             const resources = createMockResources({
-                PerchEnabled:         { value: 'true' },
-                PerchTestModeEnabled: undefined as unknown as { value: string | undefined },
+                PerchEnabled:                  { value: 'true' },
+                PerchTestModeTriggerOnStartup: undefined as unknown as { value: string | undefined },
             });
 
             expect(() => loadConfig(resources)).not.toThrow();
@@ -419,16 +419,62 @@ describe.concurrent('loadConfig', () => {
             expect(config.perch).toBeUndefined();
         });
 
-        test('should handle both PerchEnabled and PerchTestModeEnabled = undefined', () => {
+        test('should handle both PerchEnabled and PerchTestModeTriggerOnStartup = undefined', () => {
             const resources = {
                 ...createMockResources(),
-                PerchEnabled:         undefined as unknown as { value: string | undefined },
-                PerchTestModeEnabled: undefined as unknown as { value: string | undefined },
+                PerchEnabled:                  undefined as unknown as { value: string | undefined },
+                PerchTestModeTriggerOnStartup: undefined as unknown as { value: string | undefined },
             };
 
             const config = loadConfig(resources);
             // Should not throw
             expect(config.perch).toBeUndefined();
+        });
+
+        test('should load perch test mode with triggerOnStartup = true', () => {
+            const resources = createMockResources({
+                PerchEnabled:                  { value: 'true' },
+                PerchTestModeTriggerOnStartup: { value: 'true' },
+            });
+            const config = loadConfig(resources);
+
+            expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
+        });
+
+        test('should set testMode to undefined when triggerOnStartup is not true', () => {
+            const resources = createMockResources({
+                PerchEnabled: { value: 'true' },
+            });
+            const config = loadConfig(resources);
+
+            expect(config.perch?.testMode).toBeUndefined();
+        });
+
+        test('should load perch test mode with all options', () => {
+            const resources = createMockResources({
+                PerchEnabled:                  { value: 'true' },
+                PerchTestModeForceSlot:        { value: 'afternoon' },
+                PerchTestModeTriggerOnStartup: { value: 'true' },
+            });
+            const config = loadConfig(resources);
+
+            expect(config.perch?.testMode?.forceSlot).toBe('afternoon');
+            expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
+        });
+
+        test('should handle undefined PerchTestModeForceSlot resource (missing optional chaining)', () => {
+            // This tests the optionalChaining mutant
+            // If ?. is removed, accessing undefined.value would throw
+            const resources = createMockResources({
+                PerchEnabled:                  { value: 'true' },
+                PerchTestModeTriggerOnStartup: { value: 'true' },
+                PerchTestModeForceSlot:        undefined as unknown as { value: string | undefined },
+            });
+
+            expect(() => loadConfig(resources)).not.toThrow();
+            const config = loadConfig(resources);
+            expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
+            expect(config.perch?.testMode?.forceSlot).toBeUndefined();
         });
     });
 

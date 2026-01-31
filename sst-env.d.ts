@@ -85,11 +85,11 @@ declare module "sst" {
       "type": "sst.sst.Linkable"
       "value": string
     }
-    "PerchTestModeEnabled": {
+    "PerchTestModeForceSlot": {
       "type": "sst.sst.Linkable"
       "value": string
     }
-    "PerchTestModeForceSlot": {
+    "PerchTestModeTriggerOnStartup": {
       "type": "sst.sst.Linkable"
       "value": string
     }

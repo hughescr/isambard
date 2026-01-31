@@ -239,9 +239,14 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
             unsubscribe = stateManager.subscribe(onStateChange);
 
             // Skip cron scheduling if test mode is enabled
-            if(config.testMode?.enabled) {
+            if(config.testMode?.triggerOnStartup) {
                 // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
                 logger.info('Perch scheduler in test mode - cron scheduling disabled');
+
+                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+                logger.info('Test mode: triggering perch on startup');
+                // Small delay to ensure bot is fully initialized
+                setTimeout(() => this.triggerTestPerch(), 1000);
                 return;
             }
 

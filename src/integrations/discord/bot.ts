@@ -702,12 +702,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 onCatchUpComplete: () => {
                     // Reset presence mode when catch-up completes
                     presenceManager?.transitionPresenceDisplayMode('none');
-
-                    // Trigger test perch if test mode is enabled
-                    if(options.perchConfig?.testMode?.enabled && perchScheduler) {
-                        logger.info({ msg: 'Catch-up complete - triggering test perch' });
-                        perchScheduler.triggerTestPerch();
-                    }
                 },
             });
         }
@@ -796,7 +790,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     }
 
                     // NOW check if catch-up should start (after inbox is loaded)
-                    if(runner) {
+                    // Skip if perch test mode triggerOnStartup is enabled (perch handles everything)
+                    if(runner && !options.perchConfig?.testMode?.triggerOnStartup) {
                         const shouldStart = await runner.shouldStartCatchUp();
                         if(shouldStart) {
                             logger.info({ msg: 'Starting catch-up mode' });
@@ -811,10 +806,11 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                             // Not doing catch-up, transition to idle mode
                             void presenceManager?.updatePhase({ type: 'idle', since: new Date() });
                         }
-                    } else {
-                        // No catch-up system, transition to idle after startup
+                    } else if(!options.perchConfig?.testMode?.triggerOnStartup) {
+                        // No catch-up system and not in perch test mode, transition to idle after startup
                         void presenceManager?.updatePhase({ type: 'idle', since: new Date() });
                     }
+                    // If triggerOnStartup is enabled, perch scheduler handles presence - no action needed here
                 } catch (error) {
                     const errorMsg = _.isError(error) ? error.message : String(error);
                     logger.warn({

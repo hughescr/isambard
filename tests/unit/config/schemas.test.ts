@@ -430,42 +430,6 @@ describe('perchConfigSchema', () => {
         }
     });
 
-    test('should apply default testMode.enabled = false when not provided', () => {
-        const configWithTestMode = {
-            enabled:           true,
-            timezone:          'America/Los_Angeles',
-            intervalMinutes:   60,
-            jitterMinutes:     15,
-            maxSessionMinutes: 45,
-            testMode:          {},
-        };
-
-        const result = perchConfigSchema.safeParse(configWithTestMode);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data?.testMode?.enabled).toBe(false);
-        }
-    });
-
-    test('should accept testMode.enabled = true', () => {
-        const configWithTestMode = {
-            enabled:           true,
-            timezone:          'America/Los_Angeles',
-            intervalMinutes:   60,
-            jitterMinutes:     15,
-            maxSessionMinutes: 45,
-            testMode:          {
-                enabled: true,
-            },
-        };
-
-        const result = perchConfigSchema.safeParse(configWithTestMode);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data?.testMode?.enabled).toBe(true);
-        }
-    });
-
     test('should accept testMode with forceSlot', () => {
         const configWithForceSlot = {
             enabled:           true,
@@ -474,8 +438,8 @@ describe('perchConfigSchema', () => {
             jitterMinutes:     15,
             maxSessionMinutes: 45,
             testMode:          {
-                enabled:   true,
-                forceSlot: 'pre-dawn' as const,
+                triggerOnStartup: true,
+                forceSlot:        'pre-dawn' as const,
             },
         };
 
@@ -494,8 +458,8 @@ describe('perchConfigSchema', () => {
             jitterMinutes:     15,
             maxSessionMinutes: 45,
             testMode:          {
-                enabled:   true,
-                forceSlot: 'invalid-slot',
+                triggerOnStartup: true,
+                forceSlot:        'invalid-slot',
             },
         };
 
@@ -514,8 +478,8 @@ describe('perchConfigSchema', () => {
                 jitterMinutes:     15,
                 maxSessionMinutes: 45,
                 testMode:          {
-                    enabled:   true,
-                    forceSlot: slot,
+                    triggerOnStartup: true,
+                    forceSlot:        slot,
                 },
             };
 
@@ -550,16 +514,60 @@ describe('perchConfigSchema', () => {
         }
     });
 
-    test('should ensure testMode.enabled defaults to false not true', () => {
-        const configWithEmptyTestMode = {
-            testMode: {},
+    test('should apply default triggerOnStartup = false when not provided', () => {
+        const configWithTestMode = {
+            enabled:           true,
+            timezone:          'America/Los_Angeles',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 45,
+            testMode:          {},
         };
 
-        const result = perchConfigSchema.safeParse(configWithEmptyTestMode);
+        const result = perchConfigSchema.safeParse(configWithTestMode);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data?.testMode?.enabled).toBe(false);
-            expect(result.data?.testMode?.enabled).not.toBe(true);
+            expect(result.data?.testMode?.triggerOnStartup).toBe(false);
+        }
+    });
+
+    test('should accept testMode.triggerOnStartup = true', () => {
+        const configWithTriggerOnStartup = {
+            enabled:           true,
+            timezone:          'America/Los_Angeles',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 45,
+            testMode:          {
+                triggerOnStartup: true,
+            },
+        };
+
+        const result = perchConfigSchema.safeParse(configWithTriggerOnStartup);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data?.testMode?.triggerOnStartup).toBe(true);
+        }
+    });
+
+    test('should accept testMode with all options', () => {
+        const configWithAllOptions = {
+            enabled:           true,
+            timezone:          'America/Los_Angeles',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 45,
+            testMode:          {
+                triggerOnStartup: true,
+                forceSlot:        'afternoon' as const,
+            },
+        };
+
+        const result = perchConfigSchema.safeParse(configWithAllOptions);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data?.testMode?.forceSlot).toBe('afternoon');
+            expect(result.data?.testMode?.triggerOnStartup).toBe(true);
         }
     });
 });

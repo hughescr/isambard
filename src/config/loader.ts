@@ -3,27 +3,27 @@ import _ from 'lodash';
 import { configSchema, dynamoDBConfigSchema, type Config, type DynamoDBConfig } from './schemas';
 
 export interface ResourceProvider {
-    NodeEnv:                  { value: string | undefined }
-    LogLevel:                 { value: string | undefined }
-    Port:                     { value: string | undefined }
-    ClaudeCodeOAuthToken:     { value: string | undefined }
-    CaldavUrl:                { value: string | undefined }
-    CaldavUsername:           { value: string | undefined }
-    CaldavPassword:           { value: string | undefined }
-    ImapHost:                 { value: string | undefined }
-    ImapPort:                 { value: string | undefined }
-    SmtpHost:                 { value: string | undefined }
-    SmtpPort:                 { value: string | undefined }
-    EmailUser:                { value: string | undefined }
-    EmailPassword:            { value: string | undefined }
-    DiscordBotToken:          { value: string | undefined }
-    DiscordApplicationId:     { value: string | undefined }
-    DiscordMonitoredChannels: { value: string | undefined }
-    BoxClientId:              { value: string | undefined }
-    BoxClientSecret:          { value: string | undefined }
-    PerchEnabled:             { value: string | undefined }
-    PerchTestModeEnabled:     { value: string | undefined }
-    PerchTestModeForceSlot:   { value: string | undefined }
+    NodeEnv:                       { value: string | undefined }
+    LogLevel:                      { value: string | undefined }
+    Port:                          { value: string | undefined }
+    ClaudeCodeOAuthToken:          { value: string | undefined }
+    CaldavUrl:                     { value: string | undefined }
+    CaldavUsername:                { value: string | undefined }
+    CaldavPassword:                { value: string | undefined }
+    ImapHost:                      { value: string | undefined }
+    ImapPort:                      { value: string | undefined }
+    SmtpHost:                      { value: string | undefined }
+    SmtpPort:                      { value: string | undefined }
+    EmailUser:                     { value: string | undefined }
+    EmailPassword:                 { value: string | undefined }
+    DiscordBotToken:               { value: string | undefined }
+    DiscordApplicationId:          { value: string | undefined }
+    DiscordMonitoredChannels:      { value: string | undefined }
+    BoxClientId:                   { value: string | undefined }
+    BoxClientSecret:               { value: string | undefined }
+    PerchEnabled:                  { value: string | undefined }
+    PerchTestModeForceSlot:        { value: string | undefined }
+    PerchTestModeTriggerOnStartup: { value: string | undefined }
 }
 
 export interface DynamoDBResourceProvider {
@@ -85,10 +85,10 @@ export function loadConfig(resources: ResourceProvider = Resource as unknown as 
                 intervalMinutes:   60,
                 jitterMinutes:     15,
                 maxSessionMinutes: 45,
-                testMode:          resources.PerchTestModeEnabled?.value === 'true'
+                testMode:          resources.PerchTestModeTriggerOnStartup?.value === 'true'
                     ? {
-                        enabled:   true,
-                        forceSlot: resources.PerchTestModeForceSlot?.value as 'pre-dawn' | 'mid-morning' | 'afternoon' | 'evening' | 'late-night' | undefined,
+                        triggerOnStartup: true,
+                        forceSlot:        resources.PerchTestModeForceSlot?.value as 'pre-dawn' | 'mid-morning' | 'afternoon' | 'evening' | 'late-night' | undefined,
                     }
                     : undefined,
             }

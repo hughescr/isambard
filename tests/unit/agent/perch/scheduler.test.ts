@@ -716,7 +716,7 @@ describe('PerchScheduler', () => {
             const testConfig = {
                 ...config,
                 testMode: {
-                    enabled: true,
+                    triggerOnStartup: true,
                 },
             };
 
@@ -740,8 +740,8 @@ describe('PerchScheduler', () => {
             const testConfig = {
                 ...config,
                 testMode: {
-                    enabled:   true,
-                    forceSlot: 'evening' as const,
+                    triggerOnStartup: true,
+                    forceSlot:        'evening' as const,
                 },
             };
 
@@ -764,7 +764,7 @@ describe('PerchScheduler', () => {
             const testConfig = {
                 ...config,
                 testMode: {
-                    enabled: true,
+                    triggerOnStartup: true,
                 },
             };
 
@@ -832,6 +832,103 @@ describe('PerchScheduler', () => {
             const state = scheduler.getState();
             expect(state.perchPending).toBe(true);
             expect(state.pendingSlot).toBe('pre-dawn');
+        });
+
+        test('should trigger perch on startup when triggerOnStartup is true and bot is idle', () => {
+            const testConfig = {
+                ...config,
+                testMode: {
+                    enabled:          true,
+                    triggerOnStartup: true,
+                    forceSlot:        'afternoon' as const,
+                },
+            };
+
+            const deps: PerchSchedulerDeps = {
+                stateManager:   mockStateManager,
+                logger:         mockLogger,
+                config:         testConfig,
+                onPerchTrigger: mockOnPerchTrigger,
+            };
+
+            mockStateManager.getMode = mock((): OperationalMode => 'idle');
+
+            const scheduler = createPerchScheduler(deps);
+            scheduler.start();
+
+            // Should log about triggering on startup
+            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('triggering perch on startup'));
+
+            // Advance timer to allow startup delay
+            jest.advanceTimersByTime(1000);
+
+            // Should have triggered test perch
+            expect(mockOnPerchTrigger).toHaveBeenCalledWith('afternoon');
+
+            scheduler.stop();
+        });
+
+        test('should use normal cron scheduling when testMode is undefined', () => {
+            const testConfig = {
+                ...config,
+                testMode: undefined,
+            };
+
+            const deps: PerchSchedulerDeps = {
+                stateManager:   mockStateManager,
+                logger:         mockLogger,
+                config:         testConfig,
+                onPerchTrigger: mockOnPerchTrigger,
+            };
+
+            mockStateManager.getMode = mock((): OperationalMode => 'idle');
+
+            const scheduler = createPerchScheduler(deps);
+            scheduler.start();
+
+            // Should log normal scheduler start
+            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
+            expect(mockLogger.info).toHaveBeenCalledWith(
+                expect.objectContaining({ timezone: 'America/Los_Angeles' }),
+                'Perch scheduler started with randomized hourly triggers'
+            );
+
+            // Should not log about test mode
+            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
+            expect(mockLogger.info).not.toHaveBeenCalledWith(expect.stringContaining('test mode'));
+
+            scheduler.stop();
+        });
+
+        test('should use normal cron scheduling when triggerOnStartup is false', () => {
+            const testConfig = {
+                ...config,
+                testMode: {
+                    triggerOnStartup: false,
+                },
+            };
+
+            const deps: PerchSchedulerDeps = {
+                stateManager:   mockStateManager,
+                logger:         mockLogger,
+                config:         testConfig,
+                onPerchTrigger: mockOnPerchTrigger,
+            };
+
+            mockStateManager.getMode = mock((): OperationalMode => 'idle');
+
+            const scheduler = createPerchScheduler(deps);
+            scheduler.start();
+
+            // Should log normal scheduler start
+            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
+            expect(mockLogger.info).toHaveBeenCalledWith(
+                expect.objectContaining({ timezone: 'America/Los_Angeles' }),
+                'Perch scheduler started with randomized hourly triggers'
+            );
+
+            scheduler.stop();
         });
     });
 

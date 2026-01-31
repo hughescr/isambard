@@ -341,16 +341,19 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 handleSessionTimeout();
             }, timeoutMs);
 
+            // Test mode is active if triggerOnStartup or forceSlot is set
+            const isTestMode = !!(config.testMode?.triggerOnStartup ?? config.testMode?.forceSlot);
+
             logger.info({
                 slot,
                 suggestionLevel: getSuggestionLevelDescription(slot),
                 timeoutMinutes:  config.maxSessionMinutes,
-                testMode:        config.testMode?.enabled ?? false,
+                testMode:        isTestMode,
                 msg:             'Starting perch session with timeout',
             });
 
             // Build prompt for this slot (use test prompt if test mode enabled)
-            const prompt = config.testMode?.enabled
+            const prompt = isTestMode
                 ? buildTestPerchPrompt(slot)
                 : buildPerchPrompt(slot);
 
