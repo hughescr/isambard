@@ -81,5 +81,12 @@ export const config = {
         enabled: new sst.Linkable('PerchEnabled', {
             properties: { value: 'true' },
         }),
+        // Test mode settings - set triggerOnStartup to 'true' to enable
+        testModeForceSlot: new sst.Linkable('PerchTestModeForceSlot', {
+            properties: { value: undefined },
+        }),
+        testModeTriggerOnStartup: new sst.Linkable('PerchTestModeTriggerOnStartup', {
+            properties: { value: 'false' },
+        }),
     },
 };
