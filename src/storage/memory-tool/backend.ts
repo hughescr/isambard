@@ -69,8 +69,8 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
             get:    (p: MemoryPath) => this.coreOps.get(p),
             create: (input: { path: MemoryPath, content: string, contentType: ContentType, metadata?: Record<string, unknown> }) =>
                 this.coreOps.create(input),
-            update: (p: MemoryPath, input: { content: string }) =>
-                this.coreOps.update(p, input),
+            updateDirect: (p: MemoryPath, existing: MemoryToolItemData, input: { content: string }) =>
+                this.coreOps.updateWithoutVersioning(p, existing, input),
         };
     }
 

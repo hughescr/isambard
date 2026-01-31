@@ -7,7 +7,8 @@ import {
     discordConfigSchema,
     boxConfigSchema,
     dynamoDBConfigSchema,
-    configSchema
+    configSchema,
+    perchConfigSchema
 } from '@/config/schemas';
 
 describe.concurrent('appConfigSchema', () => {
@@ -362,6 +363,203 @@ describe('configSchema', () => {
             expect(result.data.app.port).toBe(3000);
             expect(result.data.email.imapPort).toBe(993);
             expect(result.data.email.smtpPort).toBe(587);
+        }
+    });
+});
+
+describe('perchConfigSchema', () => {
+    test('should apply default enabled = false when not provided', () => {
+        const configWithoutEnabled = {
+            timezone:          'America/Los_Angeles',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 45,
+        };
+
+        const result = perchConfigSchema.safeParse(configWithoutEnabled);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data?.enabled).toBe(false);
+        }
+    });
+
+    test('should accept enabled = true', () => {
+        const configWithEnabled = {
+            enabled:           true,
+            timezone:          'America/Los_Angeles',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 45,
+        };
+
+        const result = perchConfigSchema.safeParse(configWithEnabled);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data?.enabled).toBe(true);
+        }
+    });
+
+    test('should apply default timezone "America/Los_Angeles" when not provided', () => {
+        const configWithoutTimezone = {
+            enabled:           true,
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 45,
+        };
+
+        const result = perchConfigSchema.safeParse(configWithoutTimezone);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data?.timezone).toBe('America/Los_Angeles');
+        }
+    });
+
+    test('should accept custom timezone', () => {
+        const configWithCustomTimezone = {
+            enabled:           true,
+            timezone:          'Europe/London',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 45,
+        };
+
+        const result = perchConfigSchema.safeParse(configWithCustomTimezone);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data?.timezone).toBe('Europe/London');
+        }
+    });
+
+    test('should apply default testMode.enabled = false when not provided', () => {
+        const configWithTestMode = {
+            enabled:           true,
+            timezone:          'America/Los_Angeles',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 45,
+            testMode:          {},
+        };
+
+        const result = perchConfigSchema.safeParse(configWithTestMode);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data?.testMode?.enabled).toBe(false);
+        }
+    });
+
+    test('should accept testMode.enabled = true', () => {
+        const configWithTestMode = {
+            enabled:           true,
+            timezone:          'America/Los_Angeles',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 45,
+            testMode:          {
+                enabled: true,
+            },
+        };
+
+        const result = perchConfigSchema.safeParse(configWithTestMode);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data?.testMode?.enabled).toBe(true);
+        }
+    });
+
+    test('should accept testMode with forceSlot', () => {
+        const configWithForceSlot = {
+            enabled:           true,
+            timezone:          'America/Los_Angeles',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 45,
+            testMode:          {
+                enabled:   true,
+                forceSlot: 'pre-dawn' as const,
+            },
+        };
+
+        const result = perchConfigSchema.safeParse(configWithForceSlot);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data?.testMode?.forceSlot).toBe('pre-dawn');
+        }
+    });
+
+    test('should reject invalid forceSlot value', () => {
+        const configWithInvalidForceSlot = {
+            enabled:           true,
+            timezone:          'America/Los_Angeles',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 45,
+            testMode:          {
+                enabled:   true,
+                forceSlot: 'invalid-slot',
+            },
+        };
+
+        const result = perchConfigSchema.safeParse(configWithInvalidForceSlot);
+        expect(result.success).toBe(false);
+    });
+
+    test('should accept all valid forceSlot enum values', () => {
+        const validSlots = ['pre-dawn', 'mid-morning', 'afternoon', 'evening', 'late-night'] as const;
+
+        for(const slot of validSlots) {
+            const config = {
+                enabled:           true,
+                timezone:          'America/Los_Angeles',
+                intervalMinutes:   60,
+                jitterMinutes:     15,
+                maxSessionMinutes: 45,
+                testMode:          {
+                    enabled:   true,
+                    forceSlot: slot,
+                },
+            };
+
+            const result = perchConfigSchema.safeParse(config);
+            expect(result.success).toBe(true);
+            if(result.success) {
+                expect(result.data?.testMode?.forceSlot).toBe(slot);
+            }
+        }
+    });
+
+    test('should ensure enabled defaults to false not true', () => {
+        const configWithoutEnabled = {};
+
+        const result = perchConfigSchema.safeParse(configWithoutEnabled);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data?.enabled).toBe(false);
+            expect(result.data?.enabled).not.toBe(true);
+        }
+    });
+
+    test('should ensure timezone defaults to America/Los_Angeles not empty string', () => {
+        const configWithoutTimezone = {};
+
+        const result = perchConfigSchema.safeParse(configWithoutTimezone);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data?.timezone).toBe('America/Los_Angeles');
+            expect(result.data?.timezone).not.toBe('');
+            expect(result.data?.timezone.length).toBeGreaterThan(0);
+        }
+    });
+
+    test('should ensure testMode.enabled defaults to false not true', () => {
+        const configWithEmptyTestMode = {
+            testMode: {},
+        };
+
+        const result = perchConfigSchema.safeParse(configWithEmptyTestMode);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data?.testMode?.enabled).toBe(false);
+            expect(result.data?.testMode?.enabled).not.toBe(true);
         }
     });
 });

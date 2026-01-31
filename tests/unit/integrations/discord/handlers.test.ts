@@ -1119,6 +1119,259 @@ describe('Discord Event Handlers', () => {
         });
     });
 
+    describe('Perch interruption handling', () => {
+        const botUserId = createUserId('bot-123');
+        const monitoredChannelId = createChannelId('channel-456');
+
+        const createMockMessageForPerch = (): Message => {
+            return {
+                id:     'msg-123',
+                author: {
+                    id:       'user-789',
+                    tag:      'TestUser#1234',
+                    bot:      false,
+                    username: 'TestUser',
+                },
+                content: 'Test message',
+                channel: {
+                    id:         monitoredChannelId,
+                    name:       'general',
+                    // Stryker disable next-line all: Mock function for testing only
+                    sendTyping: mock(async () => { return; }),
+                },
+                guild: {
+                    id: 'guild-123',
+                },
+                attachments: new Map(),
+                createdAt:   new Date(),
+            } as unknown as Message;
+        };
+
+        it('should call handlePerchInterruption when state is perching and runner exists', async () => {
+            const mockBotStateManager = {
+                getMode: mock(_.constant('perching' as const)),
+            };
+
+            const mockPerchSessionRunner = {
+                interrupt: mock(async () => { /* intentionally empty */ }),
+            };
+
+            const mockPresenceManager = {
+                // Stryker disable next-line all: Mock functions for testing only
+                setPhase:                      mock(() => _.noop()),
+                // Stryker disable next-line all: Mock functions for testing only
+                transitionPresenceDisplayMode: mock(() => _.noop()),
+            };
+
+            const onMessage = mock(_.constant(Promise.resolve(null)));
+
+            const handler = createMessageHandler({
+                monitoredChannelIds: [monitoredChannelId],
+                botUserId,
+                onMessage,
+                perchSessionRunner:  mockPerchSessionRunner as unknown as import('@/agent/perch').PerchSessionRunner,
+                presenceManager:     mockPresenceManager as unknown as import('@/integrations/discord/presence').PresenceManager,
+                botStateManager:     mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
+            });
+
+            const message = createMockMessageForPerch();
+            await handler(message);
+
+            // Verify handlePerchInterruption was called (which calls interrupt)
+            expect(mockPerchSessionRunner.interrupt).toHaveBeenCalled();
+
+            // CRITICAL: Verify message was NOT processed separately (would cause duplicate)
+            expect(onMessage).not.toHaveBeenCalled();
+        });
+
+        it('should call interrupt with correct message details including channel name', async () => {
+            const mockBotStateManager = {
+                getMode: mock(_.constant('perching' as const)),
+            };
+
+            const mockPerchSessionRunner = {
+                interrupt: mock(async () => { /* intentionally empty */ }),
+            };
+
+            const onMessage = mock(_.constant(Promise.resolve(null)));
+
+            const handler = createMessageHandler({
+                monitoredChannelIds: [monitoredChannelId],
+                botUserId,
+                onMessage,
+                perchSessionRunner:  mockPerchSessionRunner as unknown as import('@/agent/perch').PerchSessionRunner,
+                botStateManager:     mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
+            });
+
+            const message = createMockMessageForPerch();
+            await handler(message);
+
+            // Verify interrupt was called with correct structure
+            expect(mockPerchSessionRunner.interrupt).toHaveBeenCalledWith({
+                channelId:   monitoredChannelId,
+                author:      'TestUser',
+                channelName: 'general',
+                content:     'Test message',
+            });
+        });
+
+        it('should use channel ID as fallback when channel name is null', async () => {
+            const mockBotStateManager = {
+                getMode: mock(_.constant('perching' as const)),
+            };
+
+            const mockPerchSessionRunner = {
+                interrupt: mock(async () => { /* intentionally empty */ }),
+            };
+
+            const onMessage = mock(_.constant(Promise.resolve(null)));
+
+            const handler = createMessageHandler({
+                monitoredChannelIds: [monitoredChannelId],
+                botUserId,
+                onMessage,
+                perchSessionRunner:  mockPerchSessionRunner as unknown as import('@/agent/perch').PerchSessionRunner,
+                botStateManager:     mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
+            });
+
+            const messageWithNullName = {
+                id:     'msg-123',
+                author: {
+                    id:       'user-789',
+                    tag:      'TestUser#1234',
+                    bot:      false,
+                    username: 'TestUser',
+                },
+                content: 'Test message',
+                channel: {
+                    id:         monitoredChannelId,
+                    name:       null, // DM channel or missing name
+                    // Stryker disable next-line all: Mock function for testing only
+                    sendTyping: mock(async () => { return; }),
+                },
+                guild: {
+                    id: 'guild-123',
+                },
+                attachments: new Map(),
+                createdAt:   new Date(),
+            } as unknown as Message;
+
+            await handler(messageWithNullName);
+
+            // Verify interrupt uses channel ID as fallback
+            expect(mockPerchSessionRunner.interrupt).toHaveBeenCalledWith({
+                channelId:   monitoredChannelId,
+                author:      'TestUser',
+                channelName: monitoredChannelId, // Falls back to channel ID
+                content:     'Test message',
+            });
+        });
+
+        it('should NOT call handlePerchInterruption when state is NOT perching', async () => {
+            const mockBotStateManager = {
+                getMode:                mock(_.constant('idle' as const)),
+                startProcessingMessage: mock(() => _.noop()),
+            };
+
+            const mockPerchSessionRunner = {
+                interrupt: mock(async () => { /* intentionally empty */ }),
+            };
+
+            const mockPresenceManager = {
+                // Stryker disable next-line all: Mock functions for testing only
+                setPhase:                      mock(() => _.noop()),
+                // Stryker disable next-line all: Mock functions for testing only
+                transitionPresenceDisplayMode: mock(() => _.noop()),
+            };
+
+            const onMessage = mock(_.constant(Promise.resolve(null)));
+
+            const handler = createMessageHandler({
+                monitoredChannelIds: [monitoredChannelId],
+                botUserId,
+                onMessage,
+                perchSessionRunner:  mockPerchSessionRunner as unknown as import('@/agent/perch').PerchSessionRunner,
+                presenceManager:     mockPresenceManager as unknown as import('@/integrations/discord/presence').PresenceManager,
+                botStateManager:     mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
+            });
+
+            const message = createMockMessageForPerch();
+            await handler(message);
+
+            // Verify handlePerchInterruption was NOT called
+            expect(mockPerchSessionRunner.interrupt).not.toHaveBeenCalled();
+        });
+
+        it('should NOT call handlePerchInterruption when perchSessionRunner is undefined', async () => {
+            const mockPresenceManager = {
+                // Stryker disable next-line all: Mock functions for testing only
+                setPhase:                      mock(() => _.noop()),
+                // Stryker disable next-line all: Mock functions for testing only
+                transitionPresenceDisplayMode: mock(() => _.noop()),
+            };
+
+            const mockBotStateManager = {
+                getMode:                mock(_.constant('idle' as const)),
+                startProcessingMessage: mock(() => _.noop()),
+            };
+
+            const onMessage = mock(_.constant(Promise.resolve(null)));
+
+            const handler = createMessageHandler({
+                monitoredChannelIds: [monitoredChannelId],
+                botUserId,
+                onMessage,
+                // perchSessionRunner is undefined
+                presenceManager:     mockPresenceManager as unknown as import('@/integrations/discord/presence').PresenceManager,
+                botStateManager:     mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
+            });
+
+            const message = createMockMessageForPerch();
+            // Should not throw
+            await handler(message);
+
+            // No exception should be thrown when perchSessionRunner is undefined
+            expect(onMessage).toHaveBeenCalled();
+        });
+
+        it('should NOT call coordinator when interrupting perch (prevents duplicate processing)', async () => {
+            const mockBotStateManager = {
+                getMode: mock(_.constant('perching' as const)),
+            };
+
+            const mockPerchSessionRunner = {
+                interrupt: mock(async () => { /* intentionally empty */ }),
+            };
+
+            const mockCoordinator = {
+                handleMessage: mock(() => _.noop()),
+            };
+
+            const onMessage = mock(_.constant(Promise.resolve(null)));
+
+            const handler = createMessageHandler({
+                monitoredChannelIds: [monitoredChannelId],
+                botUserId,
+                onMessage,
+                perchSessionRunner:  mockPerchSessionRunner as unknown as import('@/agent/perch').PerchSessionRunner,
+                coordinator:         mockCoordinator as unknown as import('@/integrations/discord/message-coordinator').MessageCoordinator,
+                botStateManager:     mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
+            });
+
+            const message = createMockMessageForPerch();
+            await handler(message);
+
+            // Verify interrupt was called
+            expect(mockPerchSessionRunner.interrupt).toHaveBeenCalled();
+
+            // CRITICAL: Verify coordinator was NOT called (would cause duplicate processing)
+            expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
+
+            // CRITICAL: Verify onMessage was NOT called (would cause duplicate processing)
+            expect(onMessage).not.toHaveBeenCalled();
+        });
+    });
+
     describe('extractAttachmentMetadata', () => {
         const createMockMessageForExtraction = (
             attachments: { name: string | null, contentType: string | null }[] | null | undefined

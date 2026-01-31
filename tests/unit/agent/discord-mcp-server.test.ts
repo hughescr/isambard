@@ -234,8 +234,15 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             expect(result.content[0].type).toBe('text');
 
             expect(result.content[0].text).toBe('Error: Discord API error');
+            expect(result.content[0].text).not.toBe('');
 
             expect(result.isError).toBe(true);
+            // Verify error object structure (kills ObjectLiteral and StringLiteral mutants on line 463)
+            expect(result.content).toHaveLength(1);
+            expect(result.content[0]).toEqual({
+                type: 'text',
+                text: 'Error: Discord API error',
+            });
         });
 
         test('should return error when searchService throws non-Error', async () => {
@@ -328,8 +335,15 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             const result = await handler({ channelId: '123456789012345678' });
 
             expect(result.content[0].text).toBe('Error: Channel not found');
+            expect(result.content[0].text).not.toBe('');
 
             expect(result.isError).toBe(true);
+            // Verify error object structure (kills ObjectLiteral and StringLiteral mutants on line 493)
+            expect(result.content).toHaveLength(1);
+            expect(result.content[0]).toEqual({
+                type: 'text',
+                text: 'Error: Channel not found',
+            });
         });
 
         test('should return error when searchService throws non-Error', async () => {
@@ -414,8 +428,15 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             });
 
             expect(result.content[0].text).toBe('Error: Access denied');
+            expect(result.content[0].text).not.toBe('');
 
             expect(result.isError).toBe(true);
+            // Verify error object structure (kills ObjectLiteral and StringLiteral mutants on line 539)
+            expect(result.content).toHaveLength(1);
+            expect(result.content[0]).toEqual({
+                type: 'text',
+                text: 'Error: Access denied',
+            });
         });
 
         test('should return error when searchService throws non-Error', async () => {
@@ -782,6 +803,11 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(result.isError).toBe(true);
 
             expect(result.content[0].text).toContain('Channel not found');
+            expect(result.content[0].text).not.toBe('');
+            // Verify error object structure (kills ObjectLiteral and StringLiteral mutants on lines 86)
+            expect(result.content).toHaveLength(1);
+            expect(result.content[0].type).toBe('text');
+            expect(result.content[0].text).toBe('Error: Channel not found');
         });
 
         test('should return error when missing threadName with createThread', async () => {
@@ -815,6 +841,11 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(result.isError).toBe(true);
 
             expect(result.content[0].text).toContain('threadName is required');
+            expect(result.content[0].text).not.toBe('');
+            // Verify error object structure (kills ObjectLiteral and StringLiteral mutants on lines 61-62)
+            expect(result.content).toHaveLength(1);
+            expect(result.content[0].type).toBe('text');
+            expect(result.content[0].text).toBe('Error: threadName is required when createThread is true');
         });
 
         test('should not create thread when createThread is false with valid threadName', async () => {
@@ -995,6 +1026,13 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(result.isError).toBe(true);
 
             expect(result.content[0].text).toBe('Error: Discord API error');
+            expect(result.content[0].text).not.toBe('');
+            // Verify error object structure (kills ObjectLiteral and StringLiteral mutants on line 623)
+            expect(result.content).toHaveLength(1);
+            expect(result.content[0]).toEqual({
+                type: 'text',
+                text: 'Error: Discord API error',
+            });
         });
     });
 
@@ -1289,6 +1327,10 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBe(true);
             expect(result.content[0].text).toContain('not a text-based channel');
+            expect(result.content[0].text).not.toBe('');
+            // Verify error object structure (kills ObjectLiteral mutant on line 174)
+            expect(result.content).toHaveLength(1);
+            expect(result.content[0].type).toBe('text');
         });
 
         test('should return error when channel not found', async () => {
@@ -1306,6 +1348,10 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBe(true);
             expect(result.content[0].text).toContain('Channel not found');
+            expect(result.content[0].text).not.toBe('');
+            // Verify error object structure
+            expect(result.content).toHaveLength(1);
+            expect(result.content[0].type).toBe('text');
         });
 
         test('should return error when more than 25 options provided', async () => {
@@ -1607,6 +1653,34 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(mockQuestionRegistry.register).toHaveBeenCalled();
             registerCall = mockQuestionRegistry.register.mock.calls[0][0];
             expect(registerCall.triggerUserId).toBe('bot-user-id-12345');
+        });
+    });
+
+    describe('normalizeChannelId error handling', () => {
+        test('should return proper error structure when channel not found in normalizeChannelId', async () => {
+            // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+            mockClient.channels.fetch = mock(async () => null);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: 'invalid-channel-id',
+                question:  'Test question?',
+            });
+
+            // Verify error structure (kills mutants on line 202-207)
+            expect(result.isError).toBe(true);
+            expect(result.content).toHaveLength(1);
+            expect(result.content[0].type).toBe('text');
+            expect(result.content[0].text).toBe('Error: Channel not found');
+            expect(result.content[0].text).not.toBe('');
+            // Verify the full error object structure
+            expect(result).toEqual({
+                content: [{ type: 'text', text: 'Error: Channel not found' }],
+                isError: true,
+            });
         });
     });
 

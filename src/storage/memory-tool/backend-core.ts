@@ -177,6 +177,59 @@ export class MemoryToolBackendCore {
         return updated;
     }
 
+    async updateWithoutVersioning(
+        path: MemoryPath,
+        existingData: MemoryToolItemData,
+        input: UpdateMemoryToolItemInput
+    ): Promise<MemoryToolItemData> {
+        // Build updated data with new content preview if content changed
+        // Stryker disable next-line ConditionalExpression: Conditional prevents regenerating preview when content unchanged
+        const newContentPreview = input.content !== undefined
+            ? generateContentPreview(input.content)
+            : existingData.contentPreview;
+
+        const updatedData = {
+            ...existingData,
+            ...(input.content !== undefined && { content: input.content }),
+            ...(input.metadata !== undefined && { metadata: input.metadata }),
+            ...(input.tags !== undefined && { tags: input.tags }),
+            // Stryker disable next-line ConditionalExpression: Spread operator conditional - undefined values should not override existing contentPreview
+            ...(newContentPreview !== undefined && { contentPreview: newContentPreview }),
+            version:   existingData.version + 1,
+            updatedAt: new Date().toISOString(),
+        };
+
+        const result = memoryToolItemSchema.safeParse(updatedData);
+        if(!result.success) {
+            throw new ValidationError(result.error.issues);
+        }
+
+        const updated = result.data;
+        const item = this.buildUpdatedItem(updated);
+
+        try {
+            await this.docClient.send(new PutCommand({
+                TableName:                this.tableName,
+                Item:                     item,
+                ConditionExpression:      '#version = :expectedVersion',
+                ExpressionAttributeNames: {
+                    '#version': 'version',
+                },
+                ExpressionAttributeValues: {
+                    ':expectedVersion': existingData.version,
+                },
+            }));
+        } catch (error: unknown) {
+            if(this.isConditionalCheckFailed(error)) {
+                const current = await this.get(path);
+                throw new ConflictError(path, existingData.version, current?.version ?? -1);
+            }
+            throw error;
+        }
+
+        return updated;
+    }
+
     async delete(path: MemoryPath): Promise<void> {
         const keys = MemoryToolKeyGenerator.createKeys(path);
         const key: DynamoDBKey = {

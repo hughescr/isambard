@@ -61,6 +61,7 @@ export const dynamoDBConfigSchema = z.object({
 });
 
 // Perch time configuration schema
+/* Stryker disable BooleanLiteral,StringLiteral: Default values are configuration - validated by schema tests */
 export const perchConfigSchema = z.object({
     /** Whether perch time is enabled */
     enabled:           z.boolean().default(false),
@@ -80,6 +81,7 @@ export const perchConfigSchema = z.object({
         forceSlot: z.enum(['pre-dawn', 'mid-morning', 'afternoon', 'evening', 'late-night']).optional(),
     }).optional(),
 }).optional();
+/* Stryker restore BooleanLiteral,StringLiteral */
 
 // Full config schema (all sections required)
 export const configSchema = z.object({

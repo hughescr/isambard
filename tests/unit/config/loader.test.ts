@@ -376,6 +376,60 @@ describe.concurrent('loadConfig', () => {
 
             expect(config.perch).toBeUndefined();
         });
+
+        test('should handle undefined PerchEnabled resource (missing optional chaining)', () => {
+            // This tests the optionalChaining mutant on line 81
+            // If ?? is removed, accessing undefined.value would throw
+            const resources = createMockResources({
+                // PerchEnabled is undefined, not { value: undefined }
+            });
+
+            // Replace with actual undefined object (not wrapped)
+            const resourcesWithUndefined = {
+                ...resources,
+                PerchEnabled: undefined as unknown as { value: string | undefined },
+            };
+
+            expect(() => loadConfig(resourcesWithUndefined as typeof resources)).not.toThrow();
+            const config = loadConfig(resourcesWithUndefined as typeof resources);
+            expect(config.perch).toBeUndefined();
+        });
+
+        test('should handle undefined PerchTestModeEnabled resource (missing optional chaining)', () => {
+            // This tests the optionalChaining mutant on line 88
+            // If ?? is removed, accessing undefined.value would throw
+            const resources = createMockResources({
+                PerchEnabled:         { value: 'true' },
+                PerchTestModeEnabled: undefined as unknown as { value: string | undefined },
+            });
+
+            expect(() => loadConfig(resources)).not.toThrow();
+            const config = loadConfig(resources);
+            expect(config.perch?.testMode).toBeUndefined();
+        });
+
+        test('should handle PerchEnabled = undefined and not throw', () => {
+            const resources = {
+                ...createMockResources(),
+                PerchEnabled: undefined as unknown as { value: string | undefined },
+            };
+
+            const config = loadConfig(resources);
+            // Should not throw and perch should be undefined
+            expect(config.perch).toBeUndefined();
+        });
+
+        test('should handle both PerchEnabled and PerchTestModeEnabled = undefined', () => {
+            const resources = {
+                ...createMockResources(),
+                PerchEnabled:         undefined as unknown as { value: string | undefined },
+                PerchTestModeEnabled: undefined as unknown as { value: string | undefined },
+            };
+
+            const config = loadConfig(resources);
+            // Should not throw
+            expect(config.perch).toBeUndefined();
+        });
     });
 
     describe('Type Coercion', () => {

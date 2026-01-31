@@ -489,12 +489,12 @@ describe('MemoryToolBackend', () => {
             const getCalls = ddbMock.commandCalls(GetCommand);
             expect(getCalls.length).toBeGreaterThanOrEqual(1);
 
-            // Should have updated registry (version snapshot + main update)
+            // Should have updated registry (updateDirect uses updateWithoutVersioning - no version snapshot)
             const putCalls = ddbMock.commandCalls(PutCommand);
-            expect(putCalls).toHaveLength(2);
+            expect(putCalls).toHaveLength(1);
 
-            // Second put call (main item update) should show decremented count
-            const registryUpdate = putCalls[1].args[0].input.Item;
+            // The put call should show decremented count
+            const registryUpdate = putCalls[0].args[0].input.Item;
             expect(JSON.parse(registryUpdate?.content as string)).toEqual({ tag1: 1 });
         });
     });
@@ -914,18 +914,17 @@ describe('MemoryToolBackend', () => {
 
                 await backend.delete('/state/delete-with-tags' as MemoryPath);
 
-                // Should have Put calls for registry update (version snapshot + main update)
+                // Should have Put call for registry update (updateDirect uses updateWithoutVersioning - no version snapshot)
                 const putCalls = ddbMock.commandCalls(PutCommand);
-                expect(putCalls.length).toBeGreaterThanOrEqual(2);
+                expect(putCalls.length).toBeGreaterThanOrEqual(1);
 
                 // Find all registry-related puts
                 const registryCalls = _filter(putCalls, call =>
                     call.args[0].input.Item?.path === TAG_REGISTRY_PATH
                 );
-                expect(registryCalls.length).toBeGreaterThanOrEqual(2);
+                expect(registryCalls.length).toBeGreaterThanOrEqual(1);
 
-                // The LAST registry call should be the updated one (after version snapshot)
-                // coreOps.update: 1) version snapshot (old content), 2) main update (new content)
+                // The registry call should be the updated one (no version snapshot with updateWithoutVersioning)
                 const lastRegistryCall = registryCalls[registryCalls.length - 1];
                 const content = JSON.parse(lastRegistryCall.args[0].input.Item?.content as string) as Record<string, number>;
                 expect(content['tag-to-decrement']).toBe(4); // Decremented from 5 to 4

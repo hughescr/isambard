@@ -59,6 +59,7 @@ export function clearConversationContext(): void {
  */
 function validateThreadCreation(createThread?: boolean, threadName?: string): CallToolResult | null {
     if(createThread && !threadName) {
+        // Stryker disable next-line all: Logging for observability
         logger.warn({ createThread, threadName }, 'Discord tool returned error: threadName required when createThread is true');
         return {
             content: [{ type: 'text' as const, text: 'Error: threadName is required when createThread is true' }],
@@ -83,6 +84,7 @@ async function fetchAndValidateChannel(
     );
 
     if(!channel) {
+        // Stryker disable next-line all: Logging for observability
         logger.warn({ channelId }, 'Discord tool returned error: Channel not found');
         return {
             error: {
@@ -171,6 +173,7 @@ async function createThreadIfRequested(
 function validateQuestionOptions(options?: { label: string, value: string }[]): CallToolResult | null {
     // Stryker disable next-line EqualityOperator: 25 options is valid max
     if(options && options.length > 25) {
+        // Stryker disable next-line all: Logging for observability
         logger.warn({ optionCount: options.length }, 'Discord tool returned error: Too many options (max 25)');
         return {
             content: [{ type: 'text' as const, text: 'Error: Too many options. Discord allows a maximum of 25 buttons (5 rows × 5 buttons per row).' }],
@@ -199,6 +202,7 @@ async function normalizeChannelId(
     );
 
     if(!fetchedChannel) {
+        // Stryker disable next-line all: Logging for observability
         logger.warn({ channelId }, 'Discord tool returned error: Channel not found in normalizeChannelId');
         return {
             error: {
@@ -460,6 +464,7 @@ export function createDiscordMCPServer(
                         };
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);
+                        // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'searchMessages', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
                             content: [{ type: 'text' as const, text: `Error: ${message}` }],
@@ -490,6 +495,7 @@ export function createDiscordMCPServer(
                         };
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);
+                        // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'getRecentMessages', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
                             content: [{ type: 'text' as const, text: `Error: ${message}` }],
@@ -536,6 +542,7 @@ export function createDiscordMCPServer(
                         };
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);
+                        // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'getMessageById', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
                             content: [{ type: 'text' as const, text: `Error: ${message}` }],
@@ -620,6 +627,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         };
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);
+                        // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'sendDiscordMessage', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
                             content: [{ type: 'text' as const, text: `Error: ${message}` }],

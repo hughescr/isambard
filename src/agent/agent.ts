@@ -493,6 +493,7 @@ function logToolUsage(message: { type: string, message?: { content?: unknown } }
  * Used to correlate user events (tool responses) with the tools that were invoked.
  * Tracks ALL pending tools since multiple tools can be requested in a single turn.
  */
+// Stryker disable next-line ArrayDeclaration: Module initialization - resetLogStreamState() is the tested behavior
 let pendingToolRequests: string[] = [];
 
 /**
@@ -589,6 +590,7 @@ function logToolResultEvent(message: AgentStreamEvent & { tool_name?: string }):
  */
 function logSystemEvent(message: AgentStreamEvent): void {
     // Type guard: Only SystemEvent has subtype property
+    // Stryker disable next-line ConditionalExpression: Type guard for logging compaction events
     if(message.type === 'system' && 'subtype' in message && message.subtype === 'compact_boundary') {
         const compactMessage = message as SDKCompactBoundaryMessage;
         const preTokens = compactMessage.compact_metadata?.pre_tokens;
@@ -753,6 +755,7 @@ async function handleSessionIdExtraction(
             const errorMessage = _.isError(error) ? error.message : String(error);
             logger.warn({ error, sessionId: extractedSessionId }, `Task persistence failed: ${errorMessage}`);
         }
+        // Stryker disable next-line BooleanLiteral: Success flag after try-catch
         return { sessionId: extractedSessionId, persistenceCompleted: true };
     }
 

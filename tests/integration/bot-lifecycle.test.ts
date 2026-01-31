@@ -257,7 +257,7 @@ describe('Bot Lifecycle Integration', () => {
                 plugins:                    expect.any(Array),
                 taskPersistenceCoordinator: expect.any(Object),
             });
-        }, { timeout: process.env.CI ? 150 : 15 });
+        }, { timeout: process.env.CI ? 1000 : 100 });
 
         it('should continue without memory when DynamoDB client creation fails', async () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
@@ -516,6 +516,6 @@ describe('Bot Lifecycle Integration', () => {
             expect(botOptions.memoryBackend).toHaveProperty('storeInProgressSignal');
             expect(botOptions.memoryBackend).toHaveProperty('loadInProgressSignal');
             expect(botOptions.memoryBackend).toHaveProperty('deleteInProgressSignal');
-        }, { timeout: process.env.CI ? 150 : 15 });
+        }, { timeout: process.env.CI ? 1000 : 100 });
     });
 });

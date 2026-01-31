@@ -1335,5 +1335,983 @@ describe('createClaudeAgent', () => {
             expect(result.response).toBe('Hello! This is a test response.');
             expect(result.wasInterrupted).toBe(false);
         });
+
+        test('should call taskPersistenceCoordinator when session ID extracted', async () => {
+            let prepareNewSessionCalled = false;
+            const mockTaskPersistenceCoordinator = {
+                prepareNewSession: async (_sessionId: string): Promise<boolean> => {
+                    prepareNewSessionCalled = true;
+                    return true;
+                },
+            };
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:       'system' as const,
+                        subtype:    'init' as const,
+                        session_id: 'task-session-id',
+                    };
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [{ type: 'text' as const, text: 'Response with tasks' }],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({ taskPersistenceCoordinator: mockTaskPersistenceCoordinator });
+            await agent.chatBatch([mockMessageContext]);
+
+            // Verify task persistence was called
+            expect(prepareNewSessionCalled).toBe(true);
+        });
+
+        test('should handle task persistence errors gracefully', async () => {
+            // Clear mock before test
+            mockLogger.warn.mockClear();
+
+            const mockTaskPersistenceCoordinator = {
+                prepareNewSession: async (_sessionId: string): Promise<boolean> => {
+                    throw new Error('Task persistence failed');
+                },
+            };
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:       'system' as const,
+                        subtype:    'init' as const,
+                        session_id: 'task-session-id',
+                    };
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [{ type: 'text' as const, text: 'Response despite task error' }],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({ taskPersistenceCoordinator: mockTaskPersistenceCoordinator });
+            const result = await agent.chatBatch([mockMessageContext]);
+
+            // Should complete successfully despite task persistence error
+            expect(result.response).toBe('Response despite task error');
+            expect(result.wasInterrupted).toBe(false);
+
+            // Verify error was logged
+            const logCalls = mockLogger.warn.mock.calls as unknown[][];
+            const taskErrorLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { error?: Error };
+                return logData?.error?.message === 'Task persistence failed';
+            });
+            expect(taskErrorLog).toBeDefined();
+        });
+
+        test('should use perchPrompt when provided in perching mode', async () => {
+            const agent = createClaudeAgent({});
+            const perchPrompt = 'Autonomous perch time: review your memories and plan improvements.';
+
+            await agent.chatBatch([], {
+                perchPrompt,
+                specialMode: 'perching',
+            });
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            const prompt = querySpy.mock.calls[0][0].prompt as string;
+
+            // Should use the perchPrompt
+            expect(prompt).toBe(perchPrompt);
+        });
+    });
+
+    describe('logUserEvent and logAssistantEvent', () => {
+        beforeEach(async () => {
+            mockLogger.debug.mockClear();
+            // Import and use the resetLogStreamState function
+            const { resetLogStreamState } = await import('../../../src/agent/agent');
+            resetLogStreamState();
+        });
+
+        test('should log user event as message send when no pending tools', async () => {
+            mockLogger.debug.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'user' as const,
+                        message: { role: 'user', content: 'Hello' },
+                    };
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [{ type: 'text' as const, text: 'Response' }],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Find the user event log
+            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const userLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string, msg?: string };
+                return logData?.eventType === 'user';
+            });
+
+            expect(userLog).toBeDefined();
+            const userLogData = userLog![0] as { eventType: string, msg: string };
+            expect(userLogData.msg).toBe('Sending message to Claude LLM');
+        });
+
+        test('should log user event as tool_response when tools pending', async () => {
+            mockLogger.debug.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    // Assistant requests tool
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type:  'tool_use' as const,
+                                    id:    'tool_123',
+                                    name:  'Read',
+                                    input: { file: 'test.txt' },
+                                },
+                            ],
+                        },
+                    };
+                    // User event (tool response)
+                    yield {
+                        type:    'user' as const,
+                        message: { role: 'user', content: 'Tool result' },
+                    };
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [{ type: 'text' as const, text: 'Final response' }],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Find the tool_response log
+            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const toolResponseLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string, toolName?: string };
+                return logData?.eventType === 'tool_response';
+            });
+
+            expect(toolResponseLog).toBeDefined();
+            const toolResponseLogData = toolResponseLog![0] as { eventType: string, toolName: string, msg: string };
+            expect(toolResponseLogData.toolName).toBe('Read');
+            expect(toolResponseLogData.msg).toBe('Tool result for LLM: Read');
+        });
+
+        test('should log assistant event with tool request', async () => {
+            mockLogger.debug.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type:  'tool_use' as const,
+                                    id:    'tool_456',
+                                    name:  'Grep',
+                                    input: { pattern: 'test' },
+                                },
+                            ],
+                        },
+                    };
+                    yield {
+                        type:    'user' as const,
+                        message: { role: 'user', content: 'Tool result' },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Find the tool_request log
+            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const toolRequestLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string, toolName?: string };
+                return logData?.eventType === 'tool_request' && logData?.toolName === 'Grep';
+            });
+
+            expect(toolRequestLog).toBeDefined();
+            const toolRequestLogData = toolRequestLog![0] as { eventType: string, toolName: string, msg: string };
+            expect(toolRequestLogData.msg).toBe('LLM requesting tool: Grep');
+        });
+
+        test('should log assistant event without tool as thinking when no text', async () => {
+            mockLogger.debug.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                { type: 'thinking' as const, text: 'Let me think...' },
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Find the assistant thinking log
+            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const thinkingLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string, hasText?: boolean };
+                return logData?.eventType === 'assistant' && logData?.hasText === false;
+            });
+
+            expect(thinkingLog).toBeDefined();
+            const thinkingLogData = thinkingLog![0] as { eventType: string, hasText: boolean, msg: string };
+            expect(thinkingLogData.msg).toBe('Claude LLM thinking');
+        });
+
+        test('should log assistant event without tool as responding when has text', async () => {
+            mockLogger.debug.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                { type: 'text' as const, text: 'Here is my response' },
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Find the assistant responding log
+            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const respondingLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string, hasText?: boolean };
+                return logData?.eventType === 'assistant' && logData?.hasText === true;
+            });
+
+            expect(respondingLog).toBeDefined();
+            const respondingLogData = respondingLog![0] as { eventType: string, hasText: boolean, msg: string };
+            expect(respondingLogData.msg).toBe('Claude LLM responding');
+        });
+
+        test('should track multiple pending tools and log all on next user event', async () => {
+            mockLogger.debug.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    // Assistant requests multiple tools
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type:  'tool_use' as const,
+                                    id:    'tool_1',
+                                    name:  'Read',
+                                    input: { file: 'file1.txt' },
+                                },
+                                {
+                                    type:  'tool_use' as const,
+                                    id:    'tool_2',
+                                    name:  'Grep',
+                                    input: { pattern: 'test' },
+                                },
+                            ],
+                        },
+                    };
+                    // User event (tool results)
+                    yield {
+                        type:    'user' as const,
+                        message: { role: 'user', content: 'Tool results' },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Find all tool_response logs
+            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const toolResponseLogs = _.filter(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'tool_response';
+            });
+
+            // Should log 2 tool responses
+            expect(toolResponseLogs).toHaveLength(2);
+
+            const toolNames = _.map(toolResponseLogs, (log: unknown[]) => {
+                const logData = log[0] as { toolName?: string };
+                return logData?.toolName;
+            });
+            expect(toolNames).toContain('Read');
+            expect(toolNames).toContain('Grep');
+        });
+
+        test('should clear pending tools after logging tool responses', async () => {
+            mockLogger.debug.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    // Assistant requests tool
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type:  'tool_use' as const,
+                                    id:    'tool_1',
+                                    name:  'Read',
+                                    input: { file: 'test.txt' },
+                                },
+                            ],
+                        },
+                    };
+                    // User event (tool response)
+                    yield {
+                        type:    'user' as const,
+                        message: { role: 'user', content: 'Tool result 1' },
+                    };
+                    // Another user event (should log as message send, not tool response)
+                    yield {
+                        type:    'user' as const,
+                        message: { role: 'user', content: 'Regular message' },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Find all user event logs
+            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const userLogs = _.filter(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'user';
+            });
+
+            // Second user event should log as 'user' (message send), not 'tool_response'
+            expect(userLogs).toHaveLength(1);
+            const secondUserLogData = userLogs[0][0] as { msg: string };
+            expect(secondUserLogData.msg).toBe('Sending message to Claude LLM');
+        });
+
+        test('should log system event for compaction boundary with token info', async () => {
+            mockLogger.info.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:             'system' as const,
+                        subtype:          'compact_boundary' as const,
+                        compact_metadata: {
+                            pre_tokens: 150000,
+                            trigger:    'threshold',
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Find the compaction log
+            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const compactionLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'compaction';
+            });
+
+            expect(compactionLog).toBeDefined();
+            const compactionLogData = compactionLog![0] as { eventType: string, trigger: string, preTokens: number, msg: string };
+            expect(compactionLogData.trigger).toBe('threshold');
+            expect(compactionLogData.preTokens).toBe(150000);
+            expect(compactionLogData.msg).toContain('Context compaction completed');
+            expect(compactionLogData.msg).toContain('150,000 tokens');
+        });
+
+        test('should log system event for compaction boundary without token info when undefined', async () => {
+            mockLogger.info.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:             'system' as const,
+                        subtype:          'compact_boundary' as const,
+                        compact_metadata: {
+                            trigger: 'manual',
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Find the compaction log
+            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const compactionLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'compaction';
+            });
+
+            expect(compactionLog).toBeDefined();
+            const compactionLogData = compactionLog![0] as { eventType: string, trigger: string, preTokens: undefined, msg: string };
+            expect(compactionLogData.trigger).toBe('manual');
+            expect(compactionLogData.preTokens).toBeUndefined();
+            expect(compactionLogData.msg).toBe('Context compaction completed');
+        });
+    });
+
+    describe('logToolProgressEvent and logToolResultEvent', () => {
+        beforeEach(() => {
+            mockLogger.debug.mockClear();
+        });
+
+        test('should log tool_progress event with correct eventType', async () => {
+            mockLogger.debug.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:      'tool_progress' as const,
+                        tool_name: 'mcp__memory__view',
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Find the tool_progress log (kills mutant #2: StringLiteral on line 565)
+            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const progressLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'tool_progress';
+            });
+
+            expect(progressLog).toBeDefined();
+            const progressLogData = progressLog![0] as { eventType: string, module: string, tool: string, msg: string };
+            expect(progressLogData.eventType).toBe('tool_progress');
+            expect(progressLogData.eventType).not.toBe('');
+            expect(progressLogData.module).toBe('memory');
+            expect(progressLogData.tool).toBe('view');
+        });
+
+        test('should log tool_progress with specific message', async () => {
+            mockLogger.debug.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:      'tool_progress' as const,
+                        tool_name: 'mcp__discord__search',
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Find the tool_progress log (kills mutant #5: StringLiteral on line 568)
+            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const progressLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'tool_progress';
+            });
+
+            expect(progressLog).toBeDefined();
+            const progressLogData = progressLog![0] as { msg: string };
+            expect(progressLogData.msg).toBe('Tool execution started');
+            expect(progressLogData.msg).not.toBe('');
+        });
+
+        test('should execute logToolProgressEvent function body', async () => {
+            mockLogger.debug.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:      'tool_progress' as const,
+                        tool_name: 'Read',
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutant #3: BlockStatement on line 562 - function body must execute
+            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const progressLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'tool_progress';
+            });
+
+            expect(progressLog).toBeDefined();
+        });
+
+        test('should log tool_result event with correct structure', async () => {
+            mockLogger.debug.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:      'tool_result' as const,
+                        tool_name: 'mcp__memory__store',
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutant #6: ObjectLiteral on line 578 - log object must not be empty
+            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const resultLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'tool_result';
+            });
+
+            expect(resultLog).toBeDefined();
+            const resultLogData = resultLog![0] as { eventType: string, module: string, tool: string, msg: string };
+            expect(resultLogData).toHaveProperty('eventType');
+            expect(resultLogData).toHaveProperty('module');
+            expect(resultLogData).toHaveProperty('tool');
+            expect(resultLogData).toHaveProperty('msg');
+            expect(_.keys(resultLogData).length).toBeGreaterThan(0);
+            expect(resultLogData).not.toEqual({});
+        });
+
+        test('should log tool_result with specific message', async () => {
+            mockLogger.debug.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:      'tool_result' as const,
+                        tool_name: 'Grep',
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutant #7: StringLiteral on line 582
+            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const resultLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'tool_result';
+            });
+
+            expect(resultLog).toBeDefined();
+            const resultLogData = resultLog![0] as { msg: string };
+            expect(resultLogData.msg).toBe('Tool execution complete');
+            expect(resultLogData.msg).not.toBe('');
+        });
+
+        test('should execute logToolResultEvent function body', async () => {
+            mockLogger.debug.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:      'tool_result' as const,
+                        tool_name: 'Write',
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutant #4: BlockStatement on line 576 - function body must execute
+            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const resultLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'tool_result';
+            });
+
+            expect(resultLog).toBeDefined();
+        });
+    });
+
+    describe('logSystemEvent compaction with optional chaining', () => {
+        beforeEach(() => {
+            mockLogger.info.mockClear();
+        });
+
+        test('should not log when message type is not system', async () => {
+            mockLogger.info.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: { role: 'assistant', content: 'Hello' },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills ConditionalExpression mutant on line 592: message.type === 'system'
+            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const compactionLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'compaction';
+            });
+
+            expect(compactionLog).toBeUndefined();
+        });
+
+        test('should not log when message has no subtype', async () => {
+            mockLogger.info.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type: 'system' as const,
+                        // No subtype property
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills ConditionalExpression mutant on line 592: 'subtype' in message
+            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const compactionLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'compaction';
+            });
+
+            expect(compactionLog).toBeUndefined();
+        });
+
+        test('should not log when subtype is not compact_boundary', async () => {
+            mockLogger.info.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:       'system' as const,
+                        subtype:    'init' as const,
+                        session_id: 'test-session',
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills ConditionalExpression mutant on line 592: message.subtype === 'compact_boundary'
+            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const compactionLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'compaction';
+            });
+
+            expect(compactionLog).toBeUndefined();
+        });
+
+        test('should handle missing compact_metadata gracefully', async () => {
+            mockLogger.info.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'system' as const,
+                        subtype: 'compact_boundary' as const,
+                        // Missing compact_metadata entirely
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutants #10 & #11: OptionalChaining on lines 594 & 595
+            // Should not crash and should log without token info
+            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const compactionLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'compaction';
+            });
+
+            expect(compactionLog).toBeDefined();
+            const compactionLogData = compactionLog![0] as { preTokens: undefined, trigger: undefined, msg: string };
+            expect(compactionLogData.preTokens).toBeUndefined();
+            expect(compactionLogData.trigger).toBeUndefined();
+            expect(compactionLogData.msg).toBe('Context compaction completed');
+        });
+
+        test('should include token info when pre_tokens is present', async () => {
+            mockLogger.info.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:             'system' as const,
+                        subtype:          'compact_boundary' as const,
+                        compact_metadata: {
+                            pre_tokens: 100000,
+                            trigger:    'threshold',
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutants #8 & #9: ConditionalExpression on line 592
+            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const compactionLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'compaction';
+            });
+
+            expect(compactionLog).toBeDefined();
+            const compactionLogData = compactionLog![0] as { preTokens: number, msg: string };
+            expect(compactionLogData.preTokens).toBe(100000);
+            // Message should include the token info, not empty string
+            expect(compactionLogData.msg).toContain('100,000 tokens');
+            expect(compactionLogData.msg).not.toBe('Context compaction completed');
+        });
+
+        test('should omit token info when pre_tokens is undefined', async () => {
+            mockLogger.info.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:             'system' as const,
+                        subtype:          'compact_boundary' as const,
+                        compact_metadata: {
+                            trigger: 'manual',
+                            // pre_tokens is undefined
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutants #8 & #9: ConditionalExpression on line 592 (false branch)
+            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const compactionLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'compaction';
+            });
+
+            expect(compactionLog).toBeDefined();
+            const compactionLogData = compactionLog![0] as { preTokens: undefined, msg: string };
+            expect(compactionLogData.preTokens).toBeUndefined();
+            // Message should NOT include token info (empty string ternary result)
+            expect(compactionLogData.msg).toBe('Context compaction completed');
+            expect(compactionLogData.msg).not.toContain('tokens');
+        });
+    });
+
+    describe('task persistence error message', () => {
+        test('should log task persistence failure with specific message', async () => {
+            mockLogger.warn.mockClear();
+
+            const mockTaskPersistenceCoordinator = {
+                prepareNewSession: async (_sessionId: string): Promise<boolean> => {
+                    throw new Error('DynamoDB connection timeout');
+                },
+            };
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:       'system' as const,
+                        subtype:    'init' as const,
+                        session_id: 'test-session-error',
+                    };
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [{ type: 'text' as const, text: 'Response' }],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({ taskPersistenceCoordinator: mockTaskPersistenceCoordinator });
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutant #12: StringLiteral on line 754 - verify error message template
+            const logCalls = mockLogger.warn.mock.calls as unknown[][];
+            const errorLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { error?: Error };
+                return logData?.error?.message === 'DynamoDB connection timeout';
+            });
+
+            expect(errorLog).toBeDefined();
+            const errorLogData = errorLog![1] as string;
+            expect(errorLogData).toBe('Task persistence failed: DynamoDB connection timeout');
+            expect(errorLogData).not.toBe('');
+            expect(errorLogData).toContain('Task persistence failed:');
+            expect(errorLogData).toContain('DynamoDB connection timeout');
+        });
+    });
+
+    describe('resetLogStreamState', () => {
+        test('should start with empty pendingToolRequests', async () => {
+            // Verify initial state by sending a user message with no prior tool requests
+            const { resetLogStreamState } = await import('../../../src/agent/agent');
+            resetLogStreamState();
+            mockLogger.debug.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'user' as const,
+                        message: { role: 'user', content: 'Hello' },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills ArrayDeclaration mutant on line 496: pendingToolRequests must start empty
+            // User event should log as message send, not tool response
+            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const userLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'user';
+            });
+
+            expect(userLog).toBeDefined();
+            const userLogData = userLog![0] as { msg: string };
+            expect(userLogData.msg).toBe('Sending message to Claude LLM');
+            // Should NOT be logging as tool_response since no tools were pending
+            const toolResponseLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'tool_response';
+            });
+            expect(toolResponseLog).toBeUndefined();
+        });
+
+        test('should reset pendingToolRequests to empty array', async () => {
+            // First, populate pendingToolRequests by triggering a tool request
+            mockLogger.debug.mockClear();
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [
+                                {
+                                    type:  'tool_use' as const,
+                                    id:    'tool_1',
+                                    name:  'Read',
+                                    input: { file: 'test.txt' },
+                                },
+                            ],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            await agent.chatBatch([mockMessageContext]);
+
+            // Now reset the state
+            const { resetLogStreamState } = await import('../../../src/agent/agent');
+            resetLogStreamState();
+
+            // Clear logs and run another batch
+            mockLogger.debug.mockClear();
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:    'user' as const,
+                        message: { role: 'user', content: 'Hello' },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            await agent.chatBatch([mockMessageContext]);
+
+            // Kills mutant #1: ArrayDeclaration on line 496
+            // After reset, next user event should log as message send, not tool response
+            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const userLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'user';
+            });
+
+            expect(userLog).toBeDefined();
+            const userLogData = userLog![0] as { msg: string };
+            expect(userLogData.msg).toBe('Sending message to Claude LLM');
+            // Should NOT be logging as tool_response
+            const toolResponseLog = _.find(logCalls, (call: unknown[]) => {
+                const logData = call[0] as { eventType?: string };
+                return logData?.eventType === 'tool_response';
+            });
+            expect(toolResponseLog).toBeUndefined();
+        });
     });
 });

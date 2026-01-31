@@ -285,6 +285,50 @@ describe('BotStateManager', () => {
                 const catchUpContext = state.modeContext as CatchingUpModeContext;
                 expect(catchUpContext.interruptingMessage).toBeUndefined();
             });
+
+            it('should store interrupting message in context when in perching mode', () => {
+                manager.startPerching('Observing');
+
+                const message: InterruptingMessageDetails = {
+                    channelId:   testChannelId,
+                    author:      'TestUser',
+                    channelName: 'general',
+                    content:     'Hello!',
+                };
+                manager.interrupt(message);
+
+                const state = manager.getState();
+                const perchContext = state.modeContext as import('@/integrations/discord/state/types').PerchingModeContext;
+                expect(perchContext.interruptingMessage).toEqual(message);
+            });
+
+            it('should NOT store message in perching mode when message is undefined', () => {
+                manager.startPerching('Observing');
+
+                // Call interrupt WITHOUT a message
+                manager.interrupt();
+
+                const state = manager.getState();
+                const perchContext = state.modeContext as import('@/integrations/discord/state/types').PerchingModeContext;
+                expect(perchContext.interruptingMessage).toBeUndefined();
+            });
+
+            it('should preserve existing perching context when storing interrupting message', () => {
+                manager.startPerching('Observing');
+
+                const message: InterruptingMessageDetails = {
+                    channelId:   testChannelId,
+                    author:      'TestUser',
+                    channelName: 'general',
+                    content:     'Hello!',
+                };
+                manager.interrupt(message);
+
+                const state = manager.getState();
+                const perchContext = state.modeContext as import('@/integrations/discord/state/types').PerchingModeContext;
+                expect(perchContext.activityType).toBe('Observing');
+                expect(perchContext.interruptingMessage).toEqual(message);
+            });
         });
 
         describe('resume', () => {
