@@ -124,6 +124,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
     let sessionTimeout: ReturnType<typeof setTimeout> | null = null;
     let sessionStartTime: Date | null = null;
     let isTimingOut = false;
+    let resumeInProgress = false;
 
     // Timeout handler - aborts session when max duration reached
     function handleSessionTimeout(): void {
@@ -145,15 +146,15 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
 
     // Internal resume logic - uses BotStateManager.isInterrupted() as the trigger
     async function doResume(): Promise<void> {
-        // Guard: verify we're still in perching mode and interrupted
+        // Guard: verify we're still in perching mode and interrupted, and not already resuming
         // BotStateManager is the single source of truth for this state
         // Stryker disable next-line all: Complex guard condition tested via behavior in resume-after-interruption tests
-        if(stateManager.getMode() !== 'perching' || !stateManager.isInterrupted()) {
+        if(stateManager.getMode() !== 'perching' || !stateManager.isInterrupted() || resumeInProgress) {
             return;
         }
 
-        // Resume (clear interrupted flag)
-        stateManager.resume();
+        // Mark resume as in progress to prevent double-resume
+        resumeInProgress = true;
 
         // Create new abort controller
         currentAbortController = new AbortController();
@@ -185,10 +186,17 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
         });
 
         // Run agent session with error handling
-        await runSessionAndFinalize({
-            prompt,
-            slot: currentSlot ?? 'unscheduled',
-        });
+        try {
+            await runSessionAndFinalize({
+                prompt,
+                slot: currentSlot ?? 'unscheduled',
+            });
+        } finally {
+            // Clear resume flag and interrupted state AFTER session completes
+            // This ensures presence stays as 🦉💬 (perching_interrupted) while handling the message
+            resumeInProgress = false;
+            stateManager.resume();
+        }
     }
 
     // Helper for running sessions with error handling
@@ -215,7 +223,8 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
 
             // Check interrupt state FIRST - state manager is single source of truth
             // The result.completed flag can be incorrect when abort errors are caught
-            if(stateManager.isInterrupted()) {
+            // Don't schedule resume if we're already in a resume (resumeInProgress)
+            if(stateManager.isInterrupted() && !resumeInProgress) {
                 // Session was interrupted by a message
                 // Schedule resume on next tick to let current stack unwind
                 logger.debug({ slot: options.slot }, 'Session interrupted - scheduling resume');
@@ -240,7 +249,8 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
         } catch (error) {
             // Check BotStateManager - it's the single source of truth for interrupt state
             // If interrupted by message, schedule resume on next tick to let current stack unwind
-            if(stateManager.isInterrupted()) {
+            // Don't schedule resume if we're already in a resume (resumeInProgress)
+            if(stateManager.isInterrupted() && !resumeInProgress) {
                 setTimeout(() => void doResume(), 0);
                 return;
             }
