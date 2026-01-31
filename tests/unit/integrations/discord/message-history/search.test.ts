@@ -4,7 +4,7 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Mock methods */
 /* eslint-disable @typescript-eslint/await-thenable -- expect().rejects returns a promise */
 
-import { describe, test, expect, mock, beforeEach, jest } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
 import _ from 'lodash';
 import {
     createMessageSearchService,
@@ -81,8 +81,9 @@ describe.concurrent('createMessageSearchService', () => {
     const testChannelId = '123456789012345678';
 
     beforeEach(() => {
-        // Ensure real timers and system time is reset to prevent leakage from other tests
-        jest.useRealTimers();
+        // Use fake timers to prevent timing-related race conditions
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2025-01-20T12:00:00.000Z'));
 
         mockFetcher = {
             fetchMessages: mock(() => Promise.resolve({ messages: [], hasMore: false })),
@@ -109,6 +110,10 @@ describe.concurrent('createMessageSearchService', () => {
             cache:      mockCache,
             summarizer: mockSummarizer,
         });
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
     });
 
     describe('searchMessages', () => {
@@ -186,7 +191,7 @@ describe.concurrent('createMessageSearchService', () => {
             });
 
             test('should merge cached and fetched messages for partial cache hits', async () => {
-                const now = new Date('2025-01-20T00:00:00.000Z');
+                const now = new Date('2025-01-20T12:00:00.000Z'); // Use same time as fake timer
                 const cachedTime = new Date('2025-01-15T00:00:00.000Z');
                 const gapStartTime = new Date('2025-01-10T00:00:00.000Z');
                 const gapEndTime = new Date('2025-01-14T00:00:00.000Z');
