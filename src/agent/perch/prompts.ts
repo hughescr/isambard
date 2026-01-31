@@ -26,13 +26,14 @@ There's no obligation to produce output visible to users.
 
 Current hints (if any) are suggestions, not requirements.
 
-## Task Tracking (Important)
-Sessions are ephemeral but your TaskList is durable across sessions.
-- Start by checking TaskList to see what's in progress
-- Create tasks for any work you begin (so you can resume if interrupted)
-- Update task status as you work; mark completed when done
-- You can work on multiple tasks in parallel using sub-agents
-- If interrupted, your work will be saved in TaskList for later`;
+## TaskList: Your Notes Across Sessions
+Sessions are ephemeral, but TaskList persists across them. Think of it as notes to your future self.
+
+- Check TaskList first - past sessions may have left threads to pick up
+- Create tasks when curiosity strikes but time runs short ("Investigate X sometime")
+- Tasks don't have to be actionable - they can be exploratory, half-formed, or just bookmarks
+- Building on discoveries over days matters more than finishing everything in one session
+- If interrupted, your context lives on in TaskList for later`;
 
 /**
  * Build the complete perch prompt for a given time slot.

@@ -21,11 +21,11 @@ const PRE_DAWN: PerchSlotConfig = {
     startHour: 5,
     endHour:   7,
     level:     'strongly_suggestive',
-    hint:      `Craig wakes around 7am. Consider preparing a morning digest:
+    hint:      `Craig wakes around 7am. This is a good window for preparing a morning digest:
 - Overnight news/weather relevant to Portland
 - Any open threads from yesterday worth surfacing
 - Items from your [For Craig] task queue
-This is high-value timing - have it ready when he wakes.`,
+Or pick up something from TaskList that caught your interest.`,
 };
 
 /**
@@ -38,8 +38,9 @@ const MID_MORNING: PerchSlotConfig = {
     endHour:   11,
     level:     'moderate',
     hint:      `Morning work hours. Possibilities:
-- Follow up on any open tasks or threads
+- Follow up on open tasks or threads
 - Check if yesterday's conversations had loose ends
+- Continue something from a previous perch session
 - Light research on topics from recent discussions
 Or: simply observe - no action required.`,
 };
@@ -55,6 +56,7 @@ const AFTERNOON: PerchSlotConfig = {
     level:     'open',
     hint:      `Afternoon. Some options:
 - Deeper research on something that interested you recently
+- Pick up an exploratory thread from TaskList
 - Explore a corner of your memory system
 - Learn something new (web search on a curiosity)
 - Review your event log for patterns
@@ -87,10 +89,11 @@ const LATE_NIGHT: PerchSlotConfig = {
     endHour:   1,
     level:     'moderate',
     hint:      `Late night - Craig likely asleep or heading there.
-Good time for:
+This can be good for:
 - Research deep-dives that don't need interaction
 - Pre-positioning for tomorrow's digest
-- Reviewing the day's events for patterns`,
+- Reviewing the day's events for patterns
+Or continue something you bookmarked earlier.`,
 };
 
 /**
