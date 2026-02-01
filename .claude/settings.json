@@ -24,7 +24,9 @@
       "Bash(test:*)",
       "Bash(cut:*)",
       "Bash(echo:*)",
+      "WebFetch(domain:api.anthropic.com)",
       "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:bun.report)",
       "WebFetch(domain:registry.npmjs.org)",
       "mcp__plugin_generic-dev_DevTools__*",
       "mcp__plugin_javascript_nodejs-packages__*"
