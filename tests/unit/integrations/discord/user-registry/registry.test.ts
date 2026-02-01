@@ -516,5 +516,41 @@ describe('UserRegistry', () => {
             const result = registry.resolveUsername(username);
             expect(result).toBe(userId);
         });
+
+        // Mutant 6807 (Line 65): oldUsername check - array identity
+        it('preserves username array reference when re-registering with same username', () => {
+            const userId = '123456789012345678' as UserId;
+            const username = 'preserve-ref';
+
+            registry.registerUser(userId, username, 'Test User');
+
+            // Get internal array reference
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- testing internal state
+            const internalMap = (registry as any).usernameToIds as Map<string, UserId[]>;
+            const beforeArray = internalMap.get(username);
+
+            registry.registerUser(userId, username, 'Updated Name');
+
+            const afterArray = internalMap.get(username);
+
+            // Array reference should be the same object (not replaced)
+            expect(afterArray).toBe(beforeArray);
+        });
+
+        // Note: Mutant 6810 (line 67 if(oldUserIds)) is an equivalent mutant.
+        // _.filter(undefined, ...) returns [], so behavior is identical.
+        // This mutant cannot be killed without mocking lodash internals.
+
+        // Mutant 6840 (Line 111): empty array check
+        it('throws UserNotFoundError when username maps to empty array', () => {
+            const username = 'empty-mapping';
+
+            // Create an empty array mapping directly (simulates edge case)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- testing internal state
+            const internalMap = (registry as any).usernameToIds as Map<string, UserId[]>;
+            internalMap.set(username, []);
+
+            expect(() => registry.resolveUsername(username)).toThrow(UserNotFoundError);
+        });
     });
 });

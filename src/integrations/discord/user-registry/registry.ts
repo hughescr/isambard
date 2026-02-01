@@ -64,6 +64,7 @@ export class UserRegistry {
         // If username changed, remove old mapping
         if(oldUsername && oldUsername !== username) {
             const oldUserIds = this.usernameToIds.get(oldUsername);
+            // Stryker disable next-line ConditionalExpression: equivalent mutant - _.filter(undefined) returns []
             if(oldUserIds) {
                 const filtered = _.filter(oldUserIds, id => id !== userId);
                 if(filtered.length === 0) {

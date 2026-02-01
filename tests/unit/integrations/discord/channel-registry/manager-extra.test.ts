@@ -457,6 +457,104 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
             });
         });
 
+        describe('internal state mutation killing tests', () => {
+            it('does not remove DM mapping when invalidating non-DM with same channelId', async () => {
+                const userId = createUserId('u1');
+                const sharedId = createChannelId('shared');
+                const dm = createMockChannel({ channelId: sharedId, guildId: 'DM', channelName: userId });
+                const guild = createMockChannel({ channelId: sharedId, guildId: homeGuildId });
+
+                await manager.upsertChannel(dm);
+                await manager.upsertChannel(guild);
+
+                expect(manager.getDMChannel(userId)).toBe(sharedId);
+
+                manager.invalidateCache(guild.channelId);
+
+                // Mutant would delete this - original should preserve
+                expect(manager.getDMChannel(userId)).toBe(sharedId);
+            });
+
+            it('removes wellKnownCache entry on invalidate', async () => {
+                const wk = createMockChannel({ isWellKnown: 'general' });
+                await manager.upsertChannel(wk);
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- access internal cache for mutation testing
+                const cache = (manager as any).wellKnownCache as Map<string, string>;
+                expect(cache.has('general')).toBe(true);
+
+                manager.invalidateCache(wk.channelId);
+
+                expect(cache.has('general')).toBe(false);
+            });
+
+            it('does not duplicate channelId in nameIndex when backend returns same channel twice', async () => {
+                // Backend returns same channel twice - simulates edge case
+                const channel = createMockChannel({ channelName: 'dup-test' });
+                backend.getAllChannels = mock(() => Promise.resolve([channel, channel]));
+
+                await manager.warmCache();
+
+                // Check internal nameIndex array directly - mutant would create duplicates
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- testing internal state
+                const idx = (manager as any).nameIndex as Map<string, string[]>;
+                const channelIds = idx.get('dup-test');
+
+                expect(channelIds).toHaveLength(1);
+                expect(channelIds?.[0]).toBe(channel.channelId);
+            });
+
+            it('does not remove unrelated ids when channelId is missing from nameIndex', async () => {
+                const a = createMockChannel({ channelId: createChannelId('a'), channelName: 'shared-name' });
+                const b = createMockChannel({ channelId: createChannelId('b'), channelName: 'shared-name' });
+                await manager.upsertChannel(a);
+                await manager.upsertChannel(b);
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- testing internal state
+                const idx = (manager as any).nameIndex as Map<string, string[]>;
+                // Corrupt nameIndex to simulate inconsistent state - only b is in index
+                idx.set('shared-name', [b.channelId]);
+
+                manager.invalidateCache(a.channelId);
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- testing internal state
+                (manager as any).cacheWarmed = true;
+                const results = await manager.resolveByName('shared-name');
+                expect(results).toHaveLength(1);
+                expect(results[0].channelId).toBe(b.channelId);
+            });
+
+            it('removes channel at index 1 correctly', async () => {
+                const a = createMockChannel({ channelId: createChannelId('first'), channelName: 'idx-test' });
+                const b = createMockChannel({ channelId: createChannelId('second'), channelName: 'idx-test' });
+
+                await manager.upsertChannel(a);
+                await manager.upsertChannel(b);
+
+                // Delete the second one (at index 1)
+                await manager.deleteChannel(b.channelId);
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- testing internal state
+                (manager as any).cacheWarmed = true;
+                const results = await manager.resolveByName('idx-test');
+                expect(results).toHaveLength(1);
+                expect(results[0].channelId).toBe(a.channelId);
+            });
+
+            it('deletes nameIndex entry when last channel is removed', async () => {
+                const channel = createMockChannel({ channelName: 'last-channel' });
+                await manager.upsertChannel(channel);
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- testing internal state
+                const idx = (manager as any).nameIndex as Map<string, string[]>;
+                expect(idx.has('last-channel')).toBe(true);
+
+                await manager.deleteChannel(channel.channelId);
+
+                expect(idx.has('last-channel')).toBe(false);
+            });
+        });
+
         describe('Line 82: invalidateCache dmChannelId match check', () => {
             it('should NOT delete from dmUserMap when channelIds do not match', async () => {
                 const user1 = createUserId('user-1');
