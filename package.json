@@ -6,20 +6,20 @@
   "main": "src/index.ts",
   "scripts": {
     "dev:docker": "docker compose -f docker/docker-compose.yml up --build",
-    "dev:sst": "bunx sst shell -- bun --hot src/index.ts",
+    "dev:sst": "sst shell -- bun --hot src/index.ts",
     "lint": "eslint --cache --format unix .",
     "lint:fix": "eslint --cache --fix --format overview .",
     "lint:overview": "eslint --cache --format overview .",
-    "mutate": "bunx stryker run",
-    "sst-deploy": "bunx sst deploy",
-    "sst-dev": "bunx sst dev",
-    "sst-diagnostics": "bunx sst diagnostic --print-logs \"$@\"",
-    "sst-remove": "bunx sst remove",
+    "mutate": "stryker run",
+    "sst-deploy": "sst deploy",
+    "sst-dev": "sst dev",
+    "sst-diagnostics": "sst diagnostic --print-logs \"$@\"",
+    "sst-remove": "sst remove",
     "start": "bun run dev:sst",
     "test": "if [ -n \"$CI\" ]; then bun test --timeout 60; else bun test --timeout 5; fi",
     "test:full": "bun run lint;bun run typecheck;bun run mutate",
     "test:watch": "bun test --watch",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.2.27",
