@@ -1,0 +1,551 @@
+/* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
+import { describe, it, expect, beforeEach, mock, type Mock, afterEach } from 'bun:test';
+import type { Client, Guild, GuildChannel } from 'discord.js';
+import _ from 'lodash';
+import {
+    discoverAllChannels,
+    setupChannelEventHandlers
+} from '@/integrations/discord/channel-registry/discovery';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
+import type { ChannelMetadata } from '@/integrations/discord/channel-registry/types';
+import { createChannelId, createGuildId } from '@/integrations/discord/types';
+
+describe('discovery', () => {
+    let mockManager: ChannelRegistryManager;
+    let mockClient: Client;
+    let mockGuild: Guild;
+
+    beforeEach(() => {
+        // Mock manager
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock
+        mockManager = {
+            getChannel:    mock(_.constant(Promise.resolve(null))),
+            upsertChannel: mock(_.noop),
+            deleteChannel: mock(_.noop),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock
+        } as any;
+
+        // Mock guild
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock
+        mockGuild = {
+            id:       'guild-123',
+            channels: {
+                fetch: mock(async () => new Map()),
+            },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock
+        } as any;
+
+        // Mock client
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock
+        mockClient = {
+            guilds: {
+                cache: new Map(),
+            },
+            on: mock(_.noop),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock
+        } as any;
+    });
+
+    afterEach(() => {
+        // Clear all mocks
+        (mockManager.getChannel as Mock<() => Promise<ChannelMetadata | null>>).mockClear();
+        (mockManager.upsertChannel as Mock<(metadata: ChannelMetadata) => Promise<void>>).mockClear();
+        (mockManager.deleteChannel as Mock<(channelId: string) => Promise<void>>).mockClear();
+    });
+
+    describe('discoverAllChannels', () => {
+        it('should return empty result when no guilds', async () => {
+            const result = await discoverAllChannels(mockClient, mockManager);
+
+            expect(result).toEqual({
+                discovered: 0,
+                skipped:    0,
+                errors:     [],
+            });
+        });
+
+        it('should discover channels from single guild', async () => {
+            // Create mock text channel
+            const mockChannel = {
+                id:   'channel-1',
+                name: 'general',
+                send: mock(_.noop), // Makes it text-based
+            } as unknown as GuildChannel;
+
+            mockGuild.channels.fetch = mock(async () => {
+                const map = new Map();
+                map.set('channel-1', mockChannel);
+                return map;
+            }) as unknown as typeof mockGuild.channels.fetch;
+
+            mockClient.guilds.cache.set('guild-123', mockGuild);
+
+            const result = await discoverAllChannels(mockClient, mockManager);
+
+            expect(result.discovered).toBe(1);
+            expect(result.skipped).toBe(0);
+            expect(result.errors).toHaveLength(0);
+            expect(mockManager.upsertChannel).toHaveBeenCalledTimes(1);
+        });
+
+        it('should skip channels already in registry', async () => {
+            const mockChannel = {
+                id:   'channel-1',
+                name: 'general',
+                send: mock(_.noop),
+            } as unknown as GuildChannel;
+
+            mockGuild.channels.fetch = mock(async () => {
+                const map = new Map();
+                map.set('channel-1', mockChannel);
+                return map;
+            }) as unknown as typeof mockGuild.channels.fetch;
+
+            mockClient.guilds.cache.set('guild-123', mockGuild);
+
+            // Mock existing channel
+            (mockManager.getChannel as Mock<() => Promise<ChannelMetadata | null>>).mockResolvedValue({
+                channelId:    createChannelId('channel-1'),
+                guildId:      createGuildId('guild-123'),
+                channelName:  'general',
+                isMuted:      false,
+                discoveredAt: '2025-01-01T00:00:00.000Z',
+                lastSeenAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:    '2025-01-01T00:00:00.000Z',
+            });
+
+            const result = await discoverAllChannels(mockClient, mockManager);
+
+            expect(result.discovered).toBe(0);
+            expect(result.skipped).toBe(1);
+            expect(result.errors).toHaveLength(0);
+            expect(mockManager.upsertChannel).not.toHaveBeenCalled();
+        });
+
+        it('should skip non-text channels', async () => {
+            // Category channel (no send method)
+            const mockCategory = {
+                id:   'category-1',
+                name: 'category',
+                type: 4, // CategoryChannel type
+            } as unknown as GuildChannel;
+
+            mockGuild.channels.fetch = mock(async () => {
+                const map = new Map();
+                map.set('category-1', mockCategory);
+                return map;
+            }) as unknown as typeof mockGuild.channels.fetch;
+
+            mockClient.guilds.cache.set('guild-123', mockGuild);
+
+            const result = await discoverAllChannels(mockClient, mockManager);
+
+            expect(result.discovered).toBe(0);
+            expect(result.skipped).toBe(0);
+            expect(result.errors).toHaveLength(0);
+            expect(mockManager.upsertChannel).not.toHaveBeenCalled();
+        });
+
+        it('should skip null channels', async () => {
+            mockGuild.channels.fetch = mock(async () => {
+                const map = new Map();
+                map.set('channel-1', null);
+                return map;
+            }) as unknown as typeof mockGuild.channels.fetch;
+
+            mockClient.guilds.cache.set('guild-123', mockGuild);
+
+            const result = await discoverAllChannels(mockClient, mockManager);
+
+            expect(result.discovered).toBe(0);
+            expect(result.skipped).toBe(0);
+            expect(result.errors).toHaveLength(0);
+        });
+
+        it('should handle multiple guilds', async () => {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock
+            const mockGuild1 = {
+                id:       'guild-1',
+                channels: {
+                    fetch: mock(async () => {
+                        const map = new Map();
+                        map.set('channel-1', {
+                            id:   'channel-1',
+                            name: 'general',
+                            send: mock(_.noop),
+                        });
+                        return map;
+                    }),
+                },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock
+            } as any;
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock
+            const mockGuild2 = {
+                id:       'guild-2',
+                channels: {
+                    fetch: mock(async () => {
+                        const map = new Map();
+                        map.set('channel-2', {
+                            id:   'channel-2',
+                            name: 'announcements',
+                            send: mock(_.noop),
+                        });
+                        return map;
+                    }),
+                },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock
+            } as any;
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- Test mock
+            mockClient.guilds.cache.set('guild-1', mockGuild1);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- Test mock
+            mockClient.guilds.cache.set('guild-2', mockGuild2);
+
+            const result = await discoverAllChannels(mockClient, mockManager);
+
+            expect(result.discovered).toBe(2);
+            expect(result.skipped).toBe(0);
+            expect(result.errors).toHaveLength(0);
+            expect(mockManager.upsertChannel).toHaveBeenCalledTimes(2);
+        });
+
+        it('should capture errors from guild discovery', async () => {
+            mockGuild.channels.fetch = mock(async () => {
+                throw new Error('Network error');
+            }) as unknown as typeof mockGuild.channels.fetch;
+
+            mockClient.guilds.cache.set('guild-123', mockGuild);
+
+            const result = await discoverAllChannels(mockClient, mockManager);
+
+            expect(result.discovered).toBe(0);
+            expect(result.skipped).toBe(0);
+            expect(result.errors).toHaveLength(1);
+            expect(result.errors[0]).toEqual({
+                guildId: 'guild-123',
+                error:   'Network error',
+            });
+        });
+
+        it('should handle non-Error exceptions', async () => {
+            mockGuild.channels.fetch = mock(async () => {
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing error handling
+                throw 'String error';
+            }) as unknown as typeof mockGuild.channels.fetch;
+
+            mockClient.guilds.cache.set('guild-123', mockGuild);
+
+            const result = await discoverAllChannels(mockClient, mockManager);
+
+            expect(result.errors).toHaveLength(1);
+            expect(result.errors[0]).toEqual({
+                guildId: 'guild-123',
+                error:   'String error',
+            });
+        });
+
+        it('should create correct channel metadata', async () => {
+            const mockChannel = {
+                id:   'channel-1',
+                name: 'general',
+                send: mock(_.noop),
+            } as unknown as GuildChannel;
+
+            mockGuild.channels.fetch = mock(async () => {
+                const map = new Map();
+                map.set('channel-1', mockChannel);
+                return map;
+            }) as unknown as typeof mockGuild.channels.fetch;
+
+            mockClient.guilds.cache.set('guild-123', mockGuild);
+
+            await discoverAllChannels(mockClient, mockManager);
+
+            expect(mockManager.upsertChannel).toHaveBeenCalledTimes(1);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
+            const call = (mockManager.upsertChannel as any).mock.calls[0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Test assertion
+            const metadata = call?.[0] as ChannelMetadata;
+
+            expect(metadata.channelId).toBe(createChannelId('channel-1'));
+            expect(metadata.guildId).toBe(createGuildId('guild-123'));
+            expect(metadata.channelName).toBe('general');
+            expect(metadata.isMuted).toBe(false);
+            expect(metadata.discoveredAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+            expect(metadata.lastSeenAt).toBe(metadata.discoveredAt);
+            expect(metadata.updatedAt).toBe(metadata.discoveredAt);
+        });
+    });
+
+    describe('setupChannelEventHandlers', () => {
+        it('should register event handlers on client', () => {
+            setupChannelEventHandlers(mockClient, mockManager);
+
+            expect(mockClient.on).toHaveBeenCalledTimes(3);
+            expect(mockClient.on).toHaveBeenCalledWith('channelCreate', expect.any(Function));
+            expect(mockClient.on).toHaveBeenCalledWith('channelUpdate', expect.any(Function));
+            expect(mockClient.on).toHaveBeenCalledWith('channelDelete', expect.any(Function));
+        });
+
+        describe('channelCreate handler', () => {
+            it('should upsert new text channel', async () => {
+                setupChannelEventHandlers(mockClient, mockManager);
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
+                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelCreate'])?.[1];
+
+                const mockChannel = {
+                    id:    'channel-1',
+                    name:  'new-channel',
+                    guild: mockGuild,
+                    send:  mock(_.noop),
+                } as unknown as GuildChannel;
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
+                await handler(mockChannel);
+
+                expect(mockManager.upsertChannel).toHaveBeenCalledTimes(1);
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
+                const metadata = (mockManager.upsertChannel as any).mock.calls[0]?.[0] as ChannelMetadata;
+                expect(metadata.channelId).toBe(createChannelId('channel-1'));
+                expect(metadata.channelName).toBe('new-channel');
+            });
+
+            it('should ignore channels without guild', async () => {
+                setupChannelEventHandlers(mockClient, mockManager);
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
+                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelCreate'])?.[1];
+
+                const mockChannel = {
+                    id:   'channel-1',
+                    name: 'dm-channel',
+                } as unknown as GuildChannel;
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
+                await handler(mockChannel);
+
+                expect(mockManager.upsertChannel).not.toHaveBeenCalled();
+            });
+
+            it('should ignore channels with null guild', async () => {
+                setupChannelEventHandlers(mockClient, mockManager);
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
+                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelCreate'])?.[1];
+
+                const mockChannel = {
+                    id:    'channel-1',
+                    name:  'dm-channel',
+                    guild: null, // guild property exists but is null
+                    send:  mock(_.noop),
+                } as unknown as GuildChannel;
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
+                await handler(mockChannel);
+
+                expect(mockManager.upsertChannel).not.toHaveBeenCalled();
+            });
+
+            it('should ignore non-text channels', async () => {
+                setupChannelEventHandlers(mockClient, mockManager);
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
+                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelCreate'])?.[1];
+
+                const mockChannel = {
+                    id:    'category-1',
+                    name:  'category',
+                    guild: mockGuild,
+                    type:  4,
+                } as unknown as GuildChannel;
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
+                await handler(mockChannel);
+
+                expect(mockManager.upsertChannel).not.toHaveBeenCalled();
+            });
+        });
+
+        describe('channelUpdate handler', () => {
+            it('should update existing channel name', async () => {
+                setupChannelEventHandlers(mockClient, mockManager);
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
+                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelUpdate'])?.[1];
+
+                const oldChannel = {
+                    id:    'channel-1',
+                    name:  'old-name',
+                    guild: mockGuild,
+                    send:  mock(_.noop),
+                } as unknown as GuildChannel;
+
+                const newChannel = {
+                    id:    'channel-1',
+                    name:  'new-name',
+                    guild: mockGuild,
+                    send:  mock(_.noop),
+                } as unknown as GuildChannel;
+
+                const existingMetadata: ChannelMetadata = {
+                    channelId:    createChannelId('channel-1'),
+                    guildId:      createGuildId('guild-123'),
+                    channelName:  'old-name',
+                    isMuted:      false,
+                    discoveredAt: '2025-01-01T00:00:00.000Z',
+                    lastSeenAt:   '2025-01-01T00:00:00.000Z',
+                    updatedAt:    '2025-01-01T00:00:00.000Z',
+                };
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-explicit-any -- Test mock
+                (mockManager.getChannel as any).mockResolvedValue(existingMetadata);
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
+                await handler(oldChannel, newChannel);
+
+                expect(mockManager.upsertChannel).toHaveBeenCalledTimes(1);
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
+                const metadata = (mockManager.upsertChannel as any).mock.calls[0]?.[0] as ChannelMetadata;
+                expect(metadata.channelName).toBe('new-name');
+                expect(metadata.updatedAt).not.toBe(existingMetadata.updatedAt);
+            });
+
+            it('should ignore updates to non-existing channels', async () => {
+                setupChannelEventHandlers(mockClient, mockManager);
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
+                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelUpdate'])?.[1];
+
+                const oldChannel = {
+                    id:    'channel-1',
+                    name:  'old-name',
+                    guild: mockGuild,
+                    send:  mock(_.noop),
+                } as unknown as GuildChannel;
+
+                const newChannel = {
+                    id:    'channel-1',
+                    name:  'new-name',
+                    guild: mockGuild,
+                    send:  mock(_.noop),
+                } as unknown as GuildChannel;
+
+                (mockManager.getChannel as Mock<() => Promise<ChannelMetadata | null>>).mockResolvedValue(null);
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
+                await handler(oldChannel, newChannel);
+
+                expect(mockManager.upsertChannel).not.toHaveBeenCalled();
+            });
+
+            it('should ignore channels without guild', async () => {
+                setupChannelEventHandlers(mockClient, mockManager);
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
+                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelUpdate'])?.[1];
+
+                const oldChannel = {
+                    id:   'channel-1',
+                    name: 'old-name',
+                } as unknown as GuildChannel;
+
+                const newChannel = {
+                    id:   'channel-1',
+                    name: 'new-name',
+                } as unknown as GuildChannel;
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
+                await handler(oldChannel, newChannel);
+
+                expect(mockManager.getChannel).not.toHaveBeenCalled();
+            });
+
+            it('should ignore channels with null guild', async () => {
+                setupChannelEventHandlers(mockClient, mockManager);
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
+                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelUpdate'])?.[1];
+
+                const oldChannel = {
+                    id:    'channel-1',
+                    name:  'old-name',
+                    guild: null, // guild property exists but is null
+                    send:  mock(_.noop),
+                } as unknown as GuildChannel;
+
+                const newChannel = {
+                    id:    'channel-1',
+                    name:  'new-name',
+                    guild: null, // guild property exists but is null
+                    send:  mock(_.noop),
+                } as unknown as GuildChannel;
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
+                await handler(oldChannel, newChannel);
+
+                expect(mockManager.getChannel).not.toHaveBeenCalled();
+            });
+
+            it('should ignore non-text channels', async () => {
+                setupChannelEventHandlers(mockClient, mockManager);
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
+                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelUpdate'])?.[1];
+
+                const oldChannel = {
+                    id:    'category-1',
+                    name:  'old-category',
+                    guild: mockGuild,
+                    type:  4,
+                } as unknown as GuildChannel;
+
+                const newChannel = {
+                    id:    'category-1',
+                    name:  'new-category',
+                    guild: mockGuild,
+                    type:  4,
+                } as unknown as GuildChannel;
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
+                await handler(oldChannel, newChannel);
+
+                expect(mockManager.getChannel).not.toHaveBeenCalled();
+            });
+        });
+
+        describe('channelDelete handler', () => {
+            it('should delete channel from registry', async () => {
+                setupChannelEventHandlers(mockClient, mockManager);
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
+                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelDelete'])?.[1];
+
+                const mockChannel = {
+                    id: 'channel-1',
+                } as unknown as GuildChannel;
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
+                await handler(mockChannel);
+
+                expect(mockManager.deleteChannel).toHaveBeenCalledTimes(1);
+                expect(mockManager.deleteChannel).toHaveBeenCalledWith(createChannelId('channel-1'));
+            });
+
+            it('should ignore channels without id', async () => {
+                setupChannelEventHandlers(mockClient, mockManager);
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
+                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelDelete'])?.[1];
+
+                const mockChannel = {} as unknown as GuildChannel;
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
+                await handler(mockChannel);
+
+                expect(mockManager.deleteChannel).not.toHaveBeenCalled();
+            });
+        });
+    });
+});
