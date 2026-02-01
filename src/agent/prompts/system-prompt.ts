@@ -4,6 +4,8 @@
  * Defines the agent's identity, capabilities, and behavioral guidelines.
  */
 
+import { map, replace } from 'lodash';
+
 import type { ContextBuilder } from '../context-builder.js';
 import { getCurrentTimeContext } from '@/utils/time.js';
 
@@ -241,25 +243,87 @@ Example: "I discovered I enjoy collaborative debugging"
 ❌ **Verbose transcripts**: Full message text - summarize instead`;
 
 /**
- * Build system prompt with optional core identity.
- * @param contextBuilder Optional context builder for loading identity
+ * Discord Channel Context template with placeholder for channel list.
+ * Contains documentation about channel management, sentinels, and well-known channels.
+ */
+export const DISCORD_CHANNEL_CONTEXT = `## Discord Channel Context
+
+### Response control
+
+You can control your presence in channels using the \`@@NO_RESPONSE@@\` sentinel:
+- When you want to observe without responding, include \`@@NO_RESPONSE@@\` in your message
+- This is useful when you want to track conversations without participating
+- The sentinel is stripped from your message before it's posted
+
+### Well-known channels
+
+- **#general** - General discussion and casual conversation
+- **#catch-up** - Automatic summaries of activity you missed while idle
+- **#perch-time** - Your private thinking space for self-reflection and planning
+
+### Available channels
+
+Currently visible channels: {CHANNEL_LIST}
+
+### Channel management tools
+
+You have access to channel management tools:
+- \`listChannels\` - List all channels you can see
+- \`muteChannel\` - Stop receiving messages from a channel
+- \`unmuteChannel\` - Resume receiving messages from a channel`;
+
+/**
+ * Options for building the system prompt.
+ */
+export interface BuildSystemPromptOptions {
+    /** Context builder for loading identity */
+    contextBuilder?: ContextBuilder
+    /** List of available channel names (without # prefix) */
+    channelList?:    string[]
+}
+
+/**
+ * Build system prompt with optional core identity and channel context.
+ * @param options Either a ContextBuilder (legacy) or BuildSystemPromptOptions
  * @returns System prompt string
  */
-export async function buildSystemPrompt(contextBuilder?: ContextBuilder): Promise<string> {
+export async function buildSystemPrompt(
+    options?: ContextBuilder | BuildSystemPromptOptions
+): Promise<string> {
+    // Handle legacy signature: buildSystemPrompt(contextBuilder)
+    // vs new signature: buildSystemPrompt({ contextBuilder, channelList })
+    let contextBuilder: ContextBuilder | undefined;
+    let channelList: string[] | undefined;
+
+    if(options && 'loadCoreIdentity' in options) {
+        // Legacy signature: options is a ContextBuilder
+        contextBuilder = options;
+    } else if(options) {
+        // New signature: options is BuildSystemPromptOptions
+        contextBuilder = options.contextBuilder;
+        channelList = options.channelList;
+    }
+
     const timeContext = getCurrentTimeContext();
     // Stryker disable StringLiteral: Static time context format string - mutation doesn't affect behavior
     const timeContextStr = `${timeContext.utc} (${timeContext.dayOfWeek} ${timeContext.timeOfDay})`;
     // Stryker restore StringLiteral
-    const systemPromptWithTime = `${BASE_SYSTEM_PROMPT}\n\n## Current Time Context\n${timeContextStr}`;
+    let systemPrompt = `${BASE_SYSTEM_PROMPT}\n\n## Current Time Context\n${timeContextStr}`;
 
-    if(!contextBuilder) {
-        return systemPromptWithTime;
+    // Add Discord Channel Context if channelList is provided and non-empty
+    if(channelList && channelList.length > 0) {
+        const formattedChannels = map(channelList, (channel: string) => `#${channel}`).join(', ');
+        const discordContext = replace(DISCORD_CHANNEL_CONTEXT, '{CHANNEL_LIST}', formattedChannels);
+        systemPrompt += `\n\n${discordContext}`;
     }
 
-    const coreIdentity = await contextBuilder.loadCoreIdentity();
-    if(!coreIdentity) {
-        return systemPromptWithTime;
+    // Add core identity if available
+    if(contextBuilder) {
+        const coreIdentity = await contextBuilder.loadCoreIdentity();
+        if(coreIdentity) {
+            systemPrompt += `\n\n## Who You Are\n${coreIdentity}`;
+        }
     }
 
-    return `${systemPromptWithTime}\n\n## Who You Are\n${coreIdentity}`;
+    return systemPrompt;
 }
