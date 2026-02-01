@@ -7,7 +7,7 @@ import {
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryToolItem, MemoryPath, LayerName } from '@/storage/memory-tool/types';
 
-describe.concurrent('MemoryToolBackend - Date Filtering', () => {
+describe('MemoryToolBackend - Date Filtering', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let backend: MemoryToolBackend;
 

@@ -12,7 +12,7 @@ import { ValidationError } from '@/storage/errors';
 import type { MessageId, CachedSegmentItem, CachedMessage } from '@/storage/message-cache/types';
 import type { ChannelId } from '@/integrations/discord/types';
 
-describe.concurrent('MessageCacheBackend', () => {
+describe('MessageCacheBackend', () => {
     let ddbMock: ReturnType<typeof mockClient>;
     let backend: MessageCacheBackend;
 

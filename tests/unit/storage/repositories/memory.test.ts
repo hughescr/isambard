@@ -10,7 +10,7 @@ import { MemoryRepository } from '@/storage/repositories/memory';
 import { ValidationError } from '@/storage/errors';
 import type { MemoryItem } from '@/storage/models/memory';
 
-describe.concurrent('MemoryRepository', () => {
+describe('MemoryRepository', () => {
     let ddbMock: ReturnType<typeof mockClient>;
     let repository: MemoryRepository;
 

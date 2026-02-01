@@ -13,7 +13,7 @@ import * as clientModule from '@/integrations/discord/client';
 import * as presenceModule from '@/integrations/discord/presence';
 import { createBotStateManager } from '@/integrations/discord/state';
 
-describe.concurrent('createDiscordBot', () => {
+describe('createDiscordBot', () => {
     const spies: ReturnType<typeof spyOn>[] = [];
 
     // Setup common mocks

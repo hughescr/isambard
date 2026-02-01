@@ -41,7 +41,7 @@ const createMockSearchResponse = (overrides: Partial<SearchResponse> = {}): Sear
     ...overrides,
 });
 
-describe.concurrent('createDiscordMCPServer', () => {
+describe('createDiscordMCPServer', () => {
     let mockSearchService: MessageSearchService;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock Discord client for testing
     let mockClient: any;

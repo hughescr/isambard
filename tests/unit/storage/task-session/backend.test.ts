@@ -9,7 +9,7 @@ import {
 import { TaskSessionBackend } from '@/storage/task-session/backend';
 import { createSessionId } from '@/storage/task-session/types';
 
-describe.concurrent('TaskSessionBackend', () => {
+describe('TaskSessionBackend', () => {
     let ddbMock: ReturnType<typeof mockClient>;
     let backend: TaskSessionBackend;
 

@@ -6,7 +6,7 @@ import type { MessageSearchService } from '@/integrations/discord/message-histor
 import type { DiscordChannelCheckpoint } from '@/integrations/discord/inbox/types';
 import { createChannelId, createGuildId, createUserId } from '@/integrations/discord/types';
 
-describe.concurrent('InboxManager', () => {
+describe('InboxManager', () => {
     let mockCheckpointManager: CheckpointManager;
     let mockMessageSearchService: MessageSearchService;
     let manager: InboxManager;

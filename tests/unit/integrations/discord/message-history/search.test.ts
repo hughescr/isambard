@@ -72,7 +72,7 @@ function createMockCachedMessage(overrides: Partial<{
     };
 }
 
-describe.concurrent('createMessageSearchService', () => {
+describe('createMessageSearchService', () => {
     let mockFetcher: MessageFetcher;
     let mockCache: MessageCache;
     let mockSummarizer: MessageSummarizer;

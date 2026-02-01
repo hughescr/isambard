@@ -9,7 +9,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import * as textGenerator from '@/agent/text-generator';
 import type { BotStateManager } from '@/integrations/discord/state';
 
-describe.concurrent('createInboxMCPServer', () => {
+describe('createInboxMCPServer', () => {
     let mockInboxManager: InboxManager;
     const spies: ReturnType<typeof spyOn>[] = [];
 

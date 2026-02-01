@@ -20,7 +20,7 @@ import { createDiscordRateLimiter, type LimitFunction } from '@/integrations/dis
 // Synchronous mock limit function that just executes immediately (no p-limit overhead)
 const syncLimit: LimitFunction = async <T>(fn: () => PromiseLike<T>): Promise<T> => fn();
 
-describe.concurrent('createDiscordRateLimiter', () => {
+describe('createDiscordRateLimiter', () => {
     test('sends single message to channel', async () => {
         const mockChannel = {
             id:   'channel-1',

@@ -3,22 +3,7 @@ import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { fetchImage, fetchImages, saveNonImageAttachment } from '@/integrations/discord/attachments/fetcher';
 import type { AttachmentMetadata } from '@/integrations/discord/attachments/types';
 import { MAX_IMAGE_SIZE_BYTES } from '@/integrations/discord/attachments/types';
-
-// Mock heic-convert (the converter will use this mock)
-void mock.module('heic-convert', () => ({
-    'default': mock(async (_options: { buffer: ArrayBufferLike, format: string }) => {
-        return Buffer.from('converted-png-data');
-    }),
-}));
-
-// Mock fs operations
-const mockMkdir = mock(async (_path: string, _options?: { recursive?: boolean }) => undefined);
-const mockWriteFile = mock(async (_path: string, _data: Buffer) => undefined);
-
-void mock.module('node:fs/promises', () => ({
-    mkdir:     mockMkdir,
-    writeFile: mockWriteFile,
-}));
+import { mockHeicConvert, setHeicConvertImpl, resetHeicConvertImpl, mockFsPromises, resetMockFs } from '../../../../setup';
 
 // Mock global fetch
 const mockFetch = mock(async (_url: string, _options?: RequestInit): Promise<Response> => {
@@ -30,8 +15,9 @@ const originalFetch = globalThis.fetch;
 
 describe('Attachment Fetcher', () => {
     beforeEach(() => {
-        mockMkdir.mockClear();
-        mockWriteFile.mockClear();
+        setHeicConvertImpl(async () => Buffer.from('converted-png-data'));
+        mockFsPromises.mkdir.mockClear();
+        mockFsPromises.writeFile.mockClear();
         mockFetch.mockClear();
         // Replace global fetch with our mock for testing
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any -- Testing mock needs to override global fetch type
@@ -39,6 +25,8 @@ describe('Attachment Fetcher', () => {
     });
 
     afterEach(() => {
+        resetHeicConvertImpl();
+        resetMockFs();
         // Restore original fetch
         globalThis.fetch = originalFetch;
     });
@@ -72,7 +60,6 @@ describe('Attachment Fetcher', () => {
                 expect(result.image.width).toBe(800);
                 expect(result.image.height).toBe(600);
             }
-            // Native image types don't need conversion
         });
 
         test('fetches and returns native image (png) as base64', async () => {
@@ -99,7 +86,6 @@ describe('Attachment Fetcher', () => {
                 expect(result.image.base64Data).toBe(imageData.toString('base64'));
                 expect(result.image.originalSize).toBe(2048);
             }
-            // Native image types don't need conversion
         });
 
         test('fetches and returns native image (gif) as base64', async () => {
@@ -125,7 +111,6 @@ describe('Attachment Fetcher', () => {
                 expect(result.image.mediaType).toBe('image/gif');
                 expect(result.image.base64Data).toBe(imageData.toString('base64'));
             }
-            // Native image types don't need conversion
         });
 
         test('fetches and returns native image (webp) as base64', async () => {
@@ -151,7 +136,6 @@ describe('Attachment Fetcher', () => {
                 expect(result.image.mediaType).toBe('image/webp');
                 expect(result.image.base64Data).toBe(imageData.toString('base64'));
             }
-            // Native image types don't need conversion
         });
 
         test('fetches HEIC, converts to PNG, returns as base64', async () => {
@@ -331,8 +315,7 @@ describe('Attachment Fetcher', () => {
             } as Response);
 
             // Make heic-convert throw
-            const heicConvert = (await import('heic-convert')).default as unknown as ReturnType<typeof mock>;
-            heicConvert.mockRejectedValueOnce(new Error('Invalid HEIC data'));
+            mockHeicConvert.mockRejectedValueOnce(new Error('Invalid HEIC data'));
 
             const result = await fetchImage(metadata);
 
@@ -343,9 +326,6 @@ describe('Attachment Fetcher', () => {
                 expect(result.failure.error).toContain('Invalid HEIC data');
             }
         });
-
-        // Note: Conversion error handling is tested in converter.test.ts
-        // The fetcher will catch any errors from the converter and return failure info
     });
 
     describe('fetchImages', () => {
@@ -516,8 +496,8 @@ describe('Attachment Fetcher', () => {
             expect(result?.contentType).toBe('application/pdf');
             expect(result?.size).toBe(4096);
 
-            expect(mockMkdir).toHaveBeenCalledWith('/tmp/scratch/attachments/msg123', { recursive: true });
-            expect(mockWriteFile).toHaveBeenCalledWith('/tmp/scratch/attachments/msg123/document.pdf', fileData);
+            expect(mockFsPromises.mkdir).toHaveBeenCalledWith('/tmp/scratch/attachments/msg123', { recursive: true });
+            expect(mockFsPromises.writeFile).toHaveBeenCalledWith('/tmp/scratch/attachments/msg123/document.pdf', fileData);
         });
 
         test('creates nested directory structure', async () => {
@@ -536,7 +516,7 @@ describe('Attachment Fetcher', () => {
 
             await saveNonImageAttachment(metadata, '/some/deep/path', 'msg456');
 
-            expect(mockMkdir).toHaveBeenCalledWith('/some/deep/path/attachments/msg456', { recursive: true });
+            expect(mockFsPromises.mkdir).toHaveBeenCalledWith('/some/deep/path/attachments/msg456', { recursive: true });
         });
 
         test('handles fetch errors gracefully (returns null)', async () => {
@@ -591,7 +571,7 @@ describe('Attachment Fetcher', () => {
                 arrayBuffer: async () => fileData.buffer,
             } as Response);
 
-            mockWriteFile.mockRejectedValueOnce(new Error('Write failed'));
+            mockFsPromises.writeFile.mockRejectedValueOnce(new Error('Write failed'));
 
             const result = await saveNonImageAttachment(metadata, '/tmp/scratch', 'msg123');
 

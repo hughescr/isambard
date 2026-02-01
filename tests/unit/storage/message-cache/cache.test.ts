@@ -12,7 +12,7 @@ import { MessageCache } from '@/storage/message-cache/cache';
 import type { MessageId, CachedSegmentItem, CachedMessage } from '@/storage/message-cache/types';
 import type { ChannelId } from '@/integrations/discord/types';
 
-describe.concurrent('MessageCache', () => {
+describe('MessageCache', () => {
     let ddbMock: ReturnType<typeof mockClient>;
     let cache: MessageCache;
 

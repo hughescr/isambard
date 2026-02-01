@@ -11,7 +11,7 @@ import { MemoryRepository } from '@/storage/repositories/memory';
 import { ItemNotFoundError, ConflictError, ValidationError } from '@/storage/errors';
 import type { MemoryItem } from '@/storage/models/memory';
 
-describe.concurrent('MemoryRepository', () => {
+describe('MemoryRepository', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let repository: MemoryRepository;
 

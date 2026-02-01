@@ -37,7 +37,7 @@ describe('MemoryToolBackend', () => {
         }
     });
 
-    describe.concurrent('create', () => {
+    describe('create', () => {
         test('should create a new memory tool item', async () => {
             ddbMock.on(PutCommand).resolves({});
 
@@ -119,7 +119,7 @@ describe('MemoryToolBackend', () => {
         });
     });
 
-    describe.concurrent('get', () => {
+    describe('get', () => {
         const testPath = '/test/file.md' as MemoryPath;
 
         test('should return item when found', async () => {

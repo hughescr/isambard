@@ -31,7 +31,7 @@ class TestRepository extends BaseRepository<{ id: string, name: string }> {
     }
 }
 
-describe.concurrent('BaseRepository', () => {
+describe('BaseRepository', () => {
     let ddbMock: ReturnType<typeof mockClient>;
     let repository: TestRepository;
 

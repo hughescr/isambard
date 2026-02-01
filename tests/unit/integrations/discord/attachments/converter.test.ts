@@ -1,15 +1,11 @@
-import { describe, test, expect, mock } from 'bun:test';
+import { describe, test, expect, afterEach } from 'bun:test';
 import { needsConversion, convert } from '@/integrations/discord/attachments/converter';
-
-// Mock heic-convert
-void mock.module('heic-convert', () => ({
-    'default': mock(async (_options: { buffer: ArrayBufferLike, format: string }) => {
-        // Return a fake PNG buffer
-        return Buffer.from('fake-png-data');
-    }),
-}));
+import { mockHeicConvert, resetHeicConvertImpl } from '../../../../setup';
 
 describe('Image Converter', () => {
+    afterEach(() => {
+        resetHeicConvertImpl();
+    });
     describe('needsConversion', () => {
         test('returns true for image/heic', () => {
             expect(needsConversion('image/heic')).toBe(true);
@@ -82,8 +78,7 @@ describe('Image Converter', () => {
         });
 
         test('wraps heicConvert errors with context', async () => {
-            const heicConvert = (await import('heic-convert')).default as unknown as ReturnType<typeof mock>;
-            heicConvert.mockRejectedValueOnce(new Error('Invalid HEIC data'));
+            mockHeicConvert.mockRejectedValueOnce(new Error('Invalid HEIC data'));
 
             const inputBuffer = Buffer.from('corrupt-heic-data');
 

@@ -13,7 +13,7 @@ import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import { ItemNotFoundError as _ItemNotFoundError, ConflictError as _ConflictError, ValidationError as _ValidationError } from '@/storage/errors';
 import type { MemoryToolItem, MemoryPath, ContentType, LayerName as _LayerName } from '@/storage/memory-tool/types';
 
-describe.concurrent('MemoryToolBackend - Version Operations', () => {
+describe('MemoryToolBackend - Version Operations', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let backend: MemoryToolBackend;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Spy type is complex

@@ -204,6 +204,29 @@ mock.module('@/integrations/discord/retry', () => ({
     discordErrorClassifier: originalDiscordErrorClassifier,
 }));
 
+// Mock heic-convert with mutable indirection for per-test customization
+type HeicConvertFn = (options: { buffer: ArrayBufferLike, format: string }) => Promise<Buffer>;
+
+let heicConvertImpl: HeicConvertFn = async _options => Buffer.from('fake-png-data');
+
+export const mockHeicConvert = mock(async (options: { buffer: ArrayBufferLike, format: string }) => {
+    return heicConvertImpl(options);
+});
+
+export function setHeicConvertImpl(fn: HeicConvertFn): void {
+    heicConvertImpl = fn;
+}
+
+export function resetHeicConvertImpl(): void {
+    heicConvertImpl = async () => Buffer.from('fake-png-data');
+    mockHeicConvert.mockClear();
+}
+
+// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
+mock.module('heic-convert', () => ({
+    'default': mockHeicConvert,
+}));
+
 // Mock node:fs/promises to avoid filesystem I/O cold-start cost
 // Returns in-memory fake filesystem without calling real FS APIs
 const mockFs = new Map<string, { type: 'file' | 'dir', content?: string }>();
