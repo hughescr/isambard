@@ -68,8 +68,9 @@ describe('sendResponse', () => {
         // Mock target channel
         mockTargetChannelSend = mock(async () => ({ id: 'msg-456' }));
         mockTargetChannel = {
-            id:   'target-channel-456',
-            send: mockTargetChannelSend,
+            id:          'target-channel-456',
+            send:        mockTargetChannelSend,
+            isTextBased: _.constant(true),
         } as unknown as TextChannel;
 
         // Mock client

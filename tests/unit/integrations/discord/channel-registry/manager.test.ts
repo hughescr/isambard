@@ -65,6 +65,7 @@ describe('ChannelRegistryManager', () => {
         // Create mock Discord client
         client = {
             channels: {
+                cache: new Map(),
                 fetch: mock((channelId: string) => {
                     // Default: return a mock channel with the ID as the name
                     return Promise.resolve({
@@ -928,6 +929,54 @@ describe('ChannelRegistryManager', () => {
     describe('homeGuild getter', () => {
         it('should return home guild ID', () => {
             expect(manager.homeGuild).toBe(homeGuildId);
+        });
+    });
+
+    describe('buildChannelMetadata fallback', () => {
+        it('should use "Unknown" fallback when Discord channel has no name property', async () => {
+            const channel = createMockChannel();
+
+            // Mock backend to return a stored record
+            backend.getChannel = mock(() => Promise.resolve(createMockStorageRecord({
+                channelId: channel.channelId,
+                guildId:   channel.guildId,
+                isMuted:   channel.isMuted
+            })));
+
+            // Mock Discord client to return a channel WITHOUT a name property (e.g., DMChannel)
+            client.channels.fetch = mock(() => Promise.resolve({
+                id: channel.channelId,
+                // No 'name' property at all
+            } as unknown as import('discord.js').Channel)) as unknown as typeof client.channels.fetch;
+
+            // Fetch channel - should trigger buildChannelMetadata with no-name channel
+            const result = await manager.getChannel(channel.channelId);
+
+            // Should fall back to 'Unknown'
+            expect(result?.channelName).toBe('Unknown');
+        });
+
+        it('should use "Unknown" fallback when Discord channel name is null', async () => {
+            const channel = createMockChannel();
+
+            // Mock backend to return a stored record
+            backend.getChannel = mock(() => Promise.resolve(createMockStorageRecord({
+                channelId: channel.channelId,
+                guildId:   channel.guildId,
+                isMuted:   channel.isMuted
+            })));
+
+            // Mock Discord client to return a channel with null name
+            client.channels.fetch = mock(() => Promise.resolve({
+                id:   channel.channelId,
+                name: null, // Explicitly null
+            } as unknown as import('discord.js').Channel)) as unknown as typeof client.channels.fetch;
+
+            // Fetch channel - should trigger buildChannelMetadata with null name
+            const result = await manager.getChannel(channel.channelId);
+
+            // Should fall back to 'Unknown'
+            expect(result?.channelName).toBe('Unknown');
         });
     });
 });

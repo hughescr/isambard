@@ -55,7 +55,7 @@ export async function discoverAllChannels(
 
     // Aggregate results
     for(const settledResult of results) {
-        // Stryker disable all: Defensive handling for unexpected promise rejections - the else branch cannot be triggered due to try-catch in the async callback
+        // All promises are fulfilled because try-catch in async callback handles all errors
         if(settledResult.status === 'fulfilled') {
             const value = settledResult.value;
             result.discovered += value.discovered;
@@ -66,14 +66,7 @@ export async function discoverAllChannels(
                     error:   value.error,
                 });
             }
-        } else {
-            // This shouldn't happen due to try-catch in the promise, but handle it
-            result.errors.push({
-                guildId: 'unknown',
-                error:   'Promise rejection: ' + String(settledResult.reason),
-            });
         }
-        // Stryker restore all
     }
 
     return result;

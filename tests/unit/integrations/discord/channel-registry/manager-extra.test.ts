@@ -65,6 +65,7 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
         // Create mock Discord client
         client = {
             channels: {
+                cache: new Map(),
                 fetch: mock((channelId: string) => {
                     // Default: return a mock channel with the ID as the name
                     return Promise.resolve({

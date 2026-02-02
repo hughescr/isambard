@@ -1,7 +1,7 @@
 import _ from 'lodash';
-import type { Client } from 'discord.js';
+import type { Client, Channel } from 'discord.js';
 import type { ChannelRegistryBackend } from './backend';
-import type { ChannelMetadata, WellKnownChannel } from './types';
+import type { ChannelMetadata, WellKnownChannel, ChannelStorageRecord } from './types';
 import type { ChannelId, GuildId } from '../types';
 
 /**
@@ -57,25 +57,15 @@ export class ChannelRegistryManager {
             // Stryker disable BlockStatement: Defensive error handling for Discord API failures
             // Fetch channel info from Discord API
             try {
-                const discordChannel = await this.client.channels.fetch(record.channelId);
+                const discordChannel = this.client.channels.cache.get(record.channelId)
+                  ?? await this.client.channels.fetch(record.channelId);
                 if(!discordChannel) {
                     // Channel was deleted on Discord, skip it
                     continue;
                 }
 
                 // Merge Discord API data with stored data
-                const now = new Date().toISOString();
-                const metadata: ChannelMetadata = {
-                    channelId:    record.channelId,
-                    guildId:      record.guildId,
-                    // Stryker disable next-line StringLiteral: Defensive fallback for malformed Discord channel objects
-                    channelName:  ('name' in discordChannel ? discordChannel.name : null) ?? 'Unknown',
-                    isMuted:      record.isMuted,
-                    isWellKnown:  record.isWellKnown,
-                    discoveredAt: record.createdAt,
-                    lastSeenAt:   now,
-                    updatedAt:    record.updatedAt,
-                };
+                const metadata = this.buildChannelMetadata(record, discordChannel);
 
                 this.addToCache(metadata);
             } catch{
@@ -138,25 +128,15 @@ export class ChannelRegistryManager {
 
         // Fetch channel info from Discord API
         try {
-            const discordChannel = await this.client.channels.fetch(channelId);
+            const discordChannel = this.client.channels.cache.get(channelId)
+              ?? await this.client.channels.fetch(channelId);
             if(!discordChannel) {
                 // Channel was deleted on Discord
                 return null;
             }
 
             // Merge Discord API data with stored data
-            const now = new Date().toISOString();
-            const metadata: ChannelMetadata = {
-                channelId:    storedRecord.channelId,
-                guildId:      storedRecord.guildId,
-                // Stryker disable next-line StringLiteral: Defensive fallback for malformed Discord channel objects
-                channelName:  ('name' in discordChannel ? discordChannel.name : null) ?? 'Unknown',
-                isMuted:      storedRecord.isMuted,
-                isWellKnown:  storedRecord.isWellKnown,
-                discoveredAt: storedRecord.createdAt,
-                lastSeenAt:   now,
-                updatedAt:    storedRecord.updatedAt,
-            };
+            const metadata = this.buildChannelMetadata(storedRecord, discordChannel);
 
             this.addToCache(metadata);
             return metadata;
@@ -232,25 +212,15 @@ export class ChannelRegistryManager {
         for(const record of storedRecords) {
             // Stryker disable BlockStatement: Defensive error handling for Discord API failures
             try {
-                const discordChannel = await this.client.channels.fetch(record.channelId);
+                const discordChannel = this.client.channels.cache.get(record.channelId)
+                  ?? await this.client.channels.fetch(record.channelId);
                 if(!discordChannel) {
                     // Channel was deleted on Discord, skip it
                     continue;
                 }
 
                 // Merge Discord API data with stored data
-                const now = new Date().toISOString();
-                const metadata: ChannelMetadata = {
-                    channelId:    record.channelId,
-                    guildId:      record.guildId,
-                    // Stryker disable next-line StringLiteral: Defensive fallback for malformed Discord channel objects
-                    channelName:  ('name' in discordChannel ? discordChannel.name : null) ?? 'Unknown',
-                    isMuted:      record.isMuted,
-                    isWellKnown:  record.isWellKnown,
-                    discoveredAt: record.createdAt,
-                    lastSeenAt:   now,
-                    updatedAt:    record.updatedAt,
-                };
+                const metadata = this.buildChannelMetadata(record, discordChannel);
 
                 this.addToCache(metadata);
                 results.push(metadata);
@@ -289,25 +259,15 @@ export class ChannelRegistryManager {
         for(const record of storedRecords) {
             // Stryker disable BlockStatement: Defensive error handling for Discord API failures
             try {
-                const discordChannel = await this.client.channels.fetch(record.channelId);
+                const discordChannel = this.client.channels.cache.get(record.channelId)
+                  ?? await this.client.channels.fetch(record.channelId);
                 if(!discordChannel) {
                     // Channel was deleted on Discord, skip it
                     continue;
                 }
 
                 // Merge Discord API data with stored data
-                const now = new Date().toISOString();
-                const metadata: ChannelMetadata = {
-                    channelId:    record.channelId,
-                    guildId:      record.guildId,
-                    // Stryker disable next-line StringLiteral: Defensive fallback for malformed Discord channel objects
-                    channelName:  ('name' in discordChannel ? discordChannel.name : null) ?? 'Unknown',
-                    isMuted:      record.isMuted,
-                    isWellKnown:  record.isWellKnown,
-                    discoveredAt: record.createdAt,
-                    lastSeenAt:   now,
-                    updatedAt:    record.updatedAt,
-                };
+                const metadata = this.buildChannelMetadata(record, discordChannel);
 
                 this.addToCache(metadata);
 
@@ -356,25 +316,15 @@ export class ChannelRegistryManager {
 
         // Fetch channel info from Discord API
         try {
-            const discordChannel = await this.client.channels.fetch(storedRecord.channelId);
+            const discordChannel = this.client.channels.cache.get(storedRecord.channelId)
+              ?? await this.client.channels.fetch(storedRecord.channelId);
             if(!discordChannel) {
                 // Channel was deleted on Discord
                 return null;
             }
 
             // Merge Discord API data with stored data
-            const now = new Date().toISOString();
-            const metadata: ChannelMetadata = {
-                channelId:    storedRecord.channelId,
-                guildId:      storedRecord.guildId,
-                // Stryker disable next-line StringLiteral: Defensive fallback for malformed Discord channel objects
-                channelName:  ('name' in discordChannel ? discordChannel.name : null) ?? 'Unknown',
-                isMuted:      storedRecord.isMuted,
-                isWellKnown:  storedRecord.isWellKnown,
-                discoveredAt: storedRecord.createdAt,
-                lastSeenAt:   now,
-                updatedAt:    storedRecord.updatedAt,
-            };
+            const metadata = this.buildChannelMetadata(storedRecord, discordChannel);
 
             this.addToCache(metadata);
             return metadata;
@@ -486,6 +436,26 @@ export class ChannelRegistryManager {
      */
     get homeGuild(): GuildId {
         return this.homeGuildId;
+    }
+
+    /**
+     * Build ChannelMetadata from storage record and Discord channel data.
+     * Private helper method to reduce duplication across methods.
+     */
+    private buildChannelMetadata(
+        record: ChannelStorageRecord,
+        discordChannel: Channel
+    ): ChannelMetadata {
+        return {
+            channelId:    record.channelId,
+            guildId:      record.guildId,
+            channelName:  ('name' in discordChannel ? discordChannel.name : null) ?? 'Unknown',
+            isMuted:      record.isMuted,
+            isWellKnown:  record.isWellKnown,
+            discoveredAt: record.createdAt,
+            lastSeenAt:   new Date().toISOString(),
+            updatedAt:    record.updatedAt,
+        };
     }
 
     /**

@@ -178,7 +178,7 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
         } else {
             // Send all chunks to different target channel
             const targetChannel = await client.channels.fetch(targetChannelId);
-            if(!targetChannel || !('send' in targetChannel)) {
+            if(!targetChannel?.isTextBased()) {
                 throw new Error(`Target channel ${targetChannelId} not found or not a text channel`);
             }
 
