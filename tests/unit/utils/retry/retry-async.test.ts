@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- test mock values */
-/* eslint-disable @typescript-eslint/await-thenable -- Bun's expect().rejects/resolves needs await but types don't reflect it */
 /* eslint-disable @typescript-eslint/no-empty-function -- test mocks */
 /* eslint-disable lodash/prefer-noop -- test clarity */
 import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
@@ -110,7 +109,7 @@ describe('retryAsync', () => {
             const operation = mock(() => Promise.reject(error));
             const classifier = mock(() => ({ category: 'permanent', message: 'Permanent error' } as ErrorClassification));
 
-            await expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow('Permanent error');
+            expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow('Permanent error');
 
             expect(operation).toHaveBeenCalledTimes(1);
             expect(classifier).toHaveBeenCalledTimes(1);
@@ -138,7 +137,7 @@ describe('retryAsync', () => {
                 return { category: 'permanent', message: 'Permanent error' } as ErrorClassification;
             });
 
-            await expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow('Permanent error');
+            expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow('Permanent error');
 
             expect(operation).toHaveBeenCalledTimes(2);
             expect(classifier).toHaveBeenCalledTimes(2);
@@ -204,7 +203,7 @@ describe('retryAsync', () => {
             const operation = mock(() => Promise.reject(error));
             const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
 
-            await expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow('Transient error');
+            expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow('Transient error');
 
             expect(operation).toHaveBeenCalledTimes(3); // maxAttempts
             expect(classifier).toHaveBeenCalledTimes(3);
@@ -218,7 +217,7 @@ describe('retryAsync', () => {
             const operation = mock(() => Promise.reject(originalError));
             const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
 
-            await expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow('Original error message');
+            expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow('Original error message');
         });
     });
 
@@ -308,7 +307,7 @@ describe('retryAsync', () => {
             const operation = mock(() => Promise.reject(new Error('Permanent error')));
             const classifier = mock(() => ({ category: 'permanent', message: 'Permanent error' } as ErrorClassification));
 
-            await expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow();
+            expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow();
 
             expect(mockLogger.error).toHaveBeenCalledTimes(1);
             const logCall = (mockLogger.error as ReturnType<typeof mock>).mock.calls[0][0];
@@ -322,7 +321,7 @@ describe('retryAsync', () => {
             const operation = mock(() => Promise.reject(new Error('Transient error')));
             const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
 
-            await expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow();
+            expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow();
 
             expect(mockLogger.error).toHaveBeenCalledTimes(1);
             const logCall = (mockLogger.error as ReturnType<typeof mock>).mock.calls[0][0];
@@ -359,7 +358,7 @@ describe('retryAsync', () => {
             const operation = mock(() => Promise.reject(new Error('Error')));
             const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
 
-            await expect(retryAsync(operation, { policy, classifier, deps })).rejects.toThrow();
+            expect(retryAsync(operation, { policy, classifier, deps })).rejects.toThrow();
 
             expect(operation).toHaveBeenCalledTimes(1);
             expect(sleepMock).not.toHaveBeenCalled(); // No retries
@@ -410,7 +409,7 @@ describe('retryAsync', () => {
             const operation = mock(() => Promise.reject(new Error('transient')));
             const classifier = mock(() => ({ category: 'transient', message: 'transient' } as ErrorClassification));
 
-            await expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow();
+            expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow();
 
             const firstWarnLog = (mockLogger.warn as ReturnType<typeof mock>).mock.calls[0][0];
             const secondWarnLog = (mockLogger.warn as ReturnType<typeof mock>).mock.calls[1][0];
@@ -437,7 +436,7 @@ describe('retryAsync', () => {
             const operation = mock(() => Promise.reject(new Error('always fails')));
             const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
 
-            await expect(retryAsync(operation, {
+            expect(retryAsync(operation, {
                 policy: { ...defaultPolicy, maxAttempts: 3 },
                 classifier,
                 deps,
@@ -451,7 +450,7 @@ describe('retryAsync', () => {
             const operation = mock(() => Promise.reject(new Error('always fails')));
             const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
 
-            await expect(retryAsync(operation, {
+            expect(retryAsync(operation, {
                 policy: { ...defaultPolicy, maxAttempts: 5 },
                 classifier,
                 deps,
@@ -492,7 +491,7 @@ describe('retryAsync', () => {
             const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
 
             // Test with maxAttempts = 1 (boundary case)
-            await expect(retryAsync(operation, {
+            expect(retryAsync(operation, {
                 policy: { ...defaultPolicy, maxAttempts: 1 },
                 classifier,
                 deps,
@@ -504,7 +503,7 @@ describe('retryAsync', () => {
             operation.mockClear();
 
             // Test with maxAttempts = 2 (verifies <= vs < boundary)
-            await expect(retryAsync(operation, {
+            expect(retryAsync(operation, {
                 policy: { ...defaultPolicy, maxAttempts: 2 },
                 classifier,
                 deps,
@@ -522,7 +521,7 @@ describe('retryAsync', () => {
 
             const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
 
-            await expect(retryAsync(operation, {
+            expect(retryAsync(operation, {
                 policy: { ...defaultPolicy, maxAttempts: 4 },
                 classifier,
                 deps,

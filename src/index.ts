@@ -30,6 +30,7 @@ import { createMessageSearchService } from './integrations/discord/message-histo
 import { CheckpointManager, InboxManager } from './integrations/discord/inbox';
 import { createInboxMCPServer } from './agent/inbox-mcp-server';
 import { createBotStateManager, type BotStateManager } from './integrations/discord/state';
+import { ChannelRegistryBackend, ChannelRegistryManager } from './integrations/discord/channel-registry';
 import { logger } from '@hughescr/logger';
 
 export interface App {
@@ -76,7 +77,12 @@ export async function createApp(): Promise<App> {
     // Create question registry for interactive questions (shared between MCP and bot)
     const questionRegistry = createQuestionRegistry();
 
-    // Try to create memory system and Discord MCP (optional - requires DynamoDB)
+    // Create DynamoDB client (REQUIRED)
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- SST Resource type is complex
+    const dynamoDBConfig = loadDynamoDBConfig(Resource as any);
+    const { docClient, tableName } = createDynamoDBClient(dynamoDBConfig);
+
+    // Try to create memory system, Discord client, and channel registry (required for bot startup)
     let contextBuilder;
     let memoryMcpServer: McpServerConfig | undefined;
     let discordClient: Client | undefined;
@@ -86,12 +92,9 @@ export async function createApp(): Promise<App> {
     let memoryBackend: MemoryToolBackend | undefined;
     let botStateManager: BotStateManager | undefined;
     let taskPersistenceCoordinator: TaskPersistenceCoordinator | undefined;
+    let channelRegistry: ChannelRegistryManager;
 
     try {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- SST Resource type is complex
-        const dynamoDBConfig = loadDynamoDBConfig(Resource as any);
-        const { docClient, tableName } = createDynamoDBClient(dynamoDBConfig);
-
         // Create memory backend
         memoryBackend = new MemoryToolBackend(docClient, tableName);
 
@@ -104,8 +107,17 @@ export async function createApp(): Promise<App> {
         // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
         logger.info(`Memory system initialized with DynamoDB: ${tableName} in ${dynamoDBConfig.region}`);
 
-        // Create Discord client early (shared with bot)
+        // Create Discord client early (shared with bot and channel registry)
         discordClient = createDiscordClient(config.discord);
+
+        // Create channel registry (REQUIRED - bot cannot start without it)
+        // Must be created after Discord client since it fetches channel info from Discord API
+        const channelRegistryBackend = new ChannelRegistryBackend(docClient, tableName);
+        channelRegistry = new ChannelRegistryManager({
+            backend:     channelRegistryBackend,
+            homeGuildId: config.discord.homeGuildId,
+            client:      discordClient,
+        });
 
         // Create message history components
         const messageFetcher = createMessageFetcher(discordClient);
@@ -120,7 +132,7 @@ export async function createApp(): Promise<App> {
         });
 
         // Create Discord MCP server
-        discordMcpServer = createDiscordMCPServer(messageSearchService, discordClient, questionRegistry);
+        discordMcpServer = createDiscordMCPServer(messageSearchService, discordClient, questionRegistry, channelRegistry);
 
         // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
         logger.info('Discord message history enabled');
@@ -128,12 +140,12 @@ export async function createApp(): Promise<App> {
         // Create checkpoint manager for inbox
         const checkpointManager = new CheckpointManager({ backend: memoryBackend });
 
-        // Create inbox manager with monitored channels from config
+        // Create inbox manager with channel registry
         inboxManager = new InboxManager({
             checkpointManager,
             messageSearchService,
-            monitoredChannelIds: config.discord.monitoredChannelIds as import('@/integrations/discord/types').ChannelId[],
-            config:              config.discord.inbox,  // Optional inbox config from Discord config
+            channelRegistry,
+            config: config.discord.inbox,  // Optional inbox config from Discord config
         });
 
         // Create bot state manager (shared between inbox MCP server and bot)
@@ -166,8 +178,13 @@ export async function createApp(): Promise<App> {
     } catch (error) {
         const errorMessage = _.isError(error) ? error.message : String(error);
         // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-        logger.warn(`Memory not configured, continuing without persistent memory: ${errorMessage}`);
-        // Continue without memory system
+        logger.error(`Failed to initialize required systems: ${errorMessage}`);
+        throw new Error(`Failed to initialize Discord client and channel registry: ${errorMessage}. The bot cannot start without these.`);
+    }
+
+    // Verify channel registry was initialized (required for bot to function)
+    if(!channelRegistry!) {
+        throw new Error('Channel registry not initialized. The bot cannot start without it.');
     }
 
     // Load plugins from plugins directory
@@ -181,6 +198,7 @@ export async function createApp(): Promise<App> {
         inboxMcpServer,
         plugins,
         taskPersistenceCoordinator,
+        channelRegistry,
     });
 
     // Load identity context for presence idle status generation (if API key available)
@@ -222,6 +240,7 @@ export async function createApp(): Promise<App> {
         questionRegistry,
         inboxManager,
         botStateManager,
+        channelRegistry,
         memoryBackend: memoryBackend
             ? {
                 storeCompletionSignal: async (signal: CatchUpCompletionSignal) => {

@@ -2,12 +2,13 @@ import { describe, test, expect } from 'bun:test';
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import { createDiscordClient } from '@/integrations/discord/client';
 import type { DiscordConfig } from '@/config/schemas';
+import { createGuildId } from '@/integrations/discord/types';
 
 describe.concurrent('createDiscordClient', () => {
     const validConfig: DiscordConfig = {
-        botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
-        applicationId:       '123456789012345678',
-        monitoredChannelIds: ['987654321098765432'],
+        botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
+        applicationId: '123456789012345678',
+        homeGuildId:   createGuildId('home-guild-123'),
     };
 
     test('should create a Discord Client instance', () => {
@@ -138,27 +139,5 @@ describe.concurrent('createDiscordClient', () => {
 
     test('should not throw error when creating client', () => {
         expect(() => createDiscordClient(validConfig)).not.toThrow();
-    });
-
-    test('should accept config with empty monitoredChannelIds', () => {
-        const configWithNoChannels: DiscordConfig = {
-            botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
-            applicationId:       '123456789012345678',
-            monitoredChannelIds: [],
-        };
-
-        const client = createDiscordClient(configWithNoChannels);
-        expect(client).toBeInstanceOf(Client);
-    });
-
-    test('should accept config with multiple monitoredChannelIds', () => {
-        const configWithMultipleChannels: DiscordConfig = {
-            botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
-            applicationId:       '123456789012345678',
-            monitoredChannelIds: ['111111111111111111', '222222222222222222', '333333333333333333'],
-        };
-
-        const client = createDiscordClient(configWithMultipleChannels);
-        expect(client).toBeInstanceOf(Client);
     });
 });

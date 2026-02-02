@@ -10,7 +10,6 @@
  */
 
 /* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
-/* eslint-disable @typescript-eslint/await-thenable -- expect().rejects returns a promise */
 
 import { describe, expect, test, mock } from 'bun:test';
 import _ from 'lodash';
@@ -139,7 +138,7 @@ describe('createDiscordRateLimiter', () => {
         const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
 
         // First send fails
-        await expect(
+        expect(
             limiter.sendToChannel(mockChannel, 'Message 1')
         ).rejects.toThrow('Send failed');
 
@@ -249,7 +248,7 @@ describe('createDiscordRateLimiter', () => {
         const limiter = createDiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
 
         // First send fails
-        await expect(
+        expect(
             limiter.sendToChannel(mockChannel, 'Message 1')
         ).rejects.toThrow('First send failed');
 
@@ -328,7 +327,7 @@ describe('createDiscordRateLimiter', () => {
         const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
 
         // First send fails
-        await expect(
+        expect(
             limiter.sendToChannel(mockChannel, 'Message 1')
         ).rejects.toThrow('Send failed');
 

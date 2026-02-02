@@ -8,8 +8,6 @@
  * - retryAsync is properly configured with Discord-specific classifier
  */
 
-/* eslint-disable @typescript-eslint/await-thenable -- expect().rejects returns a promise */
-
 import { describe, expect, test, mock } from 'bun:test';
 import { originalWithDiscordRetry as withDiscordRetry, originalClassifyDiscordError as classifyDiscordError } from '../../../setup';
 import { RateLimitError } from '@/integrations/discord/errors';
@@ -144,7 +142,7 @@ describe('withDiscordRetry', () => {
             debug: mock(),
         };
 
-        await expect(
+        expect(
             withDiscordRetry(operation, 'test-operation', {
                 deps: { logger: mockLogger } as Partial<RetryDeps>,
             })
@@ -172,7 +170,7 @@ describe('withDiscordRetry', () => {
             debug: mock(),
         };
 
-        await expect(
+        expect(
             withDiscordRetry(operation, 'test-operation', {
                 policy: { maxAttempts: 3 },
                 deps:   { sleep: mockSleep, logger: mockLogger } as Partial<RetryDeps>,
@@ -202,7 +200,7 @@ describe('withDiscordRetry', () => {
             debug: mock(),
         };
 
-        await expect(
+        expect(
             withDiscordRetry(operation, 'test-operation', {
                 policy: {
                     maxAttempts: 5,
@@ -225,7 +223,7 @@ describe('withDiscordRetry', () => {
             debug: mock(),
         };
 
-        await expect(
+        expect(
             withDiscordRetry(operation, 'test-operation', {
                 deps: { logger: mockLogger } as Partial<RetryDeps>,
             })

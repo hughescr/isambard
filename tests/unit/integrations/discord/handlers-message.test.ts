@@ -1,18 +1,20 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
-
+/* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
 /* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
 /* eslint-disable lodash/prefer-constant -- Test callbacks */
 import _ from 'lodash';
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import type { Message, User, Guild, TextChannel, DMChannel } from 'discord.js';
-import { mockLogger, mockWithDiscordRetry } from '../../../setup';
+import { mockLogger, mockWithDiscordRetry, createMockBotStateManager, createMockResponseRouter } from '../../../setup';
 import { createMessageHandler } from '@/integrations/discord/handlers';
 import type { DiscordMessageContext, UserId, ChannelId } from '@/integrations/discord/types';
+import { createChannelId } from '@/integrations/discord/types';
 import type { QuestionRegistry } from '@/agent/question-registry';
 import type { PendingQuestion } from '@/agent/question-registry/types';
 import type { AnswerClassifier } from '@/agent/answer-classifier';
 import type { ClassificationResult } from '@/agent/answer-classifier/types';
+import { WellKnownChannelNotFoundError } from '@/integrations/discord/channel-registry';
 
 describe('Discord Event Handlers', () => {
     beforeEach(() => {
@@ -55,30 +57,38 @@ describe('Discord Event Handlers', () => {
                 type:       0, // GuildText
                 sendTyping: mock(async () => undefined),
                 isThread:   mock(() => false),
+                isDMBased:  mock(() => false),
+                channelId:  '333333333333333333',
             } as unknown as TextChannel;
 
             mockDMChannel = {
-                id:       '444444444444444444',
-                type:     1, // DM
-                isThread: mock(() => false),
+                id:        '444444444444444444',
+                type:      1, // DM
+                isThread:  mock(() => false),
+                isDMBased: mock(() => true),
+                channelId: '444444444444444444',
             } as unknown as DMChannel;
 
             mockMessage = {
-                id:        '555555555555555555',
-                content:   'Test message',
-                author:    mockUser,
-                guild:     mockGuild,
-                channel:   mockTextChannel,
-                createdAt: new Date('2025-01-15T12:00:00.000Z'),
-                reply:     mock(async () => ({})),
+                id:           '555555555555555555',
+                content:      'Test message',
+                cleanContent: 'Test message',
+                author:       mockUser,
+                guild:        mockGuild,
+                channel:      mockTextChannel,
+                channelId:    '333333333333333333',
+                createdAt:    new Date('2025-01-15T12:00:00.000Z'),
+                reply:        mock(async () => ({})),
             } as unknown as Message;
         });
 
         it('should ignore messages from bots', async () => {
             const handler = createMessageHandler({
-                monitoredChannelIds: [],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             mockMessage.author.bot = true;
@@ -90,9 +100,11 @@ describe('Discord Event Handlers', () => {
         it('should ignore messages from the bot itself', async () => {
             const botId = '999999999999999999';
             const handler = createMessageHandler({
-                monitoredChannelIds: [],
-                botUserId:           botId as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       botId as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             mockMessage.author.id = botId;
@@ -104,15 +116,18 @@ describe('Discord Event Handlers', () => {
 
         it('should process DM messages', async () => {
             const handler = createMessageHandler({
-                monitoredChannelIds: [],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             const dmMessage = {
                 ...mockMessage,
-                channel: mockDMChannel,
-                guild:   null,
+                channel:   mockDMChannel,
+                channelId: '444444444444444444',
+                guild:     null,
             } as unknown as Message;
 
             await handler(dmMessage);
@@ -123,15 +138,61 @@ describe('Discord Event Handlers', () => {
             expect(context.userId).toBe('111111111111111111');
         });
 
+        it('should log warning and continue processing when DM tracking fails', async () => {
+            const mockDmTracker = {
+                trackFromMessage: mock(() => Promise.reject(new Error('DynamoDB write failed'))),
+            };
+
+            const handler = createMessageHandler({
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
+                dmTracker:       mockDmTracker as any,
+            });
+
+            const dmMessage = {
+                ...mockMessage,
+                channel:   mockDMChannel,
+                channelId: '444444444444444444',
+                guild:     null,
+            } as unknown as Message;
+
+            await handler(dmMessage);
+
+            // Verify DM tracking was attempted
+            expect(mockDmTracker.trackFromMessage).toHaveBeenCalled();
+
+            // Verify warning was logged
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    error:     expect.any(Error),
+                    userId:    '111111111111111111',
+                    channelId: '444444444444444444',
+                    msg:       'Failed to track DM channel, continuing message processing',
+                })
+            );
+
+            // Verify message processing continued despite tracking failure
+            expect(mockOnMessage).toHaveBeenCalled();
+            const context = mockOnMessage.mock.calls[0][0];
+            expect(context.channelId).toBe('444444444444444444');
+            expect(context.userId).toBe('111111111111111111');
+        });
+
         it('should process messages with bot mentions', async () => {
             const botId = '999999999999999999';
             const handler = createMessageHandler({
-                monitoredChannelIds: [],
-                botUserId:           botId as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       botId as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             mockMessage.content = `<@${botId}> hello there`;
+            Object.defineProperty(mockMessage, 'cleanContent', { value: `<@${botId}> hello there`, writable: true });
 
             await handler(mockMessage);
 
@@ -139,11 +200,12 @@ describe('Discord Event Handlers', () => {
         });
 
         it('should process messages in monitored channels', async () => {
-            const channelId = '333333333333333333';
             const handler = createMessageHandler({
-                monitoredChannelIds: [channelId as ChannelId],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             await handler(mockMessage);
@@ -153,9 +215,11 @@ describe('Discord Event Handlers', () => {
 
         it('should ignore messages in non-monitored channels without mention', async () => {
             const handler = createMessageHandler({
-                monitoredChannelIds: ['777777777777777777' as ChannelId],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => false), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             await handler(mockMessage);
@@ -165,9 +229,11 @@ describe('Discord Event Handlers', () => {
 
         it('should pass correct context to onMessage callback', async () => {
             const handler = createMessageHandler({
-                monitoredChannelIds: ['333333333333333333' as ChannelId],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             await handler(mockMessage);
@@ -187,12 +253,17 @@ describe('Discord Event Handlers', () => {
             mockOnMessage = mock(async () => 'Response message');
 
             const handler = createMessageHandler({
-                monitoredChannelIds: ['333333333333333333' as ChannelId],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             await handler(mockMessage);
+
+            // Wait for rate limiter microtasks to complete
+            await Promise.resolve();
 
             expect(mockMessage.reply).toHaveBeenCalledWith('Response message');
         });
@@ -207,9 +278,11 @@ describe('Discord Event Handlers', () => {
             (mockTextChannel as unknown as { send: typeof sendMock }).send = sendMock;
 
             const handler = createMessageHandler({
-                monitoredChannelIds: ['333333333333333333' as ChannelId],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             await handler(mockMessage);
@@ -229,9 +302,11 @@ describe('Discord Event Handlers', () => {
             (mockTextChannel as unknown as { send: typeof sendMock }).send = sendMock;
 
             const handler = createMessageHandler({
-                monitoredChannelIds: ['333333333333333333' as ChannelId],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             await handler(mockMessage);
@@ -258,9 +333,11 @@ describe('Discord Event Handlers', () => {
             mockOnMessage = mock(async () => null);
 
             const handler = createMessageHandler({
-                monitoredChannelIds: ['333333333333333333' as ChannelId],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             await handler(mockMessage);
@@ -274,9 +351,11 @@ describe('Discord Event Handlers', () => {
             });
 
             const handler = createMessageHandler({
-                monitoredChannelIds: ['333333333333333333' as ChannelId],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             await handler(mockMessage);
@@ -298,9 +377,11 @@ describe('Discord Event Handlers', () => {
             });
 
             const handler = createMessageHandler({
-                monitoredChannelIds: ['333333333333333333' as ChannelId],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             await handler(mockMessage);
@@ -312,17 +393,61 @@ describe('Discord Event Handlers', () => {
             expect(loggedObject.msg.includes('Reply failed')).toBe(true);
         });
 
+        it('should handle WellKnownChannelNotFoundError in response routing gracefully', async () => {
+            mockOnMessage = mock(async () => 'Response message');
+
+            // Create a mock response router that throws WellKnownChannelNotFoundError
+            const mockResponseRouter = {
+                routeResponse: mock(async () => {
+                    throw new WellKnownChannelNotFoundError('catch-up');
+                }),
+            };
+
+            // Ensure message author has tag and username properties
+            Object.defineProperty(mockMessage.author, 'tag', { value: 'TestUser#1234', writable: true });
+            Object.defineProperty(mockMessage.author, 'username', { value: 'TestUser', writable: true });
+            // Ensure message has cleanContent property
+            Object.defineProperty(mockMessage, 'cleanContent', { value: mockMessage.content, writable: true });
+
+            const handler = createMessageHandler({
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  mockResponseRouter as any,
+            });
+
+            await handler(mockMessage);
+
+            // Wait for rate limiter microtasks to complete
+            await Promise.resolve();
+
+            // Should log a warning about fallback
+            expect(mockLogger.warn).toHaveBeenCalled();
+            const warnCall = _.find(mockLogger.warn.mock.calls, (call: unknown[]) => {
+                const logObj = call[0] as { msg?: string };
+                return logObj?.msg?.includes('Well-known channel not found');
+            });
+            expect(warnCall).toBeDefined();
+
+            // Should still attempt to send reply to original channel (fallback behavior)
+            expect(mockMessage.reply).toHaveBeenCalled();
+        });
+
         it('should handle DM messages with null guild', async () => {
             const handler = createMessageHandler({
-                monitoredChannelIds: [],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             const dmMessage = {
                 ...mockMessage,
-                channel: mockDMChannel,
-                guild:   null,
+                channel:   mockDMChannel,
+                channelId: '444444444444444444',
+                guild:     null,
             } as unknown as Message;
 
             await handler(dmMessage);
@@ -335,13 +460,16 @@ describe('Discord Event Handlers', () => {
 
         it('should format timestamp as ISO datetime', async () => {
             const handler = createMessageHandler({
-                monitoredChannelIds: ['333333333333333333' as ChannelId],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             const timestampMessage = {
                 ...mockMessage,
+                channelId: '333333333333333333',
                 createdAt: new Date('2025-12-24T15:30:45.123Z'),
             } as unknown as Message;
 
@@ -355,13 +483,16 @@ describe('Discord Event Handlers', () => {
         it('should handle messages with alternative mention format', async () => {
             const botId = '999999999999999999';
             const handler = createMessageHandler({
-                monitoredChannelIds: [],
-                botUserId:           botId as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       botId as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             // Some clients use <@!userId> format
             mockMessage.content = `<@!${botId}> hello`;
+            Object.defineProperty(mockMessage, 'cleanContent', { value: `<@!${botId}> hello`, writable: true });
 
             await handler(mockMessage);
 
@@ -398,15 +529,13 @@ describe('Discord Event Handlers', () => {
             };
 
             const handler = createMessageHandler({
-                monitoredChannelIds: ['333333333333333333' as ChannelId],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
-                presenceManager:     mockPresenceManager as any,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
-                agent:               mockAgent as any,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
-                botStateManager:     mockBotStateManager as any,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                presenceManager: mockPresenceManager as any,
+                agent:           mockAgent as any,
+                botStateManager: mockBotStateManager as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             await handler(mockMessage);
@@ -418,9 +547,11 @@ describe('Discord Event Handlers', () => {
 
         it('should work without optional presenceManager and agent', async () => {
             const handler = createMessageHandler({
-                monitoredChannelIds: ['333333333333333333' as ChannelId],
-                botUserId:           '999999999999999999' as UserId,
-                onMessage:           mockOnMessage,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId:       '999999999999999999' as UserId,
+                onMessage:       mockOnMessage,
+                botStateManager: createMockBotStateManager() as any,
+                responseRouter:  createMockResponseRouter() as any,
             });
 
             await handler(mockMessage);
@@ -436,10 +567,12 @@ describe('Discord Event Handlers', () => {
                 };
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds:    ['333333333333333333' as ChannelId],
+                    channelRegistry:        { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
                     botUserId:              '999999999999999999' as UserId,
                     onMessage:              mockOnMessage,
                     dynamicStatusGenerator: mockDynamicStatusGenerator,
+                    botStateManager:        createMockBotStateManager() as any,
+                    responseRouter:         createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -465,16 +598,14 @@ describe('Discord Event Handlers', () => {
                 };
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds:    ['333333333333333333' as ChannelId],
+                    channelRegistry:        { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
                     botUserId:              '999999999999999999' as UserId,
                     onMessage:              mockOnMessage,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
                     presenceManager:        mockPresenceManager as any,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
                     agent:                  mockAgent as any,
                     dynamicStatusGenerator: mockDynamicStatusGenerator,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
                     botStateManager:        mockBotStateManager as any,
+                    responseRouter:         createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -496,16 +627,14 @@ describe('Discord Event Handlers', () => {
                 };
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
-                    presenceManager:     mockPresenceManager as any,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
-                    agent:               mockAgent as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       mockOnMessage,
+                    presenceManager: mockPresenceManager as any,
+                    agent:           mockAgent as any,
                     // dynamicStatusGenerator NOT provided
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
-                    botStateManager:     mockBotStateManager as any,
+                    botStateManager: mockBotStateManager as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -527,12 +656,13 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => 'direct response');
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           onMessageMock,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
-                    presenceManager:     mockPresenceManager as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       onMessageMock,
+                    presenceManager: mockPresenceManager as any,
                     // agent is NOT provided
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -552,12 +682,13 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => 'direct response');
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           onMessageMock,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       onMessageMock,
                     // presenceManager is NOT provided
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
-                    agent:               mockAgent as any,
+                    agent:           mockAgent as any,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -585,15 +716,13 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => 'should not be called');
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           onMessageMock,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
-                    presenceManager:     mockPresenceManager as any,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
-                    agent:               mockAgent as any,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
-                    botStateManager:     mockBotStateManager as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       onMessageMock,
+                    presenceManager: mockPresenceManager as any,
+                    agent:           mockAgent as any,
+                    botStateManager: mockBotStateManager as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -615,14 +744,13 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => 'onMessage response');
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           onMessageMock,
-                    presenceManager:     undefined,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
-                    agent:               mockAgent as any,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
-                    botStateManager:     mockBotStateManager as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       onMessageMock,
+                    presenceManager: undefined,
+                    agent:           mockAgent as any,
+                    botStateManager: mockBotStateManager as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -645,14 +773,13 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => 'onMessage response');
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           onMessageMock,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
-                    presenceManager:     mockPresenceManager as any,
-                    agent:               undefined,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
-                    botStateManager:     mockBotStateManager as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       onMessageMock,
+                    presenceManager: mockPresenceManager as any,
+                    agent:           undefined,
+                    botStateManager: mockBotStateManager as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -667,11 +794,14 @@ describe('Discord Event Handlers', () => {
                 // Use 60 char message - must be > 50 to trigger ellipsis
                 const longContent = _.repeat('a', 60);
                 mockMessage.content = longContent;
+                Object.defineProperty(mockMessage, 'cleanContent', { value: longContent, writable: true });
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       mockOnMessage,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -686,11 +816,14 @@ describe('Discord Event Handlers', () => {
 
             it('should NOT add ellipsis for exactly 50 char messages', async () => {
                 mockMessage.content = _.repeat('a', 50);
+                Object.defineProperty(mockMessage, 'cleanContent', { value: _.repeat('a', 50), writable: true });
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       mockOnMessage,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -705,11 +838,14 @@ describe('Discord Event Handlers', () => {
 
             it('should NOT add ellipsis for short messages', async () => {
                 mockMessage.content = _.repeat('a', 30);
+                Object.defineProperty(mockMessage, 'cleanContent', { value: _.repeat('a', 30), writable: true });
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       mockOnMessage,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -725,11 +861,14 @@ describe('Discord Event Handlers', () => {
             it('should include exactly first 50 chars for long messages', async () => {
                 // Use distinct chars to verify slice behavior
                 mockMessage.content = _.repeat('A', 50) + _.repeat('B', 20);
+                Object.defineProperty(mockMessage, 'cleanContent', { value: _.repeat('A', 50) + _.repeat('B', 20), writable: true });
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       mockOnMessage,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -744,11 +883,14 @@ describe('Discord Event Handlers', () => {
 
             it('should add ellipsis for 51 char messages (boundary test)', async () => {
                 mockMessage.content = _.repeat('a', 51);
+                Object.defineProperty(mockMessage, 'cleanContent', { value: _.repeat('a', 51), writable: true });
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       mockOnMessage,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -771,9 +913,11 @@ describe('Discord Event Handlers', () => {
                 } as unknown as Message;
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: [],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       mockOnMessage,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(dmMessage);
@@ -792,9 +936,11 @@ describe('Discord Event Handlers', () => {
 
             it('should log isDM as false when guild exists', async () => {
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       mockOnMessage,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -817,9 +963,11 @@ describe('Discord Event Handlers', () => {
                 Object.defineProperty(mockMessage.author, 'tag', { value: 'TestUser#1234', writable: true });
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       mockOnMessage,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -836,9 +984,11 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => null);
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           onMessageMock,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       onMessageMock,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -875,9 +1025,11 @@ describe('Discord Event Handlers', () => {
                 Object.defineProperty(mockMessage.author, 'tag', { value: 'TestUser#5678', writable: true });
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       mockOnMessage,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -894,9 +1046,11 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => 'Hello World');
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           onMessageMock,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       onMessageMock,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -914,9 +1068,11 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => 'Response');
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           onMessageMock,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       onMessageMock,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -935,15 +1091,18 @@ describe('Discord Event Handlers', () => {
                 // Create message with explicit guild to ensure isDM=false
                 const guildMessage = {
                     ...mockMessage,
-                    guild:   { id: '222222222222222222' },
-                    channel: mockTextChannel,
-                    content: '<@999999999999999999> hello',
+                    guild:     { id: '222222222222222222' },
+                    channel:   mockTextChannel,
+                    channelId: '333333333333333333',
+                    content:   '<@999999999999999999> hello',
                 } as unknown as Message;
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       mockOnMessage,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(guildMessage);
@@ -957,20 +1116,17 @@ describe('Discord Event Handlers', () => {
 
                 expect(filteringCall).toBeDefined();
                 const logObj = filteringCall![0] as {
-                    isDM:               boolean
-                    isMention:          boolean
-                    isMonitoredChannel: boolean
-                    shouldRespond:      boolean
-                    msg:                string
+                    isDM:          boolean
+                    isMention:     boolean
+                    shouldRespond: boolean
+                    msg:           string
                 };
 
                 expect(logObj.isDM).toBe(false);
                 expect(logObj.isMention).toBe(true);
-                expect(logObj.isMonitoredChannel).toBe(true);
                 expect(logObj.shouldRespond).toBe(true);
                 expect(logObj.msg).toContain('isDM=false');
                 expect(logObj.msg).toContain('isMention=true');
-                expect(logObj.msg).toContain('isMonitored=true');
                 expect(logObj.msg).toContain('shouldRespond=true');
             });
 
@@ -983,9 +1139,11 @@ describe('Discord Event Handlers', () => {
                 } as unknown as Message;
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: [],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       mockOnMessage,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(dmMessage);
@@ -1017,9 +1175,11 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => 'should not be called');
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           onMessageMock,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       onMessageMock,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 mockMessage.author.bot = true;
@@ -1036,9 +1196,11 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => 'should not be called');
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           botId as UserId,
-                    onMessage:           onMessageMock,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       botId as UserId,
+                    onMessage:       onMessageMock,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 mockMessage.author.id = botId;
@@ -1055,9 +1217,11 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => 'response from handler');
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           onMessageMock,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       onMessageMock,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 // Ensure message is from a non-bot, non-self user
@@ -1075,9 +1239,11 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => 'response');
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           botId as UserId,
-                    onMessage:           onMessageMock,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       botId as UserId,
+                    onMessage:       onMessageMock,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 // Test 1: Bot message (author.bot = true) - should be ignored
@@ -1112,14 +1278,17 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => 'should not be called');
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           botId as UserId,
-                    onMessage:           onMessageMock,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       botId as UserId,
+                    onMessage:       onMessageMock,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 // Message is from a bot, in monitored channel, with mention
                 mockMessage.author.bot = true;
                 mockMessage.content = `<@${botId}> hello`;
+                Object.defineProperty(mockMessage, 'cleanContent', { value: `<@${botId}> hello`, writable: true });
                 await handler(mockMessage);
 
                 // Should still be ignored because author.bot is true
@@ -1133,15 +1302,18 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => 'should not be called');
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           botId as UserId,
-                    onMessage:           onMessageMock,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       botId as UserId,
+                    onMessage:       onMessageMock,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 // Message is from the bot itself (not marked as bot but same ID)
                 mockMessage.author.bot = false;
                 mockMessage.author.id = botId;
                 mockMessage.content = `<@${botId}> hello`;
+                Object.defineProperty(mockMessage, 'cleanContent', { value: `<@${botId}> hello`, writable: true });
                 await handler(mockMessage);
 
                 // Should still be ignored because author.id matches botUserId
@@ -1154,9 +1326,11 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => 'response');
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           botId as UserId,
-                    onMessage:           onMessageMock,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       botId as UserId,
+                    onMessage:       onMessageMock,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 // Message is NOT from a bot (author.bot = false) and NOT from self
@@ -1174,9 +1348,11 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => 'response');
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           onMessageMock,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       onMessageMock,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 // Message from a different bot (not our bot)
@@ -1194,9 +1370,11 @@ describe('Discord Event Handlers', () => {
                 const onMessageMock = mock(async () => 'response');
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           botId as UserId,
-                    onMessage:           onMessageMock,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       botId as UserId,
+                    onMessage:       onMessageMock,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 // Test: non-bot user with bot's ID (edge case - shouldn't happen but tests the check)
@@ -1250,11 +1428,13 @@ describe('Discord Event Handlers', () => {
 
             it('should resolve pending question when message is classified as answer', async () => {
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
-                    questionRegistry:    mockQuestionRegistry,
-                    answerClassifier:    mockAnswerClassifier,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:        '999999999999999999' as UserId,
+                    onMessage:        mockOnMessage,
+                    questionRegistry: mockQuestionRegistry,
+                    answerClassifier: mockAnswerClassifier,
+                    botStateManager:  createMockBotStateManager() as any,
+                    responseRouter:   createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -1294,11 +1474,13 @@ describe('Discord Event Handlers', () => {
                 );
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
-                    questionRegistry:    mockQuestionRegistry,
-                    answerClassifier:    mockAnswerClassifier,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:        '999999999999999999' as UserId,
+                    onMessage:        mockOnMessage,
+                    questionRegistry: mockQuestionRegistry,
+                    answerClassifier: mockAnswerClassifier,
+                    botStateManager:  createMockBotStateManager() as any,
+                    responseRouter:   createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -1319,11 +1501,13 @@ describe('Discord Event Handlers', () => {
                 );
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
-                    questionRegistry:    mockQuestionRegistry,
-                    answerClassifier:    mockAnswerClassifier,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:        '999999999999999999' as UserId,
+                    onMessage:        mockOnMessage,
+                    questionRegistry: mockQuestionRegistry,
+                    answerClassifier: mockAnswerClassifier,
+                    botStateManager:  createMockBotStateManager() as any,
+                    responseRouter:   createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -1354,11 +1538,13 @@ describe('Discord Event Handlers', () => {
                 mockMessage.reply = replySpy as typeof mockMessage.reply;
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
-                    questionRegistry:    mockQuestionRegistry,
-                    answerClassifier:    mockAnswerClassifier,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:        '999999999999999999' as UserId,
+                    onMessage:        mockOnMessage,
+                    questionRegistry: mockQuestionRegistry,
+                    answerClassifier: mockAnswerClassifier,
+                    botStateManager:  createMockBotStateManager() as any,
+                    responseRouter:   createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -1411,11 +1597,13 @@ describe('Discord Event Handlers', () => {
                 });
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
-                    questionRegistry:    mockQuestionRegistry,
-                    answerClassifier:    mockAnswerClassifier,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:        '999999999999999999' as UserId,
+                    onMessage:        mockOnMessage,
+                    questionRegistry: mockQuestionRegistry,
+                    answerClassifier: mockAnswerClassifier,
+                    botStateManager:  createMockBotStateManager() as any,
+                    responseRouter:   createMockResponseRouter() as any,
                 });
 
                 // Wait for handler to complete (retry will happen automatically)
@@ -1432,11 +1620,13 @@ describe('Discord Event Handlers', () => {
                 (mockQuestionRegistry.findPendingQuestion as ReturnType<typeof mock>).mockReturnValue(null);
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
-                    questionRegistry:    mockQuestionRegistry,
-                    answerClassifier:    mockAnswerClassifier,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:        '999999999999999999' as UserId,
+                    onMessage:        mockOnMessage,
+                    questionRegistry: mockQuestionRegistry,
+                    answerClassifier: mockAnswerClassifier,
+                    botStateManager:  createMockBotStateManager() as any,
+                    responseRouter:   createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -1450,10 +1640,12 @@ describe('Discord Event Handlers', () => {
 
             it('should proceed normally when question registry is not configured', async () => {
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       mockOnMessage,
                     // No questionRegistry or answerClassifier
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -1465,22 +1657,27 @@ describe('Discord Event Handlers', () => {
             it('should include threadId when message is in a thread', async () => {
                 const threadChannel = {
                     ...mockTextChannel,
-                    id:       '888888888888888888',
-                    parentId: '333333333333333333', // Thread's parent channel ID
-                    isThread: mock(() => true),
+                    id:        '888888888888888888',
+                    channelId: '888888888888888888',
+                    parentId:  '333333333333333333', // Thread's parent channel ID
+                    isThread:  mock(() => true),
+                    isDMBased: mock(() => false),
                 } as unknown as TextChannel;
 
                 const threadMessage = {
                     ...mockMessage,
-                    channel: threadChannel,
+                    channel:   threadChannel,
+                    channelId: '888888888888888888',
                 } as unknown as Message;
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId, '888888888888888888' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
-                    questionRegistry:    mockQuestionRegistry,
-                    answerClassifier:    mockAnswerClassifier,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:        '999999999999999999' as UserId,
+                    onMessage:        mockOnMessage,
+                    questionRegistry: mockQuestionRegistry,
+                    answerClassifier: mockAnswerClassifier,
+                    botStateManager:  createMockBotStateManager() as any,
+                    responseRouter:   createMockResponseRouter() as any,
                 });
 
                 await handler(threadMessage);
@@ -1502,11 +1699,13 @@ describe('Discord Event Handlers', () => {
 
             it('should use channel ID directly for regular channels (not threads)', async () => {
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
-                    questionRegistry:    mockQuestionRegistry,
-                    answerClassifier:    mockAnswerClassifier,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:        '999999999999999999' as UserId,
+                    onMessage:        mockOnMessage,
+                    questionRegistry: mockQuestionRegistry,
+                    answerClassifier: mockAnswerClassifier,
+                    botStateManager:  createMockBotStateManager() as any,
+                    responseRouter:   createMockResponseRouter() as any,
                 });
 
                 await handler(mockMessage);
@@ -1529,15 +1728,18 @@ describe('Discord Event Handlers', () => {
             it('should include referencedMessageId when message is a reply', async () => {
                 const replyMessage = {
                     ...mockMessage,
+                    channelId: '333333333333333333',
                     reference: { messageId: '666666666666666666' },
                 } as unknown as Message;
 
                 const handler = createMessageHandler({
-                    monitoredChannelIds: ['333333333333333333' as ChannelId],
-                    botUserId:           '999999999999999999' as UserId,
-                    onMessage:           mockOnMessage,
-                    questionRegistry:    mockQuestionRegistry,
-                    answerClassifier:    mockAnswerClassifier,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    botUserId:        '999999999999999999' as UserId,
+                    onMessage:        mockOnMessage,
+                    questionRegistry: mockQuestionRegistry,
+                    answerClassifier: mockAnswerClassifier,
+                    botStateManager:  createMockBotStateManager() as any,
+                    responseRouter:   createMockResponseRouter() as any,
                 });
 
                 await handler(replyMessage);
@@ -1549,6 +1751,264 @@ describe('Discord Event Handlers', () => {
                         referencedMessageId: '666666666666666666',
                     })
                 );
+            });
+        });
+
+        describe('thread mute inheritance', () => {
+            it('should not process messages in threads when parent channel is muted', async () => {
+                const parentChannelId = createChannelId('parent-channel-123');
+                const threadChannelId = createChannelId('thread-456');
+
+                // Mock a thread channel
+                const mockThreadChannel = {
+                    id:         threadChannelId,
+                    type:       11, // PublicThread
+                    isThread:   mock(() => true),
+                    parentId:   parentChannelId,
+                    sendTyping: mock(async () => undefined),
+                    isDMBased:  mock(() => false),
+                } as unknown as TextChannel;
+
+                const threadMessage = {
+                    ...mockMessage,
+                    content:      'Test message in thread',
+                    cleanContent: 'Test message in thread',
+                    channel:      mockThreadChannel,
+                    channelId:    threadChannelId,
+                } as unknown as Message;
+
+                // Mock channelRegistry to return false for muted parent channel
+                const mockChannelRegistry = {
+                    shouldProcess: mock((channelId: ChannelId, isDM: boolean, isMention: boolean, isReplyToBot: boolean) => {
+                        // Thread itself is not muted, but parent is
+                        if(channelId === threadChannelId && !isMention && !isReplyToBot) {
+                            return true;
+                        }
+                        // Parent channel is muted
+                        if(channelId === parentChannelId && !isDM && !isMention && !isReplyToBot) {
+                            return false;
+                        }
+                        return true;
+                    }),
+                    getChannel: mock(() => null),
+                    warmCache:  mock(() => Promise.resolve()),
+                };
+
+                const handler = createMessageHandler({
+                    channelRegistry: mockChannelRegistry as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       mockOnMessage,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
+                });
+
+                await handler(threadMessage);
+
+                // Should NOT process the message (parent muted)
+                expect(mockOnMessage).not.toHaveBeenCalled();
+            });
+
+            it('should process messages in threads when parent channel is unmuted', async () => {
+                const parentChannelId = createChannelId('parent-channel-123');
+                const threadChannelId = createChannelId('thread-456');
+
+                // Mock a thread channel
+                const mockThreadChannel = {
+                    id:         threadChannelId,
+                    type:       11, // PublicThread
+                    isThread:   mock(() => true),
+                    parentId:   parentChannelId,
+                    sendTyping: mock(async () => undefined),
+                    isDMBased:  mock(() => false),
+                } as unknown as TextChannel;
+
+                const threadMessage = {
+                    ...mockMessage,
+                    content:      'Test message in thread',
+                    cleanContent: 'Test message in thread',
+                    channel:      mockThreadChannel,
+                    channelId:    threadChannelId,
+                } as unknown as Message;
+
+                // Mock channelRegistry to return true for unmuted parent
+                const mockChannelRegistry = {
+                    shouldProcess: mock(() => true),
+                    getChannel:    mock(() => null),
+                    warmCache:     mock(() => Promise.resolve()),
+                };
+
+                const handler = createMessageHandler({
+                    channelRegistry: mockChannelRegistry as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       mockOnMessage,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
+                });
+
+                await handler(threadMessage);
+
+                // SHOULD process the message (parent unmuted)
+                expect(mockOnMessage).toHaveBeenCalled();
+            });
+
+            it('should process mentions in threads even when parent channel is muted', async () => {
+                const botId = '999999999999999999';
+                const parentChannelId = createChannelId('parent-channel-123');
+                const threadChannelId = createChannelId('thread-456');
+
+                // Mock a thread channel
+                const mockThreadChannel = {
+                    id:         threadChannelId,
+                    type:       11, // PublicThread
+                    isThread:   mock(() => true),
+                    parentId:   parentChannelId,
+                    sendTyping: mock(async () => undefined),
+                    isDMBased:  mock(() => false),
+                } as unknown as TextChannel;
+
+                const threadMessage = {
+                    ...mockMessage,
+                    content:      `<@${botId}> hello from thread`,
+                    cleanContent: `<@${botId}> hello from thread`,
+                    channel:      mockThreadChannel,
+                    channelId:    threadChannelId,
+                } as unknown as Message;
+
+                // Mock channelRegistry to return false for muted parent channel (without overrides)
+                const mockChannelRegistry = {
+                    shouldProcess: mock((channelId: ChannelId, isDM: boolean, isMention: boolean, isReplyToBot: boolean) => {
+                        // Mentions always override
+                        if(isMention) {
+                            return true;
+                        }
+                        // Parent channel is muted
+                        if(channelId === parentChannelId && !isDM && !isReplyToBot) {
+                            return false;
+                        }
+                        return true;
+                    }),
+                    getChannel: mock(() => null),
+                    warmCache:  mock(() => Promise.resolve()),
+                };
+
+                const handler = createMessageHandler({
+                    channelRegistry: mockChannelRegistry as any,
+                    botUserId:       botId as UserId,
+                    onMessage:       mockOnMessage,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
+                });
+
+                await handler(threadMessage);
+
+                // SHOULD process the message (mention override)
+                expect(mockOnMessage).toHaveBeenCalled();
+            });
+
+            it('should process replies to bot in threads even when parent channel is muted', async () => {
+                const botId = '999999999999999999';
+                const parentChannelId = createChannelId('parent-channel-123');
+                const threadChannelId = createChannelId('thread-456');
+
+                // Mock a thread channel
+                const mockThreadChannel = {
+                    id:         threadChannelId,
+                    type:       11, // PublicThread
+                    isThread:   mock(() => true),
+                    parentId:   parentChannelId,
+                    sendTyping: mock(async () => undefined),
+                    isDMBased:  mock(() => false),
+                } as unknown as TextChannel;
+
+                const threadMessage = {
+                    ...mockMessage,
+                    content:      'replying to bot message',
+                    cleanContent: 'replying to bot message',
+                    channel:      mockThreadChannel,
+                    channelId:    threadChannelId,
+                    reference:    {
+                        messageId: '888888888888888888',
+                        channelId: threadChannelId,
+                        guildId:   '222222222222222222',
+                    },
+                    fetchReference: mock(async () => ({
+                        author: {
+                            id:  botId,
+                            bot: true,
+                        },
+                    })),
+                } as unknown as Message;
+
+                // Mock channelRegistry to return false for muted parent channel (without overrides)
+                const mockChannelRegistry = {
+                    shouldProcess: mock((channelId: ChannelId, isDM: boolean, isMention: boolean, isReplyToBot: boolean) => {
+                        // Replies to bot always override
+                        if(isReplyToBot) {
+                            return true;
+                        }
+                        // Parent channel is muted
+                        if(channelId === parentChannelId && !isDM && !isMention) {
+                            return false;
+                        }
+                        return true;
+                    }),
+                    getChannel: mock(() => null),
+                    warmCache:  mock(() => Promise.resolve()),
+                };
+
+                const handler = createMessageHandler({
+                    channelRegistry: mockChannelRegistry as any,
+                    botUserId:       botId as UserId,
+                    onMessage:       mockOnMessage,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
+                });
+
+                await handler(threadMessage);
+
+                // SHOULD process the message (reply to bot override)
+                expect(mockOnMessage).toHaveBeenCalled();
+            });
+
+            it('should handle threads without parentId gracefully', async () => {
+                const threadChannelId = createChannelId('thread-456');
+
+                // Mock a thread channel without parentId
+                const mockThreadChannel = {
+                    id:         threadChannelId,
+                    type:       11, // PublicThread
+                    isThread:   mock(() => true),
+                    parentId:   null,
+                    sendTyping: mock(async () => undefined),
+                    isDMBased:  mock(() => false),
+                } as unknown as TextChannel;
+
+                const threadMessage = {
+                    ...mockMessage,
+                    content:      'Test message in thread',
+                    cleanContent: 'Test message in thread',
+                    channel:      mockThreadChannel,
+                    channelId:    threadChannelId,
+                } as unknown as Message;
+
+                const mockChannelRegistry = {
+                    shouldProcess: mock(() => true),
+                    getChannel:    mock(() => null),
+                    warmCache:     mock(() => Promise.resolve()),
+                };
+
+                const handler = createMessageHandler({
+                    channelRegistry: mockChannelRegistry as any,
+                    botUserId:       '999999999999999999' as UserId,
+                    onMessage:       mockOnMessage,
+                    botStateManager: createMockBotStateManager() as any,
+                    responseRouter:  createMockResponseRouter() as any,
+                });
+
+                await handler(threadMessage);
+
+                // Should still process (no parent to check)
+                expect(mockOnMessage).toHaveBeenCalled();
             });
         });
     });

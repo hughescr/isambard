@@ -299,6 +299,8 @@ export interface ClaudeAgentOptions {
     plugins?:                    SdkPluginConfig[]
     /** Task persistence coordinator for maintaining tasks across sessions */
     taskPersistenceCoordinator?: TaskPersistenceCoordinator
+    /** Optional channel registry for getting channel list */
+    channelRegistry?:            import('../integrations/discord/channel-registry').ChannelRegistryManager
 }
 
 /** Options for chatBatch processing */
@@ -319,6 +321,8 @@ export interface ChatBatchOptions {
     catchUpPrompt?:   string
     /** Optional perch prompt for autonomous perch time */
     perchPrompt?:     string
+    /** Optional list of available channels for system prompt context */
+    channelList?:     string[]
 }
 
 /** Result from chatBatch processing */
@@ -951,8 +955,25 @@ function buildChatBatchResult(
     };
 }
 
+/**
+ * Get channel list from channel registry.
+ * Returns array of channel names (without # prefix) for unmuted channels.
+ * @param channelRegistry Optional channel registry manager
+ * @returns Array of channel names, or undefined if registry not available
+ */
+async function getChannelListFromRegistry(
+    channelRegistry: import('../integrations/discord/channel-registry').ChannelRegistryManager | undefined
+): Promise<string[] | undefined> {
+    if(!channelRegistry) {
+        return undefined;
+    }
+
+    const unmutedChannels = await channelRegistry.getUnmutedChannels();
+    return _.map(unmutedChannels, 'channelName');
+}
+
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
-    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, taskPersistenceCoordinator } = options;
+    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, taskPersistenceCoordinator, channelRegistry } = options;
 
     // Load retry configuration
     const retryConfig = loadRetryConfig();
@@ -972,8 +993,10 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
             let capturedSessionId: string | undefined;
 
             try {
-                // 1. Build system prompt with core identity
-                const systemPrompt = await buildSystemPrompt(contextBuilder);
+                // 1. Build system prompt with core identity and channel list
+                // Prefer channelList from options (pre-formatted with guild names), otherwise get from registry
+                const channelList = options?.channelList ?? await getChannelListFromRegistry(channelRegistry);
+                const systemPrompt = await buildSystemPrompt({ contextBuilder, channelList });
 
                 // 2. Build user message text
                 const userMessageText = await buildUserMessageTextForBatch(
@@ -1040,8 +1063,9 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
             images?: FetchedImage[]
         ): Promise<string | null> => {
             try {
-                // 1. Build system prompt with core identity
-                const systemPrompt = await buildSystemPrompt(contextBuilder);
+                // 1. Build system prompt with core identity and channel list
+                const channelList = await getChannelListFromRegistry(channelRegistry);
+                const systemPrompt = await buildSystemPrompt({ contextBuilder, channelList });
 
                 // 2. Build context prefix from memories and events
                 const contextPrefix = contextBuilder

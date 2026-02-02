@@ -12,20 +12,18 @@
 export {
     wellKnownChannelSchema,
     channelMetadataSchema,
-    channelReferenceSchema,
     WELL_KNOWN_CHANNELS,
     createChannelMetadata,
     isChannelMetadata
 } from './types';
-export type { WellKnownChannel, ChannelMetadata, ChannelReference } from './types';
+export type { WellKnownChannel, ChannelMetadata } from './types';
 
 // Errors
 export {
     ChannelRegistryError,
     ChannelNotFoundError,
     AmbiguousChannelError,
-    WellKnownChannelMissingError,
-    ChannelMutedError
+    WellKnownChannelNotFoundError
 } from './errors';
 
 // Key generator
@@ -38,9 +36,6 @@ export { ChannelRegistryBackend } from './backend';
 // Manager
 export { ChannelRegistryManager } from './manager';
 export type { ChannelRegistryManagerConfig } from './manager';
-
-// Name resolver
-export { normalizeChannelName, formatChannelReference, ChannelNameResolver } from './name-resolver';
 
 // DM tracker
 export { formatDMChannelName, extractUsernameFromDM, isDMChannelName, DMTracker } from './dm-tracker';

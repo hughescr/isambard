@@ -10,6 +10,7 @@ import {
     configSchema,
     perchConfigSchema
 } from '@/config/schemas';
+import { createGuildId } from '@/integrations/discord/types';
 
 describe.concurrent('appConfigSchema', () => {
     test('should coerce port from string to number', () => {
@@ -140,6 +141,7 @@ describe('discordConfigSchema', () => {
         const configWithPresence = {
             botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId: '123456789012345678',
+            homeGuildId:   createGuildId('home-guild-123'),
             presence:      {
                 updateThrottleMs:      5000,
                 idleTimeoutMs:         120000,
@@ -162,6 +164,7 @@ describe('discordConfigSchema', () => {
         const configWithEmptyPresence = {
             botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId: '123456789012345678',
+            homeGuildId:   createGuildId('home-guild-123'),
             presence:      {},
         };
 
@@ -173,31 +176,6 @@ describe('discordConfigSchema', () => {
                 idleTimeoutMs:         60000, // default
                 idleRefreshIntervalMs: 300000, // default
             });
-        }
-    });
-
-    test('should reject monitoredChannelIds with empty strings', () => {
-        const configWithEmptyChannelId = {
-            botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
-            applicationId:       '123456789012345678',
-            monitoredChannelIds: ['valid-channel-id', ''],
-        };
-
-        const result = discordConfigSchema.safeParse(configWithEmptyChannelId);
-        expect(result.success).toBe(false);
-    });
-
-    test('should accept valid monitoredChannelIds array', () => {
-        const configWithChannelIds = {
-            botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
-            applicationId:       '123456789012345678',
-            monitoredChannelIds: ['channel-1', 'channel-2', 'channel-3'],
-        };
-
-        const result = discordConfigSchema.safeParse(configWithChannelIds);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data.monitoredChannelIds).toEqual(['channel-1', 'channel-2', 'channel-3']);
         }
     });
 });
@@ -264,6 +242,7 @@ describe('configSchema', () => {
             discord: {
                 botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
                 applicationId: '123456789012345678',
+                homeGuildId:   createGuildId('home-guild-123'),
             },
             box: {
                 clientId:     'abc123xyz789',
@@ -274,13 +253,7 @@ describe('configSchema', () => {
         const result = configSchema.safeParse(validConfig);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data).toEqual({
-                ...validConfig,
-                discord: {
-                    ...validConfig.discord,
-                    monitoredChannelIds: [], // Default empty array
-                },
-            });
+            expect(result.data).toEqual(validConfig);
         }
     });
 
@@ -310,6 +283,7 @@ describe('configSchema', () => {
             discord: {
                 botToken:      'token',
                 applicationId: '123',
+                homeGuildId:   createGuildId('home-guild-123'),
             },
             box: {
                 clientId:     'id',
@@ -350,6 +324,7 @@ describe('configSchema', () => {
             discord: {
                 botToken:      'token',
                 applicationId: '123',
+                homeGuildId:   createGuildId('home-guild-123'),
             },
             box: {
                 clientId:     'id',

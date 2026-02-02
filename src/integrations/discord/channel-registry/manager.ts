@@ -1,7 +1,8 @@
 import _ from 'lodash';
+import type { Client } from 'discord.js';
 import type { ChannelRegistryBackend } from './backend';
-import type { ChannelMetadata, WellKnownChannel, ChannelReference } from './types';
-import type { ChannelId, GuildId, UserId } from '../types';
+import type { ChannelMetadata, WellKnownChannel } from './types';
+import type { ChannelId, GuildId } from '../types';
 
 /**
  * Configuration for ChannelRegistryManager.
@@ -11,6 +12,8 @@ export interface ChannelRegistryManagerConfig {
     backend:     ChannelRegistryBackend
     /** Home guild ID for proactive sessions */
     homeGuildId: GuildId
+    /** Discord client for fetching channel info from Discord API */
+    client:      Client
 }
 
 /**
@@ -21,39 +24,66 @@ export interface ChannelRegistryManagerConfig {
  * - warmCache(): Load all channels from DynamoDB on startup
  * - Cache-first reads: Check cache before DynamoDB
  * - Write-through: Update both cache and DynamoDB
- * - Name index: Maintained for fast name resolution
  */
 export class ChannelRegistryManager {
     // In-memory caches
     private readonly channelCache:   Map<ChannelId, ChannelMetadata>;
-    private readonly nameIndex:      Map<string, ChannelId[]>;  // channelName → [channelIds]
-    private readonly dmUserMap:      Map<UserId, ChannelId>;    // userId → dmChannelId
     private readonly wellKnownCache: Map<WellKnownChannel, ChannelId>; // wellKnownType → channelId
 
     private readonly backend:     ChannelRegistryBackend;
     private readonly homeGuildId: GuildId;
+    private readonly client:      Client;
     private cacheWarmed           = false;
 
     constructor(config: ChannelRegistryManagerConfig) {
         this.backend = config.backend;
         this.homeGuildId = config.homeGuildId;
+        this.client = config.client;
 
         // Initialize caches
         this.channelCache = new Map();
-        this.nameIndex = new Map();
-        this.dmUserMap = new Map();
         this.wellKnownCache = new Map();
     }
 
     /**
      * Load all channels from DynamoDB into cache.
+     * Fetches channel info from Discord API for each stored record.
      * Should be called on startup for optimal performance.
      */
     async warmCache(): Promise<void> {
-        const channels = await this.backend.getAllChannels();
+        const storedRecords = await this.backend.getAllChannels();
 
-        for(const channel of channels) {
-            this.addToCache(channel);
+        for(const record of storedRecords) {
+            // Stryker disable BlockStatement: Defensive error handling for Discord API failures
+            // Fetch channel info from Discord API
+            try {
+                const discordChannel = await this.client.channels.fetch(record.channelId);
+                if(!discordChannel) {
+                    // Channel was deleted on Discord, skip it
+                    continue;
+                }
+
+                // Merge Discord API data with stored data
+                const now = new Date().toISOString();
+                const metadata: ChannelMetadata = {
+                    channelId:    record.channelId,
+                    guildId:      record.guildId,
+                    // Stryker disable next-line StringLiteral: Defensive fallback for malformed Discord channel objects
+                    channelName:  ('name' in discordChannel ? discordChannel.name : null) ?? 'Unknown',
+                    isMuted:      record.isMuted,
+                    isWellKnown:  record.isWellKnown,
+                    discoveredAt: record.createdAt,
+                    lastSeenAt:   now,
+                    updatedAt:    record.updatedAt,
+                };
+
+                this.addToCache(metadata);
+            } catch{
+                // Discord API failure - channel might be deleted or inaccessible
+                // Skip this channel and continue
+                continue;
+            }
+            // Stryker restore BlockStatement
         }
 
         this.cacheWarmed = true;
@@ -72,20 +102,6 @@ export class ChannelRegistryManager {
         // Remove from channel cache
         this.channelCache.delete(channelId);
 
-        // Remove from name index
-        this.removeFromNameIndex(channel);
-
-        // Remove from DM map if applicable
-        if(channel.guildId === 'DM') {
-            // Find and remove from dmUserMap
-            for(const [userId, dmChannelId] of this.dmUserMap.entries()) {
-                if(dmChannelId === channelId) {
-                    this.dmUserMap.delete(userId);
-                    break;
-                }
-            }
-        }
-
         // Remove from well-known cache if applicable
         if(channel.isWellKnown) {
             this.wellKnownCache.delete(channel.isWellKnown);
@@ -98,8 +114,6 @@ export class ChannelRegistryManager {
      */
     clearCache(): void {
         this.channelCache.clear();
-        this.nameIndex.clear();
-        this.dmUserMap.clear();
         this.wellKnownCache.clear();
         this.cacheWarmed = false;
     }
@@ -107,6 +121,7 @@ export class ChannelRegistryManager {
     /**
      * Get a channel by ID.
      * Cache-first with backend fallback.
+     * Fetches channel info from Discord API and merges with stored data.
      */
     async getChannel(channelId: ChannelId): Promise<ChannelMetadata | null> {
         // Check cache first
@@ -115,13 +130,41 @@ export class ChannelRegistryManager {
             return cached;
         }
 
-        // Fallback to backend
-        const channel = await this.backend.getChannel(channelId);
-        if(channel) {
-            this.addToCache(channel);
+        // Fallback to backend for stored data (mute/well-known)
+        const storedRecord = await this.backend.getChannel(channelId);
+        if(!storedRecord) {
+            return null;
         }
 
-        return channel;
+        // Fetch channel info from Discord API
+        try {
+            const discordChannel = await this.client.channels.fetch(channelId);
+            if(!discordChannel) {
+                // Channel was deleted on Discord
+                return null;
+            }
+
+            // Merge Discord API data with stored data
+            const now = new Date().toISOString();
+            const metadata: ChannelMetadata = {
+                channelId:    storedRecord.channelId,
+                guildId:      storedRecord.guildId,
+                // Stryker disable next-line StringLiteral: Defensive fallback for malformed Discord channel objects
+                channelName:  ('name' in discordChannel ? discordChannel.name : null) ?? 'Unknown',
+                isMuted:      storedRecord.isMuted,
+                isWellKnown:  storedRecord.isWellKnown,
+                discoveredAt: storedRecord.createdAt,
+                lastSeenAt:   now,
+                updatedAt:    storedRecord.updatedAt,
+            };
+
+            this.addToCache(metadata);
+            return metadata;
+        } catch{
+            // Discord API failure - channel might be deleted or inaccessible
+            // Return null rather than crashing
+            return null;
+        }
     }
 
     /**
@@ -129,23 +172,27 @@ export class ChannelRegistryManager {
      * Write-through to both cache and backend.
      */
     async upsertChannel(metadata: ChannelMetadata): Promise<void> {
-        // Remove old cache entry if it exists (to handle name changes)
+        // Remove old cache entry if it exists (to handle well-known changes)
         const existing = this.channelCache.get(metadata.channelId);
-        if(existing) {
-            this.removeFromNameIndex(existing);
-            if(existing.isWellKnown) {
-                this.wellKnownCache.delete(existing.isWellKnown);
-            }
+        if(existing?.isWellKnown) {
+            this.wellKnownCache.delete(existing.isWellKnown);
         }
 
+        // Convert runtime metadata to storage record (strip Discord API fields)
+        const storageRecord = {
+            channelId:   metadata.channelId,
+            guildId:     metadata.guildId,
+            isMuted:     metadata.isMuted,
+            isWellKnown: metadata.isWellKnown,
+            createdAt:   metadata.discoveredAt, // discoveredAt becomes createdAt in storage
+            updatedAt:   metadata.updatedAt,
+        };
+
         // Update backend
-        await this.backend.upsertChannel(metadata);
+        await this.backend.upsertChannel(storageRecord);
 
         // Update cache
         this.addToCache(metadata);
-
-        // Mark cache as warmed since we're actively managing it
-        this.cacheWarmed = true;
     }
 
     /**
@@ -163,6 +210,7 @@ export class ChannelRegistryManager {
     /**
      * Get all channels in a guild.
      * Cache-first with backend fallback.
+     * Fetches channel info from Discord API for uncached channels.
      */
     async getChannelsByGuild(guildId: GuildId): Promise<ChannelMetadata[]> {
         // If cache is warmed, filter from cache
@@ -177,19 +225,49 @@ export class ChannelRegistryManager {
         }
 
         // Fallback to backend
-        const channels = await this.backend.getChannelsByGuild(guildId);
+        const storedRecords = await this.backend.getChannelsByGuild(guildId);
+        const results: ChannelMetadata[] = [];
 
-        // Cache results
-        for(const channel of channels) {
-            this.addToCache(channel);
+        // Fetch channel info from Discord for each record
+        for(const record of storedRecords) {
+            // Stryker disable BlockStatement: Defensive error handling for Discord API failures
+            try {
+                const discordChannel = await this.client.channels.fetch(record.channelId);
+                if(!discordChannel) {
+                    // Channel was deleted on Discord, skip it
+                    continue;
+                }
+
+                // Merge Discord API data with stored data
+                const now = new Date().toISOString();
+                const metadata: ChannelMetadata = {
+                    channelId:    record.channelId,
+                    guildId:      record.guildId,
+                    // Stryker disable next-line StringLiteral: Defensive fallback for malformed Discord channel objects
+                    channelName:  ('name' in discordChannel ? discordChannel.name : null) ?? 'Unknown',
+                    isMuted:      record.isMuted,
+                    isWellKnown:  record.isWellKnown,
+                    discoveredAt: record.createdAt,
+                    lastSeenAt:   now,
+                    updatedAt:    record.updatedAt,
+                };
+
+                this.addToCache(metadata);
+                results.push(metadata);
+            } catch{
+                // Discord API failure - skip this channel
+                continue;
+            }
+            // Stryker restore BlockStatement
         }
 
-        return channels;
+        return results;
     }
 
     /**
      * Get all unmuted channels.
      * Cache-first with backend fallback.
+     * Fetches channel info from Discord API for uncached channels.
      */
     async getUnmutedChannels(): Promise<ChannelMetadata[]> {
         // If cache is warmed, filter from cache
@@ -204,20 +282,61 @@ export class ChannelRegistryManager {
         }
 
         // Fallback to backend
-        const channels = await this.backend.getAllChannels();
+        const storedRecords = await this.backend.getAllChannels();
+        const results: ChannelMetadata[] = [];
 
-        // Cache results
-        for(const channel of channels) {
-            this.addToCache(channel);
+        // Fetch channel info from Discord for each record
+        for(const record of storedRecords) {
+            // Stryker disable BlockStatement: Defensive error handling for Discord API failures
+            try {
+                const discordChannel = await this.client.channels.fetch(record.channelId);
+                if(!discordChannel) {
+                    // Channel was deleted on Discord, skip it
+                    continue;
+                }
+
+                // Merge Discord API data with stored data
+                const now = new Date().toISOString();
+                const metadata: ChannelMetadata = {
+                    channelId:    record.channelId,
+                    guildId:      record.guildId,
+                    // Stryker disable next-line StringLiteral: Defensive fallback for malformed Discord channel objects
+                    channelName:  ('name' in discordChannel ? discordChannel.name : null) ?? 'Unknown',
+                    isMuted:      record.isMuted,
+                    isWellKnown:  record.isWellKnown,
+                    discoveredAt: record.createdAt,
+                    lastSeenAt:   now,
+                    updatedAt:    record.updatedAt,
+                };
+
+                this.addToCache(metadata);
+
+                // Only include unmuted channels
+                if(!metadata.isMuted) {
+                    results.push(metadata);
+                }
+            } catch{
+                // Discord API failure - skip this channel
+                continue;
+            }
+            // Stryker restore BlockStatement
         }
 
-        // Filter unmuted
-        return _.filter(channels, channel => !channel.isMuted);
+        return results;
+    }
+
+    /**
+     * Get all channels from the cache (both muted and unmuted).
+     * @returns Array of all channel metadata in the cache
+     */
+    getAllChannels(): ChannelMetadata[] {
+        return Array.from(this.channelCache.values());
     }
 
     /**
      * Get a well-known channel by type.
      * Cache-first with backend fallback.
+     * Fetches channel info from Discord API for uncached channels.
      */
     async getWellKnownChannel(type: WellKnownChannel): Promise<ChannelMetadata | null> {
         // Check well-known cache first
@@ -229,63 +348,40 @@ export class ChannelRegistryManager {
             }
         }
 
-        // Fallback to backend
-        const channel = await this.backend.getWellKnownChannel(type);
-        if(channel) {
-            this.addToCache(channel);
+        // Fallback to backend for stored data
+        const storedRecord = await this.backend.getWellKnownChannel(type);
+        if(!storedRecord) {
+            return null;
         }
 
-        return channel;
-    }
-
-    /**
-     * Resolve channels by name.
-     * Returns multiple matches for disambiguation.
-     * Cache-first with backend fallback.
-     */
-    async resolveByName(channelName: string, contextGuildId?: GuildId): Promise<ChannelReference[]> {
-        // If cache is warmed, resolve from cache
-        if(this.cacheWarmed) {
-            const channelIds = this.nameIndex.get(channelName) ?? [];
-            const results: ChannelReference[] = [];
-
-            for(const channelId of channelIds) {
-                const channel = this.channelCache.get(channelId);
-                if(!channel) {
-                    continue;
-                }
-
-                // Filter by guild context if provided
-                if(contextGuildId && channel.guildId !== contextGuildId) {
-                    continue;
-                }
-
-                results.push({
-                    channelName: channel.channelName,
-                    guildName:   undefined, // Would need guild registry to populate
-                    channelId:   channel.channelId,
-                    guildId:     channel.guildId,
-                });
+        // Fetch channel info from Discord API
+        try {
+            const discordChannel = await this.client.channels.fetch(storedRecord.channelId);
+            if(!discordChannel) {
+                // Channel was deleted on Discord
+                return null;
             }
 
-            return results;
+            // Merge Discord API data with stored data
+            const now = new Date().toISOString();
+            const metadata: ChannelMetadata = {
+                channelId:    storedRecord.channelId,
+                guildId:      storedRecord.guildId,
+                // Stryker disable next-line StringLiteral: Defensive fallback for malformed Discord channel objects
+                channelName:  ('name' in discordChannel ? discordChannel.name : null) ?? 'Unknown',
+                isMuted:      storedRecord.isMuted,
+                isWellKnown:  storedRecord.isWellKnown,
+                discoveredAt: storedRecord.createdAt,
+                lastSeenAt:   now,
+                updatedAt:    storedRecord.updatedAt,
+            };
+
+            this.addToCache(metadata);
+            return metadata;
+        } catch{
+            // Discord API failure - channel might be deleted or inaccessible
+            return null;
         }
-
-        // Fallback to backend
-        const channels = await this.backend.getChannelByName(channelName, contextGuildId);
-
-        // Cache results
-        for(const channel of channels) {
-            this.addToCache(channel);
-        }
-
-        // Convert to ChannelReference
-        return _.map(channels, channel => ({
-            channelName: channel.channelName,
-            guildName:   undefined,
-            channelId:   channel.channelId,
-            guildId:     channel.guildId,
-        }));
     }
 
     /**
@@ -322,48 +418,50 @@ export class ChannelRegistryManager {
     }
 
     /**
-     * Track a DM channel for a user.
-     * Called when a DM channel is discovered or updated.
-     */
-    trackDM(userId: UserId, channelId: ChannelId): void {
-        this.dmUserMap.set(userId, channelId);
-    }
-
-    /**
-     * Get the DM channel ID for a user.
-     * Returns undefined if no DM channel is tracked.
-     */
-    getDMChannel(userId: UserId): ChannelId | undefined {
-        return this.dmUserMap.get(userId);
-    }
-
-    /**
      * Mute a channel.
      * Updates both cache and backend.
+     * If backend update fails, cache is invalidated to prevent inconsistency.
      */
     async muteChannel(channelId: ChannelId): Promise<void> {
-        // Update backend
-        await this.backend.muteChannel(channelId);
+        try {
+            // Update backend
+            await this.backend.muteChannel(channelId);
 
-        // Update cache
-        const channel = this.channelCache.get(channelId);
-        if(channel) {
-            channel.isMuted = true;
+            // Update cache only on success
+            const channel = this.channelCache.get(channelId);
+            if(channel) {
+                channel.isMuted = true;
+                channel.updatedAt = new Date().toISOString();
+            }
+        } catch (error) {
+            // Invalidate cache to prevent stale data
+            this.invalidateCache(channelId);
+            // Re-throw to inform caller of failure
+            throw error;
         }
     }
 
     /**
      * Unmute a channel.
      * Updates both cache and backend.
+     * If backend update fails, cache is invalidated to prevent inconsistency.
      */
     async unmuteChannel(channelId: ChannelId): Promise<void> {
-        // Update backend
-        await this.backend.unmuteChannel(channelId);
+        try {
+            // Update backend
+            await this.backend.unmuteChannel(channelId);
 
-        // Update cache
-        const channel = this.channelCache.get(channelId);
-        if(channel) {
-            channel.isMuted = false;
+            // Update cache only on success
+            const channel = this.channelCache.get(channelId);
+            if(channel) {
+                channel.isMuted = false;
+                channel.updatedAt = new Date().toISOString();
+            }
+        } catch (error) {
+            // Invalidate cache to prevent stale data
+            this.invalidateCache(channelId);
+            // Re-throw to inform caller of failure
+            throw error;
         }
     }
 
@@ -398,47 +496,9 @@ export class ChannelRegistryManager {
         // Add to channel cache
         this.channelCache.set(channel.channelId, channel);
 
-        // Add to name index
-        this.addToNameIndex(channel);
-
-        // Track DM channels
-        if(channel.guildId === 'DM') {
-            // Channel name for DMs is the userId
-            this.dmUserMap.set(channel.channelName as UserId, channel.channelId);
-        }
-
         // Track well-known channels
         if(channel.isWellKnown) {
             this.wellKnownCache.set(channel.isWellKnown, channel.channelId);
-        }
-    }
-
-    /**
-     * Add a channel to the name index.
-     * Private helper method.
-     */
-    private addToNameIndex(channel: ChannelMetadata): void {
-        const channelIds = this.nameIndex.get(channel.channelName) ?? [];
-        if(!channelIds.includes(channel.channelId)) {
-            channelIds.push(channel.channelId);
-            this.nameIndex.set(channel.channelName, channelIds);
-        }
-    }
-
-    /**
-     * Remove a channel from the name index.
-     * Private helper method.
-     */
-    private removeFromNameIndex(channel: ChannelMetadata): void {
-        const channelIds = this.nameIndex.get(channel.channelName);
-        if(channelIds) {
-            const index = channelIds.indexOf(channel.channelId);
-            if(index !== -1) {
-                channelIds.splice(index, 1);
-            }
-            if(channelIds.length === 0) {
-                this.nameIndex.delete(channel.channelName);
-            }
         }
     }
 }

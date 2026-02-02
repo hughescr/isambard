@@ -18,7 +18,7 @@ export interface ResourceProvider {
     EmailPassword:                 { value: string | undefined }
     DiscordBotToken:               { value: string | undefined }
     DiscordApplicationId:          { value: string | undefined }
-    DiscordMonitoredChannels:      { value: string | undefined }
+    DiscordHomeGuildId:            { value: string | undefined }
     BoxClientId:                   { value: string | undefined }
     BoxClientSecret:               { value: string | undefined }
     PerchEnabled:                  { value: string | undefined }
@@ -56,19 +56,13 @@ export function loadConfig(resources: ResourceProvider = Resource as unknown as 
             password: resources.EmailPassword.value,
         },
         discord: {
-            botToken:            resources.DiscordBotToken.value,
-            applicationId:       resources.DiscordApplicationId.value,
-            monitoredChannelIds: resources.DiscordMonitoredChannels.value
-                ? _.chain(resources.DiscordMonitoredChannels.value)
-                    .split(',')
-                    .map(s => _.trim(s))
-                    .compact()
-                    .value()
-                : undefined,
+            botToken:      resources.DiscordBotToken.value,
+            applicationId: resources.DiscordApplicationId.value,
+            homeGuildId:   resources.DiscordHomeGuildId.value,
             // Discord presence configuration controls how bot status updates are displayed.
             // These values balance responsiveness with API rate limit compliance.
             // Stryker disable next-line ObjectLiteral: Default config values tested via integration
-            presence: {
+            presence:      {
                 updateDebounceMs:      2000,        // Debounce rapid phase changes to avoid flickering
                 idleTimeoutMs:         60000,       // Transition to idle after 1 minute of inactivity
                 idleRefreshIntervalMs: 300000,      // Refresh idle status every 5 minutes to maintain visibility

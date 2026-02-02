@@ -1,8 +1,8 @@
 import type { ChannelRegistryManager } from './manager';
-import type { DMTracker } from './dm-tracker';
 import type { WellKnownChannel } from './types';
-import type { ChannelId, UserId } from '../types';
+import type { ChannelId } from '../types';
 import { processResponse } from './sentinel';
+import { WellKnownChannelNotFoundError } from './errors';
 
 export type SessionType = 'catching_up' | 'perching' | 'processing_message' | 'dm';
 
@@ -20,8 +20,7 @@ export interface RoutingResult {
 }
 
 export interface ResponseRouterConfig {
-    manager:   ChannelRegistryManager
-    dmTracker: DMTracker
+    manager: ChannelRegistryManager
 }
 
 /**
@@ -41,14 +40,12 @@ export class ResponseRouter {
      * @param sessionType - The type of session that generated the response
      * @param response - The raw response from the agent
      * @param originChannelId - The channel where the triggering message came from
-     * @param triggeringUserId - The user who triggered the session (for DM fallback)
      * @returns Routing result with target channel and processed content
      */
     async routeResponse(
         sessionType: SessionType,
         response: string,
-        originChannelId: ChannelId,
-        triggeringUserId: UserId
+        originChannelId: ChannelId
     ): Promise<RoutingResult> {
         // Process response for sentinel
         const { shouldSend, content } = processResponse(response);
@@ -88,16 +85,22 @@ export class ResponseRouter {
             };
         }
 
-        // Well-known channel missing - fallback to DM
-        const dmChannelId = await this.config.dmTracker.getOrCreateDM(triggeringUserId);
+        // Well-known channel missing - try fallback
+        const fallbackChannel = await this.config.manager.getWellKnownChannel('fallback');
 
-        return {
-            targetChannelId: dmChannelId,
-            shouldSend,
-            content,
-            isFallback:      true,
-            fallbackReason:  `Well-known channel #${wellKnownType} not found. Response sent via DM instead.`,
-        };
+        if(fallbackChannel) {
+            const fallbackReason = `⚠️ Channel #${wellKnownType} not configured, routing to fallback.\n\n`;
+            return {
+                targetChannelId: fallbackChannel.channelId,
+                shouldSend,
+                content:         fallbackReason + content,
+                isFallback:      true,
+                fallbackReason:  `#${wellKnownType} not configured`,
+            };
+        }
+
+        // Both well-known and fallback missing - throw error
+        throw new WellKnownChannelNotFoundError(wellKnownType);
     }
 
     /**
@@ -116,6 +119,10 @@ export class ResponseRouter {
         }
 
         const wellKnownChannel = await this.config.manager.getWellKnownChannel(wellKnownType);
-        return wellKnownChannel?.channelId ?? originChannelId;
+        if(!wellKnownChannel) {
+            throw new WellKnownChannelNotFoundError(wellKnownType);
+        }
+
+        return wellKnownChannel.channelId;
     }
 }

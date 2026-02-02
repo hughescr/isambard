@@ -2,7 +2,7 @@ import type { Client } from 'discord.js';
 import _ from 'lodash';
 import type { ChannelRegistryManager } from './manager';
 import type { ChannelId, UserId } from '../types';
-import { createChannelId } from '../types';
+import { createChannelId, createUserId } from '../types';
 
 /**
  * Formats a DM channel name from a username.
@@ -35,6 +35,8 @@ export function isDMChannelName(channelName: string): boolean {
  * DM channel tracker with on-demand channel creation.
  */
 export class DMTracker {
+    private readonly dmUserMap = new Map<UserId, ChannelId>();
+
     constructor(
         private readonly manager: ChannelRegistryManager,
         private readonly client: Client
@@ -44,7 +46,7 @@ export class DMTracker {
      * Gets an existing DM channel for a user, or undefined if not tracked.
      */
     getDMChannel(userId: UserId): ChannelId | undefined {
-        return this.manager.getDMChannel(userId);
+        return this.dmUserMap.get(userId);
     }
 
     /**
@@ -53,7 +55,7 @@ export class DMTracker {
      */
     async getOrCreateDM(userId: UserId): Promise<ChannelId> {
         // Check cache first
-        const existing = this.manager.getDMChannel(userId);
+        const existing = this.dmUserMap.get(userId);
         if(existing) {
             return existing;
         }
@@ -64,7 +66,7 @@ export class DMTracker {
         const channelId = createChannelId(dmChannel.id);
 
         // Track the new DM channel
-        this.manager.trackDM(userId, channelId);
+        this.dmUserMap.set(userId, channelId);
 
         // Also upsert to registry for persistence
         await this.manager.upsertChannel({
@@ -82,13 +84,32 @@ export class DMTracker {
 
     /**
      * Gets or creates a DM channel by username.
-     * Searches for user by username first.
+     * Searches for user by username first across all guilds the bot is in.
+     * @param username - Username to search for (with or without discriminator)
+     * @returns Channel ID of the DM, or null if user not found
      */
-    async getOrCreateDMByUsername(): Promise<ChannelId | null> {
-        // This is more complex - need to search for user
-        // For now, return null and let caller handle
-        // Full implementation would search guild members
-        return _.constant(null)();
+    async getOrCreateDMByUsername(username: string): Promise<ChannelId | null> {
+        // Search all guilds the bot is in for a member with this username
+        for(const guild of this.client.guilds.cache.values()) {
+            // Fetch members (search by username)
+            const members = await guild.members.fetch({ query: username, limit: 10 });
+
+            // Try exact match on username or full tag (username#discriminator)
+            // Discord.js Collection is a Map subclass, so we must use its find method directly
+            // eslint-disable-next-line lodash/prefer-lodash-method -- Discord.js Collection.find not compatible with _.find
+            const member = members.find(m =>
+                m.user.username === username
+                || m.user.tag === username
+            );
+
+            if(member) {
+                // Found user, create/get DM channel
+                return this.getOrCreateDM(createUserId(member.user.id));
+            }
+        }
+
+        // User not found in any guild
+        return null;
     }
 
     /**
@@ -96,7 +117,7 @@ export class DMTracker {
      * Call this when receiving a DM to ensure it's in the registry.
      */
     async trackFromMessage(userId: UserId, channelId: ChannelId, username: string): Promise<void> {
-        this.manager.trackDM(userId, channelId);
+        this.dmUserMap.set(userId, channelId);
 
         await this.manager.upsertChannel({
             channelId,

@@ -18,6 +18,7 @@ import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { ChannelId, GuildId } from '@/integrations/discord/types';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
 import type { CheckpointManager } from './checkpoint-manager';
 import type { UnreadMessage, UnreadOverview } from './types';
 import type { InboxConfig } from './config';
@@ -42,8 +43,8 @@ export interface InboxManagerOptions {
     checkpointManager:    CheckpointManager
     /** Message search service for fetching historical messages */
     messageSearchService: MessageSearchService
-    /** List of monitored channel IDs from config (single source of truth) */
-    monitoredChannelIds:  ChannelId[]
+    /** Channel registry for managing monitored channels */
+    channelRegistry:      ChannelRegistryManager
     /** Bot user ID to filter out bot's own messages from unread inbox (can be set later via setBotUserId) */
     botUserId?:           string
     /** Optional configuration overrides */
@@ -59,7 +60,7 @@ export interface InboxManagerOptions {
  * const inboxManager = new InboxManager({
  *   checkpointManager,
  *   messageSearchService,
- *   monitoredChannelIds: [channelId1, channelId2],
+ *   channelRegistry,
  *   botUserId: client.user.id,
  *   config: { maxCatchUpMessages: 50 },
  * });
@@ -90,8 +91,8 @@ export interface InboxManagerOptions {
 export class InboxManager {
     private readonly checkpointManager:    CheckpointManager;
     private readonly messageSearchService: MessageSearchService;
+    private readonly channelRegistry:      ChannelRegistryManager;
     private readonly config:               InboxConfig;
-    private readonly monitoredChannelIds:  ChannelId[];
     private botUserId?:                    string;
 
     /** In-memory storage of unread messages by channel */
@@ -103,7 +104,7 @@ export class InboxManager {
     constructor(options: InboxManagerOptions) {
         this.checkpointManager = options.checkpointManager;
         this.messageSearchService = options.messageSearchService;
-        this.monitoredChannelIds = options.monitoredChannelIds;
+        this.channelRegistry = options.channelRegistry;
         this.botUserId = options.botUserId;
         this.config = { ...DEFAULT_INBOX_CONFIG, ...options.config };
     }
@@ -170,7 +171,7 @@ export class InboxManager {
      * that arrived while the bot was offline.
      *
      * Algorithm:
-     * 1. Iterate over all monitored channel IDs from config
+     * 1. Get unmuted channels from ChannelRegistryManager
      * 2. Load or initialize checkpoint for each channel (sets lastSeenAt to now if missing)
      * 3. Calculate time gap since lastSeenAt
      * 4. Skip channels with gaps smaller than minGapDurationMs (avoid noise)
@@ -191,16 +192,15 @@ export class InboxManager {
     async loadUnread(): Promise<number> {
         let totalLoaded = 0;
 
-        for(const channelId of this.monitoredChannelIds) {
+        // Get unmuted channels from registry instead of static list
+        const channels = await this.channelRegistry.getUnmutedChannels();
+
+        for(const channel of channels) {
+            const channelId = channel.channelId;
             // Stryker disable BlockStatement: Error handling logs failure but continues processing other channels
             try {
-                // Load checkpoint or initialize if missing
-                // Get guildId from metadata cache if available, otherwise use 'DM' as fallback
-                const metadata = this.channelMetadata.get(channelId);
-                const guildId = metadata?.guildId ?? 'DM';
-
                 // Initialize checkpoint if it doesn't exist (creates new checkpoint with lastSeenAt = now)
-                await this.checkpointManager.initializeIfMissing(channelId, guildId);
+                await this.checkpointManager.initializeIfMissing(channelId, channel.guildId);
 
                 // Load the checkpoint (now guaranteed to exist)
                 const checkpoint = await this.checkpointManager.load(channelId);
@@ -248,22 +248,18 @@ export class InboxManager {
 
                 // Stryker disable next-line all: Guard clause - > vs >= makes no practical difference when checking for empty arrays
                 if(response.messages.length > 0) {
-                    // Get channel name from metadata cache or use ID as fallback
-                    const cachedMetadata = this.channelMetadata.get(channelId);
-                    const channelName = cachedMetadata?.channelName ?? channelId;
-
                     // Filter out bot messages (if botUserId is set) and convert to UnreadMessage format
                     // Stryker disable next-line LogicalOperator,ConditionalExpression,EqualityOperator: Filter logic - either path produces valid filtered results
                     const filteredMessages = _.filter(response.messages, msg => !this.botUserId || msg.author.id !== this.botUserId);
                     const unreadMessages: UnreadMessage[] = _.map(filteredMessages, msg => ({
-                        id:        msg.id,
+                        id:          msg.id,
                         channelId,
-                        channelName,
-                        guildId:   checkpoint.guildId,
-                        author:    msg.author.displayName,
-                        content:   msg.content,
-                        timestamp: msg.timestamp,
-                        isRead:    false,
+                        channelName: channel.channelName,
+                        guildId:     channel.guildId,
+                        author:      msg.author.displayName,
+                        content:     msg.content,
+                        timestamp:   msg.timestamp,
+                        isRead:      false,
                     }));
 
                     // Stryker disable next-line ConditionalExpression,EqualityOperator: Guard clause - only store if we have messages after filtering
@@ -274,7 +270,7 @@ export class InboxManager {
                         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
                         logger.info({
                             channelId,
-                            channelName,
+                            channelName:  channel.channelName,
                             messageCount: unreadMessages.length,
                             msg:          `Loaded ${unreadMessages.length} unread messages for channel`,
                         });

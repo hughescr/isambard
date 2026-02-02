@@ -62,8 +62,7 @@ describe('Image Converter', () => {
         test('throws error for unsupported image types', async () => {
             const inputBuffer = Buffer.from('fake-jpeg-data');
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
-            await expect(convert(inputBuffer, 'image/jpeg')).rejects.toThrow(
+            expect(convert(inputBuffer, 'image/jpeg')).rejects.toThrow(
                 'Unsupported content type for conversion: image/jpeg'
             );
         });
@@ -71,8 +70,7 @@ describe('Image Converter', () => {
         test('throws error for non-image types', async () => {
             const inputBuffer = Buffer.from('pdf-data');
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
-            await expect(convert(inputBuffer, 'application/pdf')).rejects.toThrow(
+            expect(convert(inputBuffer, 'application/pdf')).rejects.toThrow(
                 'Unsupported content type for conversion: application/pdf'
             );
         });
@@ -82,8 +80,7 @@ describe('Image Converter', () => {
 
             const inputBuffer = Buffer.from('corrupt-heic-data');
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
-            await expect(convert(inputBuffer, 'image/heic')).rejects.toThrow(
+            expect(convert(inputBuffer, 'image/heic')).rejects.toThrow(
                 'HEIC conversion failed: Invalid HEIC data'
             );
         });

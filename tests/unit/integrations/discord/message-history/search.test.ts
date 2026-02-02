@@ -2,7 +2,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test mocks */
 /* eslint-disable @typescript-eslint/unbound-method -- Mock methods */
-/* eslint-disable @typescript-eslint/await-thenable -- expect().rejects returns a promise */
 
 import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
 import _ from 'lodash';
@@ -813,7 +812,7 @@ describe('createMessageSearchService', () => {
                     Promise.reject(new Error('Cache error'))
                 );
 
-                await expect(
+                expect(
                     service.searchMessages({ channelId: createChannelId(testChannelId) })
                 ).rejects.toThrow('Cache error');
             });
@@ -836,7 +835,7 @@ describe('createMessageSearchService', () => {
                     Promise.reject(new Error('Fetcher error'))
                 );
 
-                await expect(
+                expect(
                     service.searchMessages({ channelId: createChannelId(testChannelId) })
                 ).rejects.toThrow('Fetcher error');
             });
@@ -861,7 +860,7 @@ describe('createMessageSearchService', () => {
                     Promise.reject(new Error('Summarizer error'))
                 );
 
-                await expect(
+                expect(
                     service.searchMessages({
                         channelId: createChannelId(testChannelId),
                         limit:     5,
@@ -905,7 +904,7 @@ describe('createMessageSearchService', () => {
                 Promise.reject(new Error('Fetch error'))
             );
 
-            await expect(
+            expect(
                 service.getMessageById(testChannelId, '100000000000000000')
             ).rejects.toThrow('Fetch error');
         });
@@ -917,7 +916,7 @@ describe('createMessageSearchService', () => {
                 Promise.reject(new Error('Batch fetch error'))
             );
 
-            await expect(
+            expect(
                 service.getMessagesById(testChannelId, ['100000000000000001'])
             ).rejects.toThrow('Batch fetch error');
         });

@@ -3,12 +3,14 @@ import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:t
 import { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { CheckpointManager } from '@/integrations/discord/inbox/checkpoint-manager';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
 import type { DiscordChannelCheckpoint } from '@/integrations/discord/inbox/types';
 import { createChannelId, createGuildId, createUserId } from '@/integrations/discord/types';
 
 describe('InboxManager', () => {
     let mockCheckpointManager: CheckpointManager;
     let mockMessageSearchService: MessageSearchService;
+    let mockChannelRegistry: ChannelRegistryManager;
     let manager: InboxManager;
 
     const channelId = createChannelId('123456789');
@@ -52,10 +54,14 @@ describe('InboxManager', () => {
             })),
         } as unknown as MessageSearchService;
 
+        mockChannelRegistry = {
+            getUnmutedChannels: mock(async () => []),  // Empty by default, tests will populate as needed
+        } as unknown as ChannelRegistryManager;
+
         manager = new InboxManager({
             checkpointManager:    mockCheckpointManager,
             messageSearchService: mockMessageSearchService,
-            monitoredChannelIds:  [],  // Empty by default, tests will populate as needed
+            channelRegistry:      mockChannelRegistry,
         });
     });
 
@@ -98,19 +104,28 @@ describe('InboxManager', () => {
     });
 
     describe('loadUnread', () => {
-        test('should return zero when no monitored channels', async () => {
-            // Manager has empty monitoredChannelIds from beforeEach
+        test('should return zero when no unmuted channels', async () => {
+            // Manager has empty channelRegistry from beforeEach
             const total = await manager.loadUnread();
 
             expect(total).toBe(0);
         });
 
         test('should skip channels with gap smaller than minGapDurationMs', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             const checkpoint: DiscordChannelCheckpoint = {
@@ -130,11 +145,20 @@ describe('InboxManager', () => {
         });
 
         test('should load messages for channels with sufficient gap', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             const checkpoint: DiscordChannelCheckpoint = {
@@ -178,11 +202,20 @@ describe('InboxManager', () => {
         });
 
         test('should limit catch-up age to maxCatchUpAgeDays', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             const checkpoint: DiscordChannelCheckpoint = {
@@ -219,11 +252,20 @@ describe('InboxManager', () => {
         });
 
         test('should respect maxCatchUpMessages limit', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             const checkpoint: DiscordChannelCheckpoint = {
@@ -243,16 +285,22 @@ describe('InboxManager', () => {
             expect(call.limit).toBe(100); // Default maxCatchUpMessages
         });
 
-        test('should use channel metadata name if available', async () => {
-            // Create manager with monitored channel
+        test('should use channel name from registry', async () => {
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: 'general',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
-
-            // Update metadata with channel name
-            managerWithChannel.updateChannelMetadata(channelId, 'general', guildId);
 
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
@@ -294,12 +342,21 @@ describe('InboxManager', () => {
             expect(messages[0].channelName).toBe('general');
         });
 
-        test('should use channelId as fallback name if metadata not set', async () => {
-            // Create manager with monitored channel but don't update metadata
+        test('should use channel name from registry metadata', async () => {
+            // Create mock registry with channel metadata
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#registered-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             const checkpoint: DiscordChannelCheckpoint = {
@@ -339,18 +396,25 @@ describe('InboxManager', () => {
             await managerWithChannel.loadUnread();
 
             const messages = managerWithChannel.getChannelMessages(channelId);
-            expect(messages[0].channelName).toBe(channelId);
+            expect(messages[0].channelName).toBe('#registered-channel');
         });
 
         test('should continue processing channels despite errors', async () => {
             const channel1Id = createChannelId('111111111');
             const channel2Id = createChannelId('222222222');
 
-            // Create manager with two monitored channels
+            // Create mock registry with two unmuted channels
+            const mockRegistryWithChannels = {
+                getUnmutedChannels: mock(async () => [
+                    { channelId: channel1Id, channelName: '#channel-1', guildId, isMuted: false },
+                    { channelId: channel2Id, channelName: '#channel-2', guildId, isMuted: false },
+                ]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannels = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channel1Id, channel2Id],
+                channelRegistry:      mockRegistryWithChannels,
             });
 
             const checkpoint1: DiscordChannelCheckpoint = {
@@ -420,11 +484,20 @@ describe('InboxManager', () => {
         });
 
         test('should handle empty message results', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             const checkpoint: DiscordChannelCheckpoint = {
@@ -462,14 +535,23 @@ describe('InboxManager', () => {
         });
 
         test('should return correct overview with unread messages', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: 'general',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
-            // Update metadata with channel name
+            // Update metadata cache with channel name for getUnreadOverview
             managerWithChannel.updateChannelMetadata(channelId, 'general', guildId);
 
             // Load some messages
@@ -519,11 +601,20 @@ describe('InboxManager', () => {
         });
 
         test('should exclude channels with all messages marked as read', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             const checkpoint: DiscordChannelCheckpoint = {
@@ -578,11 +669,20 @@ describe('InboxManager', () => {
         });
 
         test('should return unread messages only', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             const checkpoint: DiscordChannelCheckpoint = {
@@ -648,11 +748,20 @@ describe('InboxManager', () => {
         });
 
         test('should return undefined for unknown message', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             const checkpoint: DiscordChannelCheckpoint = {
@@ -672,11 +781,20 @@ describe('InboxManager', () => {
         });
 
         test('should return message by ID', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             const checkpoint: DiscordChannelCheckpoint = {
@@ -731,11 +849,20 @@ describe('InboxManager', () => {
         });
 
         test('should mark messages as read and update checkpoint', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             // Update metadata
@@ -791,11 +918,20 @@ describe('InboxManager', () => {
         });
 
         test('should update checkpoint to latest marked message', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             // Update metadata
@@ -884,11 +1020,20 @@ describe('InboxManager', () => {
         });
 
         test('should do nothing for channel with no messages', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             const checkpoint: DiscordChannelCheckpoint = {
@@ -908,11 +1053,20 @@ describe('InboxManager', () => {
         });
 
         test('should mark all messages as read', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             // Update metadata
@@ -1009,11 +1163,20 @@ describe('InboxManager', () => {
         });
 
         test('should return correct count with unread messages', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             const checkpoint: DiscordChannelCheckpoint = {
@@ -1067,11 +1230,20 @@ describe('InboxManager', () => {
         });
 
         test('should exclude read messages from count', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             const checkpoint: DiscordChannelCheckpoint = {
@@ -1132,11 +1304,20 @@ describe('InboxManager', () => {
         });
 
         test('should return true with unread messages', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             const checkpoint: DiscordChannelCheckpoint = {
@@ -1179,11 +1360,20 @@ describe('InboxManager', () => {
         });
 
         test('should return false after marking all as read', async () => {
-            // Create manager with monitored channel
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
             const managerWithChannel = new InboxManager({
                 checkpointManager:    mockCheckpointManager,
                 messageSearchService: mockMessageSearchService,
-                monitoredChannelIds:  [channelId],
+                channelRegistry:      mockRegistryWithChannel,
             });
 
             const checkpoint: DiscordChannelCheckpoint = {

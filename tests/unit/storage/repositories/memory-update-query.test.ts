@@ -242,8 +242,7 @@ describe('MemoryRepository', () => {
                 _assign(otherError, errorProps);
                 ddbMock.on(PutCommand).rejectsOnce(otherError);
 
-                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
-                await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toBe(otherError);
+                expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toBe(otherError);
             });
 
             // Tests to kill remaining mutants at line 122
@@ -271,8 +270,7 @@ describe('MemoryRepository', () => {
                 });
 
                 // Should re-throw value as-is
-                // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
-                await expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toBe(throwValue);
+                expect(repository.update(testId, 'identity', { content: 'Updated' })).rejects.toBe(throwValue);
 
                 sendSpy.mockRestore();
             });

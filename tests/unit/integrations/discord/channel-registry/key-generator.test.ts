@@ -4,44 +4,45 @@ import { ChannelRegistryKeyGenerator } from '@/integrations/discord/channel-regi
 describe('ChannelRegistryKeyGenerator', () => {
     describe('createKeys', () => {
         it('should create correct keys for a basic channel', () => {
-            const keys = ChannelRegistryKeyGenerator.createKeys('123456', '789012', 'general');
+            const keys = ChannelRegistryKeyGenerator.createKeys('123456', '789012');
 
             expect(keys).toEqual({
                 PK:     'CHANNEL#123456',
                 SK:     'METADATA',
                 GSI1PK: 'GUILD#789012',
-                GSI1SK: 'CHANNEL#general',
+                GSI1SK: 'CHANNEL#123456',
             });
         });
 
         it('should handle channel names with special characters', () => {
-            const keys = ChannelRegistryKeyGenerator.createKeys('999', '888', 'dev-chat-v2.0');
+            const keys = ChannelRegistryKeyGenerator.createKeys('999', '888');
 
             expect(keys).toEqual({
                 PK:     'CHANNEL#999',
                 SK:     'METADATA',
                 GSI1PK: 'GUILD#888',
-                GSI1SK: 'CHANNEL#dev-chat-v2.0',
+                GSI1SK: 'CHANNEL#999',
             });
         });
 
         it('should handle long channel IDs', () => {
             const longChannelId = '1234567890123456789';
             const longGuildId = '9876543210987654321';
-            const keys = ChannelRegistryKeyGenerator.createKeys(longChannelId, longGuildId, 'test');
+            const keys = ChannelRegistryKeyGenerator.createKeys(longChannelId, longGuildId);
 
             expect(keys.PK).toBe(`CHANNEL#${longChannelId}`);
             expect(keys.GSI1PK).toBe(`GUILD#${longGuildId}`);
+            expect(keys.GSI1SK).toBe(`CHANNEL#${longChannelId}`);
         });
 
-        it('should handle empty channel names', () => {
-            const keys = ChannelRegistryKeyGenerator.createKeys('111', '222', '');
+        it('should handle empty channel IDs', () => {
+            const keys = ChannelRegistryKeyGenerator.createKeys('', '222');
 
             expect(keys.GSI1SK).toBe('CHANNEL#');
         });
 
         it('should not include GSI2 keys', () => {
-            const keys = ChannelRegistryKeyGenerator.createKeys('123', '456', 'test');
+            const keys = ChannelRegistryKeyGenerator.createKeys('123', '456');
 
             expect(keys.GSI2PK).toBeUndefined();
             expect(keys.GSI2SK).toBeUndefined();
@@ -143,24 +144,24 @@ describe('ChannelRegistryKeyGenerator', () => {
         it('should parse valid GSI1 keys correctly', () => {
             const result = ChannelRegistryKeyGenerator.parseGuildKeys(
                 'GUILD#789012',
-                'CHANNEL#general'
+                'CHANNEL#123456'
             );
 
             expect(result).toEqual({
-                guildId:     '789012',
-                channelName: 'general',
+                guildId:   '789012',
+                channelId: '123456',
             });
         });
 
         it('should parse long IDs correctly', () => {
             const result = ChannelRegistryKeyGenerator.parseGuildKeys(
                 'GUILD#9876543210987654321',
-                'CHANNEL#dev-chat-v2.0'
+                'CHANNEL#1234567890123456789'
             );
 
             expect(result).toEqual({
-                guildId:     '9876543210987654321',
-                channelName: 'dev-chat-v2.0',
+                guildId:   '9876543210987654321',
+                channelId: '1234567890123456789',
             });
         });
 
@@ -173,13 +174,13 @@ describe('ChannelRegistryKeyGenerator', () => {
             expect(result.guildId).toBe('');
         });
 
-        it('should handle empty channel name', () => {
+        it('should handle empty channel ID', () => {
             const result = ChannelRegistryKeyGenerator.parseGuildKeys(
                 'GUILD#123',
                 'CHANNEL#'
             );
 
-            expect(result.channelName).toBe('');
+            expect(result.channelId).toBe('');
         });
 
         it('should throw error for invalid GSI1PK prefix', () => {
@@ -258,23 +259,23 @@ describe('ChannelRegistryKeyGenerator', () => {
     describe('round-trip consistency', () => {
         it('should maintain channelId through createKeys and parseChannelId', () => {
             const originalChannelId = '123456789';
-            const keys = ChannelRegistryKeyGenerator.createKeys(originalChannelId, '999', 'test');
+            const keys = ChannelRegistryKeyGenerator.createKeys(originalChannelId, '999');
             const parsedChannelId = ChannelRegistryKeyGenerator.parseChannelId(keys.PK);
 
             expect(parsedChannelId).toBe(originalChannelId);
         });
 
-        it('should maintain guildId and channelName through createKeys and parseGuildKeys', () => {
+        it('should maintain guildId and channelId through createKeys and parseGuildKeys', () => {
             const originalGuildId = '987654321';
-            const originalChannelName = 'general-chat';
-            const keys = ChannelRegistryKeyGenerator.createKeys('111', originalGuildId, originalChannelName);
-            const { guildId, channelName } = ChannelRegistryKeyGenerator.parseGuildKeys(
+            const originalChannelId = '111222333';
+            const keys = ChannelRegistryKeyGenerator.createKeys(originalChannelId, originalGuildId);
+            const { guildId, channelId } = ChannelRegistryKeyGenerator.parseGuildKeys(
                 keys.GSI1PK,
                 keys.GSI1SK
             );
 
             expect(guildId).toBe(originalGuildId);
-            expect(channelName).toBe(originalChannelName);
+            expect(channelId).toBe(originalChannelId);
         });
     });
 });

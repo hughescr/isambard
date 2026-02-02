@@ -4,21 +4,19 @@ import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import _ from 'lodash';
 import { ResponseRouter } from '../../../../../src/integrations/discord/channel-registry/response-router';
 import type { ChannelRegistryManager } from '../../../../../src/integrations/discord/channel-registry/manager';
-import type { DMTracker } from '../../../../../src/integrations/discord/channel-registry/dm-tracker';
 import type { ChannelMetadata } from '../../../../../src/integrations/discord/channel-registry/types';
-import { createChannelId, createUserId, createGuildId } from '../../../../../src/integrations/discord/types';
+import { createChannelId, createGuildId } from '../../../../../src/integrations/discord/types';
 import { NO_RESPONSE_SENTINEL } from '../../../../../src/integrations/discord/channel-registry/sentinel';
+import { WellKnownChannelNotFoundError } from '../../../../../src/integrations/discord/channel-registry/errors';
 
 describe('ResponseRouter', () => {
     let router: ResponseRouter;
     let mockManager: ChannelRegistryManager;
-    let mockDMTracker: DMTracker;
 
     const ORIGIN_CHANNEL = createChannelId('origin-123');
     const CATCHUP_CHANNEL = createChannelId('catchup-456');
     const PERCH_CHANNEL = createChannelId('perch-789');
-    const DM_CHANNEL = createChannelId('dm-999');
-    const USER_ID = createUserId('user-123');
+    const FALLBACK_CHANNEL = createChannelId('fallback-999');
 
     beforeEach(() => {
         // Create minimal mocks with just the methods we need
@@ -26,13 +24,8 @@ describe('ResponseRouter', () => {
             getWellKnownChannel: mock(_.constant(Promise.resolve(null))),
         } as unknown as ChannelRegistryManager;
 
-        mockDMTracker = {
-            getOrCreateDM: mock(_.constant(Promise.resolve(DM_CHANNEL))),
-        } as unknown as DMTracker;
-
         router = new ResponseRouter({
-            manager:   mockManager,
-            dmTracker: mockDMTracker,
+            manager: mockManager,
         });
     });
 
@@ -42,8 +35,7 @@ describe('ResponseRouter', () => {
                 const result = await router.routeResponse(
                     'dm',
                     'Hello from DM',
-                    ORIGIN_CHANNEL,
-                    USER_ID
+                    ORIGIN_CHANNEL
                 );
 
                 // Should NOT attempt to get well-known channel for DM
@@ -59,8 +51,7 @@ describe('ResponseRouter', () => {
                 const result = await router.routeResponse(
                     'dm',
                     `${NO_RESPONSE_SENTINEL} Not sending this`,
-                    ORIGIN_CHANNEL,
-                    USER_ID
+                    ORIGIN_CHANNEL
                 );
 
                 // Should NOT attempt to get well-known channel for DM
@@ -77,8 +68,7 @@ describe('ResponseRouter', () => {
                 const result = await router.routeResponse(
                     'processing_message',
                     'Processing message response',
-                    ORIGIN_CHANNEL,
-                    USER_ID
+                    ORIGIN_CHANNEL
                 );
 
                 // Should NOT attempt to get well-known channel for processing_message
@@ -93,8 +83,7 @@ describe('ResponseRouter', () => {
                 const result = await router.routeResponse(
                     'processing_message',
                     `Some text ${NO_RESPONSE_SENTINEL} more text`,
-                    ORIGIN_CHANNEL,
-                    USER_ID
+                    ORIGIN_CHANNEL
                 );
 
                 // Should NOT attempt to get well-known channel for processing_message
@@ -124,8 +113,7 @@ describe('ResponseRouter', () => {
                 const result = await router.routeResponse(
                     'catching_up',
                     'Catch-up complete',
-                    ORIGIN_CHANNEL,
-                    USER_ID
+                    ORIGIN_CHANNEL
                 );
 
                 expect(mockManager.getWellKnownChannel).toHaveBeenCalledWith('catch-up');
@@ -135,23 +123,47 @@ describe('ResponseRouter', () => {
                 expect(result.isFallback).toBe(false);
             });
 
-            it('should fallback to DM when catch-up channel missing', async () => {
-                mockManager.getWellKnownChannel = mock(_.constant(Promise.resolve(null)));
+            it('should route to fallback when catch-up channel missing', async () => {
+                const fallbackMeta: ChannelMetadata = {
+                    channelId:    FALLBACK_CHANNEL,
+                    guildId:      createGuildId('guild-123'),
+                    channelName:  'fallback',
+                    isMuted:      false,
+                    isWellKnown:  'fallback',
+                    discoveredAt: new Date().toISOString(),
+                    lastSeenAt:   new Date().toISOString(),
+                    updatedAt:    new Date().toISOString(),
+                };
+
+                // First call for 'catch-up' returns null, second call for 'fallback' returns fallback channel
+                mockManager.getWellKnownChannel = mock((type: string) =>
+                    Promise.resolve(type === 'fallback' ? fallbackMeta : null)
+                );
 
                 const result = await router.routeResponse(
                     'catching_up',
                     'Catch-up complete',
-                    ORIGIN_CHANNEL,
-                    USER_ID
+                    ORIGIN_CHANNEL
                 );
 
                 expect(mockManager.getWellKnownChannel).toHaveBeenCalledWith('catch-up');
-                expect(mockDMTracker.getOrCreateDM).toHaveBeenCalledWith(USER_ID);
-                expect(result.targetChannelId).toBe(DM_CHANNEL);
+                expect(mockManager.getWellKnownChannel).toHaveBeenCalledWith('fallback');
+                expect(result.targetChannelId).toBe(FALLBACK_CHANNEL);
                 expect(result.shouldSend).toBe(true);
-                expect(result.content).toBe('Catch-up complete');
+                expect(result.content).toContain('⚠️ Channel #catch-up not configured');
+                expect(result.content).toContain('Catch-up complete');
                 expect(result.isFallback).toBe(true);
-                expect(result.fallbackReason).toBe('Well-known channel #catch-up not found. Response sent via DM instead.');
+                expect(result.fallbackReason).toBe('#catch-up not configured');
+            });
+
+            it('should throw WellKnownChannelNotFoundError when both catch-up and fallback channels missing', () => {
+                mockManager.getWellKnownChannel = mock(_.constant(Promise.resolve(null)));
+
+                expect(router.routeResponse(
+                    'catching_up',
+                    'Catch-up complete',
+                    ORIGIN_CHANNEL
+                )).rejects.toThrow(WellKnownChannelNotFoundError);
             });
 
             it('should detect sentinel in catch-up response', async () => {
@@ -171,8 +183,7 @@ describe('ResponseRouter', () => {
                 const result = await router.routeResponse(
                     'catching_up',
                     `${NO_RESPONSE_SENTINEL} Silent catch-up`,
-                    ORIGIN_CHANNEL,
-                    USER_ID
+                    ORIGIN_CHANNEL
                 );
 
                 expect(result.shouldSend).toBe(false);
@@ -198,8 +209,7 @@ describe('ResponseRouter', () => {
                 const result = await router.routeResponse(
                     'perching',
                     'Perch observation',
-                    ORIGIN_CHANNEL,
-                    USER_ID
+                    ORIGIN_CHANNEL
                 );
 
                 expect(mockManager.getWellKnownChannel).toHaveBeenCalledWith('perch-time');
@@ -209,23 +219,47 @@ describe('ResponseRouter', () => {
                 expect(result.isFallback).toBe(false);
             });
 
-            it('should fallback to DM when perch-time channel missing', async () => {
-                mockManager.getWellKnownChannel = mock(_.constant(Promise.resolve(null)));
+            it('should route to fallback when perch-time channel missing', async () => {
+                const fallbackMeta: ChannelMetadata = {
+                    channelId:    FALLBACK_CHANNEL,
+                    guildId:      createGuildId('guild-123'),
+                    channelName:  'fallback',
+                    isMuted:      false,
+                    isWellKnown:  'fallback',
+                    discoveredAt: new Date().toISOString(),
+                    lastSeenAt:   new Date().toISOString(),
+                    updatedAt:    new Date().toISOString(),
+                };
+
+                // First call for 'perch-time' returns null, second call for 'fallback' returns fallback channel
+                mockManager.getWellKnownChannel = mock((type: string) =>
+                    Promise.resolve(type === 'fallback' ? fallbackMeta : null)
+                );
 
                 const result = await router.routeResponse(
                     'perching',
                     'Perch observation',
-                    ORIGIN_CHANNEL,
-                    USER_ID
+                    ORIGIN_CHANNEL
                 );
 
                 expect(mockManager.getWellKnownChannel).toHaveBeenCalledWith('perch-time');
-                expect(mockDMTracker.getOrCreateDM).toHaveBeenCalledWith(USER_ID);
-                expect(result.targetChannelId).toBe(DM_CHANNEL);
+                expect(mockManager.getWellKnownChannel).toHaveBeenCalledWith('fallback');
+                expect(result.targetChannelId).toBe(FALLBACK_CHANNEL);
                 expect(result.shouldSend).toBe(true);
-                expect(result.content).toBe('Perch observation');
+                expect(result.content).toContain('⚠️ Channel #perch-time not configured');
+                expect(result.content).toContain('Perch observation');
                 expect(result.isFallback).toBe(true);
-                expect(result.fallbackReason).toBe('Well-known channel #perch-time not found. Response sent via DM instead.');
+                expect(result.fallbackReason).toBe('#perch-time not configured');
+            });
+
+            it('should throw WellKnownChannelNotFoundError when both perch-time and fallback channels missing', () => {
+                mockManager.getWellKnownChannel = mock(_.constant(Promise.resolve(null)));
+
+                expect(router.routeResponse(
+                    'perching',
+                    'Perch observation',
+                    ORIGIN_CHANNEL
+                )).rejects.toThrow(WellKnownChannelNotFoundError);
             });
 
             it('should detect sentinel in perch response', async () => {
@@ -245,8 +279,7 @@ describe('ResponseRouter', () => {
                 const result = await router.routeResponse(
                     'perching',
                     `${NO_RESPONSE_SENTINEL} Silent perch`,
-                    ORIGIN_CHANNEL,
-                    USER_ID
+                    ORIGIN_CHANNEL
                 );
 
                 expect(result.shouldSend).toBe(false);
@@ -263,8 +296,7 @@ describe('ResponseRouter', () => {
                 const result = await router.routeResponse(
                     unknownType,
                     'Response for unknown type',
-                    ORIGIN_CHANNEL,
-                    USER_ID
+                    ORIGIN_CHANNEL
                 );
 
                 // Should not call manager since wellKnownType is undefined
@@ -315,12 +347,10 @@ describe('ResponseRouter', () => {
             expect(target).toBe(CATCHUP_CHANNEL);
         });
 
-        it('should return origin channel when catch-up channel missing', async () => {
+        it('should throw WellKnownChannelNotFoundError when catch-up channel missing', () => {
             mockManager.getWellKnownChannel = mock(_.constant(Promise.resolve(null)));
 
-            const target = await router.getTargetChannel('catching_up', ORIGIN_CHANNEL);
-
-            expect(target).toBe(ORIGIN_CHANNEL);
+            expect(router.getTargetChannel('catching_up', ORIGIN_CHANNEL)).rejects.toThrow(WellKnownChannelNotFoundError);
         });
 
         it('should return perch-time channel when available', async () => {
@@ -343,12 +373,10 @@ describe('ResponseRouter', () => {
             expect(target).toBe(PERCH_CHANNEL);
         });
 
-        it('should return origin channel when perch-time channel missing', async () => {
+        it('should throw WellKnownChannelNotFoundError when perch-time channel missing', () => {
             mockManager.getWellKnownChannel = mock(_.constant(Promise.resolve(null)));
 
-            const target = await router.getTargetChannel('perching', ORIGIN_CHANNEL);
-
-            expect(target).toBe(ORIGIN_CHANNEL);
+            expect(router.getTargetChannel('perching', ORIGIN_CHANNEL)).rejects.toThrow(WellKnownChannelNotFoundError);
         });
 
         it('should return origin channel for unmapped session type', async () => {

@@ -310,8 +310,7 @@ describe('MemoryToolBackend', () => {
             ddbMock.on(PutCommand).resolvesOnce({}).rejectsOnce(conditionalError); // Version snapshot succeeds, main item fails
             ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions (if called)
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
-            await expect(
+            expect(
                 backend.update(testPath, { content: 'Updated' })
             ).rejects.toMatchObject({
                 name:    'ConflictError',
@@ -328,8 +327,7 @@ describe('MemoryToolBackend', () => {
             ddbMock.on(PutCommand).resolvesOnce({}).rejectsOnce(otherError); // Version snapshot succeeds, main item fails
             ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions (if called)
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
-            await expect(
+            expect(
                 backend.update(testPath, { content: 'Updated' })
             ).rejects.toThrow('Network timeout');
         });
@@ -364,8 +362,7 @@ describe('MemoryToolBackend', () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(QueryCommand).resolves({ Items: [] }); // For pruneVersions (if called)
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects returns a promise
-            await expect(
+            expect(
                 backend.update(testPath, { content: '' }) // Empty content
             ).rejects.toThrow(ValidationError);
         });

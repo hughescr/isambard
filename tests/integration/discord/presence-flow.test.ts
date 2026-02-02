@@ -14,10 +14,13 @@ import { createIdleStatusGenerator } from '@/integrations/discord/presence/statu
 import { createPresenceManager } from '@/integrations/discord/presence/manager';
 import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
 import { createMessageHandler } from '@/integrations/discord/handlers';
+import { createMockBotStateManager, createMockResponseRouter } from '../../setup';
 import type { ClaudeAgent } from '@/agent/agent';
 import type { StreamTracker } from '@/agent/stream-tracker';
 import type { DiscordMessageContext, ChannelId, UserId, GuildId } from '@/integrations/discord/types';
 import type { AgentStreamEvent } from '@/agent/types';
+import type { BotStateManager } from '@/integrations/discord/state';
+import type { ChannelRegistryManager, ResponseRouter } from '@/integrations/discord/channel-registry';
 // Import shared mocks from setup.ts (already registered via mock.module in preload)
 import { mockGenerateText, mockGenerateTextWithSystemPrompt } from '../../setup';
 
@@ -43,18 +46,24 @@ describe('Discord Presence Flow (Integration)', () => {
 
         // Mock channel with typing indicator
         mockChannel = {
+            id:         'channel-id',
+            channelId:  'channel-id',
             sendTyping: mock(async () => undefined),
+            isDMBased:  mock(_constant(false)),
+            isThread:   mock(_constant(false)),
         } as unknown as TextChannel;
 
         // Mock Discord message
         mockMessage = {
-            id:        '123456789',
-            author:    { id: 'user-id', bot: false },
-            content:   'Hello bot!',
-            createdAt: new Date(),
-            guild:     { id: 'guild-id' },
-            channel:   { ...mockChannel, id: 'channel-id' },
-            reply:     mock(async () => undefined),
+            id:           '123456789',
+            author:       { id: 'user-id', bot: false, tag: 'TestUser#1234' },
+            content:      'Hello bot!',
+            cleanContent: 'Hello bot!',
+            createdAt:    new Date(),
+            guild:        { id: 'guild-id' },
+            channel:      mockChannel,
+            channelId:    'channel-id',
+            reply:        mock(async () => undefined),
         } as unknown as Message;
     });
 
@@ -155,13 +164,13 @@ describe('Discord Presence Flow (Integration)', () => {
         // Don't use onMessage directly if presenceManager and agent are provided
         // The middleware will call agent.chat instead
         const messageHandler = createMessageHandler({
-            monitoredChannelIds: ['channel-id' as ChannelId],
-            botUserId:           'bot-id' as UserId,
-            onMessage:           mock(_constant(Promise.resolve('test response'))), // This won't be called when middleware is used
+            channelRegistry: { shouldProcess: mock(_constant(true)), getChannel: mock(_constant(null)), warmCache: mock(_constant(Promise.resolve())) } as unknown as ChannelRegistryManager,
+            botUserId:       'bot-id' as UserId,
+            onMessage:       mock(_constant(Promise.resolve('test response'))), // This won't be called when middleware is used
             presenceManager,
-            agent:               mockAgent,
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock type is intentionally loose
-            botStateManager:     mockBotStateManager,
+            agent:           mockAgent,
+            botStateManager: mockBotStateManager as unknown as BotStateManager,
+            responseRouter:  createMockResponseRouter() as unknown as ResponseRouter,
         });
 
         // Process message
@@ -276,20 +285,24 @@ describe('Discord Presence Flow (Integration)', () => {
     it('should work without presence manager (backward compatibility)', async () => {
         // Create fresh mock for this test to avoid interference
         const testMessage = {
-            id:        '999888777',
-            author:    { id: 'user-id', bot: false },
-            content:   'Hello bot!',
-            createdAt: new Date(),
-            guild:     { id: 'guild-id' },
-            channel:   { id: 'channel-id', sendTyping: mock(async () => undefined) },
-            reply:     mock(async () => undefined),
+            id:           '999888777',
+            author:       { id: 'user-id', bot: false, tag: 'TestUser#5678' },
+            content:      'Hello bot!',
+            cleanContent: 'Hello bot!',
+            createdAt:    new Date(),
+            guild:        { id: 'guild-id' },
+            channel:      { id: 'channel-id', channelId: 'channel-id', sendTyping: mock(async () => undefined), isDMBased: mock(_constant(false)), isThread: mock(_constant(false)) },
+            channelId:    'channel-id',
+            reply:        mock(async () => undefined),
         } as unknown as Message;
 
         // Create message handler WITHOUT presence manager
         const messageHandler = createMessageHandler({
-            monitoredChannelIds: ['channel-id' as ChannelId],
-            botUserId:           'bot-id' as UserId,
-            onMessage:           mock(_constant(Promise.resolve('Response without presence'))),
+            channelRegistry: { shouldProcess: mock(_constant(true)), getChannel: mock(_constant(null)), warmCache: mock(_constant(Promise.resolve())) } as unknown as ChannelRegistryManager,
+            botUserId:       'bot-id' as UserId,
+            onMessage:       mock(_constant(Promise.resolve('Response without presence'))),
+            botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+            responseRouter:  createMockResponseRouter() as unknown as ResponseRouter,
         });
 
         // Process message

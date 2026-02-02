@@ -5,14 +5,18 @@ import {
     QueryCommand,
     UpdateCommand,
     DeleteCommand,
-    ScanCommand
+    ScanCommand // Still needed for getAllChannels()
 } from '@aws-sdk/lib-dynamodb';
 import _ from 'lodash';
 import { stripDynamoKeys } from '@/storage/utils/index.js';
 import { withDynamoTimeout } from '@/storage/dynamo-retry';
 import { ItemNotFoundError, ValidationError } from '@/storage/errors';
 import type { ChannelId, GuildId } from '../types';
-import { type ChannelMetadata, type WellKnownChannel, channelMetadataSchema } from './types';
+import {
+    type ChannelStorageRecord,
+    type WellKnownChannel,
+    channelStorageRecordSchema
+} from './types';
 import { ChannelRegistryKeyGenerator, type ChannelRegistryKeys } from './key-generator';
 
 /**
@@ -28,14 +32,15 @@ export class ChannelRegistryBackend {
 
     /**
      * Upserts a channel (create or update).
-     * Generates all necessary DynamoDB keys and stores the metadata.
+     * Generates all necessary DynamoDB keys and stores the minimal metadata.
+     * Note: Only stores Izzy-specific data (mute status, well-known designation).
      *
-     * @param metadata - Channel metadata to store
-     * @throws {ValidationError} If metadata is invalid
+     * @param record - Channel storage record (minimal data)
+     * @throws {ValidationError} If record is invalid
      */
-    async upsertChannel(metadata: ChannelMetadata): Promise<void> {
-        // Validate metadata
-        const validationResult = channelMetadataSchema.safeParse(metadata);
+    async upsertChannel(record: ChannelStorageRecord): Promise<void> {
+        // Validate storage record
+        const validationResult = channelStorageRecordSchema.safeParse(record);
         if(!validationResult.success) {
             throw new ValidationError(validationResult.error.issues);
         }
@@ -45,12 +50,11 @@ export class ChannelRegistryBackend {
         // Generate keys
         const keys = ChannelRegistryKeyGenerator.createKeys(
             validated.channelId,
-            validated.guildId,
-            validated.channelName
+            validated.guildId
         );
 
         // Add well-known keys if applicable
-        let item: ChannelMetadata & ChannelRegistryKeys = {
+        let item: ChannelStorageRecord & ChannelRegistryKeys = {
             ...validated,
             ...keys,
         };
@@ -78,12 +82,14 @@ export class ChannelRegistryBackend {
     }
 
     /**
-     * Gets a channel by ID.
+     * Gets a channel storage record by ID.
+     * Returns minimal stored data (mute status, well-known designation).
+     * Manager layer is responsible for merging with Discord API data.
      *
      * @param channelId - Discord channel ID
-     * @returns Channel metadata or null if not found
+     * @returns Channel storage record or null if not found
      */
-    async getChannel(channelId: ChannelId): Promise<ChannelMetadata | null> {
+    async getChannel(channelId: ChannelId): Promise<ChannelStorageRecord | null> {
         const keys = {
             PK: `CHANNEL#${channelId}`,
             SK: 'METADATA',
@@ -106,17 +112,18 @@ export class ChannelRegistryBackend {
             return null;
         }
 
-        return stripDynamoKeys(result.Item) as ChannelMetadata;
+        return stripDynamoKeys(result.Item) as ChannelStorageRecord;
     }
 
     /**
-     * Gets all channels in a guild.
+     * Gets all channel storage records in a guild.
      * Uses GSI1 to query by guild ID.
+     * Manager layer is responsible for merging with Discord API data.
      *
      * @param guildId - Discord guild ID
-     * @returns Array of channel metadata
+     * @returns Array of channel storage records
      */
-    async getChannelsByGuild(guildId: GuildId): Promise<ChannelMetadata[]> {
+    async getChannelsByGuild(guildId: GuildId): Promise<ChannelStorageRecord[]> {
         const command = new QueryCommand({
             TableName:                 this.tableName,
             IndexName:                 'GSI1',
@@ -135,69 +142,18 @@ export class ChannelRegistryBackend {
             }
         );
 
-        return _.map(result.Items ?? [], item => stripDynamoKeys(item) as ChannelMetadata);
+        return _.map(result.Items ?? [], item => stripDynamoKeys(item) as ChannelStorageRecord);
     }
 
     /**
-     * Gets channel by name within a guild (for name resolution).
-     * Uses GSI1 to query by guild ID and channel name.
-     *
-     * @param channelName - Channel name to search for
-     * @param guildId - Optional guild ID to scope the search
-     * @returns Array of matching channels
-     */
-    async getChannelByName(channelName: string, guildId?: GuildId): Promise<ChannelMetadata[]> {
-        if(guildId) {
-            // Query specific guild
-            const command = new QueryCommand({
-                TableName:                 this.tableName,
-                IndexName:                 'GSI1',
-                KeyConditionExpression:    'GSI1PK = :guildPk AND GSI1SK = :channelSk',
-                ExpressionAttributeValues: {
-                    ':guildPk':   `GUILD#${guildId}`,
-                    ':channelSk': `CHANNEL#${channelName}`,
-                },
-            });
-
-            const result = await withDynamoTimeout(
-                () => this.docClient.send(command),
-                {
-                    timeoutMs: this.timeoutMs,
-                    operation: 'ChannelRegistry.getChannelByName',
-                }
-            );
-
-            return _.map(result.Items ?? [], item => stripDynamoKeys(item) as ChannelMetadata);
-        }
-
-        // Scan all guilds for this channel name (less efficient, but needed for global search)
-        const command = new ScanCommand({
-            TableName:                 this.tableName,
-            FilterExpression:          'channelName = :channelName',
-            ExpressionAttributeValues: {
-                ':channelName': channelName,
-            },
-        });
-
-        const result = await withDynamoTimeout(
-            () => this.docClient.send(command),
-            {
-                timeoutMs: this.timeoutMs,
-                operation: 'ChannelRegistry.getChannelByName.scan',
-            }
-        );
-
-        return _.map(result.Items ?? [], item => stripDynamoKeys(item) as ChannelMetadata);
-    }
-
-    /**
-     * Gets a well-known channel by type.
+     * Gets a well-known channel storage record by type.
      * Uses GSI2 for efficient lookup.
+     * Manager layer is responsible for merging with Discord API data.
      *
      * @param type - Well-known channel type
-     * @returns Channel metadata or null if not found
+     * @returns Channel storage record or null if not found
      */
-    async getWellKnownChannel(type: WellKnownChannel): Promise<ChannelMetadata | null> {
+    async getWellKnownChannel(type: WellKnownChannel): Promise<ChannelStorageRecord | null> {
         const command = new QueryCommand({
             TableName:                 this.tableName,
             IndexName:                 'GSI2',
@@ -221,16 +177,17 @@ export class ChannelRegistryBackend {
             return null;
         }
 
-        return stripDynamoKeys(result.Items[0]) as ChannelMetadata;
+        return stripDynamoKeys(result.Items[0]) as ChannelStorageRecord;
     }
 
     /**
-     * Gets all channels.
+     * Gets all channel storage records.
      * WARNING: Uses scan operation - expensive for large datasets.
+     * Manager layer is responsible for merging with Discord API data.
      *
-     * @returns Array of all channel metadata
+     * @returns Array of all channel storage records
      */
-    async getAllChannels(): Promise<ChannelMetadata[]> {
+    async getAllChannels(): Promise<ChannelStorageRecord[]> {
         const command = new ScanCommand({
             TableName:                 this.tableName,
             FilterExpression:          'SK = :metadataSk',
@@ -247,7 +204,7 @@ export class ChannelRegistryBackend {
             }
         );
 
-        return _.map(result.Items ?? [], item => stripDynamoKeys(item) as ChannelMetadata);
+        return _.map(result.Items ?? [], item => stripDynamoKeys(item) as ChannelStorageRecord);
     }
 
     /**

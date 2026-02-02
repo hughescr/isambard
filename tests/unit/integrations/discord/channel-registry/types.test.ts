@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 import {
     channelMetadataSchema,
-    channelReferenceSchema,
+    channelStorageRecordSchema,
     createChannelMetadata,
     isChannelMetadata,
     WELL_KNOWN_CHANNELS,
@@ -15,7 +15,7 @@ import { createChannelId, createGuildId } from '../../../../../src/integrations/
 describe('channel-registry/types', () => {
     describe('wellKnownChannelSchema', () => {
         it('should accept valid well-known channel types', () => {
-            const validChannels: WellKnownChannel[] = ['general', 'catch-up', 'perch-time'];
+            const validChannels: WellKnownChannel[] = ['general', 'catch-up', 'perch-time', 'fallback'];
             for(const channel of validChannels) {
                 expect(() => wellKnownChannelSchema.parse(channel)).not.toThrow();
             }
@@ -29,11 +29,47 @@ describe('channel-registry/types', () => {
         });
 
         it('should match WELL_KNOWN_CHANNELS constant', () => {
-            expect(WELL_KNOWN_CHANNELS).toEqual(['general', 'catch-up', 'perch-time']);
+            expect(WELL_KNOWN_CHANNELS).toEqual(['general', 'catch-up', 'perch-time', 'fallback']);
             // Verify all constants are valid
             for(const channel of WELL_KNOWN_CHANNELS) {
                 expect(() => wellKnownChannelSchema.parse(channel)).not.toThrow();
             }
+        });
+    });
+
+    describe('channelStorageRecordSchema', () => {
+        const validRecord = {
+            channelId: createChannelId('123456789'),
+            guildId:   createGuildId('987654321'),
+            createdAt: '2024-01-01T00:00:00.000Z',
+            updatedAt: '2024-01-01T00:00:00.000Z',
+        };
+
+        it('should default isMuted to false when not specified', () => {
+            const result = channelStorageRecordSchema.parse(validRecord);
+            expect(result.isMuted).toBe(false);
+        });
+
+        it('should accept explicit isMuted values', () => {
+            const mutedRecord = { ...validRecord, isMuted: true };
+            const result = channelStorageRecordSchema.parse(mutedRecord);
+            expect(result.isMuted).toBe(true);
+
+            const unmutedRecord = { ...validRecord, isMuted: false };
+            const result2 = channelStorageRecordSchema.parse(unmutedRecord);
+            expect(result2.isMuted).toBe(false);
+        });
+
+        it('should accept optional isWellKnown field', () => {
+            const withWellKnown = { ...validRecord, isWellKnown: 'general' as const };
+            const result = channelStorageRecordSchema.parse(withWellKnown);
+            expect(result.isWellKnown).toBe('general');
+        });
+
+        it('should reject missing required fields', () => {
+            const missing = { ...validRecord };
+            delete (missing as Partial<typeof missing>).channelId;
+            expect(() => channelStorageRecordSchema.parse(missing)).toThrow(z.ZodError);
         });
     });
 
@@ -119,51 +155,6 @@ describe('channel-registry/types', () => {
 
             const invalidEmpty = { ...validMetadata, guildId: '' };
             expect(() => channelMetadataSchema.parse(invalidEmpty)).toThrow(z.ZodError);
-        });
-    });
-
-    describe('channelReferenceSchema', () => {
-        const validReference = {
-            channelName: 'test-channel',
-            channelId:   createChannelId('123456789'),
-            guildId:     createGuildId('987654321'),
-        };
-
-        it('should accept valid channel reference with guild ID', () => {
-            const result = channelReferenceSchema.parse(validReference);
-            expect(result).toBeDefined();
-            expect(result.channelName).toBe('test-channel');
-            expect(result.guildName).toBeUndefined();
-        });
-
-        it('should accept valid channel reference with DM literal', () => {
-            const dmReference = {
-                ...validReference,
-                guildId: 'DM' as const,
-            };
-            const result = channelReferenceSchema.parse(dmReference);
-            expect(result.guildId).toBe('DM');
-        });
-
-        it('should accept optional guildName field', () => {
-            const withGuildName = { ...validReference, guildName: 'Test Server' };
-            const result = channelReferenceSchema.parse(withGuildName);
-            expect(result.guildName).toBe('Test Server');
-
-            const withoutGuildName = validReference;
-            const result2 = channelReferenceSchema.parse(withoutGuildName);
-            expect(result2.guildName).toBeUndefined();
-        });
-
-        it('should reject empty channelName', () => {
-            const invalid = { ...validReference, channelName: '' };
-            expect(() => channelReferenceSchema.parse(invalid)).toThrow(z.ZodError);
-        });
-
-        it('should reject missing required fields', () => {
-            const missing = { ...validReference };
-            delete (missing as Partial<typeof missing>).channelId;
-            expect(() => channelReferenceSchema.parse(missing)).toThrow(z.ZodError);
         });
     });
 

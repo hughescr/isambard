@@ -10,8 +10,7 @@ import {
     ChannelRegistryError,
     ChannelNotFoundError,
     AmbiguousChannelError,
-    WellKnownChannelMissingError,
-    ChannelMutedError
+    WellKnownChannelNotFoundError
 } from '@/integrations/discord/channel-registry/errors';
 
 describe('ChannelRegistryError', () => {
@@ -88,59 +87,34 @@ describe('AmbiguousChannelError', () => {
     });
 });
 
-describe('WellKnownChannelMissingError', () => {
+describe('WellKnownChannelNotFoundError', () => {
     it('should construct with general channel type', () => {
-        const error = new WellKnownChannelMissingError('general');
+        const error = new WellKnownChannelNotFoundError('general');
         expect(error).toBeInstanceOf(Error);
         expect(error).toBeInstanceOf(ChannelRegistryError);
-        expect(error).toBeInstanceOf(WellKnownChannelMissingError);
+        expect(error).toBeInstanceOf(WellKnownChannelNotFoundError);
         expect(error.channelType).toBe('general');
-        expect(error.message).toBe('Well-known channel not configured: general');
-        expect(error.code).toBe('WELL_KNOWN_CHANNEL_MISSING');
-        expect(error.name).toBe('WellKnownChannelMissingError');
+        expect(error.message).toBe('Required well-known channel not found: general');
+        expect(error.code).toBe('WELL_KNOWN_CHANNEL_NOT_FOUND');
+        expect(error.name).toBe('WellKnownChannelNotFoundError');
     });
 
     it('should construct with catch-up channel type', () => {
-        const error = new WellKnownChannelMissingError('catch-up');
+        const error = new WellKnownChannelNotFoundError('catch-up');
         expect(error.channelType).toBe('catch-up');
-        expect(error.message).toBe('Well-known channel not configured: catch-up');
+        expect(error.message).toBe('Required well-known channel not found: catch-up');
     });
 
     it('should construct with perch-time channel type', () => {
-        const error = new WellKnownChannelMissingError('perch-time');
+        const error = new WellKnownChannelNotFoundError('perch-time');
         expect(error.channelType).toBe('perch-time');
-        expect(error.message).toBe('Well-known channel not configured: perch-time');
+        expect(error.message).toBe('Required well-known channel not found: perch-time');
     });
 
     it('should capture stack trace', () => {
-        const error = new WellKnownChannelMissingError('general');
+        const error = new WellKnownChannelNotFoundError('general');
         expect(error.stack).toBeDefined();
-        expect(error.stack).toContain('WellKnownChannelMissingError');
-    });
-});
-
-describe('ChannelMutedError', () => {
-    it('should construct with channel name', () => {
-        const error = new ChannelMutedError('general');
-        expect(error).toBeInstanceOf(Error);
-        expect(error).toBeInstanceOf(ChannelRegistryError);
-        expect(error).toBeInstanceOf(ChannelMutedError);
-        expect(error.channelName).toBe('general');
-        expect(error.message).toBe('Channel is muted: general');
-        expect(error.code).toBe('CHANNEL_MUTED');
-        expect(error.name).toBe('ChannelMutedError');
-    });
-
-    it('should capture stack trace', () => {
-        const error = new ChannelMutedError('general');
-        expect(error.stack).toBeDefined();
-        expect(error.stack).toContain('ChannelMutedError');
-    });
-
-    it('should work with different channel names', () => {
-        const error = new ChannelMutedError('announcements');
-        expect(error.channelName).toBe('announcements');
-        expect(error.message).toBe('Channel is muted: announcements');
+        expect(error.stack).toContain('WellKnownChannelNotFoundError');
     });
 });
 
@@ -150,8 +124,7 @@ describe('Error instanceof checks', () => {
         expect(error instanceof ChannelRegistryError).toBe(true);
         expect(error instanceof ChannelNotFoundError).toBe(true);
         expect(error instanceof AmbiguousChannelError).toBe(false);
-        expect(error instanceof WellKnownChannelMissingError).toBe(false);
-        expect(error instanceof ChannelMutedError).toBe(false);
+        expect(error instanceof WellKnownChannelNotFoundError).toBe(false);
     });
 
     it('should correctly identify AmbiguousChannelError instance', () => {
@@ -159,26 +132,15 @@ describe('Error instanceof checks', () => {
         expect(error instanceof ChannelRegistryError).toBe(true);
         expect(error instanceof AmbiguousChannelError).toBe(true);
         expect(error instanceof ChannelNotFoundError).toBe(false);
-        expect(error instanceof WellKnownChannelMissingError).toBe(false);
-        expect(error instanceof ChannelMutedError).toBe(false);
+        expect(error instanceof WellKnownChannelNotFoundError).toBe(false);
     });
 
-    it('should correctly identify WellKnownChannelMissingError instance', () => {
-        const error = new WellKnownChannelMissingError('general');
+    it('should correctly identify WellKnownChannelNotFoundError instance', () => {
+        const error = new WellKnownChannelNotFoundError('general');
         expect(error instanceof ChannelRegistryError).toBe(true);
-        expect(error instanceof WellKnownChannelMissingError).toBe(true);
+        expect(error instanceof WellKnownChannelNotFoundError).toBe(true);
         expect(error instanceof ChannelNotFoundError).toBe(false);
         expect(error instanceof AmbiguousChannelError).toBe(false);
-        expect(error instanceof ChannelMutedError).toBe(false);
-    });
-
-    it('should correctly identify ChannelMutedError instance', () => {
-        const error = new ChannelMutedError('test');
-        expect(error instanceof ChannelRegistryError).toBe(true);
-        expect(error instanceof ChannelMutedError).toBe(true);
-        expect(error instanceof ChannelNotFoundError).toBe(false);
-        expect(error instanceof AmbiguousChannelError).toBe(false);
-        expect(error instanceof WellKnownChannelMissingError).toBe(false);
     });
 });
 

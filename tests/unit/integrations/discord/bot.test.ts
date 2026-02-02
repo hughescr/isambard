@@ -7,23 +7,34 @@ import { filter as _filter, noop as _noop } from 'lodash';
 import type { Client } from 'discord.js';
 import { createDiscordBot } from '@/integrations/discord/bot';
 import type { DiscordConfig } from '@/config/schemas';
-import type { DiscordMessageContext, ChannelId } from '@/integrations/discord/types';
-import { createChannelId } from '@/integrations/discord/types';
+import type { DiscordMessageContext } from '@/integrations/discord/types';
+import { createChannelId, createGuildId } from '@/integrations/discord/types';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
 import * as clientModule from '@/integrations/discord/client';
+import * as channelRegistryModule from '@/integrations/discord/channel-registry';
 import * as presenceModule from '@/integrations/discord/presence';
 import { createBotStateManager } from '@/integrations/discord/state';
+import * as loggerModule from '@hughescr/logger';
 
 describe('createDiscordBot', () => {
     const spies: ReturnType<typeof spyOn>[] = [];
 
     // Setup common mocks
     const mockConfig: DiscordConfig = {
-        botToken:            'test-bot-token',
-        applicationId:       'test-app-id',
-        monitoredChannelIds: ['123456789' as ChannelId, '987654321' as ChannelId],
+        botToken:      'test-bot-token',
+        applicationId: 'test-app-id',
+        homeGuildId:   createGuildId('home-guild-123'),
     };
 
     const mockOnMessage = mock(async (_context: DiscordMessageContext) => null);
+
+    const mockChannelRegistry = {
+        shouldProcess:      mock(() => true),
+        getChannel:         mock(() => Promise.resolve(null)),
+        warmCache:          mock(() => Promise.resolve()),
+        getUnmutedChannels: mock(() => Promise.resolve([])),
+        upsertChannel:      mock(() => Promise.resolve()),
+    } as unknown as ChannelRegistryManager;
 
     const mockLogger = {
         info:  _noop,
@@ -41,12 +52,16 @@ describe('createDiscordBot', () => {
             }
         }
         spies.length = 0;
+        jest.restoreAllMocks();
+        // Clear global Discord client state to prevent test pollution
+        globalThis.__discordClient = undefined;
     });
 
     test('should return an object with start and stop methods', () => {
         const bot = createDiscordBot({
-            config:    mockConfig,
-            onMessage: mockOnMessage,
+            config:          mockConfig,
+            onMessage:       mockOnMessage,
+            channelRegistry: mockChannelRegistry,
         });
 
         expect(bot).toBeDefined();
@@ -56,19 +71,21 @@ describe('createDiscordBot', () => {
 
     test('should call client.login with bot token when start() is called', async () => {
         const mockClient = {
-            on:      mock(() => mockClient),
-            once:    mock(() => mockClient),
-            login:   mock(async () => 'mock-token'),
-            destroy: mock(async () => undefined),
-            user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-            rest:    null,
+            on:                 mock(() => mockClient),
+            once:               mock(() => mockClient),
+            login:              mock(async () => 'mock-token'),
+            destroy:            mock(async () => undefined),
+            removeAllListeners: mock(() => undefined),
+            user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+            rest:               null,
         } as unknown as Client;
 
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
         const bot = createDiscordBot({
-            config:    mockConfig,
-            onMessage: mockOnMessage,
+            config:          mockConfig,
+            onMessage:       mockOnMessage,
+            channelRegistry: mockChannelRegistry,
         });
 
         await bot.start();
@@ -78,19 +95,21 @@ describe('createDiscordBot', () => {
 
     test('should call client.destroy when stop() is called', async () => {
         const mockClient = {
-            on:      mock(() => mockClient),
-            once:    mock(() => mockClient),
-            login:   mock(async () => 'mock-token'),
-            destroy: mock(async () => undefined),
-            user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-            rest:    null,
+            on:                 mock(() => mockClient),
+            once:               mock(() => mockClient),
+            login:              mock(async () => 'mock-token'),
+            destroy:            mock(async () => undefined),
+            removeAllListeners: mock(() => undefined),
+            user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+            rest:               null,
         } as unknown as Client;
 
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
         const bot = createDiscordBot({
-            config:    mockConfig,
-            onMessage: mockOnMessage,
+            config:          mockConfig,
+            onMessage:       mockOnMessage,
+            channelRegistry: mockChannelRegistry,
         });
 
         await bot.stop();
@@ -101,19 +120,21 @@ describe('createDiscordBot', () => {
     test('should propagate login errors to caller', async () => {
         const loginError = new Error('Invalid bot token');
         const mockClient = {
-            on:      mock(() => mockClient),
-            once:    mock(() => mockClient),
-            login:   mock(async () => { throw loginError; }),
-            destroy: mock(async () => undefined),
-            user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-            rest:    null,
+            on:                 mock(() => mockClient),
+            once:               mock(() => mockClient),
+            login:              mock(async () => { throw loginError; }),
+            destroy:            mock(async () => undefined),
+            removeAllListeners: mock(() => undefined),
+            user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+            rest:               null,
         } as unknown as Client;
 
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
         const bot = createDiscordBot({
-            config:    mockConfig,
-            onMessage: mockOnMessage,
+            config:          mockConfig,
+            onMessage:       mockOnMessage,
+            channelRegistry: mockChannelRegistry,
         });
 
         expect(bot.start()).rejects.toThrow('Invalid bot token');
@@ -122,19 +143,21 @@ describe('createDiscordBot', () => {
     test('should propagate destroy errors to caller', async () => {
         const destroyError = new Error('Destroy failed');
         const mockClient = {
-            on:      mock(() => mockClient),
-            once:    mock(() => mockClient),
-            login:   mock(async () => 'mock-token'),
-            destroy: mock(async () => { throw destroyError; }),
-            user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-            rest:    null,
+            on:                 mock(() => mockClient),
+            once:               mock(() => mockClient),
+            login:              mock(async () => 'mock-token'),
+            destroy:            mock(async () => { throw destroyError; }),
+            removeAllListeners: mock(() => undefined),
+            user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+            rest:               null,
         } as unknown as Client;
 
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
         const bot = createDiscordBot({
-            config:    mockConfig,
-            onMessage: mockOnMessage,
+            config:          mockConfig,
+            onMessage:       mockOnMessage,
+            channelRegistry: mockChannelRegistry,
         });
 
         expect(bot.stop()).rejects.toThrow('Destroy failed');
@@ -142,19 +165,21 @@ describe('createDiscordBot', () => {
 
     test('should allow multiple start/stop cycles', async () => {
         const mockClient = {
-            on:      mock(() => mockClient),
-            once:    mock(() => mockClient),
-            login:   mock(async () => 'mock-token'),
-            destroy: mock(async () => undefined),
-            user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-            rest:    null,
+            on:                 mock(() => mockClient),
+            once:               mock(() => mockClient),
+            login:              mock(async () => 'mock-token'),
+            destroy:            mock(async () => undefined),
+            removeAllListeners: mock(() => undefined),
+            user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+            rest:               null,
         } as unknown as Client;
 
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
         const bot = createDiscordBot({
-            config:    mockConfig,
-            onMessage: mockOnMessage,
+            config:          mockConfig,
+            onMessage:       mockOnMessage,
+            channelRegistry: mockChannelRegistry,
         });
 
         await bot.start();
@@ -169,12 +194,13 @@ describe('createDiscordBot', () => {
     describe('BotStateManager Throttle Integration', () => {
         test('should NOT call presenceManager.updatePhase when shouldUpdatePresence returns false', async () => {
             const mockClient = {
-                on:      mock(() => mockClient),
-                once:    mock(() => mockClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => undefined),
-                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:    null,
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
             } as unknown as Client;
 
             const configWithPresence: DiscordConfig = {
@@ -218,6 +244,7 @@ describe('createDiscordBot', () => {
             createDiscordBot({
                 config:          configWithPresence,
                 onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
                 botStateManager: mockBotStateManager,
             });
@@ -267,12 +294,13 @@ describe('createDiscordBot', () => {
     describe('Presence Flow Integration', () => {
         test('should set up activity phase subscription when presence manager is created', async () => {
             const mockClient = {
-                on:      mock(() => mockClient),
-                once:    mock(() => mockClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => undefined),
-                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:    null,
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
             } as unknown as Client;
 
             const configWithPresence: DiscordConfig = {
@@ -320,6 +348,7 @@ describe('createDiscordBot', () => {
             createDiscordBot({
                 config:          configWithPresence,
                 onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
                 botStateManager: realBotStateManager,
             });
@@ -339,12 +368,13 @@ describe('createDiscordBot', () => {
 
         test('should complete full presence flow: state update → subscription → throttle check → presence update', async () => {
             const mockClient = {
-                on:      mock(() => mockClient),
-                once:    mock(() => mockClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => undefined),
-                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:    null,
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
             } as unknown as Client;
 
             const configWithPresence: DiscordConfig = {
@@ -386,6 +416,7 @@ describe('createDiscordBot', () => {
             createDiscordBot({
                 config:          configWithPresence,
                 onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
                 botStateManager: mockBotStateManager,
             });
@@ -458,12 +489,13 @@ describe('createDiscordBot', () => {
             jest.setSystemTime(baseTime);
 
             const mockClient = {
-                on:      mock(() => mockClient),
-                once:    mock(() => mockClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => undefined),
-                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:    null,
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
             } as unknown as Client;
 
             const configWithPresence: DiscordConfig = {
@@ -504,6 +536,7 @@ describe('createDiscordBot', () => {
             createDiscordBot({
                 config:          configWithPresence,
                 onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
                 botStateManager: mockBotStateManager,
             });
@@ -554,12 +587,13 @@ describe('createDiscordBot', () => {
 
         test('should verify subscription fires on activity phase updates', async () => {
             const mockClient = {
-                on:      mock(() => mockClient),
-                once:    mock(() => mockClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => undefined),
-                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:    null,
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
             } as unknown as Client;
 
             const configWithPresence: DiscordConfig = {
@@ -601,6 +635,7 @@ describe('createDiscordBot', () => {
             createDiscordBot({
                 config:          configWithPresence,
                 onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
                 botStateManager: mockBotStateManager,
             });
@@ -645,19 +680,21 @@ describe('createDiscordBot', () => {
     describe('Reconnection Handler Safety', () => {
         test('should use client.once() for clientReady to prevent duplicate handler registration on reconnects', () => {
             const mockClient = {
-                on:      mock(() => mockClient),
-                once:    mock(() => mockClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => undefined),
-                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:    null,
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
             } as unknown as Client;
 
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
             createDiscordBot({
-                config:    mockConfig,
-                onMessage: mockOnMessage,
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
             });
 
             // Verify client.once() was called with 'clientReady' (not client.on())
@@ -669,13 +706,13 @@ describe('createDiscordBot', () => {
             expect(clientReadyCalls.length).toBeGreaterThan(0);
         });
 
-        test('should verify clientReady handler uses once() to prevent re-registration on reconnect', () => {
+        test('should verify clientReady handler uses once() to prevent re-registration on reconnect', async () => {
             let messageCreateHandlerCount = 0;
             let interactionCreateHandlerCount = 0;
             let clientReadyHandlerCallCount = 0;
 
-            // Track registered handlers
-            const registeredHandlers = new Map<string, ((...args: unknown[]) => void)[]>();
+            // Track registered handlers (may be async)
+            const registeredHandlers = new Map<string, ((...args: unknown[]) => void | Promise<void>)[]>();
 
             // Create a mock client that behaves like the real Discord client
             const mockClient = {
@@ -693,11 +730,12 @@ describe('createDiscordBot', () => {
                     }
                     return mockClient;
                 }),
-                once: mock((event: string, handler: (...args: unknown[]) => void) => {
+                once: mock((event: string, handler: (...args: unknown[]) => void | Promise<void>) => {
                     // once() should only fire the handler once
-                    const wrappedHandler = (...args: unknown[]) => {
+
+                    const wrappedHandler = async (...args: unknown[]) => {
                         clientReadyHandlerCallCount++;
-                        handler(...args);
+                        await Promise.resolve(handler(...args));
                     };
                     if(!registeredHandlers.has(event)) {
                         registeredHandlers.set(event, []);
@@ -705,17 +743,27 @@ describe('createDiscordBot', () => {
                     registeredHandlers.get(event)!.push(wrappedHandler);
                     return mockClient;
                 }),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => undefined),
-                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:    null,
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
             } as unknown as Client;
 
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
+            // Mock channel registry functions
+            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                discovered: 0,
+                updated:    0,
+                errors:     [],
+            }));
+            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
             createDiscordBot({
-                config:    mockConfig,
-                onMessage: mockOnMessage,
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
             });
 
             // Verify that clientReady was registered with once()
@@ -728,9 +776,9 @@ describe('createDiscordBot', () => {
             const clientReadyHandlers = registeredHandlers.get('clientReady') ?? [];
             expect(clientReadyHandlers.length).toBeGreaterThan(0);
 
-            // Fire the clientReady handler once
+            // Fire the clientReady handler once (now async, must await)
             for(const handler of clientReadyHandlers) {
-                handler(mockClient);
+                await Promise.resolve(handler(mockClient));
             }
 
             // After first clientReady, should have handlers registered
@@ -744,7 +792,7 @@ describe('createDiscordBot', () => {
             // The key protection is using once() instead of on()
         });
 
-        test('should verify messageCreate and interactionCreate handlers are registered inside clientReady', () => {
+        test('should verify messageCreate and interactionCreate handlers are registered inside clientReady', async () => {
             let messageCreateRegistered = false;
             let interactionCreateRegistered = false;
 
@@ -758,18 +806,28 @@ describe('createDiscordBot', () => {
                     }
                     return mockClient;
                 }),
-                once:    mock(() => mockClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => undefined),
-                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:    null,
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
             } as unknown as Client;
 
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
+            // Mock channel registry functions
+            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                discovered: 0,
+                updated:    0,
+                errors:     [],
+            }));
+            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
             createDiscordBot({
-                config:    mockConfig,
-                onMessage: mockOnMessage,
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
             });
 
             // Before clientReady fires, handlers should NOT be registered
@@ -778,14 +836,14 @@ describe('createDiscordBot', () => {
 
             // Get and fire the clientReady handler
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
 
             expect(clientReadyHandler).toBeDefined();
 
             if(clientReadyHandler) {
-                clientReadyHandler(mockClient);
+                await Promise.resolve(clientReadyHandler(mockClient));
             }
 
             // After clientReady fires, handlers SHOULD be registered
@@ -797,12 +855,13 @@ describe('createDiscordBot', () => {
     describe('Presence Manager Lifecycle', () => {
         test('should create presence manager when identityContext and config.presence provided', () => {
             const mockClient = {
-                on:      mock(() => mockClient),
-                once:    mock(() => mockClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => undefined),
-                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:    null,
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
             } as unknown as Client;
 
             const configWithPresence: DiscordConfig = {
@@ -837,6 +896,7 @@ describe('createDiscordBot', () => {
             createDiscordBot({
                 config:          configWithPresence,
                 onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
             });
 
@@ -860,12 +920,13 @@ describe('createDiscordBot', () => {
             spies.push(presenceManagerSpy);
 
             const mockClient = {
-                on:      mock(() => mockClient),
-                once:    mock(() => mockClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => undefined),
-                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:    null,
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
             } as unknown as Client;
 
             const configWithPresence: DiscordConfig = {
@@ -880,8 +941,9 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
             createDiscordBot({
-                config:    configWithPresence,
-                onMessage: mockOnMessage,
+                config:          configWithPresence,
+                onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
                 // identityContext missing
             });
 
@@ -898,12 +960,13 @@ describe('createDiscordBot', () => {
 
         test('should call presenceManager.stop() on bot stop() when manager exists', async () => {
             const mockClient = {
-                on:      mock(() => mockClient),
-                once:    mock(() => mockClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => undefined),
-                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:    null,
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
             } as unknown as Client;
 
             const configWithPresence: DiscordConfig = {
@@ -937,6 +1000,7 @@ describe('createDiscordBot', () => {
             const bot = createDiscordBot({
                 config:          configWithPresence,
                 onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
             });
 
@@ -959,12 +1023,13 @@ describe('createDiscordBot', () => {
             const callOrder: string[] = [];
 
             const mockClient = {
-                on:      mock(() => mockClient),
-                once:    mock(() => mockClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => { callOrder.push('destroy'); }),
-                user:    { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:    null,
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => { callOrder.push('destroy'); }),
+                removeAllListeners: mock(() => { callOrder.push('removeAllListeners'); }),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
             } as unknown as Client;
 
             const configWithPresence: DiscordConfig = {
@@ -998,6 +1063,7 @@ describe('createDiscordBot', () => {
             const bot = createDiscordBot({
                 config:          configWithPresence,
                 onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
             });
 
@@ -1012,7 +1078,527 @@ describe('createDiscordBot', () => {
 
             await bot.stop();
 
-            expect(callOrder).toEqual(['stop', 'destroy']);
+            expect(callOrder).toEqual(['stop', 'removeAllListeners', 'destroy']);
+        });
+    });
+
+    describe('Hot Reload Protection', () => {
+        test('should create new client and store in global state on first initialization', () => {
+            // Clear global state before test
+            globalThis.__discordClient = undefined;
+
+            const mockClient = {
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            const createClientSpy = spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient);
+            spies.push(createClientSpy);
+
+            createDiscordBot({
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
+            });
+
+            // Should create new client
+            expect(createClientSpy).toHaveBeenCalledWith(mockConfig);
+            // Should store in global state
+            expect(globalThis.__discordClient as unknown as Client).toBe(mockClient);
+            // Should NOT call removeAllListeners (no existing handlers)
+            expect(mockClient.removeAllListeners).not.toHaveBeenCalled();
+        });
+
+        test('should reuse existing client and remove listeners on simulated hot reload', () => {
+            const existingMockClient = {
+                on:                 mock(() => existingMockClient),
+                once:               mock(() => existingMockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            // Simulate existing client from previous hot reload
+            globalThis.__discordClient = existingMockClient;
+
+            const createClientSpy = spyOn(clientModule, 'createDiscordClient');
+            spies.push(createClientSpy);
+
+            createDiscordBot({
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
+            });
+
+            // Should NOT create new client (reuse existing)
+            expect(createClientSpy).not.toHaveBeenCalled();
+            // Should call removeAllListeners to clear old handlers
+            expect(existingMockClient.removeAllListeners).toHaveBeenCalledTimes(1);
+            // Global state should still point to same client
+            expect(globalThis.__discordClient).toBe(existingMockClient);
+        });
+
+        test('should use provided client without touching global state', () => {
+            // Clear global state before test
+            globalThis.__discordClient = undefined;
+
+            const providedClient = {
+                on:                 mock(() => providedClient),
+                once:               mock(() => providedClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            const createClientSpy = spyOn(clientModule, 'createDiscordClient');
+            spies.push(createClientSpy);
+
+            createDiscordBot({
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
+                client:          providedClient,
+            });
+
+            // Should NOT create new client
+            expect(createClientSpy).not.toHaveBeenCalled();
+            // Should NOT store in global state (provided client takes precedence)
+            expect(globalThis.__discordClient).toBeUndefined();
+            // Should NOT call removeAllListeners (provided client is not from hot reload)
+            expect(providedClient.removeAllListeners).not.toHaveBeenCalled();
+        });
+
+        test('should clear global state on stop() when using global client', async () => {
+            // Clear global state before test
+            globalThis.__discordClient = undefined;
+
+            const mockClient = {
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            const bot = createDiscordBot({
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
+            });
+
+            // Verify global state is set
+            expect(globalThis.__discordClient as unknown as Client).toBe(mockClient);
+
+            await bot.stop();
+
+            // Should call removeAllListeners before destroy
+            expect(mockClient.removeAllListeners).toHaveBeenCalled();
+            // Should clear global state after destroy
+            expect(globalThis.__discordClient).toBeUndefined();
+        });
+
+        test('should NOT clear global state on stop() when using provided client', async () => {
+            const existingGlobalClient = {
+                on:                 mock(() => existingGlobalClient),
+                once:               mock(() => existingGlobalClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '888888888888888888', tag: 'GlobalBot#5678' },
+                rest:               null,
+            } as unknown as Client;
+
+            // Set up global client
+            globalThis.__discordClient = existingGlobalClient;
+
+            const providedClient = {
+                on:                 mock(() => providedClient),
+                once:               mock(() => providedClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            const bot = createDiscordBot({
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
+                client:          providedClient,
+            });
+
+            await bot.stop();
+
+            // Should call removeAllListeners on provided client
+            expect(providedClient.removeAllListeners).toHaveBeenCalled();
+            // Should NOT clear global state (different client)
+            expect(globalThis.__discordClient).toBe(existingGlobalClient);
+        });
+
+        test('should call removeAllListeners before destroy in correct order', async () => {
+            // Clear global state before test
+            globalThis.__discordClient = undefined;
+
+            const callOrder: string[] = [];
+            const mockClient = {
+                on:      mock(() => mockClient),
+                once:    mock(() => mockClient),
+                login:   mock(async () => 'mock-token'),
+                destroy: mock(async () => {
+                    callOrder.push('destroy');
+                }),
+                removeAllListeners: mock(() => {
+                    callOrder.push('removeAllListeners');
+                }),
+                user: { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest: null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            const bot = createDiscordBot({
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
+            });
+
+            await bot.stop();
+
+            // removeAllListeners should be called before destroy
+            expect(callOrder).toEqual(['removeAllListeners', 'destroy']);
+        });
+    });
+
+    describe('Channel Registry Fail-Open Error Handling', () => {
+        test('should log at ERROR level when channel registry initialization fails', async () => {
+            const mockClient = {
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+                channels:           {
+                    fetch: mock(async () => ({
+                        send: mock(async () => ({})),
+                    })),
+                },
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            // Mock channel registry to throw error during warmCache
+            const failingChannelRegistry = {
+                shouldProcess:      mock(() => true),
+                getChannel:         mock(() => Promise.resolve(null)),
+                warmCache:          mock(() => Promise.reject(new Error('DynamoDB connection failed'))),
+                getUnmutedChannels: mock(() => Promise.resolve([])),
+                upsertChannel:      mock(() => Promise.resolve()),
+            } as unknown as ChannelRegistryManager;
+
+            // Mock discoverAllChannels to avoid execution
+            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                discovered: 0,
+                updated:    0,
+                errors:     [],
+            }));
+
+            // Spy on logger.error to verify it's called
+            const loggerErrorSpy = spyOn(loggerModule.logger, 'error');
+            spies.push(loggerErrorSpy);
+
+            createDiscordBot({
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: failingChannelRegistry,
+            });
+
+            // Trigger clientReady event
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = readyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            // Verify logger.error was called with the error
+            expect(loggerErrorSpy).toHaveBeenCalled();
+
+            expect(loggerErrorSpy).toHaveBeenCalledWith(expect.objectContaining({
+                error: 'DynamoDB connection failed',
+                msg:   'Failed to initialize channel registry on startup',
+            }));
+        });
+
+        test('should send urgent notification to fallback channel when registry init fails', async () => {
+            const mockSendToChannel = mock(async () => ({}));
+            const mockChannel = {
+                send: mockSendToChannel,
+            };
+            const mockClient = {
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+                channels:           {
+                    fetch: mock(async () => mockChannel),
+                },
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            // Mock channel registry to throw error during warmCache
+            const fallbackChannelId = createChannelId('123456789');
+            const failingChannelRegistry = {
+                shouldProcess:         mock(() => true),
+                getChannel:            mock(() => Promise.resolve(null)),
+                warmCache:             mock(() => Promise.reject(new Error('DynamoDB connection failed'))),
+                getUnmutedChannels:    mock(() => Promise.resolve([])),
+                upsertChannel:         mock(() => Promise.resolve()),
+                getFallbackChannelId:  mock(() => fallbackChannelId),
+                shouldRouteToFallback: mock(() => true),
+            } as unknown as ChannelRegistryManager;
+
+            // Mock discoverAllChannels to avoid execution
+            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                discovered: 0,
+                updated:    0,
+                errors:     [],
+            }));
+            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
+            createDiscordBot({
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: failingChannelRegistry,
+            });
+
+            // Trigger clientReady event
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = readyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            // Verify notification was sent
+            expect(mockSendToChannel).toHaveBeenCalled();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+            const sentMessage = (mockSendToChannel as any).mock.calls[0]?.[0] as string;
+            expect(sentMessage).toContain('⚠️ **Channel Registry Error**');
+            expect(sentMessage).toContain('DynamoDB connection failed');
+        });
+
+        test('should not send notification when channel does not have send method', async () => {
+            const mockSendToChannel = mock(async () => ({}));
+            const mockChannelWithoutSend = {
+                // No 'send' method
+                id: 'channel-123',
+            };
+            const mockClient = {
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+                channels:           {
+                    fetch: mock(async () => mockChannelWithoutSend),
+                },
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            // Mock channel registry to throw error during warmCache
+            const fallbackChannelId = createChannelId('123456789');
+            const failingChannelRegistry = {
+                shouldProcess:         mock(() => true),
+                getChannel:            mock(() => Promise.resolve(null)),
+                warmCache:             mock(() => Promise.reject(new Error('DynamoDB connection failed'))),
+                getUnmutedChannels:    mock(() => Promise.resolve([])),
+                upsertChannel:         mock(() => Promise.resolve()),
+                getFallbackChannelId:  mock(() => fallbackChannelId),
+                shouldRouteToFallback: mock(() => true),
+            } as unknown as ChannelRegistryManager;
+
+            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                discovered: 0,
+                updated:    0,
+                errors:     [],
+            }));
+            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
+            createDiscordBot({
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: failingChannelRegistry,
+            });
+
+            // Trigger clientReady event
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = readyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            // Verify notification was NOT sent (channel lacks send method)
+            expect(mockSendToChannel).not.toHaveBeenCalled();
+        });
+
+        test('should continue running (fail-open) even when registry init fails', async () => {
+            const mockClient = {
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+                channels:           {
+                    fetch: mock(async () => ({
+                        send: mock(async () => ({})),
+                    })),
+                },
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            // Mock channel registry to throw error during warmCache
+            const failingChannelRegistry = {
+                shouldProcess:         mock(() => true),
+                getChannel:            mock(() => Promise.resolve(null)),
+                warmCache:             mock(() => Promise.reject(new Error('DynamoDB connection failed'))),
+                getUnmutedChannels:    mock(() => Promise.resolve([])),
+                upsertChannel:         mock(() => Promise.resolve()),
+                getFallbackChannelId:  mock(() => null), // No fallback available
+                shouldRouteToFallback: mock(() => false),
+            } as unknown as ChannelRegistryManager;
+
+            // Mock discoverAllChannels to avoid execution
+            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                discovered: 0,
+                updated:    0,
+                errors:     [],
+            }));
+            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
+            const bot = createDiscordBot({
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: failingChannelRegistry,
+            });
+
+            // Trigger clientReady event
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = readyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            // Bot should still be running - verify it can be stopped without error
+            await bot.stop();
+            expect(true).toBe(true); // If we get here without throwing, the test passes
+        });
+
+        test('should handle notification send failure gracefully', async () => {
+            const mockClient = {
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+                channels:           {
+                    fetch: mock(async () => {
+                        throw new Error('Channel fetch failed');
+                    }),
+                },
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            // Mock channel registry to throw error during warmCache
+            const fallbackChannelId = createChannelId('123456789');
+            const failingChannelRegistry = {
+                shouldProcess:         mock(() => true),
+                getChannel:            mock(() => Promise.resolve(null)),
+                warmCache:             mock(() => Promise.reject(new Error('DynamoDB connection failed'))),
+                getUnmutedChannels:    mock(() => Promise.resolve([])),
+                upsertChannel:         mock(() => Promise.resolve()),
+                getFallbackChannelId:  mock(() => fallbackChannelId),
+                shouldRouteToFallback: mock(() => true),
+            } as unknown as ChannelRegistryManager;
+
+            // Mock discoverAllChannels to avoid execution
+            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                discovered: 0,
+                updated:    0,
+                errors:     [],
+            }));
+            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
+            // Spy on logger.error to verify notification failure is logged
+            const loggerErrorSpy = spyOn(loggerModule.logger, 'error');
+            spies.push(loggerErrorSpy);
+
+            const bot = createDiscordBot({
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: failingChannelRegistry,
+            });
+
+            // Clear any previous logger calls before triggering the test scenario
+            loggerErrorSpy.mockClear();
+
+            // Trigger clientReady event
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = readyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            // Verify logger.error was called for both registry init failure and notification failure
+            expect(loggerErrorSpy).toHaveBeenCalledTimes(2);
+
+            expect(loggerErrorSpy).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to initialize channel registry on startup',
+            }));
+
+            expect(loggerErrorSpy).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to send channel registry error notification to owner',
+            }));
+
+            // Bot should still be running
+            await bot.stop();
+            expect(true).toBe(true); // If we get here without throwing, the test passes
         });
     });
 });

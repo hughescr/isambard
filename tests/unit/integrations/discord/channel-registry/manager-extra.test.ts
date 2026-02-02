@@ -1,13 +1,15 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test mocks use expect().toHaveBeenCalled() on mock methods */
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import _ from 'lodash';
+import type { Client } from 'discord.js';
 import { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import type { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/backend';
 import type { ChannelMetadata } from '@/integrations/discord/channel-registry/types';
-import { createChannelId, createGuildId, createUserId } from '@/integrations/discord/types';
-import type { UserId } from '@/integrations/discord/types';
+import { createChannelId, createGuildId } from '@/integrations/discord/types';
 
 describe('ChannelRegistryManager - Additional Mutation Tests', () => {
     let backend: ChannelRegistryBackend;
+    let client: Client;
     let manager: ChannelRegistryManager;
     const homeGuildId = createGuildId('home-guild');
 
@@ -22,6 +24,30 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
         ...overrides,
     });
 
+    const createMockStorageRecord = (overrides: Partial<ChannelMetadata> = {}) => {
+        const metadata = createMockChannel(overrides);
+        return {
+            channelId:   metadata.channelId,
+            guildId:     metadata.guildId,
+            isMuted:     metadata.isMuted,
+            isWellKnown: metadata.isWellKnown,
+            createdAt:   metadata.discoveredAt,
+            updatedAt:   metadata.updatedAt,
+        };
+    };
+
+    // Helper to set up Discord client mock for specific channels
+    const mockDiscordChannels = (channels: ChannelMetadata[]) => {
+        client.channels.fetch = mock((channelId: string) => {
+            // eslint-disable-next-line lodash/matches-prop-shorthand -- Branded types require explicit comparison
+            const channel = _.find(channels, (ch: ChannelMetadata) => ch.channelId === channelId);
+            if(channel) {
+                return Promise.resolve({ id: channelId, name: channel.channelName } as unknown as import('discord.js').Channel);
+            }
+            return Promise.resolve(null);
+        }) as unknown as Client['channels']['fetch'];
+    };
+
     beforeEach(() => {
         // Create mock backend
         backend = {
@@ -30,161 +56,36 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
             upsertChannel:       mock(() => Promise.resolve()),
             deleteChannel:       mock(() => Promise.resolve()),
             getChannelsByGuild:  mock(() => Promise.resolve([])),
-            getChannelByName:    mock(() => Promise.resolve([])),
             getWellKnownChannel: mock(() => Promise.resolve(null)),
             muteChannel:         mock(() => Promise.resolve()),
             unmuteChannel:       mock(() => Promise.resolve()),
             markAsWellKnown:     mock(() => Promise.resolve()),
         } as unknown as ChannelRegistryBackend;
 
+        // Create mock Discord client
+        client = {
+            channels: {
+                fetch: mock((channelId: string) => {
+                    // Default: return a mock channel with the ID as the name
+                    return Promise.resolve({
+                        id:   channelId,
+                        name: `channel-${channelId}`,
+                    } as unknown as import('discord.js').Channel);
+                }) as unknown as Client['channels']['fetch'],
+            },
+        } as unknown as Client;
+
         manager = new ChannelRegistryManager({
             backend:     backend,
             homeGuildId: homeGuildId,
-        });
-    });
-
-    describe('name index operations', () => {
-        it('should not duplicate channel IDs in name index', async () => {
-            const channel = createMockChannel({ channelName: 'general' });
-
-            // Upsert same channel multiple times
-            await manager.upsertChannel(channel);
-            await manager.upsertChannel(channel);
-            await manager.upsertChannel(channel);
-
-            // Should only appear once in results
-            const results = await manager.resolveByName('general');
-            expect(results).toHaveLength(1);
-        });
-
-        it('should handle multiple channels with same name', async () => {
-            const channel1 = createMockChannel({ channelId: createChannelId('channel-1'), channelName: 'general', guildId: homeGuildId });
-            const channel2 = createMockChannel({ channelId: createChannelId('channel-2'), channelName: 'general', guildId: createGuildId('guild-2') });
-            const channel3 = createMockChannel({ channelId: createChannelId('channel-3'), channelName: 'general', guildId: createGuildId('guild-3') });
-
-            await manager.upsertChannel(channel1);
-            await manager.upsertChannel(channel2);
-            await manager.upsertChannel(channel3);
-
-            const results = await manager.resolveByName('general');
-            expect(results).toHaveLength(3);
-        });
-
-        it('should remove last channel from name index and clean up entry', async () => {
-            const channel = createMockChannel({ channelName: 'unique-name' });
-            await manager.upsertChannel(channel);
-
-            // Verify name resolution works
-            let results = await manager.resolveByName('unique-name');
-            expect(results).toHaveLength(1);
-
-            // Delete the channel
-            await manager.deleteChannel(channel.channelId);
-
-            // Name should no longer resolve
-            results = await manager.resolveByName('unique-name');
-            expect(results).toHaveLength(0);
-        });
-
-        it('should remove one channel from name index with multiple entries', async () => {
-            const channel1 = createMockChannel({ channelId: createChannelId('channel-1'), channelName: 'general' });
-            const channel2 = createMockChannel({ channelId: createChannelId('channel-2'), channelName: 'general' });
-
-            await manager.upsertChannel(channel1);
-            await manager.upsertChannel(channel2);
-
-            // Both should be found
-            let results = await manager.resolveByName('general');
-            expect(results).toHaveLength(2);
-
-            // Delete one
-            await manager.deleteChannel(channel1.channelId);
-
-            // Only one should remain
-            results = await manager.resolveByName('general');
-            expect(results).toHaveLength(1);
-            expect(results[0].channelId).toBe(channel2.channelId);
-        });
-
-        it('should handle channel not in name index during removal', async () => {
-            const channel = createMockChannel({ channelName: 'general' });
-            await manager.upsertChannel(channel);
-
-            // Manually invalidate to remove from name index
-            manager.invalidateCache(channel.channelId);
-
-            // Try to delete again - should not crash
-            expect(() => manager.invalidateCache(channel.channelId)).not.toThrow();
-        });
-    });
-
-    describe('DM tracking edge cases', () => {
-        it('should handle non-DM channel in addToCache', async () => {
-            const guildChannel = createMockChannel({ guildId: homeGuildId });
-            await manager.upsertChannel(guildChannel);
-
-            // Should NOT be in DM map
-            const dmChannelId = manager.getDMChannel(guildChannel.channelName as UserId);
-            expect(dmChannelId).toBeUndefined();
-        });
-
-        it('should handle DM channel in addToCache', async () => {
-            const userId = createUserId('user-123');
-            const dmChannel = createMockChannel({ guildId: 'DM', channelName: userId });
-            await manager.upsertChannel(dmChannel);
-
-            // SHOULD be in DM map
-            const dmChannelId = manager.getDMChannel(userId);
-            expect(dmChannelId).toBe(dmChannel.channelId);
-        });
-
-        it('should not remove non-DM from DM map during invalidation', async () => {
-            const userId = createUserId('user-123');
-            const dmChannel = createMockChannel({ channelId: createChannelId('dm'), guildId: 'DM', channelName: userId });
-            await manager.upsertChannel(dmChannel);
-
-            // Add a regular guild channel
-            const guildChannel = createMockChannel({ channelId: createChannelId('guild'), guildId: homeGuildId });
-            await manager.upsertChannel(guildChannel);
-
-            // DM should be tracked
-            let dmChannelId = manager.getDMChannel(userId);
-            expect(dmChannelId).toBe(dmChannel.channelId);
-
-            // Invalidate guild channel (should not affect DM map)
-            manager.invalidateCache(guildChannel.channelId);
-
-            // DM should still be tracked
-            dmChannelId = manager.getDMChannel(userId);
-            expect(dmChannelId).toBe(dmChannel.channelId);
-        });
-
-        it('should skip non-matching DM channels during invalidation loop', async () => {
-            const user1 = createUserId('user-1');
-            const user2 = createUserId('user-2');
-            const dmChannel1 = createMockChannel({ channelId: createChannelId('dm-1'), guildId: 'DM', channelName: user1 });
-            const dmChannel2 = createMockChannel({ channelId: createChannelId('dm-2'), guildId: 'DM', channelName: user2 });
-
-            await manager.upsertChannel(dmChannel1);
-            await manager.upsertChannel(dmChannel2);
-
-            // Both should be tracked
-            expect(manager.getDMChannel(user1)).toBe(dmChannel1.channelId);
-            expect(manager.getDMChannel(user2)).toBe(dmChannel2.channelId);
-
-            // Invalidate first DM
-            manager.invalidateCache(dmChannel1.channelId);
-
-            // First should be gone, second should remain
-            expect(manager.getDMChannel(user1)).toBeUndefined();
-            expect(manager.getDMChannel(user2)).toBe(dmChannel2.channelId);
+            client:      client,
         });
     });
 
     describe('well-known channel tracking', () => {
         it('should track well-known channels during warmCache', async () => {
             const wellKnown = createMockChannel({ isWellKnown: 'general' });
-            backend.getAllChannels = mock(() => Promise.resolve([wellKnown]));
+            backend.getAllChannels = mock(() => Promise.resolve([createMockStorageRecord({ isWellKnown: 'general' })]));
 
             await manager.warmCache();
 
@@ -239,12 +140,12 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
             const channel = createMockChannel({ guildId: homeGuildId });
 
             // Cache is cold - should use backend
-            backend.getChannelsByGuild = mock(() => Promise.resolve([channel]));
+            backend.getChannelsByGuild = mock(() => Promise.resolve([createMockStorageRecord(channel)]));
             await manager.getChannelsByGuild(homeGuildId);
             expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(1);
 
             // Warm the cache
-            backend.getAllChannels = mock(() => Promise.resolve([channel]));
+            backend.getAllChannels = mock(() => Promise.resolve([createMockStorageRecord(channel)]));
             await manager.warmCache();
 
             // Now should use cache
@@ -255,7 +156,7 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
 
         it('should transition from warmed to cold cache', async () => {
             const channel = createMockChannel({ guildId: homeGuildId });
-            backend.getAllChannels = mock(() => Promise.resolve([channel]));
+            backend.getAllChannels = mock(() => Promise.resolve([createMockStorageRecord(channel)]));
             await manager.warmCache();
 
             // Cache is warmed - uses cache
@@ -266,7 +167,7 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
             manager.clearCache();
 
             // Now should use backend
-            backend.getChannelsByGuild = mock(() => Promise.resolve([channel]));
+            backend.getChannelsByGuild = mock(() => Promise.resolve([createMockStorageRecord(channel)]));
             await manager.getChannelsByGuild(homeGuildId);
             expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(1);
         });
@@ -300,36 +201,19 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
             expect(results).toHaveLength(0);
         });
 
-        it('should handle empty backend result in resolveByName', async () => {
-            backend.getChannelByName = mock(() => Promise.resolve([]));
-
-            const results = await manager.resolveByName('nonexistent');
-
-            expect(results).toHaveLength(0);
-        });
-
-        it('should handle empty name index lookup', async () => {
-            backend.getAllChannels = mock(() => Promise.resolve([]));
-            await manager.warmCache();
-
-            // Name index will be empty
-            const results = await manager.resolveByName('nonexistent');
-
-            expect(results).toHaveLength(0);
-        });
-
         it('should verify empty for loops do work when not empty', async () => {
             // Verify getChannelsByGuild backend fallback loop actually adds to cache
             const channel1 = createMockChannel({ channelId: createChannelId('ch1'), guildId: homeGuildId });
             const channel2 = createMockChannel({ channelId: createChannelId('ch2'), guildId: homeGuildId });
 
-            backend.getChannelsByGuild = mock(() => Promise.resolve([channel1, channel2]));
+            mockDiscordChannels([channel1, channel2]);
+            backend.getChannelsByGuild = mock(() => Promise.resolve([createMockStorageRecord(channel1), createMockStorageRecord(channel2)]));
 
             await manager.getChannelsByGuild(homeGuildId);
 
             // Verify channels were cached by checking cache hit
             const cached1 = await manager.getChannel(channel1.channelId);
-            expect(cached1).toEqual(channel1);
+            expect(cached1?.channelId).toBe(channel1.channelId);
             expect(backend.getChannel).not.toHaveBeenCalled(); // Cache hit
         });
 
@@ -337,43 +221,29 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
             const channel1 = createMockChannel({ channelId: createChannelId('ch1'), isMuted: false });
             const channel2 = createMockChannel({ channelId: createChannelId('ch2'), isMuted: true });
 
-            backend.getAllChannels = mock(() => Promise.resolve([channel1, channel2]));
+            mockDiscordChannels([channel1, channel2]);
+            backend.getAllChannels = mock(() => Promise.resolve([createMockStorageRecord(channel1), createMockStorageRecord(channel2)]));
 
             const results = await manager.getUnmutedChannels();
 
             // Verify both were cached
             const cached1 = await manager.getChannel(channel1.channelId);
             const cached2 = await manager.getChannel(channel2.channelId);
-            expect(cached1).toEqual(channel1);
-            expect(cached2).toEqual(channel2);
+            expect(cached1?.channelId).toBe(channel1.channelId);
+            expect(cached2?.channelId).toBe(channel2.channelId);
             expect(backend.getChannel).not.toHaveBeenCalled(); // Cache hits
 
             // Verify correct filtering
             expect(results).toHaveLength(1);
-            expect(results[0]).toEqual(channel1);
-        });
-
-        it('should verify resolveByName backend fallback loop works', async () => {
-            const channel1 = createMockChannel({ channelId: createChannelId('ch1'), channelName: 'general' });
-            const channel2 = createMockChannel({ channelId: createChannelId('ch2'), channelName: 'general' });
-
-            backend.getChannelByName = mock(() => Promise.resolve([channel1, channel2]));
-
-            await manager.resolveByName('general');
-
-            // Verify both were cached
-            const cached1 = await manager.getChannel(channel1.channelId);
-            const cached2 = await manager.getChannel(channel2.channelId);
-            expect(cached1).toEqual(channel1);
-            expect(cached2).toEqual(channel2);
-            expect(backend.getChannel).not.toHaveBeenCalled(); // Cache hits
+            expect(results[0].channelId).toBe(channel1.channelId);
+            expect(results[0].isMuted).toBe(false);
         });
     });
 
     describe('conditional expression mutations', () => {
         it('should test clearCache sets cacheWarmed to exactly false', async () => {
             const channel = createMockChannel({ guildId: homeGuildId });
-            backend.getAllChannels = mock(() => Promise.resolve([channel]));
+            backend.getAllChannels = mock(() => Promise.resolve([createMockStorageRecord(channel)]));
             await manager.warmCache();
 
             // Cache is warmed
@@ -383,98 +253,14 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
             manager.clearCache();
 
             // If cacheWarmed was set to true instead of false, this would fail
-            backend.getChannelsByGuild = mock(() => Promise.resolve([channel]));
+            backend.getChannelsByGuild = mock(() => Promise.resolve([createMockStorageRecord(channel)]));
             await manager.getChannelsByGuild(homeGuildId);
             expect(backend.getChannelsByGuild).toHaveBeenCalled();
-        });
-
-        it('should test that !channelIds.includes checks correctly', async () => {
-            const channel = createMockChannel({ channelName: 'general' });
-
-            // First upsert
-            await manager.upsertChannel(channel);
-
-            // Second upsert of same channel - should not duplicate
-            await manager.upsertChannel(channel);
-
-            const results = await manager.resolveByName('general');
-            expect(results).toHaveLength(1); // If includes check was inverted, would have 2
-        });
-
-        it('should test that index !== -1 check works correctly', async () => {
-            const channel1 = createMockChannel({ channelId: createChannelId('ch1'), channelName: 'test' });
-            const channel2 = createMockChannel({ channelId: createChannelId('ch2'), channelName: 'test' });
-
-            await manager.upsertChannel(channel1);
-            await manager.upsertChannel(channel2);
-
-            // Both in index
-            let results = await manager.resolveByName('test');
-            expect(results).toHaveLength(2);
-
-            // Remove one
-            await manager.deleteChannel(channel1.channelId);
-
-            // If index !== -1 was mutated to true, splice would happen on -1
-            results = await manager.resolveByName('test');
-            expect(results).toHaveLength(1);
-            expect(results[0].channelId).toBe(channel2.channelId);
-        });
-
-        it('should test that channelIds.length === 0 check works correctly', async () => {
-            const channel = createMockChannel({ channelName: 'unique' });
-
-            await manager.upsertChannel(channel);
-
-            // Delete it
-            await manager.deleteChannel(channel.channelId);
-
-            // If length === 0 was mutated to true, entry would be deleted even when not empty
-            const results = await manager.resolveByName('unique');
-            expect(results).toHaveLength(0);
         });
     });
 
     describe('mutation-killing tests for surviving mutants', () => {
-        describe('Line 79: invalidateCache DM check', () => {
-            it('should NOT modify dmUserMap when invalidating non-DM channel', async () => {
-                const userId = createUserId('user-123');
-                const dmChannel = createMockChannel({ channelId: createChannelId('dm'), guildId: 'DM', channelName: userId });
-                const guildChannel = createMockChannel({ channelId: createChannelId('guild'), guildId: homeGuildId });
-
-                await manager.upsertChannel(dmChannel);
-                await manager.upsertChannel(guildChannel);
-
-                // DM should be tracked
-                expect(manager.getDMChannel(userId)).toBe(dmChannel.channelId);
-
-                // Invalidate guild channel - this should NOT affect DM map
-                // Kills mutant: if(channel.guildId === 'DM') -> true
-                manager.invalidateCache(guildChannel.channelId);
-
-                // DM should still be tracked (proves DM check is working)
-                expect(manager.getDMChannel(userId)).toBe(dmChannel.channelId);
-            });
-        });
-
         describe('internal state mutation killing tests', () => {
-            it('does not remove DM mapping when invalidating non-DM with same channelId', async () => {
-                const userId = createUserId('u1');
-                const sharedId = createChannelId('shared');
-                const dm = createMockChannel({ channelId: sharedId, guildId: 'DM', channelName: userId });
-                const guild = createMockChannel({ channelId: sharedId, guildId: homeGuildId });
-
-                await manager.upsertChannel(dm);
-                await manager.upsertChannel(guild);
-
-                expect(manager.getDMChannel(userId)).toBe(sharedId);
-
-                manager.invalidateCache(guild.channelId);
-
-                // Mutant would delete this - original should preserve
-                expect(manager.getDMChannel(userId)).toBe(sharedId);
-            });
-
             it('removes wellKnownCache entry on invalidate', async () => {
                 const wk = createMockChannel({ isWellKnown: 'general' });
                 await manager.upsertChannel(wk);
@@ -487,124 +273,6 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
 
                 expect(cache.has('general')).toBe(false);
             });
-
-            it('does not duplicate channelId in nameIndex when backend returns same channel twice', async () => {
-                // Backend returns same channel twice - simulates edge case
-                const channel = createMockChannel({ channelName: 'dup-test' });
-                backend.getAllChannels = mock(() => Promise.resolve([channel, channel]));
-
-                await manager.warmCache();
-
-                // Check internal nameIndex array directly - mutant would create duplicates
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- testing internal state
-                const idx = (manager as any).nameIndex as Map<string, string[]>;
-                const channelIds = idx.get('dup-test');
-
-                expect(channelIds).toHaveLength(1);
-                expect(channelIds?.[0]).toBe(channel.channelId);
-            });
-
-            it('does not remove unrelated ids when channelId is missing from nameIndex', async () => {
-                const a = createMockChannel({ channelId: createChannelId('a'), channelName: 'shared-name' });
-                const b = createMockChannel({ channelId: createChannelId('b'), channelName: 'shared-name' });
-                await manager.upsertChannel(a);
-                await manager.upsertChannel(b);
-
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- testing internal state
-                const idx = (manager as any).nameIndex as Map<string, string[]>;
-                // Corrupt nameIndex to simulate inconsistent state - only b is in index
-                idx.set('shared-name', [b.channelId]);
-
-                manager.invalidateCache(a.channelId);
-
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- testing internal state
-                (manager as any).cacheWarmed = true;
-                const results = await manager.resolveByName('shared-name');
-                expect(results).toHaveLength(1);
-                expect(results[0].channelId).toBe(b.channelId);
-            });
-
-            it('removes channel at index 1 correctly', async () => {
-                const a = createMockChannel({ channelId: createChannelId('first'), channelName: 'idx-test' });
-                const b = createMockChannel({ channelId: createChannelId('second'), channelName: 'idx-test' });
-
-                await manager.upsertChannel(a);
-                await manager.upsertChannel(b);
-
-                // Delete the second one (at index 1)
-                await manager.deleteChannel(b.channelId);
-
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- testing internal state
-                (manager as any).cacheWarmed = true;
-                const results = await manager.resolveByName('idx-test');
-                expect(results).toHaveLength(1);
-                expect(results[0].channelId).toBe(a.channelId);
-            });
-
-            it('deletes nameIndex entry when last channel is removed', async () => {
-                const channel = createMockChannel({ channelName: 'last-channel' });
-                await manager.upsertChannel(channel);
-
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- testing internal state
-                const idx = (manager as any).nameIndex as Map<string, string[]>;
-                expect(idx.has('last-channel')).toBe(true);
-
-                await manager.deleteChannel(channel.channelId);
-
-                expect(idx.has('last-channel')).toBe(false);
-            });
-        });
-
-        describe('Line 82: invalidateCache dmChannelId match check', () => {
-            it('should NOT delete from dmUserMap when channelIds do not match', async () => {
-                const user1 = createUserId('user-1');
-                const user2 = createUserId('user-2');
-                const dmChannel1 = createMockChannel({ channelId: createChannelId('dm-1'), guildId: 'DM', channelName: user1 });
-                const dmChannel2 = createMockChannel({ channelId: createChannelId('dm-2'), guildId: 'DM', channelName: user2 });
-
-                await manager.upsertChannel(dmChannel1);
-                await manager.upsertChannel(dmChannel2);
-
-                // Both should be tracked
-                expect(manager.getDMChannel(user1)).toBe(dmChannel1.channelId);
-                expect(manager.getDMChannel(user2)).toBe(dmChannel2.channelId);
-
-                // Invalidate first DM - should only remove first entry
-                // Kills mutant: if(dmChannelId === channelId) -> true
-                manager.invalidateCache(dmChannel1.channelId);
-
-                // First should be removed, second should remain
-                expect(manager.getDMChannel(user1)).toBeUndefined();
-                expect(manager.getDMChannel(user2)).toBe(dmChannel2.channelId);
-            });
-
-            it('should iterate through dmUserMap and only delete matching channelId', async () => {
-                // Create 3 DM channels to ensure we test loop iteration
-                const user1 = createUserId('user-1');
-                const user2 = createUserId('user-2');
-                const user3 = createUserId('user-3');
-                const dmChannel1 = createMockChannel({ channelId: createChannelId('dm-1'), guildId: 'DM', channelName: user1 });
-                const dmChannel2 = createMockChannel({ channelId: createChannelId('dm-2'), guildId: 'DM', channelName: user2 });
-                const dmChannel3 = createMockChannel({ channelId: createChannelId('dm-3'), guildId: 'DM', channelName: user3 });
-
-                await manager.upsertChannel(dmChannel1);
-                await manager.upsertChannel(dmChannel2);
-                await manager.upsertChannel(dmChannel3);
-
-                // All three should be tracked
-                expect(manager.getDMChannel(user1)).toBe(dmChannel1.channelId);
-                expect(manager.getDMChannel(user2)).toBe(dmChannel2.channelId);
-                expect(manager.getDMChannel(user3)).toBe(dmChannel3.channelId);
-
-                // Invalidate middle DM - loop must iterate to find it
-                // If mutant (dmChannelId === channelId) -> true, it would delete first entry
-                manager.invalidateCache(dmChannel2.channelId);
-
-                // First and third should remain, second should be removed
-                expect(manager.getDMChannel(user1)).toBe(dmChannel1.channelId);
-                expect(manager.getDMChannel(user2)).toBeUndefined();
-                expect(manager.getDMChannel(user3)).toBe(dmChannel3.channelId);
-            });
         });
 
         describe('Line 196: getUnmutedChannels cache-warmed block', () => {
@@ -612,18 +280,19 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
                 const unmuted1 = createMockChannel({ channelId: createChannelId('unmuted-1'), isMuted: false });
                 const muted = createMockChannel({ channelId: createChannelId('muted'), isMuted: true });
 
-                backend.getAllChannels = mock(() => Promise.resolve([unmuted1, muted]));
+                mockDiscordChannels([unmuted1, muted]);
+                backend.getAllChannels = mock(() => Promise.resolve([createMockStorageRecord(unmuted1), createMockStorageRecord(muted)]));
                 await manager.warmCache();
 
                 // Reset the mock to verify backend is NOT called
-                backend.getAllChannels = mock(() => Promise.resolve([unmuted1, muted]));
+                backend.getAllChannels = mock(() => Promise.resolve([createMockStorageRecord(unmuted1), createMockStorageRecord(muted)]));
 
                 // Kills mutant: if(this.cacheWarmed) BlockStatement -> {}
                 // If block was empty, backend would be called
                 const results = await manager.getUnmutedChannels();
 
                 expect(results).toHaveLength(1);
-                expect(results).toContainEqual(unmuted1);
+                expect(_.map(results, 'channelId')).toContain(unmuted1.channelId);
                 // Backend should NOT be called (proves cache block executed)
                 expect(backend.getAllChannels).not.toHaveBeenCalled();
             });
@@ -659,74 +328,6 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
                 );
 
                 expect(result).toBe(false);
-            });
-        });
-
-        describe('Line 436: removeFromNameIndex index check', () => {
-            it('should splice when channel IS in the index', async () => {
-                const channel1 = createMockChannel({ channelId: createChannelId('ch1'), channelName: 'shared' });
-                const channel2 = createMockChannel({ channelId: createChannelId('ch2'), channelName: 'shared' });
-
-                await manager.upsertChannel(channel1);
-                await manager.upsertChannel(channel2);
-
-                // Both should be in index
-                let results = await manager.resolveByName('shared');
-                expect(results).toHaveLength(2);
-
-                // Delete one - kills mutant: if(index !== -1) UnaryOperator -1 to +1
-                await manager.deleteChannel(channel1.channelId);
-
-                // Only one should remain (proves splice happened)
-                results = await manager.resolveByName('shared');
-                expect(results).toHaveLength(1);
-                expect(results[0].channelId).toBe(channel2.channelId);
-            });
-
-            it('should handle channel NOT in index gracefully', async () => {
-                const channel = createMockChannel({ channelName: 'test' });
-                await manager.upsertChannel(channel);
-
-                // Manually corrupt state - remove from cache
-                manager.invalidateCache(channel.channelId);
-
-                // Try to invalidate again - channel not in cache, not in index
-                // Should not crash (proves index !== -1 check works)
-                expect(() => manager.invalidateCache(channel.channelId)).not.toThrow();
-            });
-        });
-
-        describe('Line 439: removeFromNameIndex length check', () => {
-            it('should delete name index entry when length becomes 0', async () => {
-                const channel = createMockChannel({ channelName: 'last-one' });
-                await manager.upsertChannel(channel);
-
-                // Verify it exists
-                let results = await manager.resolveByName('last-one');
-                expect(results).toHaveLength(1);
-
-                // Delete the channel - kills mutant: if(channelIds.length === 0) -> false
-                await manager.deleteChannel(channel.channelId);
-
-                // Entry should be completely removed from name index
-                results = await manager.resolveByName('last-one');
-                expect(results).toHaveLength(0);
-            });
-
-            it('should NOT delete name index entry when length is NOT 0', async () => {
-                const channel1 = createMockChannel({ channelId: createChannelId('ch1'), channelName: 'shared' });
-                const channel2 = createMockChannel({ channelId: createChannelId('ch2'), channelName: 'shared' });
-
-                await manager.upsertChannel(channel1);
-                await manager.upsertChannel(channel2);
-
-                // Delete one channel
-                await manager.deleteChannel(channel1.channelId);
-
-                // Name should still resolve (proves entry NOT deleted when length > 0)
-                const results = await manager.resolveByName('shared');
-                expect(results).toHaveLength(1);
-                expect(results[0].channelId).toBe(channel2.channelId);
             });
         });
     });

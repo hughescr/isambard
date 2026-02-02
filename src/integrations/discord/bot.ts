@@ -1,9 +1,9 @@
-import type { Client, TextChannel } from 'discord.js';
+import type { Client } from 'discord.js';
 import { ActivityType } from 'discord.js';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { DiscordConfig } from '@/config/schemas';
-import type { DiscordMessageContext, UserId, ChannelId, GuildId } from './types';
+import type { DiscordMessageContext, UserId } from './types';
 import type { ClaudeAgent } from '@/agent/agent';
 import { setConversationContext, clearConversationContext } from '@/agent';
 import { createDiscordClient } from './client';
@@ -18,9 +18,7 @@ import {
     type CatchUpSynopsisContext
 } from './presence';
 import { createMessageCoordinator, type MessageCoordinator } from './message-coordinator';
-import { splitMessage } from './messages';
 import { createDiscordRateLimiter, type DiscordRateLimiter } from './rate-limiter';
-import { withDiscordRetry } from './retry';
 import { createQuestionRegistry, type QuestionRegistry } from '@/agent/question-registry';
 import { createAnswerClassifier, classifyWithHaiku } from '@/agent/answer-classifier';
 import { createInteractionHandler } from './interactions';
@@ -46,6 +44,19 @@ import {
     type PerchSessionRunner,
     type PerchConfig
 } from '@/agent/perch';
+import { discoverAllChannels, setupChannelEventHandlers, DMTracker, ResponseRouter, type ChannelRegistryManager } from './channel-registry';
+import { sendResponse } from './response-sender';
+
+/**
+ * Global state for Discord client to survive Bun hot reload.
+ * During hot reload, the module is re-executed but global state persists.
+ * This allows us to reuse the existing client and remove old event handlers
+ * before registering new ones, preventing duplicate handler registration.
+ */
+declare global {
+
+    var __discordClient: Client | undefined;
+}
 
 /**
  * Result of processing Discord message attachments
@@ -56,88 +67,6 @@ interface ProcessedAttachments {
     /** Text descriptions of saved non-image attachments */
     contentAdditions: string[]
 }
-
-/**
- * Populates channel metadata cache for better display names.
- * Fetches channel details from Discord and updates the inbox manager.
- *
- * @param client - Discord client for fetching channels
- * @param inboxManager - Inbox manager to update with metadata
- * @param channelIds - Channel IDs to fetch metadata for
- */
-// Stryker disable all: Integration function with external dependencies - tested via bot integration tests
-async function populateChannelMetadata(
-    client: Client,
-    inboxManager: InboxManager,
-    channelIds: string[]
-): Promise<void> {
-    logger.debug({
-        channelIds: channelIds,
-        msg:        'Starting channel metadata population'
-    });
-
-    for(const channelId of channelIds) {
-        try {
-            const channel = await client.channels.fetch(channelId);
-
-            logger.debug({
-                channelId,
-                channelFound: !!channel,
-                channelType:  channel?.type,
-                msg:          'Fetched channel for metadata'
-            });
-
-            if(channel) {
-                logger.debug({
-                    channelId,
-                    isDMBased: channel.isDMBased(),
-                    hasGuild:  'guild' in channel && !!channel.guild,
-                    type:      channel.type,
-                    msg:       'Processing channel type'
-                });
-                // Determine guild ID and name based on channel type
-                let guildId: GuildId | 'DM' = 'DM';
-                let channelName = channelId;
-
-                // Check if this is a guild-based channel (has a guild property)
-                if('guild' in channel && channel.guild) {
-                    guildId = channel.guild.id as GuildId;
-                    channelName = 'name' in channel && _.isString(channel.name)
-                        ? channel.name
-                        : channelId;
-                } else if(channel.isDMBased()) {
-                    // DM channel - try to get recipient name for better display
-                    if('recipient' in channel && channel.recipient) {
-                        // Single-user DM - use recipient's display name
-                        const recipient = channel.recipient;
-                        channelName = `DM with ${recipient.displayName ?? recipient.username}`;
-                    } else {
-                        // Group DM or unknown - fall back to generic name
-                        channelName = 'DM';
-                    }
-                }
-
-                // Update metadata cache (for display names)
-                inboxManager.updateChannelMetadata(
-                    channelId as ChannelId,
-                    channelName,
-                    guildId
-                );
-            } else {
-                logger.warn({
-                    channelId,
-                    msg: 'Channel not found or not accessible'
-                });
-            }
-        } catch (error) {
-            logger.warn({
-                channelId,
-                error: _.isError(error) ? error.message : String(error),
-            }, 'Failed to fetch channel for metadata');
-        }
-    }
-}
-// Stryker restore all
 
 /**
  * Builds catch-up synopsis context from inbox state.
@@ -296,6 +225,620 @@ function createPresenceStreamHandler(
 /**
  * Options for configuring the Discord bot.
  */
+/**
+ * Initializes the channel registry by warming cache, discovering channels, and setting up event handlers.
+ *
+ * @param client - Discord client (must be ready)
+ * @param channelRegistry - Channel registry manager
+ * @param responseRouter - Response router for sending notifications
+ * @param botStateManager - Bot state manager for determining session type
+ * @param rateLimiter - Rate limiter for Discord API calls (optional, created after this function)
+ * @returns Promise that resolves when initialization is complete
+ */
+async function initializeChannelRegistry(
+    client: Client,
+    channelRegistry: ChannelRegistryManager,
+    responseRouter: ResponseRouter,
+    botStateManager: BotStateManager,
+    rateLimiter?: DiscordRateLimiter
+): Promise<void> {
+    try {
+        // Warm cache from DynamoDB
+        await channelRegistry.warmCache();
+
+        // Discover all channels the bot can see
+        const discoveryResult = await discoverAllChannels(client, channelRegistry);
+        // Stryker disable all: Logging for observability
+        logger.info({
+            discovered: discoveryResult.discovered,
+            updated:    discoveryResult.updated,
+            errors:     discoveryResult.errors.length,
+            msg:        `Channel discovery completed: ${discoveryResult.discovered} new, ${discoveryResult.updated} updated`,
+        });
+        // Stryker restore all
+
+        // Set up event handlers for channel changes
+        setupChannelEventHandlers(client, channelRegistry);
+    } catch (error) {
+        const errorMsg = _.isError(error) ? error.message : String(error);
+        logger.error({
+            error: errorMsg,
+            msg:   'Failed to initialize channel registry on startup',
+        });
+        // Continue anyway - handlers will work but channel data may be incomplete (fail-open)
+
+        // Send urgent notification to owner via fallback channel
+        if(rateLimiter) {
+            try {
+                const notificationContent = `⚠️ **Channel Registry Error**: Failed to load channel mute settings. I'm currently responding to ALL channels until this is resolved. Error: ${errorMsg}`;
+
+                // Route to fallback channel for startup errors
+                const routing = await responseRouter.routeResponse(
+                    'processing_message', // Use processing_message as the session type
+                    notificationContent,
+                    'synthetic-channel' as import('./types').ChannelId // Will trigger fallback routing
+                );
+
+                // Stryker disable next-line all: Defensive guard - routing always has shouldSend=true and targetChannelId set for error notifications
+                if(routing.shouldSend && routing.targetChannelId) {
+                    // Fetch the target channel and send directly
+                    const targetChannel = await client.channels.fetch(routing.targetChannelId);
+                    // Stryker disable next-line all: Defensive guard - validated in response-sender.test.ts for normal flow
+                    if(targetChannel && 'send' in targetChannel) {
+                        await rateLimiter.sendToChannel(targetChannel as import('discord.js').TextChannel, routing.content);
+                        // Stryker disable all: Logging for observability
+                        logger.info({
+                            targetChannelId: routing.targetChannelId,
+                            msg:             'Channel registry error notification sent to fallback channel',
+                        });
+                        // Stryker restore all
+                    }
+                }
+            } catch (notificationError) {
+                const notificationErrorMsg = _.isError(notificationError) ? notificationError.message : String(notificationError);
+                logger.error({
+                    error: notificationErrorMsg,
+                    msg:   'Failed to send channel registry error notification to owner',
+                });
+                // Continue - notification is best-effort
+            }
+        }
+    }
+}
+
+/**
+ * Parameters for setting up message processing.
+ */
+interface SetupMessageProcessingParams {
+    client:                 Client
+    readyClient:            Client
+    channelRegistry:        ChannelRegistryManager
+    onMessage:              (context: DiscordMessageContext) => Promise<string | null>
+    presenceManager:        PresenceManager | undefined
+    agent:                  ClaudeAgent | undefined
+    dynamicStatusGenerator: ReturnType<typeof createDynamicStatusGenerator> | undefined
+    addRecentMessage:       (content: string) => void
+    coordinator:            MessageCoordinator | undefined
+    questionRegistry:       QuestionRegistry
+    answerClassifier:       ReturnType<typeof createAnswerClassifier>
+    inboxManager:           InboxManager | undefined
+    catchUpSessionRunner:   CatchUpSessionRunner | undefined
+    botStateManager:        BotStateManager
+    perchSessionRunner:     PerchSessionRunner | undefined
+    dmTracker:              DMTracker
+    responseRouter:         ResponseRouter
+}
+
+/**
+ * Sets up message processing by registering the messageCreate handler.
+ *
+ * @param params - Configuration for message processing
+ */
+function setupMessageProcessing(params: SetupMessageProcessingParams): void {
+    const {
+        client,
+        readyClient,
+        channelRegistry,
+        onMessage,
+        presenceManager,
+        agent,
+        dynamicStatusGenerator,
+        addRecentMessage,
+        coordinator,
+        questionRegistry,
+        answerClassifier,
+        inboxManager,
+        catchUpSessionRunner,
+        botStateManager,
+        perchSessionRunner,
+        dmTracker,
+        responseRouter,
+    } = params;
+
+    // Register message handler AFTER channel registry is initialized
+    // This ensures channelRegistry.shouldProcess() has data to work with
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- messageCreate handler is async
+    client.on('messageCreate', createMessageHandler({
+        botUserId: readyClient.user!.id as UserId,
+        channelRegistry,
+        onMessage,
+        presenceManager,
+        agent,
+        dynamicStatusGenerator,
+        addRecentMessage,
+        coordinator,
+        questionRegistry,
+        answerClassifier,
+        inboxManager,
+        catchUpSessionRunner,
+        botStateManager,
+        perchSessionRunner,
+        dmTracker,
+        responseRouter,
+    }));
+}
+
+/**
+ * Parameters for setting up inbox and catch-up functionality.
+ */
+interface SetupInboxParams {
+    inboxManager:         InboxManager
+    readyClient:          Client
+    botStateManager:      BotStateManager
+    catchUpSessionRunner: CatchUpSessionRunner | undefined
+    presenceManager:      PresenceManager | undefined
+    memoryBackend:        {
+        loadCompletionSignal: () => Promise<CatchUpCompletionSignal | null>
+    }
+    perchConfig: PerchConfig | undefined
+}
+
+/**
+ * Sets up inbox and catch-up functionality.
+ * Initializes inbox, loads unread messages, and starts catch-up if needed.
+ *
+ * @param params - Configuration for inbox setup
+ */
+function setupInboxAndCatchUp(params: SetupInboxParams): void {
+    const {
+        inboxManager,
+        readyClient,
+        botStateManager,
+        catchUpSessionRunner,
+        presenceManager,
+        memoryBackend,
+        perchConfig,
+    } = params;
+
+    // Capture runner reference for closure safety
+    const runner = catchUpSessionRunner;
+
+    (async () => {
+        try {
+            // Start unified state manager
+            botStateManager.start();
+
+            // Set bot user ID for filtering bot messages from inbox
+            inboxManager.setBotUserId(readyClient.user!.id);
+
+            // Load unread messages (automatically initializes checkpoints for monitored channels)
+            const count = await inboxManager.loadUnread();
+            if(count > 0) {
+                logger.info({
+                    unreadCount: count,
+                    msg:         `Inbox loaded with ${count} unread messages`,
+                });
+            }
+
+            // NOW check if catch-up should start (after inbox is loaded)
+            // Skip if perch test mode triggerOnStartup is enabled (perch handles everything)
+            if(runner && !perchConfig?.testMode?.triggerOnStartup) {
+                const shouldStart = await runner.shouldStartCatchUp();
+                if(shouldStart) {
+                    logger.info({ msg: 'Starting catch-up mode' });
+
+                    // Build catch-up context for rich status generation
+                    const catchUpContext = await buildCatchUpContext(inboxManager, memoryBackend);
+
+                    // Update presence to show catching up with rich context
+                    presenceManager?.transitionPresenceDisplayMode('catching_up', catchUpContext);
+                    await runner.startCatchUp();
+                } else {
+                    // Not doing catch-up, transition to idle mode
+                    void presenceManager?.updatePhase({ type: 'idle', since: new Date() });
+                }
+            } else if(!perchConfig?.testMode?.triggerOnStartup) {
+                // No catch-up system and not in perch test mode, transition to idle after startup
+                void presenceManager?.updatePhase({ type: 'idle', since: new Date() });
+            }
+            // If triggerOnStartup is enabled, perch scheduler handles presence - no action needed here
+        } catch (error) {
+            const errorMsg = _.isError(error) ? error.message : String(error);
+            logger.warn({
+                error: errorMsg,
+                msg:   'Failed to load inbox on startup',
+            });
+        }
+    })().catch((error) => {
+        const errorMsg = _.isError(error) ? error.message : String(error);
+        logger.error({
+            error: errorMsg,
+            msg:   'Unhandled error in inbox initialization',
+        });
+    });
+}
+
+/**
+ * Parameters for setting up coordinator integration.
+ */
+interface SetupCoordinatorParams {
+    agent:                  ClaudeAgent
+    presenceManager:        PresenceManager | undefined
+    dynamicStatusGenerator: ReturnType<typeof createDynamicStatusGenerator> | undefined
+    botStateManager:        BotStateManager
+    catchUpSessionRunner:   CatchUpSessionRunner | undefined
+    perchSessionRunner:     PerchSessionRunner | undefined
+    responseRouter:         ResponseRouter
+    rateLimiter:            DiscordRateLimiter
+    readyClient:            Client
+    channelRegistry:        ChannelRegistryManager
+}
+
+/**
+ * Sets up the message coordinator integration with the agent.
+ * Configures the processor to handle message contexts and call the agent.
+ *
+ * @param params - Configuration for coordinator setup
+ * @returns Configured message coordinator
+ */
+function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoordinator {
+    const {
+        agent,
+        presenceManager,
+        dynamicStatusGenerator,
+        botStateManager,
+        catchUpSessionRunner,
+        perchSessionRunner,
+        responseRouter,
+        rateLimiter,
+        readyClient,
+    } = params;
+
+    const coordinator = createMessageCoordinator({
+        debounceMs: 250,
+        onResponse: async (result, discordMessage) => {
+            // Only send response if we have both a response and a message to reply to
+            if(result.response && discordMessage) {
+                // Capture rate limiter reference for safe closure access
+                const limiter = rateLimiter;
+
+                await sendResponse({
+                    responseRouter,
+                    botStateManager,
+                    response:           result.response,
+                    message:            discordMessage,
+                    rateLimiter:        limiter,
+                    client:             readyClient,
+                    useFallbackOnError: false,
+                });
+            }
+
+            // Resume catch-up if we were interrupted
+            if(botStateManager.getMode() === 'catching_up' && botStateManager.isInterrupted() && catchUpSessionRunner) {
+                logger.info({ msg: 'Resuming catch-up after interruption' });
+                // Update presence back to catching_up
+                presenceManager?.transitionPresenceDisplayMode('catching_up');
+                // Resume catch-up (async, don't await)
+                void catchUpSessionRunner.resumeAfterInterruption().catch((error) => {
+                    const errorMsg = _.isError(error) ? error.message : String(error);
+                    logger.error({ error: errorMsg, msg: 'Failed to resume catch-up after interruption' });
+                    // Reset presence on failure
+                    presenceManager?.transitionPresenceDisplayMode('none');
+                });
+            }
+
+            // Resume perch if we were interrupted
+            if(botStateManager.getMode() === 'perching' && botStateManager.isInterrupted() && perchSessionRunner) {
+                logger.info({ msg: 'Resuming perch after interruption' });
+                presenceManager?.transitionPresenceDisplayMode('perching');
+                void perchSessionRunner.resumeAfterInterruption().catch((error) => {
+                    const errorMsg = _.isError(error) ? error.message : String(error);
+                    logger.error({ error: errorMsg, msg: 'Failed to resume perch after interruption' });
+                    presenceManager?.transitionPresenceDisplayMode('none');
+                });
+            }
+        },
+    });
+
+    // Helper to update presence when starting to process a user message
+    const updatePresenceForMessageStart = (): void => {
+        if(botStateManager.getMode() === 'idle') {
+            presenceManager?.transitionPresenceDisplayMode('processing_message');
+        }
+    };
+
+    // Helper to complete presence updates after message processing
+    const completePresenceForMessage = (
+        streamEventHandler: ReturnType<typeof createPresenceStreamHandler> | undefined
+    ): void => {
+        // Transition to idle after completion, but NOT if we're in catch-up interrupted state
+        // (the resumed catch-up session will handle presence updates)
+        const currentMode = botStateManager.getMode();
+        const isInterrupted = botStateManager.isInterrupted();
+        if(streamEventHandler && !(currentMode === 'catching_up' && isInterrupted)) {
+            streamEventHandler.complete();
+        }
+
+        // Reset presence mode back to none if we were in idle mode
+        if(currentMode === 'idle') {
+            presenceManager?.transitionPresenceDisplayMode('none');
+        }
+
+        // Transition state manager to idle when message processing completes
+        // (unless we're in catch-up interrupted state)
+        if(currentMode === 'processing_message' && !isInterrupted) {
+            botStateManager.goIdle();
+        }
+    };
+
+    // Set the processor to call agent.chatBatch
+    coordinator.setProcessor(async (contexts, resumeContext, sessionId, abortSignal) => {
+        // Update presence to show processing message if not in catch-up mode
+        updatePresenceForMessageStart();
+
+        // Set conversation context for MCP tools
+        setConversationContext({
+            currentUserId:    contexts[0]?.userId,
+            currentChannelId: contexts[0]?.channelId,
+        });
+
+        try {
+            // Create abort controller from signal
+            const abortController = new AbortController();
+            abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
+
+            // Process attachments from all contexts
+            const { images, contentAdditions } = await processAttachments(contexts);
+
+            // Modify contexts to include attachment file paths in content
+            const modifiedContexts = addAttachmentInfoToContexts(contexts, contentAdditions);
+
+            // Extract user message from first context for synopsis generation
+            const userMessage = contexts[0]?.content ?? '';
+
+            // Create stream event handler for presence updates if presenceManager available
+            const streamEventHandler = createPresenceStreamHandler(
+                presenceManager,
+                dynamicStatusGenerator,
+                userMessage,
+                botStateManager
+            );
+
+            // Get unmuted channels and format for system prompt
+            const registry = params.channelRegistry;
+            const client = params.readyClient;
+            const unmutedChannels = await registry.getUnmutedChannels();
+            const channelList = _.map(unmutedChannels, (channel: import('./channel-registry/types').ChannelMetadata) => {
+                // Get guild name for disambiguation
+                let guildName: string | undefined;
+                if(channel.guildId !== 'DM') {
+                    try {
+                        const guild = client.guilds.cache.get(channel.guildId);
+                        guildName = guild?.name;
+                    } catch{
+                        // Guild not in cache, skip guild name
+                    }
+                }
+
+                // Format: "channelName (guildName) [well-known: type]" or "channelName [well-known: type]"
+                let formatted = channel.channelName;
+                if(guildName) {
+                    formatted += ` (${guildName})`;
+                }
+                if(channel.isWellKnown) {
+                    formatted += ` [well-known: ${channel.isWellKnown}]`;
+                }
+                return formatted;
+            });
+
+            // Call chatBatch with presence updates, images, and channel context
+            const result = await agent.chatBatch(modifiedContexts, {
+                sessionId,
+                resumeContext: resumeContext ?? undefined,
+                abortController,
+                onStreamEvent: streamEventHandler?.onStreamEvent,
+                images:        images.length > 0 ? images : undefined,
+                channelList,
+            });
+
+            // Complete presence updates after processing
+            completePresenceForMessage(streamEventHandler);
+
+            return result;
+        } finally {
+            // Clear context after processing
+            clearConversationContext();
+        }
+    });
+
+    return coordinator;
+}
+
+/**
+ * Parameters for setting up catch-up session runner.
+ */
+interface SetupCatchUpRunnerParams {
+    inboxManager:  InboxManager
+    agent:         ClaudeAgent
+    memoryBackend:          {
+        storeCompletionSignal:  (signal: CatchUpCompletionSignal) => Promise<void>
+        loadCompletionSignal:   () => Promise<CatchUpCompletionSignal | null>
+        storeInProgressSignal:  (signal: CatchUpInProgressSignal) => Promise<void>
+        loadInProgressSignal:   () => Promise<CatchUpInProgressSignal | null>
+        deleteInProgressSignal: () => Promise<void>
+    }
+    botStateManager:        BotStateManager
+    presenceManager:        PresenceManager | undefined
+    dynamicStatusGenerator: ReturnType<typeof createDynamicStatusGenerator> | undefined
+}
+
+/**
+ * Creates and configures the catch-up session runner.
+ *
+ * @param params - Configuration for catch-up setup
+ * @returns Configured catch-up session runner
+ */
+function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): CatchUpSessionRunner {
+    const {
+        inboxManager,
+        agent,
+        memoryBackend,
+        botStateManager,
+        presenceManager,
+        dynamicStatusGenerator,
+    } = params;
+
+    return createCatchUpSessionRunner({
+        stateManager:           botStateManager,
+        inboxManager,
+        storeCompletionSignal:  memoryBackend.storeCompletionSignal,
+        loadCompletionSignal:   memoryBackend.loadCompletionSignal,
+        storeInProgressSignal:  memoryBackend.storeInProgressSignal,
+        loadInProgressSignal:   memoryBackend.loadInProgressSignal,
+        deleteInProgressSignal: memoryBackend.deleteInProgressSignal,
+        resolveChannelName:     channelId => inboxManager.getChannelName(channelId),
+        runAgentSession:        async (runOptions) => {
+            // Create abort controller from signal
+            const abortController = new AbortController();
+            runOptions.abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
+
+            // Build dynamic user message from status context
+            const statusContext = runOptions.statusContext;
+            const userMessage = statusContext
+                ? `Processing ${statusContext.totalUnread} messages from ${statusContext.topAuthors.join(', ')} in ${statusContext.channelNames.join(', ')}`
+                : 'Catching up on messages...';
+
+            // Create stream event handler for presence updates during catch-up
+            const streamEventHandler = createPresenceStreamHandler(
+                presenceManager,
+                dynamicStatusGenerator,
+                userMessage,
+                botStateManager
+            );
+
+            // Call agent.chatBatch with specialMode: 'catchup' and the catch-up prompt
+            const result = await agent.chatBatch([], {
+                specialMode:   'catchup',
+                abortController,
+                sessionId:     runOptions.sessionId,
+                catchUpPrompt: runOptions.prompt,
+                onStreamEvent: streamEventHandler?.onStreamEvent,
+            });
+
+            // Transition to idle after completion
+            if(streamEventHandler) {
+                streamEventHandler.complete();
+            }
+
+            return {
+                completed: !result.wasInterrupted,
+                sessionId: result.sessionId,
+            };
+        },
+        onCatchUpComplete: () => {
+            // Reset presence mode when catch-up completes
+            presenceManager?.transitionPresenceDisplayMode('none');
+        },
+    });
+}
+
+/**
+ * Parameters for setting up perch scheduler and runner.
+ */
+interface SetupPerchParams {
+    agent:                  ClaudeAgent
+    perchConfig:            PerchConfig
+    botStateManager:        BotStateManager
+    presenceManager:        PresenceManager | undefined
+    dynamicStatusGenerator: ReturnType<typeof createDynamicStatusGenerator> | undefined
+}
+
+/**
+ * Creates and configures the perch session runner and scheduler.
+ *
+ * @param params - Configuration for perch setup
+ * @returns Object containing configured perch session runner and scheduler
+ */
+function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
+    runner:    PerchSessionRunner
+    scheduler: PerchScheduler
+} {
+    const {
+        agent,
+        perchConfig,
+        botStateManager,
+        presenceManager,
+        dynamicStatusGenerator,
+    } = params;
+
+    const runner = createPerchSessionRunner({
+        stateManager:    botStateManager,
+        logger,
+        config:          perchConfig,
+        runAgentSession: async (runOptions) => {
+            // Create abort controller from signal
+            const abortController = new AbortController();
+            runOptions.abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
+
+            // Create stream event handler for presence updates during perch
+            const streamEventHandler = createPresenceStreamHandler(
+                presenceManager,
+                dynamicStatusGenerator,
+                `Perch time: ${runOptions.slot}`,
+                botStateManager
+            );
+
+            // Call agent.chatBatch with specialMode: 'perching' and the perch prompt
+            const result = await agent.chatBatch([], {
+                specialMode:   'perching',
+                abortController,
+                perchPrompt:   runOptions.prompt,
+                onStreamEvent: streamEventHandler?.onStreamEvent,
+            });
+
+            // Complete presence updates
+            if(streamEventHandler) {
+                streamEventHandler.complete();
+            }
+
+            return {
+                completed: !result.wasInterrupted,
+                sessionId: result.sessionId,
+            };
+        },
+    });
+
+    const scheduler = createPerchScheduler({
+        stateManager:   botStateManager,
+        logger,
+        config:         perchConfig,
+        onPerchTrigger: (slot) => {
+            if(runner) {
+                void runner.startPerch(slot).catch((error) => {
+                    const errorMsg = _.isError(error) ? error.message : String(error);
+                    logger.error({ error: errorMsg, slot, msg: 'Failed to start perch session' });
+                });
+            }
+        },
+    });
+
+    // Start the perch scheduler
+    scheduler.start();
+    logger.info({ msg: 'Perch scheduler initialized and started' });
+
+    return { runner, scheduler };
+}
+
 export interface DiscordBotOptions {
     /**
      * Discord configuration including bot token and monitored channels.
@@ -364,6 +907,12 @@ export interface DiscordBotOptions {
     botStateManager?: BotStateManager
 
     /**
+     * Channel registry for dynamic channel management.
+     * Required for message filtering and channel discovery.
+     */
+    channelRegistry: ChannelRegistryManager
+
+    /**
      * Optional perch time configuration.
      * If provided along with agent, enables autonomous perch time.
      */
@@ -420,8 +969,9 @@ export interface DiscordBot {
  *   config: {
  *     botToken: process.env.DISCORD_BOT_TOKEN,
  *     applicationId: process.env.DISCORD_APP_ID,
- *     monitoredChannelIds: ['123456789', '987654321']
+ *     homeGuildId: '...'
  *   },
+ *   channelRegistry: myChannelRegistry,
  *   onMessage: async (context) => {
  *     console.log(`Message from ${context.userId}: ${context.content}`);
  *     return `You said: ${context.content}`;
@@ -434,8 +984,28 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, onMessage, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager } = options;
-    const client: Client = providedClient ?? createDiscordClient(config);
+    const { config, onMessage, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry } = options;
+
+    // Hot reload protection: Reuse existing client if available in global state
+    // During Bun hot reload, the module is re-executed but global state persists.
+    // This prevents duplicate event handler registration.
+    let client: Client;
+    if(providedClient) {
+        // Use provided client (testing or external management)
+        client = providedClient;
+    } else if(globalThis.__discordClient) {
+        // Reuse existing client from hot reload
+        client = globalThis.__discordClient;
+        // Remove all existing listeners before re-registering
+        // This is critical to prevent duplicate handlers during hot reload
+        client.removeAllListeners();
+    } else {
+        // First initialization - create new client
+        client = createDiscordClient(config);
+        // Store in global state for hot reload survival
+        globalThis.__discordClient = client;
+    }
+
     let presenceManager: PresenceManager | undefined;
     let coordinator: MessageCoordinator | undefined;
     let rateLimiter: DiscordRateLimiter | undefined;
@@ -480,7 +1050,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // Register clientReady handler for messageCreate setup
     // This runs after the client is authenticated and ready
     // Use .once() to ensure this setup only runs once, even on reconnects
-    client.once('clientReady', (readyClient: Client): void => {
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- clientReady handler must be async; needs refactoring to reduce complexity
+    client.once('clientReady', async (readyClient: Client): Promise<void> => {
         // Log that the bot is ready (preserving functionality from removed logging handler)
         createReadyHandler()(readyClient);
         // At this point, readyClient.user is guaranteed to be non-null
@@ -651,332 +1222,44 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
         // Create catch-up session runner if all dependencies available (must be created before inbox init)
         if(inboxManager && agent && memoryBackend) {
-            // Create session runner
-            catchUpSessionRunner = createCatchUpSessionRunner({
-                stateManager:           botStateManager,
+            catchUpSessionRunner = setupCatchUpSessionRunner({
                 inboxManager,
-                storeCompletionSignal:  memoryBackend.storeCompletionSignal,
-                loadCompletionSignal:   memoryBackend.loadCompletionSignal,
-                storeInProgressSignal:  memoryBackend.storeInProgressSignal,
-                loadInProgressSignal:   memoryBackend.loadInProgressSignal,
-                deleteInProgressSignal: memoryBackend.deleteInProgressSignal,
-                resolveChannelName:     channelId => inboxManager.getChannelName(channelId),
-                runAgentSession:        async (runOptions) => {
-                    // Create abort controller from signal
-                    const abortController = new AbortController();
-                    runOptions.abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
-
-                    // Build dynamic user message from status context
-                    const statusContext = runOptions.statusContext;
-                    const userMessage = statusContext
-                        ? `Processing ${statusContext.totalUnread} messages from ${statusContext.topAuthors.join(', ')} in ${statusContext.channelNames.join(', ')}`
-                        : 'Catching up on messages...';
-
-                    // Create stream event handler for presence updates during catch-up
-                    const streamEventHandler = createPresenceStreamHandler(
-                        presenceManager,
-                        dynamicStatusGenerator,
-                        userMessage,
-                        botStateManager
-                    );
-
-                    // Call agent.chatBatch with specialMode: 'catchup' and the catch-up prompt
-                    const result = await agent.chatBatch([], {
-                        specialMode:   'catchup',
-                        abortController,
-                        sessionId:     runOptions.sessionId,
-                        catchUpPrompt: runOptions.prompt,
-                        onStreamEvent: streamEventHandler?.onStreamEvent,
-                    });
-
-                    // Transition to idle after completion
-                    if(streamEventHandler) {
-                        streamEventHandler.complete();
-                    }
-
-                    return {
-                        completed: !result.wasInterrupted,
-                        sessionId: result.sessionId,
-                    };
-                },
-                onCatchUpComplete: () => {
-                    // Reset presence mode when catch-up completes
-                    presenceManager?.transitionPresenceDisplayMode('none');
-                },
+                agent,
+                memoryBackend,
+                botStateManager,
+                presenceManager,
+                dynamicStatusGenerator,
             });
         }
 
         // Create perch session runner and scheduler if config provided
         if(agent && options.perchConfig?.enabled) {
-            perchSessionRunner = createPerchSessionRunner({
-                stateManager:    botStateManager,
-                logger,
-                config:          options.perchConfig,
-                runAgentSession: async (runOptions) => {
-                    // Create abort controller from signal
-                    const abortController = new AbortController();
-                    runOptions.abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
-
-                    // Create stream event handler for presence updates during perch
-                    const streamEventHandler = createPresenceStreamHandler(
-                        presenceManager,
-                        dynamicStatusGenerator,
-                        `Perch time: ${runOptions.slot}`,
-                        botStateManager
-                    );
-
-                    // Call agent.chatBatch with specialMode: 'perching' and the perch prompt
-                    const result = await agent.chatBatch([], {
-                        specialMode:   'perching',
-                        abortController,
-                        perchPrompt:   runOptions.prompt,
-                        onStreamEvent: streamEventHandler?.onStreamEvent,
-                    });
-
-                    // Complete presence updates
-                    if(streamEventHandler) {
-                        streamEventHandler.complete();
-                    }
-
-                    return {
-                        completed: !result.wasInterrupted,
-                        sessionId: result.sessionId,
-                    };
-                },
+            const perchSetup = setupPerchSessionRunnerAndScheduler({
+                agent,
+                perchConfig: options.perchConfig,
+                botStateManager,
+                presenceManager,
+                dynamicStatusGenerator,
             });
-
-            perchScheduler = createPerchScheduler({
-                stateManager:   botStateManager,
-                logger,
-                config:         options.perchConfig,
-                onPerchTrigger: (slot) => {
-                    if(perchSessionRunner) {
-                        void perchSessionRunner.startPerch(slot).catch((error) => {
-                            const errorMsg = _.isError(error) ? error.message : String(error);
-                            logger.error({ error: errorMsg, slot, msg: 'Failed to start perch session' });
-                        });
-                    }
-                },
-            });
-
-            // Start the perch scheduler
-            perchScheduler.start();
-            logger.info({ msg: 'Perch scheduler initialized and started' });
+            perchSessionRunner = perchSetup.runner;
+            perchScheduler = perchSetup.scheduler;
         }
 
-        // Initialize inbox on startup and then check for catch-up
-        if(inboxManager) {
-            // Capture runner reference for closure safety
-            const runner = catchUpSessionRunner;
+        // Create DMTracker and ResponseRouter (after client is ready)
+        const dmTracker = new DMTracker(channelRegistry, readyClient);
+        const responseRouter = new ResponseRouter({
+            manager: channelRegistry,
+        });
 
-            (async () => {
-                try {
-                    // Start unified state manager
-                    botStateManager.start();
+        // Initialize channel registry BEFORE setting up message handlers
+        // Pass rateLimiter for error notification (may be undefined if not created yet)
+        await initializeChannelRegistry(readyClient, channelRegistry, responseRouter, botStateManager, rateLimiter);
 
-                    // Set bot user ID for filtering bot messages from inbox
-                    inboxManager.setBotUserId(readyClient.user!.id);
-
-                    // Populate channel metadata cache for better display names
-                    await populateChannelMetadata(readyClient, inboxManager, config.monitoredChannelIds);
-
-                    // Load unread messages (automatically initializes checkpoints for monitored channels)
-                    const count = await inboxManager.loadUnread();
-                    if(count > 0) {
-                        logger.info({
-                            unreadCount: count,
-                            msg:         `Inbox loaded with ${count} unread messages`,
-                        });
-                    }
-
-                    // NOW check if catch-up should start (after inbox is loaded)
-                    // Skip if perch test mode triggerOnStartup is enabled (perch handles everything)
-                    if(runner && !options.perchConfig?.testMode?.triggerOnStartup) {
-                        const shouldStart = await runner.shouldStartCatchUp();
-                        if(shouldStart) {
-                            logger.info({ msg: 'Starting catch-up mode' });
-
-                            // Build catch-up context for rich status generation
-                            const catchUpContext = await buildCatchUpContext(inboxManager, memoryBackend!);
-
-                            // Update presence to show catching up with rich context
-                            presenceManager?.transitionPresenceDisplayMode('catching_up', catchUpContext);
-                            await runner.startCatchUp();
-                        } else {
-                            // Not doing catch-up, transition to idle mode
-                            void presenceManager?.updatePhase({ type: 'idle', since: new Date() });
-                        }
-                    } else if(!options.perchConfig?.testMode?.triggerOnStartup) {
-                        // No catch-up system and not in perch test mode, transition to idle after startup
-                        void presenceManager?.updatePhase({ type: 'idle', since: new Date() });
-                    }
-                    // If triggerOnStartup is enabled, perch scheduler handles presence - no action needed here
-                } catch (error) {
-                    const errorMsg = _.isError(error) ? error.message : String(error);
-                    logger.warn({
-                        error: errorMsg,
-                        msg:   'Failed to load inbox on startup',
-                    });
-                }
-            })().catch((error) => {
-                const errorMsg = _.isError(error) ? error.message : String(error);
-                logger.error({
-                    error: errorMsg,
-                    msg:   'Unhandled error in inbox initialization',
-                });
-            });
-        }
-
-        // Create message coordinator if agent is provided
-        if(agent) {
-            coordinator = createMessageCoordinator({
-                debounceMs: 250,
-                onResponse: async (result, discordMessage) => {
-                    // Only send response if we have both a response and a message to reply to
-                    if(result.response && discordMessage) {
-                        const chunks = splitMessage(result.response);
-
-                        try {
-                            // Capture rate limiter reference for safe closure access
-                            const limiter = rateLimiter!;
-
-                            // First chunk uses reply() to thread the response
-                            await withDiscordRetry(
-                                () => limiter.replyToMessage(discordMessage, chunks[0]),
-                                'replyToMessage'
-                            );
-                            logger.info({ messageId: discordMessage.id, chunkIndex: 0, totalChunks: chunks.length, msg: 'Reply sent successfully' });
-
-                            // Subsequent chunks use channel.send() to continue the conversation
-                            const channel = discordMessage.channel as TextChannel;
-                            for(let i = 1; i < chunks.length; i++) {
-                                await withDiscordRetry(
-                                    () => limiter.sendToChannel(channel, chunks[i]),
-                                    'sendToChannel'
-                                );
-                                logger.info({ messageId: discordMessage.id, chunkIndex: i, totalChunks: chunks.length, msg: 'Continuation sent successfully' });
-                            }
-                        } catch (replyError) {
-                            const err = _.isError(replyError) ? replyError : new Error(String(replyError));
-                            logger.error({ error: err, messageId: discordMessage.id, msg: `Failed to reply to message ${discordMessage.id}: ${err.message}` });
-                        }
-                    }
-
-                    // Resume catch-up if we were interrupted
-                    if(botStateManager.getMode() === 'catching_up' && botStateManager.isInterrupted() && catchUpSessionRunner) {
-                        logger.info({ msg: 'Resuming catch-up after interruption' });
-                        // Update presence back to catching_up
-                        presenceManager?.transitionPresenceDisplayMode('catching_up');
-                        // Resume catch-up (async, don't await)
-                        void catchUpSessionRunner.resumeAfterInterruption().catch((error) => {
-                            const errorMsg = _.isError(error) ? error.message : String(error);
-                            logger.error({ error: errorMsg, msg: 'Failed to resume catch-up after interruption' });
-                            // Reset presence on failure
-                            presenceManager?.transitionPresenceDisplayMode('none');
-                        });
-                    }
-
-                    // Resume perch if we were interrupted
-                    if(botStateManager.getMode() === 'perching' && botStateManager.isInterrupted() && perchSessionRunner) {
-                        logger.info({ msg: 'Resuming perch after interruption' });
-                        presenceManager?.transitionPresenceDisplayMode('perching');
-                        void perchSessionRunner.resumeAfterInterruption().catch((error) => {
-                            const errorMsg = _.isError(error) ? error.message : String(error);
-                            logger.error({ error: errorMsg, msg: 'Failed to resume perch after interruption' });
-                            presenceManager?.transitionPresenceDisplayMode('none');
-                        });
-                    }
-                },
-            });
-
-            // Helper to update presence when starting to process a user message
-            const updatePresenceForMessageStart = (): void => {
-                if(botStateManager.getMode() === 'idle') {
-                    presenceManager?.transitionPresenceDisplayMode('processing_message');
-                }
-            };
-
-            // Helper to complete presence updates after message processing
-            const completePresenceForMessage = (
-                streamEventHandler: ReturnType<typeof createPresenceStreamHandler> | undefined
-            ): void => {
-                // Transition to idle after completion, but NOT if we're in catch-up interrupted state
-                // (the resumed catch-up session will handle presence updates)
-                const currentMode = botStateManager.getMode();
-                const isInterrupted = botStateManager.isInterrupted();
-                if(streamEventHandler && !(currentMode === 'catching_up' && isInterrupted)) {
-                    streamEventHandler.complete();
-                }
-
-                // Reset presence mode back to none if we were in idle mode
-                if(currentMode === 'idle') {
-                    presenceManager?.transitionPresenceDisplayMode('none');
-                }
-
-                // Transition state manager to idle when message processing completes
-                // (unless we're in catch-up interrupted state)
-                if(currentMode === 'processing_message' && !isInterrupted) {
-                    botStateManager.goIdle();
-                }
-            };
-
-            // Set the processor to call agent.chatBatch
-            coordinator.setProcessor(async (contexts, resumeContext, sessionId, abortSignal) => {
-                // Update presence to show processing message if not in catch-up mode
-                updatePresenceForMessageStart();
-
-                // Set conversation context for MCP tools
-                setConversationContext({
-                    currentUserId:    contexts[0]?.userId,
-                    currentChannelId: contexts[0]?.channelId,
-                });
-
-                try {
-                    // Create abort controller from signal
-                    const abortController = new AbortController();
-                    abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
-
-                    // Process attachments from all contexts
-                    const { images, contentAdditions } = await processAttachments(contexts);
-
-                    // Modify contexts to include attachment file paths in content
-                    const modifiedContexts = addAttachmentInfoToContexts(contexts, contentAdditions);
-
-                    // Extract user message from first context for synopsis generation
-                    const userMessage = contexts[0]?.content ?? '';
-
-                    // Create stream event handler for presence updates if presenceManager available
-                    const streamEventHandler = createPresenceStreamHandler(
-                        presenceManager,
-                        dynamicStatusGenerator,
-                        userMessage,
-                        botStateManager
-                    );
-
-                    // Call chatBatch with presence updates and images
-                    const result = await agent.chatBatch(modifiedContexts, {
-                        sessionId,
-                        resumeContext: resumeContext ?? undefined,
-                        abortController,
-                        onStreamEvent: streamEventHandler?.onStreamEvent,
-                        images:        images.length > 0 ? images : undefined,
-                    });
-
-                    // Complete presence updates after processing
-                    completePresenceForMessage(streamEventHandler);
-
-                    return result;
-                } finally {
-                    // Clear context after processing
-                    clearConversationContext();
-                }
-            });
-        }
-
-        // eslint-disable-next-line @typescript-eslint/no-misused-promises -- messageCreate handler is async
-        client.on('messageCreate', createMessageHandler({
-            monitoredChannelIds: config.monitoredChannelIds as ChannelId[],
-            botUserId:           readyClient.user!.id as UserId,
+        // Register message handler AFTER channel registry is initialized
+        setupMessageProcessing({
+            client,
+            readyClient,
+            channelRegistry,
             onMessage,
             presenceManager,
             agent,
@@ -989,7 +1272,38 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             catchUpSessionRunner,
             botStateManager,
             perchSessionRunner,
-        }));
+            dmTracker,
+            responseRouter,
+        });
+
+        // Initialize inbox on startup and then check for catch-up
+        if(inboxManager) {
+            setupInboxAndCatchUp({
+                inboxManager,
+                readyClient,
+                botStateManager,
+                catchUpSessionRunner,
+                presenceManager,
+                memoryBackend: memoryBackend!,
+                perchConfig:   options.perchConfig,
+            });
+        }
+
+        // Create message coordinator if agent is provided
+        if(agent) {
+            coordinator = setupCoordinatorIntegration({
+                agent,
+                presenceManager,
+                dynamicStatusGenerator,
+                botStateManager,
+                catchUpSessionRunner,
+                perchSessionRunner,
+                responseRouter,
+                rateLimiter: rateLimiter,
+                readyClient,
+                channelRegistry,
+            });
+        }
     });
 
     return {
@@ -1042,8 +1356,15 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             if(rateLimiter) {
                 rateLimiter.stop();
             }
+            // Remove all listeners before destroy to prevent memory leaks
+            client.removeAllListeners();
             // destroy() is sufficient for cleanup (as per user decision)
             await client.destroy();
+            // Clear global state to allow fresh initialization if needed
+            // Only clear if this is the global client (not a provided client)
+            if(!providedClient && globalThis.__discordClient === client) {
+                globalThis.__discordClient = undefined;
+            }
         },
 
         // For testing - expose internal state manager (Phase 2)

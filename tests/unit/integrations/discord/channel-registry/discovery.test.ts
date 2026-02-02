@@ -59,7 +59,7 @@ describe('discovery', () => {
 
             expect(result).toEqual({
                 discovered: 0,
-                skipped:    0,
+                updated:    0,
                 errors:     [],
             });
         });
@@ -83,15 +83,15 @@ describe('discovery', () => {
             const result = await discoverAllChannels(mockClient, mockManager);
 
             expect(result.discovered).toBe(1);
-            expect(result.skipped).toBe(0);
+            expect(result.updated).toBe(0);
             expect(result.errors).toHaveLength(0);
             expect(mockManager.upsertChannel).toHaveBeenCalledTimes(1);
         });
 
-        it('should skip channels already in registry', async () => {
+        it('should update channels already in registry', async () => {
             const mockChannel = {
                 id:   'channel-1',
-                name: 'general',
+                name: 'general-renamed',
                 send: mock(_.noop),
             } as unknown as GuildChannel;
 
@@ -103,7 +103,7 @@ describe('discovery', () => {
 
             mockClient.guilds.cache.set('guild-123', mockGuild);
 
-            // Mock existing channel
+            // Mock existing channel with old name
             (mockManager.getChannel as Mock<() => Promise<ChannelMetadata | null>>).mockResolvedValue({
                 channelId:    createChannelId('channel-1'),
                 guildId:      createGuildId('guild-123'),
@@ -117,9 +117,67 @@ describe('discovery', () => {
             const result = await discoverAllChannels(mockClient, mockManager);
 
             expect(result.discovered).toBe(0);
-            expect(result.skipped).toBe(1);
+            expect(result.updated).toBe(1);
             expect(result.errors).toHaveLength(0);
-            expect(mockManager.upsertChannel).not.toHaveBeenCalled();
+            expect(mockManager.upsertChannel).toHaveBeenCalledTimes(1);
+
+            // Verify the updated metadata
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
+            const call = (mockManager.upsertChannel as any).mock.calls[0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Test assertion
+            const metadata = call?.[0] as ChannelMetadata;
+
+            expect(metadata.channelName).toBe('general-renamed');
+            expect(metadata.isMuted).toBe(false);
+            expect(metadata.discoveredAt).toBe('2025-01-01T00:00:00.000Z');
+            expect(metadata.lastSeenAt).not.toBe('2025-01-01T00:00:00.000Z');
+            expect(metadata.updatedAt).not.toBe('2025-01-01T00:00:00.000Z');
+        });
+
+        it('should preserve user settings when updating channels', async () => {
+            const mockChannel = {
+                id:   'channel-1',
+                name: 'general-renamed',
+                send: mock(_.noop),
+            } as unknown as GuildChannel;
+
+            mockGuild.channels.fetch = mock(async () => {
+                const map = new Map();
+                map.set('channel-1', mockChannel);
+                return map;
+            }) as unknown as typeof mockGuild.channels.fetch;
+
+            mockClient.guilds.cache.set('guild-123', mockGuild);
+
+            // Mock existing channel with user settings
+            (mockManager.getChannel as Mock<() => Promise<ChannelMetadata | null>>).mockResolvedValue({
+                channelId:    createChannelId('channel-1'),
+                guildId:      createGuildId('guild-123'),
+                channelName:  'general',
+                isMuted:      true,  // User muted this channel
+                isWellKnown:  'general' as const,  // Admin marked as well-known
+                discoveredAt: '2025-01-01T00:00:00.000Z',
+                lastSeenAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:    '2025-01-01T00:00:00.000Z',
+            });
+
+            const result = await discoverAllChannels(mockClient, mockManager);
+
+            expect(result.discovered).toBe(0);
+            expect(result.updated).toBe(1);
+
+            // Verify user settings are preserved
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
+            const call = (mockManager.upsertChannel as any).mock.calls[0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Test assertion
+            const metadata = call?.[0] as ChannelMetadata;
+
+            expect(metadata.channelName).toBe('general-renamed');  // Updated from Discord
+            expect(metadata.isMuted).toBe(true);  // Preserved user setting
+            expect(metadata.isWellKnown).toBe('general');  // Preserved admin setting
+            expect(metadata.discoveredAt).toBe('2025-01-01T00:00:00.000Z');  // Preserved
+            expect(metadata.lastSeenAt).not.toBe('2025-01-01T00:00:00.000Z');  // Updated
+            expect(metadata.updatedAt).not.toBe('2025-01-01T00:00:00.000Z');  // Updated
         });
 
         it('should skip non-text channels', async () => {
@@ -141,7 +199,7 @@ describe('discovery', () => {
             const result = await discoverAllChannels(mockClient, mockManager);
 
             expect(result.discovered).toBe(0);
-            expect(result.skipped).toBe(0);
+            expect(result.updated).toBe(0);
             expect(result.errors).toHaveLength(0);
             expect(mockManager.upsertChannel).not.toHaveBeenCalled();
         });
@@ -158,7 +216,7 @@ describe('discovery', () => {
             const result = await discoverAllChannels(mockClient, mockManager);
 
             expect(result.discovered).toBe(0);
-            expect(result.skipped).toBe(0);
+            expect(result.updated).toBe(0);
             expect(result.errors).toHaveLength(0);
         });
 
@@ -205,7 +263,7 @@ describe('discovery', () => {
             const result = await discoverAllChannels(mockClient, mockManager);
 
             expect(result.discovered).toBe(2);
-            expect(result.skipped).toBe(0);
+            expect(result.updated).toBe(0);
             expect(result.errors).toHaveLength(0);
             expect(mockManager.upsertChannel).toHaveBeenCalledTimes(2);
         });
@@ -220,7 +278,7 @@ describe('discovery', () => {
             const result = await discoverAllChannels(mockClient, mockManager);
 
             expect(result.discovered).toBe(0);
-            expect(result.skipped).toBe(0);
+            expect(result.updated).toBe(0);
             expect(result.errors).toHaveLength(1);
             expect(result.errors[0]).toEqual({
                 guildId: 'guild-123',

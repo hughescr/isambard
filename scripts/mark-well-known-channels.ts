@@ -2,30 +2,29 @@
  * Admin script to mark Discord channels as well-known.
  *
  * Usage:
- *   bun run scripts/mark-well-known-channels.ts <guildId> <channelName> <type>
- *   bun run scripts/mark-well-known-channels.ts <guildId> --all
+ *   bun run scripts/mark-well-known-channels.ts <channelId> <type>
  *
- * Types: general, catch-up, perch-time
+ * Types: general, catch-up, perch-time, fallback
  *
  * Examples:
- *   # Mark #general as the default channel
- *   bun run scripts/mark-well-known-channels.ts 1451694736166359194 general general
+ *   # Mark a channel as the default general channel
+ *   bun run scripts/mark-well-known-channels.ts 1451694736166359197 general
  *
- *   # Mark #catch-up for catch-up session routing
- *   bun run scripts/mark-well-known-channels.ts 1451694736166359194 catch-up catch-up
+ *   # Mark a channel for catch-up session routing
+ *   bun run scripts/mark-well-known-channels.ts 1451694736166359198 catch-up
  *
- *   # Mark #perch-time for perch session routing
- *   bun run scripts/mark-well-known-channels.ts 1451694736166359194 perch-time perch-time
+ *   # Mark a channel for perch session routing
+ *   bun run scripts/mark-well-known-channels.ts 1451694736166359199 perch-time
  *
- *   # Mark all three default channels at once
- *   bun run scripts/mark-well-known-channels.ts 1451694736166359194 --all
+ *   # Mark a channel for fallback routing
+ *   bun run scripts/mark-well-known-channels.ts 1451694736166359200 fallback
  */
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { ChannelRegistryBackend } from '../src/integrations/discord/channel-registry/backend';
-import { createGuildId, type GuildId } from '../src/integrations/discord/types';
+import { createChannelId, type ChannelId } from '../src/integrations/discord/types';
 import { type WellKnownChannel, WELL_KNOWN_CHANNELS } from '../src/integrations/discord/channel-registry/types';
 
 class UsageError extends Error {
@@ -36,30 +35,29 @@ class UsageError extends Error {
 }
 
 class ChannelNotFoundError extends Error {
-    constructor(channelName: string) {
-        super(`Channel #${channelName} not found in guild. Has it been discovered yet? Hint: Send a message in the channel first to trigger discovery.`);
+    constructor(channelId: ChannelId) {
+        super(`Channel ${channelId} not found. Has it been discovered yet? Hint: Send a message in the channel first to trigger discovery.`);
         this.name = 'ChannelNotFoundError';
     }
 }
-
-const DEFAULT_CHANNEL_NAMES: Record<WellKnownChannel, string> = {
-    general:      'general',
-    'catch-up':   'catch-up',
-    'perch-time': 'perch-time',
-};
 
 async function main() {
     const args = process.argv.slice(2);
 
     if(args.length < 2) {
         throw new UsageError(
-            'Usage: bun run scripts/mark-well-known-channels.ts <guildId> <channelName> <type>\n'
-            + '       bun run scripts/mark-well-known-channels.ts <guildId> --all\n\n'
-            + 'Types: general, catch-up, perch-time'
+            'Usage: bun run scripts/mark-well-known-channels.ts <channelId> <type>\n\n'
+            + 'Types: general, catch-up, perch-time, fallback'
         );
     }
 
-    const guildId = createGuildId(args[0]);
+    const channelId = createChannelId(args[0]);
+    const type = args[1] as WellKnownChannel;
+
+    if(!type || !WELL_KNOWN_CHANNELS.includes(type)) {
+        throw new UsageError(`Invalid type: ${type}. Must be one of: ${WELL_KNOWN_CHANNELS.join(', ')}`);
+    }
+
     const tableName = process.env.DYNAMODB_TABLE_NAME ?? 'IsambardTable';
     const region = process.env.AWS_REGION ?? 'us-west-2';
 
@@ -78,51 +76,28 @@ async function main() {
     });
     const backend = new ChannelRegistryBackend(docClient, tableName);
 
-    if(args[1] === '--all') {
-        // Mark all default well-known channels
-        logger.info({ msg: 'Marking all default well-known channels' });
-        for(const type of WELL_KNOWN_CHANNELS) {
-            await markChannel(backend, guildId, DEFAULT_CHANNEL_NAMES[type], type);
-        }
-        logger.info({ msg: 'All default channels marked successfully' });
-    } else {
-        // Mark specific channel
-        const channelName = args[1];
-        const type = args[2] as WellKnownChannel;
-
-        if(!type || !WELL_KNOWN_CHANNELS.includes(type)) {
-            throw new UsageError(`Invalid type: ${type}. Must be one of: ${WELL_KNOWN_CHANNELS.join(', ')}`);
-        }
-
-        await markChannel(backend, guildId, channelName, type);
-    }
+    await markChannel(backend, channelId, type);
 }
 
 async function markChannel(
     backend: ChannelRegistryBackend,
-    guildId: GuildId,
-    channelName: string,
+    channelId: ChannelId,
     type: WellKnownChannel
 ): Promise<void> {
-    logger.info({ channelName, guildId, msg: 'Looking for channel' });
+    logger.info({ channelId, msg: 'Looking for channel' });
 
-    // Find the channel by name in the guild
-    const channels = await backend.getChannelByName(channelName, guildId);
+    // Verify channel exists in backend
+    const channel = await backend.getChannel(channelId);
 
-    if(channels.length === 0) {
-        throw new ChannelNotFoundError(channelName);
+    if(!channel) {
+        throw new ChannelNotFoundError(channelId);
     }
 
-    if(channels.length > 1) {
-        logger.warn({ channelName, count: channels.length, msg: 'Multiple channels found with same name, using first match' });
-    }
-
-    const channel = channels[0];
-    logger.info({ channelId: channel.channelId, msg: 'Found channel' });
+    logger.info({ channelId, guildId: channel.guildId, msg: 'Found channel' });
 
     // Mark as well-known
-    await backend.markAsWellKnown(channel.channelId, type);
-    logger.info({ channelName, type, channelId: channel.channelId, msg: 'Marked channel as well-known' });
+    await backend.markAsWellKnown(channelId, type);
+    logger.info({ type, channelId, msg: 'Marked channel as well-known' });
 }
 
 main().catch((error: unknown) => {

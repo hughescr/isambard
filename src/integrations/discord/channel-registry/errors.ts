@@ -5,6 +5,8 @@
  * All errors extend ChannelRegistryError which provides error codes for programmatic handling.
  */
 
+import type { WellKnownChannel } from './types';
+
 /**
  * Base error class for all channel registry errors
  */
@@ -47,21 +49,11 @@ export class AmbiguousChannelError extends ChannelRegistryError {
 }
 
 /**
- * Error thrown when a well-known channel doesn't exist
+ * Error thrown when a well-known channel is required but doesn't exist
  */
-export class WellKnownChannelMissingError extends ChannelRegistryError {
-    constructor(public readonly channelType: 'general' | 'catch-up' | 'perch-time') {
-        super(`Well-known channel not configured: ${channelType}`, 'WELL_KNOWN_CHANNEL_MISSING');
-        this.name = 'WellKnownChannelMissingError';
-    }
-}
-
-/**
- * Error thrown when trying to send to a muted channel
- */
-export class ChannelMutedError extends ChannelRegistryError {
-    constructor(public readonly channelName: string) {
-        super(`Channel is muted: ${channelName}`, 'CHANNEL_MUTED');
-        this.name = 'ChannelMutedError';
+export class WellKnownChannelNotFoundError extends ChannelRegistryError {
+    constructor(public readonly channelType: WellKnownChannel) {
+        super(`Required well-known channel not found: ${channelType}`, 'WELL_KNOWN_CHANNEL_NOT_FOUND');
+        this.name = 'WellKnownChannelNotFoundError';
     }
 }

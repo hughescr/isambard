@@ -24,7 +24,7 @@ function createMockResources(
         EmailPassword:                 { value: 'emailpass' },
         DiscordBotToken:               { value: 'bot-token-123' },
         DiscordApplicationId:          { value: 'app-id-456' },
-        DiscordMonitoredChannels:      { value: undefined },
+        DiscordHomeGuildId:            { value: 'home-guild-123' },
         BoxClientId:                   { value: 'box-client-id' },
         BoxClientSecret:               { value: 'box-secret' },
         ClaudeCodeOAuthToken:          { value: 'test-oauth-token-12345' },
@@ -260,40 +260,6 @@ describe.concurrent('loadConfig', () => {
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Testing error message property
                 expect(urlError?.message).not.toBe('[REDACTED]');
             }
-        });
-    });
-
-    describe('Comma-Separated Values (Discord Channel IDs)', () => {
-        test('should split comma-separated monitored channel IDs', () => {
-            const resources = createMockResources({
-                DiscordMonitoredChannels: { value: 'channel1,channel2,channel3' },
-            });
-            const config = loadConfig(resources);
-            expect(config.discord.monitoredChannelIds).toEqual(['channel1', 'channel2', 'channel3']);
-        });
-
-        test('should trim whitespace from monitored channel IDs', () => {
-            const resources = createMockResources({
-                DiscordMonitoredChannels: { value: '  channel1 , channel2  ,  channel3  ' },
-            });
-            const config = loadConfig(resources);
-            expect(config.discord.monitoredChannelIds).toEqual(['channel1', 'channel2', 'channel3']);
-        });
-
-        test('should handle single channel ID', () => {
-            const resources = createMockResources({
-                DiscordMonitoredChannels: { value: 'channel1' },
-            });
-            const config = loadConfig(resources);
-            expect(config.discord.monitoredChannelIds).toEqual(['channel1']);
-        });
-
-        test('should return empty array when monitored channel IDs are not provided', () => {
-            const resources = createMockResources({
-                DiscordMonitoredChannels: { value: undefined },
-            });
-            const config = loadConfig(resources);
-            expect(config.discord.monitoredChannelIds).toEqual([]);
         });
     });
 

@@ -253,7 +253,7 @@ export const DISCORD_CHANNEL_CONTEXT = `## Discord Channel Context
 You can control your presence in channels using the \`@@NO_RESPONSE@@\` sentinel:
 - When you want to observe without responding, include \`@@NO_RESPONSE@@\` in your message
 - This is useful when you want to track conversations without participating
-- The sentinel is stripped from your message before it's posted
+- When you include this sentinel, your message will not be sent - you will observe silently
 
 ### Well-known channels
 
@@ -263,12 +263,14 @@ You can control your presence in channels using the \`@@NO_RESPONSE@@\` sentinel
 
 ### Available channels
 
-Currently visible channels: {CHANNEL_LIST}
+Currently visible channels (unmuted only): {CHANNEL_LIST}
+
+To see all channels including muted ones, use the \`listChannels\` tool with \`includesMuted: true\`.
 
 ### Channel management tools
 
 You have access to channel management tools:
-- \`listChannels\` - List all channels you can see
+- \`listChannels\` - List all channels you can see (optional: includesMuted parameter)
 - \`muteChannel\` - Stop receiving messages from a channel
 - \`unmuteChannel\` - Resume receiving messages from a channel`;
 

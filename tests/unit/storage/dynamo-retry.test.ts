@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/await-thenable -- Bun's expect().rejects/resolves needs await but types don't reflect it */
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { withDynamoTimeout, DynamoTimeoutError } from '@/storage/dynamo-retry';
 import type { RetryLogger } from '@/utils/retry/types';
@@ -99,8 +98,8 @@ describe('withDynamoTimeout', () => {
             // Advance past timeout
             jest.advanceTimersByTime(1001);
 
-            await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
-            await expect(resultPromise).rejects.toThrow("DynamoDB operation 'PutItem' timed out after 1000ms");
+            expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
+            expect(resultPromise).rejects.toThrow("DynamoDB operation 'PutItem' timed out after 1000ms");
         });
 
         it('should log error when timeout occurs', async () => {
@@ -116,7 +115,7 @@ describe('withDynamoTimeout', () => {
 
             jest.advanceTimersByTime(2001);
 
-            await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
+            expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
 
             expect(mockLogger.error).toHaveBeenCalledWith({
                 operation: 'UpdateItem',
@@ -162,7 +161,7 @@ describe('withDynamoTimeout', () => {
 
             jest.advanceTimersByTime(1001);
 
-            await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
+            expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
 
             // Should not have called logger (it wasn't provided)
             expect(mockLogger.error).not.toHaveBeenCalled();
@@ -196,7 +195,7 @@ describe('withDynamoTimeout', () => {
 
             jest.advanceTimersByTime(1501);
 
-            await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
+            expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
         });
     });
 
@@ -222,8 +221,8 @@ describe('withDynamoTimeout', () => {
             jest.advanceTimersByTime(1001);
 
             // Fast should succeed, slow should timeout
-            await expect(slow).rejects.toThrow(DynamoTimeoutError);
-            await expect(fast).resolves.toBe('fast');
+            expect(slow).rejects.toThrow(DynamoTimeoutError);
+            expect(fast).resolves.toBe('fast');
         });
     });
 
@@ -240,8 +239,8 @@ describe('withDynamoTimeout', () => {
                 logger:    mockLogger,
             });
 
-            await expect(resultPromise).rejects.toThrow('DynamoDB validation error');
-            await expect(resultPromise).rejects.not.toThrow(DynamoTimeoutError);
+            expect(resultPromise).rejects.toThrow('DynamoDB validation error');
+            expect(resultPromise).rejects.not.toThrow(DynamoTimeoutError);
 
             // Should not log timeout error (different error type)
             expect(mockLogger.error).not.toHaveBeenCalled();
@@ -264,7 +263,7 @@ describe('withDynamoTimeout', () => {
             jest.advanceTimersByTime(501);
 
             // Should get timeout error (race winner)
-            await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
+            expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
         });
     });
 });

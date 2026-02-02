@@ -10,7 +10,7 @@ export interface ChannelRegistryKeys {
     SK:      string
     /** GSI1 Primary Key: GUILD#{guildId} */
     GSI1PK:  string
-    /** GSI1 Sort Key: CHANNEL#{channelName} */
+    /** GSI1 Sort Key: CHANNEL#{channelId} (changed from channelName) */
     GSI1SK:  string
     /** GSI2 Primary Key: WELLKNOWN#{type} (optional, only for well-known channels) */
     GSI2PK?: string
@@ -27,26 +27,25 @@ export class ChannelRegistryKeyGenerator {
      *
      * @param channelId - Discord channel ID
      * @param guildId - Discord guild (server) ID
-     * @param channelName - Channel name
      * @returns DynamoDB keys for the channel registry item
      *
      * @example
      * ```ts
-     * const keys = ChannelRegistryKeyGenerator.createKeys('123456', '789012', 'general');
+     * const keys = ChannelRegistryKeyGenerator.createKeys('123456', '789012');
      * // {
      * //   PK: 'CHANNEL#123456',
      * //   SK: 'METADATA',
      * //   GSI1PK: 'GUILD#789012',
-     * //   GSI1SK: 'CHANNEL#general'
+     * //   GSI1SK: 'CHANNEL#123456'
      * // }
      * ```
      */
-    static createKeys(channelId: string, guildId: string, channelName: string): ChannelRegistryKeys {
+    static createKeys(channelId: string, guildId: string): ChannelRegistryKeys {
         return {
             PK:     `CHANNEL#${channelId}`,
             SK:     'METADATA',
             GSI1PK: `GUILD#${guildId}`,
-            GSI1SK: `CHANNEL#${channelName}`,
+            GSI1SK: `CHANNEL#${channelId}`,
         };
     }
 
@@ -94,23 +93,23 @@ export class ChannelRegistryKeyGenerator {
     }
 
     /**
-     * Parses GSI1 keys back to guildId and channelName
+     * Parses GSI1 keys back to guildId and channelId
      *
      * @param gsi1pk - GSI1 Primary Key (GUILD#{guildId})
-     * @param gsi1sk - GSI1 Sort Key (CHANNEL#{channelName})
-     * @returns Object containing guildId and channelName
+     * @param gsi1sk - GSI1 Sort Key (CHANNEL#{channelId})
+     * @returns Object containing guildId and channelId
      * @throws Error if keys are not in expected format
      *
      * @example
      * ```ts
-     * const { guildId, channelName } = ChannelRegistryKeyGenerator.parseGuildKeys(
+     * const { guildId, channelId } = ChannelRegistryKeyGenerator.parseGuildKeys(
      *   'GUILD#789012',
-     *   'CHANNEL#general'
+     *   'CHANNEL#123456'
      * );
-     * // { guildId: '789012', channelName: 'general' }
+     * // { guildId: '789012', channelId: '123456' }
      * ```
      */
-    static parseGuildKeys(gsi1pk: string, gsi1sk: string): { guildId: string, channelName: string } {
+    static parseGuildKeys(gsi1pk: string, gsi1sk: string): { guildId: string, channelId: string } {
         if(!_startsWith(gsi1pk, 'GUILD#')) {
             throw new Error(`Invalid GSI1PK format: expected GUILD#..., got ${gsi1pk}`);
         }
@@ -119,8 +118,8 @@ export class ChannelRegistryKeyGenerator {
         }
 
         return {
-            guildId:     gsi1pk.slice(6),  // Remove 'GUILD#' prefix
-            channelName: gsi1sk.slice(8),  // Remove 'CHANNEL#' prefix
+            guildId:   gsi1pk.slice(6),  // Remove 'GUILD#' prefix
+            channelId: gsi1sk.slice(8),  // Remove 'CHANNEL#' prefix
         };
     }
 }

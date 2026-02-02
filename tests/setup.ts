@@ -2,6 +2,7 @@
 import { mock } from 'bun:test';
 import {
     assign,
+    constant,
     replace,
     padStart,
     isDate,
@@ -18,6 +19,35 @@ import {
     filter,
     forEach
 } from 'lodash';
+
+// Mock SST Resource - MUST be mutable so tests can customize values
+export const mockSstResource: Record<string, { value: unknown }> = {
+    App:                      { value: 'test-app' },
+    DiscordToken:             { value: 'test-discord-token' },
+    ClaudeApiKey:             { value: 'test-claude-api-key' },
+    ClaudeCodeOAuthToken:     { value: 'test-oauth-token' },
+    DiscordHomeGuildId:       { value: 'test-guild-123' },
+    DiscordMonitoredChannels: { value: '' },
+    DynamoDBTableName:        { value: 'IsambardMemory' },
+    DynamoDBEndpoint:         { value: undefined },
+};
+
+// Helper to reset SST Resource to defaults
+export function resetMockSstResource(): void {
+    mockSstResource.App = { value: 'test-app' };
+    mockSstResource.DiscordToken = { value: 'test-discord-token' };
+    mockSstResource.ClaudeApiKey = { value: 'test-claude-api-key' };
+    mockSstResource.ClaudeCodeOAuthToken = { value: 'test-oauth-token' };
+    mockSstResource.DiscordHomeGuildId = { value: 'test-guild-123' };
+    mockSstResource.DiscordMonitoredChannels = { value: '' };
+    mockSstResource.DynamoDBTableName = { value: 'IsambardMemory' };
+    mockSstResource.DynamoDBEndpoint = { value: undefined };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
+mock.module('sst', () => ({
+    Resource: mockSstResource,
+}));
 
 // Mock AWS SDK before any imports - we test OUR code, not AWS SDK
 // This eliminates cold-start costs entirely
@@ -161,6 +191,29 @@ export const mockLogger = {
     error: mock((_obj: Record<string, unknown>) => undefined),
     child: mock(() => { return mockLogger; }),
 };
+
+// Mock helpers for Discord handlers
+export function createMockBotStateManager() {
+    return {
+        shouldUpdatePresence:   mock(constant(true)),
+        updateActivityPhase:    mock(constant(undefined)),
+        clearActivityPhase:     mock(constant(undefined)),
+        getMode:                mock(constant('idle' as const)),
+        goIdle:                 mock(constant(undefined)),
+        startProcessingMessage: mock(constant(undefined)),
+    };
+}
+
+export function createMockResponseRouter() {
+    return {
+        routeResponse: mock(async (_sessionType: string, reply: string, channelId: string, _userId: string) => ({
+            shouldSend:      !reply.includes('@@NO_RESPONSE@@'),
+            content:         replace(reply, '@@NO_RESPONSE@@', ''),
+            targetChannelId: channelId,
+            isFallback:      false,
+        })),
+    };
+}
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
 mock.module('@hughescr/logger', () => ({

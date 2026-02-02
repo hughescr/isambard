@@ -8,9 +8,7 @@ import type { ClaudeAgent } from '@/agent/agent';
 import type { MessageCoordinator } from './message-coordinator';
 import { createGuildId, createChannelId, createUserId } from './types';
 import { createStatusMiddleware } from './presence';
-import { splitMessage } from './messages';
 import { createDiscordRateLimiter } from './rate-limiter';
-import { withDiscordRetry } from './retry';
 import type { QuestionRegistry } from '@/agent/question-registry';
 import type { AnswerClassifier } from '@/agent/answer-classifier';
 import type { AttachmentMetadata } from './attachments/types';
@@ -18,6 +16,9 @@ import { inferImageContentType } from './content-type';
 import type { InboxManager } from './inbox';
 import type { CatchUpSessionRunner } from './catchup';
 import type { BotStateManager } from './state';
+import type { ChannelRegistryManager, DMTracker, ResponseRouter } from './channel-registry';
+import { sendResponse } from './response-sender';
+import { withDiscordRetry } from './retry';
 
 /**
  * Helper function to extract attachment metadata from a Discord message.
@@ -91,15 +92,15 @@ export function createErrorHandler(): (error: Error) => void {
  */
 export interface MessageHandlerOptions {
     /**
-     * List of channel IDs to monitor for messages.
-     * Messages in these channels will trigger the onMessage callback.
-     */
-    monitoredChannelIds: ChannelId[]
-
-    /**
      * The bot's user ID (used to detect @mentions and ignore own messages).
      */
     botUserId: UserId
+
+    /**
+     * Channel registry for dynamic channel management.
+     * Used to determine if messages should be processed.
+     */
+    channelRegistry: ChannelRegistryManager
 
     /**
      * Callback function invoked when a relevant message is received.
@@ -154,14 +155,24 @@ export interface MessageHandlerOptions {
     catchUpSessionRunner?: CatchUpSessionRunner
 
     /**
-     * Optional bot state manager for checking current mode.
+     * Bot state manager for checking current mode.
      */
-    botStateManager?: BotStateManager
+    botStateManager: BotStateManager
 
     /**
      * Optional perch session runner for interrupting autonomous perch sessions.
      */
     perchSessionRunner?: import('@/agent/perch').PerchSessionRunner
+
+    /**
+     * Optional DM tracker for tracking DM channels.
+     */
+    dmTracker?: DMTracker
+
+    /**
+     * Response router for routing responses based on session type.
+     */
+    responseRouter: ResponseRouter
 }
 
 /**
@@ -220,7 +231,7 @@ async function handleCatchUpInterruption(
         author:      message.author.username,
         // Stryker disable next-line LogicalOperator: Fallback for DM channels where name is null
         channelName: channel.name ?? message.channel.id,
-        content:     message.content,
+        content:     message.cleanContent,
     });
 
     // Presence update is handled by the subscription in bot.ts
@@ -249,7 +260,7 @@ async function handlePerchInterruption(
         channelId:   createChannelId(message.channel.id),
         author:      message.author.username,
         channelName: channel.name ?? message.channel.id,
-        content:     message.content,
+        content:     message.cleanContent,
     });
 
     // Presence update is handled by the subscription in bot.ts
@@ -287,7 +298,7 @@ function handleStateAndInbox(
     if(botStateManager?.getMode() === 'idle') {
         botStateManager.startProcessingMessage(
             createChannelId(message.channel.id),
-            message.content
+            message.cleanContent
         );
     }
 
@@ -388,19 +399,39 @@ function shouldIgnoreMessage(message: Message, botUserId: UserId): boolean {
 
 /**
  * Helper function to determine response context for a message.
- * Returns an object with isDM, isMention, isMonitoredChannel, and shouldRespond.
+ * Returns an object with isDM, isMention, isReplyToBot, and shouldRespond.
  */
-function determineResponseContext(
+async function determineResponseContext(
     message: Message,
     botUserId: UserId,
-    monitoredChannelIds: ChannelId[]
-): { isDM: boolean, isMention: boolean, isMonitoredChannel: boolean, shouldRespond: boolean } {
+    channelRegistry: ChannelRegistryManager
+): Promise<{ isDM: boolean, isMention: boolean, isReplyToBot: boolean, shouldRespond: boolean }> {
     const isDM = !message.guild; // DM channels have no guild
     const isMention = message.content.includes(`<@${botUserId}>`) || message.content.includes(`<@!${botUserId}>`);
-    const isMonitoredChannel = monitoredChannelIds.includes(message.channel.id as ChannelId);
-    const shouldRespond = isDM || isMention || isMonitoredChannel;
+    const channelId = message.channel.id as ChannelId;
 
-    return { isDM, isMention, isMonitoredChannel, shouldRespond };
+    // Check for reply to bot
+    let isReplyToBot = false;
+    if(message.reference?.messageId) {
+        try {
+            const referencedMessage = await message.fetchReference();
+            isReplyToBot = referencedMessage.author.id === botUserId;
+        } catch{
+            // If we can't fetch the reference, assume it's not a reply to bot
+            isReplyToBot = false;
+        }
+    }
+
+    // For thread messages, check parent channel mute state
+    // If parent is muted, threads inherit the mute unless override conditions apply
+    let shouldRespond = channelRegistry.shouldProcess(channelId, isDM, isMention, isReplyToBot);
+    if(shouldRespond && message.channel.isThread?.() && message.channel.parentId) {
+        const parentChannelId = message.channel.parentId as ChannelId;
+        // Check if parent channel is muted. Override conditions (mention, reply) still apply - if someone @mentions Izzy in a thread of a muted channel, still respond.
+        shouldRespond = channelRegistry.shouldProcess(parentChannelId, false, isMention, isReplyToBot);
+    }
+
+    return { isDM, isMention, isReplyToBot, shouldRespond };
 }
 
 /**
@@ -437,7 +468,7 @@ async function handlePendingQuestion(
     }
 
     const classification = await answerClassifier.classify(pendingQuestion, {
-        content:             message.content,
+        content:             message.cleanContent,
         authorId:            message.author.id,
         channelId:           message.channel.id,
         threadId:            lookupThreadId,
@@ -468,7 +499,7 @@ async function handlePendingQuestion(
 
         // Resolve the question - don't send to coordinator
         questionRegistry.resolveWithAnswer(pendingQuestion.questionId, {
-            content:     message.content,
+            content:     message.cleanContent,
             responderId: createUserId(message.author.id),
             messageId:   message.id,
             channelId:   lookupChannelId,
@@ -516,7 +547,7 @@ async function handlePendingQuestion(
 }
 
 export function createMessageHandler(options: MessageHandlerOptions): (message: Message) => Promise<void> {
-    const { monitoredChannelIds, botUserId, onMessage, presenceManager, agent, dynamicStatusGenerator, addRecentMessage, coordinator, questionRegistry, answerClassifier, inboxManager, catchUpSessionRunner, botStateManager, perchSessionRunner } = options;
+    const { botUserId, channelRegistry, onMessage, presenceManager, agent, dynamicStatusGenerator, addRecentMessage, coordinator, questionRegistry, answerClassifier, inboxManager, catchUpSessionRunner, botStateManager, perchSessionRunner, dmTracker, responseRouter } = options;
 
     // Create status middleware if presenceManager, agent, and botStateManager are provided
     const statusMiddleware = presenceManager && agent && botStateManager
@@ -544,7 +575,7 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
             channelId:   createChannelId(message.channel.id),
             userId:      createUserId(message.author.id),
             messageId:   message.id,
-            content:     message.content,
+            content:     message.cleanContent,
             timestamp:   message.createdAt.toISOString(),
             botUserId,
             // Stryker disable next-line ConditionalExpression: Empty array exclusion - tests verify both cases
@@ -553,6 +584,7 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
     };
 
     // Helper function to process a message after filtering checks pass
+
     async function processMessage(message: Message): Promise<void> {
         // Convert Discord.js Message to DiscordMessageContext
         const context = createContext(message);
@@ -562,7 +594,7 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
                 userId:         message.author.id,
                 channelId:      message.channel.id,
                 messageId:      message.id,
-                contentPreview: message.content.slice(0, 50) + (message.content.length > 50 ? '...' : ''),
+                contentPreview: message.cleanContent.slice(0, 50) + (message.cleanContent.length > 50 ? '...' : ''),
                 msg:            `Processing message from ${message.author.tag}`,
             });
 
@@ -598,40 +630,15 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
 
             // Reply if callback returned a string
             if(reply !== null) {
-                logger.info({
-                    messageId:      message.id,
-                    responseLength: reply.length,
-                    msg:            `Response generated (${reply.length} chars)`,
+                await sendResponse({
+                    responseRouter,
+                    botStateManager,
+                    response:           reply,
+                    message,
+                    rateLimiter,
+                    client:             message.client,
+                    useFallbackOnError: true,
                 });
-
-                // Split long messages into Discord-safe chunks
-                const chunks = splitMessage(reply);
-
-                try {
-                    // First chunk uses reply() to thread the response (with retry and rate limiting)
-                    await withDiscordRetry(
-                        () => rateLimiter.replyToMessage(message, chunks[0]),
-                        // Stryker disable next-line StringLiteral: Operation name for logging only
-                        'replyToMessage'
-                    );
-                    logger.info({ messageId: message.id, chunkIndex: 0, totalChunks: chunks.length, msg: 'Reply sent successfully' });
-
-                    // Subsequent chunks use channel.send() to continue the conversation (with retry and rate limiting)
-                    const channel = message.channel as TextChannel;
-                    // Stryker disable next-line EqualityOperator: Loop starts at 1 to skip already-sent first chunk
-                    for(let i = 1; i < chunks.length; i++) {
-                        await withDiscordRetry(
-                            () => rateLimiter.sendToChannel(channel, chunks[i]),
-                            // Stryker disable next-line StringLiteral: Operation name for logging
-                            'sendToChannel'
-                        );
-                        logger.info({ messageId: message.id, chunkIndex: i, totalChunks: chunks.length, msg: 'Continuation sent successfully' });
-                    }
-                } catch (replyError) {
-                    const err = _.isError(replyError) ? replyError : new Error(String(replyError));
-                    // Use object spread to satisfy logger typing while maintaining structured logging
-                    logger.error({ error: err, messageId: message.id, msg: `Failed to reply to message ${message.id}: ${err.message}` });
-                }
             }
         } catch (error) {
             const err = _.isError(error) ? error : new Error(String(error));
@@ -654,10 +661,10 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         }
 
         // Determine response context
-        const { isDM, isMention, isMonitoredChannel, shouldRespond } = determineResponseContext(
+        const { isDM, isMention, isReplyToBot, shouldRespond } = await determineResponseContext(
             message,
             botUserId,
-            monitoredChannelIds
+            channelRegistry
         );
 
         // FIRST: Check for pending questions BEFORE shouldRespond filtering
@@ -673,13 +680,32 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         logger.debug({
             isDM,
             isMention,
-            isMonitoredChannel,
+            isReplyToBot,
             shouldRespond,
-            msg: `Filtering: isDM=${isDM}, isMention=${isMention}, isMonitored=${isMonitoredChannel} → shouldRespond=${shouldRespond}`,
+            msg: `Filtering: isDM=${isDM}, isMention=${isMention}, isReplyToBot=${isReplyToBot} → shouldRespond=${shouldRespond}`,
         });
 
         if(!shouldRespond) {
             return;
+        }
+
+        // Track DM channel if this is a DM message
+        if(dmTracker && isDM) {
+            try {
+                await dmTracker.trackFromMessage(
+                    createUserId(message.author.id),
+                    createChannelId(message.channel.id),
+                    message.author.username
+                );
+            } catch (error) {
+                // Log tracking failure but continue processing message
+                logger.warn({
+                    error,
+                    userId:    message.author.id,
+                    channelId: message.channel.id,
+                    msg:       'Failed to track DM channel, continuing message processing',
+                });
+            }
         }
 
         // Handle mode-based interruptions (catch-up or perch)

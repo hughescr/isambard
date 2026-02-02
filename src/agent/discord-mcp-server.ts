@@ -12,6 +12,8 @@ import { buildQuestionButtons } from '../integrations/discord/button-builder';
 import { createChannelId, createUserId, type UserId, type ChannelId } from '../integrations/discord/types';
 import { withDiscordRetry } from '../integrations/discord/retry';
 import { splitMessage } from '../integrations/discord/messages';
+import type { ChannelRegistryManager } from '../integrations/discord/channel-registry';
+import { DMTracker } from '../integrations/discord/channel-registry';
 
 /**
  * Context for the current Discord conversation.
@@ -428,8 +430,12 @@ function formatQuestionResult(
 export function createDiscordMCPServer(
     searchService: MessageSearchService,
     client: Client,
-    questionRegistry: QuestionRegistry
+    questionRegistry: QuestionRegistry,
+    channelRegistry?: ChannelRegistryManager
 ) {
+    // Create DMTracker for username resolution (requires channelRegistry)
+    const dmTracker = channelRegistry ? new DMTracker(channelRegistry, client) : undefined;
+
     return createSdkMcpServer({
         name:    'discord',
         version: '1.0.0',
@@ -554,17 +560,18 @@ export function createDiscordMCPServer(
 
             tool(
                 'sendDiscordMessage',
-                `Send a message to a Discord channel. Use this to communicate with users.
+                `Send a message to a Discord channel or DM to a user. Use this to communicate with users.
 
 CRITICAL: Only use channel IDs from:
 1. The channelId in a message you're responding to (preferred)
 2. Your memory (/state/discord-channels)
 3. Default: 1451694737026449581 (#general)
+4. @username format for DMs (e.g., "@alice" to send a DM)
 
 NEVER invent or guess channel IDs. If unsure, use #general.`,
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    channelId:        z.string().describe('Target channel ID - use from message context, memory, or default: 1451694737026449581 (#general)'),
+                    channelId:        z.string().describe('Target channel ID, or @username for DM - use from message context, memory, or default: 1451694737026449581 (#general)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     content:          z.string().describe('Message content (max 2000 chars)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
@@ -582,8 +589,29 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             return threadError;
                         }
 
+                        // Resolve @username to channel ID if needed
+                        let resolvedChannelId = args.channelId;
+                        if(_.startsWith(args.channelId, '@')) {
+                            if(!dmTracker) {
+                                return {
+                                    content: [{ type: 'text' as const, text: 'Error: DM functionality not available (channel registry not configured)' }],
+                                    isError: true,
+                                };
+                            }
+
+                            const username = args.channelId.slice(1); // Remove @
+                            const dmChannelId = await dmTracker.getOrCreateDMByUsername(username);
+                            if(!dmChannelId) {
+                                return {
+                                    content: [{ type: 'text' as const, text: `Error: Could not find user @${username} in any server` }],
+                                    isError: true,
+                                };
+                            }
+                            resolvedChannelId = dmChannelId;
+                        }
+
                         // Fetch and validate channel
-                        const channelResult = await fetchAndValidateChannel(client, args.channelId);
+                        const channelResult = await fetchAndValidateChannel(client, resolvedChannelId);
                         if('error' in channelResult) {
                             return channelResult.error;
                         }
@@ -812,6 +840,117 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);
                         logger.warn({ tool: 'addReaction', error: message, channelId: args.channelId, messageId: args.messageId }, 'Discord tool returned error');
+                        return {
+                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
+                            isError: true,
+                        };
+                    }
+                }
+            ),
+
+            tool(
+                'muteChannel',
+                'Mute a Discord channel so the bot will not respond to messages in it. Use this when you want to observe a channel without participating.',
+                {
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    channelId: z.string().describe('Discord channel ID to mute'),
+                },
+                async (args): Promise<CallToolResult> => {
+                    if(!channelRegistry) {
+                        return {
+                            content: [{ type: 'text' as const, text: 'Error: Channel registry not available' }],
+                            isError: true,
+                        };
+                    }
+                    try {
+                        await channelRegistry.muteChannel(args.channelId as ChannelId);
+                        // Stryker disable next-line all: Logging for observability
+                        logger.info({ tool: 'muteChannel', channelId: args.channelId, msg: 'Channel muted' });
+                        return {
+                            content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId: args.channelId, muted: true }) }],
+                        };
+                    } catch (error) {
+                        const message = _.isError(error) ? error.message : String(error);
+                        // Stryker disable next-line all: Logging for observability
+                        logger.warn({ tool: 'muteChannel', error: message, channelId: args.channelId }, 'Discord tool returned error');
+                        return {
+                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
+                            isError: true,
+                        };
+                    }
+                }
+            ),
+
+            tool(
+                'unmuteChannel',
+                'Unmute a Discord channel so the bot will respond to messages in it again.',
+                {
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    channelId: z.string().describe('Discord channel ID to unmute'),
+                },
+                async (args): Promise<CallToolResult> => {
+                    if(!channelRegistry) {
+                        return {
+                            content: [{ type: 'text' as const, text: 'Error: Channel registry not available' }],
+                            isError: true,
+                        };
+                    }
+                    try {
+                        await channelRegistry.unmuteChannel(args.channelId as ChannelId);
+                        // Stryker disable next-line all: Logging for observability
+                        logger.info({ tool: 'unmuteChannel', channelId: args.channelId, msg: 'Channel unmuted' });
+                        return {
+                            content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId: args.channelId, muted: false }) }],
+                        };
+                    } catch (error) {
+                        const message = _.isError(error) ? error.message : String(error);
+                        // Stryker disable next-line all: Logging for observability
+                        logger.warn({ tool: 'unmuteChannel', error: message, channelId: args.channelId }, 'Discord tool returned error');
+                        return {
+                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
+                            isError: true,
+                        };
+                    }
+                }
+            ),
+
+            tool(
+                'listChannels',
+                'List all channels the bot is tracking, with their mute status. Use this to see available channels.',
+                {
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    includesMuted: z.boolean().optional().describe('Include muted channels in the list (default: false)'),
+                },
+                async (args): Promise<CallToolResult> => {
+                    if(!channelRegistry) {
+                        return {
+                            content: [{ type: 'text' as const, text: 'Error: Channel registry not available' }],
+                            isError: true,
+                        };
+                    }
+                    try {
+                        // Get channels based on includesMuted parameter (default false)
+                        const includesMuted = args.includesMuted === true;
+                        const channels = includesMuted
+                            ? channelRegistry.getAllChannels()
+                            : await channelRegistry.getUnmutedChannels();
+
+                        // Format output
+                        const formatted = _.map(channels, ch => ({
+                            channelId:     ch.channelId,
+                            channelName:   ch.channelName,
+                            guildId:       ch.guildId,
+                            isMuted:       ch.isMuted,
+                            wellKnownType: ch.isWellKnown,
+                        }));
+
+                        return {
+                            content: [{ type: 'text' as const, text: JSON.stringify({ channels: formatted, count: formatted.length }) }],
+                        };
+                    } catch (error) {
+                        const message = _.isError(error) ? error.message : String(error);
+                        // Stryker disable next-line all: Logging for observability
+                        logger.warn({ tool: 'listChannels', error: message }, 'Discord tool returned error');
                         return {
                             content: [{ type: 'text' as const, text: `Error: ${message}` }],
                             isError: true,

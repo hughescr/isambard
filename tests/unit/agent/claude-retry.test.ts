@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/await-thenable -- Bun's expect().rejects/resolves needs await but types don't reflect it */
 /* eslint-disable @typescript-eslint/no-empty-function -- test mocks */
 /* eslint-disable lodash/prefer-noop -- test clarity */
 /* eslint-disable require-yield -- testing generators that throw before yield */
@@ -355,7 +354,7 @@ describe('createRetryableQuery', () => {
                 }
             };
 
-            await expect(consumeGenerator()).rejects.toThrow();
+            expect(consumeGenerator()).rejects.toThrow();
 
             expect(mockQueryFn).toHaveBeenCalledTimes(1);
             expect(sleepMock).not.toHaveBeenCalled();
@@ -441,7 +440,7 @@ describe('createRetryableQuery', () => {
                 }
             };
 
-            await expect(consumeGenerator()).rejects.toThrow();
+            expect(consumeGenerator()).rejects.toThrow();
 
             expect(mockQueryFn).toHaveBeenCalledTimes(2);
             expect(sleepMock).toHaveBeenCalledTimes(1);
@@ -466,7 +465,7 @@ describe('createRetryableQuery', () => {
                 }
             };
 
-            await expect(consumeGenerator()).rejects.toThrow();
+            expect(consumeGenerator()).rejects.toThrow();
 
             expect(mockQueryFn).toHaveBeenCalledTimes(4);
             expect(sleepMock).toHaveBeenCalledTimes(3);

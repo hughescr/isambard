@@ -12,7 +12,7 @@ import {
 import { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/backend';
 import { ItemNotFoundError, ValidationError } from '@/storage/errors';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
-import type { ChannelMetadata } from '@/integrations/discord/channel-registry/types';
+import type { ChannelMetadata, ChannelStorageRecord } from '@/integrations/discord/channel-registry/types';
 import * as dynamoRetry from '@/storage/dynamo-retry';
 
 describe('ChannelRegistryBackend', () => {
@@ -25,7 +25,16 @@ describe('ChannelRegistryBackend', () => {
     const guildId = createGuildId('789012');
     const channelName = 'general';
 
-    const createMetadata = (overrides?: Partial<ChannelMetadata>): ChannelMetadata => ({
+    const createStorageRecord = (overrides?: Partial<ChannelStorageRecord>): ChannelStorageRecord => ({
+        channelId,
+        guildId,
+        isMuted:   false,
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-01-01T00:00:00.000Z',
+        ...overrides,
+    });
+
+    const _createMetadata = (overrides?: Partial<ChannelMetadata>): ChannelMetadata => ({
         channelId,
         guildId,
         channelName,
@@ -60,11 +69,11 @@ describe('ChannelRegistryBackend', () => {
 
     describe('upsertChannel', () => {
         test('should upsert a basic channel without well-known designation', async () => {
-            const metadata = createMetadata();
+            const record = createStorageRecord();
 
             ddbMock.on(PutCommand).resolves({});
 
-            await backend.upsertChannel(metadata);
+            await backend.upsertChannel(record);
 
             const calls = ddbMock.commandCalls(PutCommand);
             expect(calls).toHaveLength(1);
@@ -73,12 +82,11 @@ describe('ChannelRegistryBackend', () => {
             expect(call.args[0].input.Item).toMatchObject({
                 channelId,
                 guildId,
-                channelName,
                 isMuted: false,
                 PK:      `CHANNEL#${channelId}`,
                 SK:      'METADATA',
                 GSI1PK:  `GUILD#${guildId}`,
-                GSI1SK:  `CHANNEL#${channelName}`,
+                GSI1SK:  `CHANNEL#${channelId}`,
             });
             // Should not have well-known keys
             expect(call.args[0].input.Item?.GSI2PK).toBeUndefined();
@@ -92,11 +100,11 @@ describe('ChannelRegistryBackend', () => {
         });
 
         test('should upsert a well-known channel with GSI2 keys', async () => {
-            const metadata = createMetadata({ isWellKnown: 'general' });
+            const record = createStorageRecord({ isWellKnown: 'general' });
 
             ddbMock.on(PutCommand).resolves({});
 
-            await backend.upsertChannel(metadata);
+            await backend.upsertChannel(record);
 
             const calls = ddbMock.commandCalls(PutCommand);
             expect(calls).toHaveLength(1);
@@ -104,23 +112,22 @@ describe('ChannelRegistryBackend', () => {
             expect(call.args[0].input.Item).toMatchObject({
                 channelId,
                 guildId,
-                channelName,
                 isWellKnown: 'general',
                 PK:          `CHANNEL#${channelId}`,
                 SK:          'METADATA',
                 GSI1PK:      `GUILD#${guildId}`,
-                GSI1SK:      `CHANNEL#${channelName}`,
+                GSI1SK:      `CHANNEL#${channelId}`,
                 GSI2PK:      'WELLKNOWN#general',
                 GSI2SK:      'CHANNEL',
             });
         });
 
         test('should update an existing channel', async () => {
-            const metadata = createMetadata({ isMuted: true });
+            const record = createStorageRecord({ isMuted: true });
 
             ddbMock.on(PutCommand).resolves({});
 
-            await backend.upsertChannel(metadata);
+            await backend.upsertChannel(record);
 
             const calls = ddbMock.commandCalls(PutCommand);
             expect(calls).toHaveLength(1);
@@ -129,38 +136,34 @@ describe('ChannelRegistryBackend', () => {
         });
 
         test('should throw ValidationError for invalid metadata', async () => {
-            const invalidMetadata = {
-                channelId:    '', // Invalid - empty string
+            const invalidRecord = {
+                channelId: '', // Invalid - empty string
                 guildId,
-                channelName,
-                isMuted:      false,
-                discoveredAt: '2025-01-01T00:00:00.000Z',
-                lastSeenAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:    '2025-01-01T00:00:00.000Z',
+                isMuted:   false,
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             };
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects requires await even though expect is not thenable
-            await expect(backend.upsertChannel(invalidMetadata as ChannelMetadata)).rejects.toThrow(ValidationError);
+            expect(backend.upsertChannel(invalidRecord as ChannelStorageRecord)).rejects.toThrow(ValidationError);
             expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
         });
     });
 
     describe('getChannel', () => {
         test('should return channel metadata when found', async () => {
-            const metadata = createMetadata();
+            const storageRecord = createStorageRecord();
             ddbMock.on(GetCommand).resolves({
                 Item: {
-                    ...metadata,
+                    ...storageRecord,
                     PK:     `CHANNEL#${channelId}`,
                     SK:     'METADATA',
                     GSI1PK: `GUILD#${guildId}`,
-                    GSI1SK: `CHANNEL#${channelName}`,
                 },
             });
 
             const result = await backend.getChannel(channelId);
 
-            expect(result).toEqual(metadata);
+            expect(result).toEqual(storageRecord);
             const calls = ddbMock.commandCalls(GetCommand);
             expect(calls).toHaveLength(1);
             const call = calls[0];
@@ -186,14 +189,13 @@ describe('ChannelRegistryBackend', () => {
         });
 
         test('should strip DynamoDB keys from response', async () => {
-            const metadata = createMetadata();
+            const storageRecord = createStorageRecord();
             ddbMock.on(GetCommand).resolves({
                 Item: {
-                    ...metadata,
+                    ...storageRecord,
                     PK:     `CHANNEL#${channelId}`,
                     SK:     'METADATA',
                     GSI1PK: `GUILD#${guildId}`,
-                    GSI1SK: `CHANNEL#${channelName}`,
                     GSI2PK: 'WELLKNOWN#general',
                     GSI2SK: 'CHANNEL',
                 },
@@ -212,13 +214,13 @@ describe('ChannelRegistryBackend', () => {
 
     describe('getChannelsByGuild', () => {
         test('should return all channels in a guild', async () => {
-            const channel1 = createMetadata({ channelId: createChannelId('111'), channelName: 'general' });
-            const channel2 = createMetadata({ channelId: createChannelId('222'), channelName: 'dev-chat' });
+            const channel1 = createStorageRecord({ channelId: createChannelId('111') });
+            const channel2 = createStorageRecord({ channelId: createChannelId('222') });
 
             ddbMock.on(QueryCommand).resolves({
                 Items: [
-                    { ...channel1, PK: `CHANNEL#${channel1.channelId}`, SK: 'METADATA', GSI1PK: `GUILD#${guildId}`, GSI1SK: `CHANNEL#${channel1.channelName}` },
-                    { ...channel2, PK: `CHANNEL#${channel2.channelId}`, SK: 'METADATA', GSI1PK: `GUILD#${guildId}`, GSI1SK: `CHANNEL#${channel2.channelName}` },
+                    { ...channel1, PK: `CHANNEL#${channel1.channelId}`, SK: 'METADATA', GSI1PK: `GUILD#${guildId}` },
+                    { ...channel2, PK: `CHANNEL#${channel2.channelId}`, SK: 'METADATA', GSI1PK: `GUILD#${guildId}` },
                 ],
             });
 
@@ -227,8 +229,8 @@ describe('ChannelRegistryBackend', () => {
             expect(result).toHaveLength(2);
             // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- expect.arrayContaining requires any[] type
             expect(result).toEqual(expect.arrayContaining([
-                expect.objectContaining({ channelName: 'general' }),
-                expect.objectContaining({ channelName: 'dev-chat' }),
+                expect.objectContaining({ channelId: channel1.channelId }),
+                expect.objectContaining({ channelId: channel2.channelId }),
             ]));
 
             const calls = ddbMock.commandCalls(QueryCommand);
@@ -264,81 +266,13 @@ describe('ChannelRegistryBackend', () => {
         });
     });
 
-    describe('getChannelByName', () => {
-        test('should query specific guild when guildId provided', async () => {
-            const metadata = createMetadata();
-            ddbMock.on(QueryCommand).resolves({
-                Items: [
-                    { ...metadata, PK: `CHANNEL#${channelId}`, SK: 'METADATA', GSI1PK: `GUILD#${guildId}`, GSI1SK: `CHANNEL#${channelName}` },
-                ],
-            });
-
-            const result = await backend.getChannelByName(channelName, guildId);
-
-            expect(result).toHaveLength(1);
-            expect(result[0]).toEqual(metadata);
-
-            const calls = ddbMock.commandCalls(QueryCommand);
-            const call = calls[0];
-            expect(call.args[0].input.IndexName).toBe('GSI1');
-            expect(call.args[0].input.KeyConditionExpression).toBe('GSI1PK = :guildPk AND GSI1SK = :channelSk');
-            expect(call.args[0].input.ExpressionAttributeValues).toEqual({
-                ':guildPk':   `GUILD#${guildId}`,
-                ':channelSk': `CHANNEL#${channelName}`,
-            });
-
-            // Verify operation name passed to withDynamoTimeout
-            expect(withDynamoTimeoutSpy).toHaveBeenCalledWith(
-                expect.any(Function),
-                expect.objectContaining({ operation: 'ChannelRegistry.getChannelByName' })
-            );
-        });
-
-        test('should scan all guilds when guildId not provided', async () => {
-            const metadata1 = createMetadata({ guildId: createGuildId('111') });
-            const metadata2 = createMetadata({ guildId: createGuildId('222') });
-
-            ddbMock.on(ScanCommand).resolves({
-                Items: [
-                    { ...metadata1, PK: `CHANNEL#${channelId}`, SK: 'METADATA' },
-                    { ...metadata2, PK: `CHANNEL#${channelId}`, SK: 'METADATA' },
-                ],
-            });
-
-            const result = await backend.getChannelByName(channelName);
-
-            expect(result).toHaveLength(2);
-
-            const calls = ddbMock.commandCalls(ScanCommand);
-            const call = calls[0];
-            expect(call.args[0].input.FilterExpression).toBe('channelName = :channelName');
-            expect(call.args[0].input.ExpressionAttributeValues).toEqual({
-                ':channelName': channelName,
-            });
-
-            // Verify operation name passed to withDynamoTimeout
-            expect(withDynamoTimeoutSpy).toHaveBeenCalledWith(
-                expect.any(Function),
-                expect.objectContaining({ operation: 'ChannelRegistry.getChannelByName.scan' })
-            );
-        });
-
-        test('should return empty array when no matches found', async () => {
-            ddbMock.on(QueryCommand).resolves({ Items: [] });
-
-            const result = await backend.getChannelByName(channelName, guildId);
-
-            expect(result).toEqual([]);
-        });
-    });
-
     describe('getWellKnownChannel', () => {
         test('should return well-known channel when found', async () => {
-            const metadata = createMetadata({ isWellKnown: 'general' });
+            const storageRecord = createStorageRecord({ isWellKnown: 'general' });
             ddbMock.on(QueryCommand).resolves({
                 Items: [
                     {
-                        ...metadata,
+                        ...storageRecord,
                         PK:     `CHANNEL#${channelId}`,
                         SK:     'METADATA',
                         GSI2PK: 'WELLKNOWN#general',
@@ -349,7 +283,7 @@ describe('ChannelRegistryBackend', () => {
 
             const result = await backend.getWellKnownChannel('general');
 
-            expect(result).toEqual(metadata);
+            expect(result).toEqual(storageRecord);
 
             const calls = ddbMock.commandCalls(QueryCommand);
             const call = calls[0];
@@ -387,8 +321,8 @@ describe('ChannelRegistryBackend', () => {
 
     describe('getAllChannels', () => {
         test('should return all channels using scan', async () => {
-            const channel1 = createMetadata({ channelId: createChannelId('111') });
-            const channel2 = createMetadata({ channelId: createChannelId('222') });
+            const channel1 = createStorageRecord({ channelId: createChannelId('111') });
+            const channel2 = createStorageRecord({ channelId: createChannelId('222') });
 
             ddbMock.on(ScanCommand).resolves({
                 Items: [
@@ -455,16 +389,14 @@ describe('ChannelRegistryBackend', () => {
             (conditionalCheckError as { name: string }).name = 'ConditionalCheckFailedException';
             ddbMock.on(UpdateCommand).rejects(conditionalCheckError);
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects requires await even though expect is not thenable
-            await expect(backend.muteChannel(channelId)).rejects.toThrow(ItemNotFoundError);
+            expect(backend.muteChannel(channelId)).rejects.toThrow(ItemNotFoundError);
         });
 
         test('should propagate other errors', async () => {
             const otherError = new Error('Network error');
             ddbMock.on(UpdateCommand).rejects(otherError);
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects requires await even though expect is not thenable
-            await expect(backend.muteChannel(channelId)).rejects.toThrow('Network error');
+            expect(backend.muteChannel(channelId)).rejects.toThrow('Network error');
         });
     });
 
@@ -499,16 +431,14 @@ describe('ChannelRegistryBackend', () => {
             (conditionalCheckError as { name: string }).name = 'ConditionalCheckFailedException';
             ddbMock.on(UpdateCommand).rejects(conditionalCheckError);
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects requires await even though expect is not thenable
-            await expect(backend.unmuteChannel(channelId)).rejects.toThrow(ItemNotFoundError);
+            expect(backend.unmuteChannel(channelId)).rejects.toThrow(ItemNotFoundError);
         });
 
         test('should propagate other errors', async () => {
             const otherError = new Error('Network error');
             ddbMock.on(UpdateCommand).rejects(otherError);
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects requires await even though expect is not thenable
-            await expect(backend.unmuteChannel(channelId)).rejects.toThrow('Network error');
+            expect(backend.unmuteChannel(channelId)).rejects.toThrow('Network error');
         });
     });
 
@@ -547,16 +477,14 @@ describe('ChannelRegistryBackend', () => {
             (conditionalCheckError as { name: string }).name = 'ConditionalCheckFailedException';
             ddbMock.on(UpdateCommand).rejects(conditionalCheckError);
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects requires await even though expect is not thenable
-            await expect(backend.markAsWellKnown(channelId, 'general')).rejects.toThrow(ItemNotFoundError);
+            expect(backend.markAsWellKnown(channelId, 'general')).rejects.toThrow(ItemNotFoundError);
         });
 
         test('should propagate other errors', async () => {
             const otherError = new Error('Network error');
             ddbMock.on(UpdateCommand).rejects(otherError);
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects requires await even though expect is not thenable
-            await expect(backend.markAsWellKnown(channelId, 'general')).rejects.toThrow('Network error');
+            expect(backend.markAsWellKnown(channelId, 'general')).rejects.toThrow('Network error');
         });
     });
 
@@ -585,8 +513,7 @@ describe('ChannelRegistryBackend', () => {
         test('should not throw error when channel does not exist', async () => {
             ddbMock.on(DeleteCommand).resolves({});
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().resolves requires await even though expect is not thenable
-            await expect(backend.deleteChannel(channelId)).resolves.toBeUndefined();
+            expect(backend.deleteChannel(channelId)).resolves.toBeUndefined();
         });
     });
 

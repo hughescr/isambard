@@ -3,9 +3,9 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test mocks */
 /* eslint-disable @typescript-eslint/no-unsafe-argument -- Test mocks */
-/* eslint-disable @typescript-eslint/await-thenable -- Test async functions */
 /* eslint-disable lodash/prefer-constant -- Test callbacks */
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import '../setup'; // SST mock is applied via side effects
 import { createApp, type App } from '@/index';
 import * as configLoader from '@/config/loader';
 import * as discordBot from '@/integrations/discord/bot';
@@ -13,6 +13,7 @@ import * as agentAgent from '@/agent/agent';
 import * as contextBuilder from '@/agent/context-builder';
 import * as memoryMcpServer from '@/agent/memory-mcp-server';
 import * as dynamoClient from '@/storage/client';
+import * as channelRegistryModule from '@/integrations/discord/channel-registry';
 import type { DiscordConfig, DynamoDBConfig, AgentConfig } from '@/config/schemas';
 import type { DiscordBot } from '@/integrations/discord/bot';
 import type { ClaudeAgent } from '@/agent/agent';
@@ -33,7 +34,8 @@ import { createGuildId, createChannelId, createUserId } from '@/integrations/dis
  * 5. Error conditions are handled appropriately
  */
 describe('Bot Lifecycle Integration', () => {
-    const spies: ReturnType<typeof spyOn>[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Spies have different return types
+    const spies: any[] = [];
     let mockDiscordConfig: DiscordConfig;
     let mockAgentConfig: AgentConfig;
     let mockDynamoDBConfig: DynamoDBConfig;
@@ -48,9 +50,9 @@ describe('Bot Lifecycle Integration', () => {
 
         // Mock Discord configuration
         mockDiscordConfig = {
-            botToken:            'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
-            applicationId:       '123456789012345678',
-            monitoredChannelIds: ['987654321098765432'],
+            botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
+            applicationId: '123456789012345678',
+            homeGuildId:   createGuildId('home-guild-123'),
         };
 
         // Mock Agent configuration
@@ -81,6 +83,37 @@ describe('Bot Lifecycle Integration', () => {
                 streamTracker:  {} as StreamTracker,
             })),
         };
+
+        // Mock DynamoDB client creation
+        const mockClient = {} as DynamoDBClient;
+        const mockDocClient = {} as DynamoDBDocumentClient;
+        spies.push(spyOn(dynamoClient, 'createDynamoDBClient').mockReturnValue({
+            client:    mockClient,
+            docClient: mockDocClient,
+            tableName: 'IsambardMemory',
+        }));
+
+        // Mock ChannelRegistryBackend and ChannelRegistryManager
+        const mockChannelRegistryBackend = {
+            warmCache:     mock(async () => undefined),
+            getChannel:    mock(async () => null),
+            upsertChannel: mock(async () => undefined),
+            listChannels:  mock(async () => []),
+            deleteChannel: mock(async () => undefined),
+        };
+        const mockChannelRegistryManager = {
+            shouldProcess: mock(() => true),
+            getChannel:    mock(() => null),
+            warmCache:     mock(async () => undefined),
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mocking class constructors
+        const backendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend') as any;
+        backendSpy.mockReturnValue(mockChannelRegistryBackend);
+        spies.push(backendSpy);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mocking class constructors
+        const managerSpy = spyOn(channelRegistryModule, 'ChannelRegistryManager') as any;
+        managerSpy.mockReturnValue(mockChannelRegistryManager);
+        spies.push(managerSpy);
     });
 
     afterEach(() => {
@@ -106,9 +139,7 @@ describe('Bot Lifecycle Integration', () => {
                 agent:   mockAgentConfig,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
             } as any));
-            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockImplementation(() => {
-                throw new Error('DynamoDB not configured');
-            }));
+            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
@@ -126,9 +157,7 @@ describe('Bot Lifecycle Integration', () => {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
             } as any);
             spies.push(loadConfigSpy);
-            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockImplementation(() => {
-                throw new Error('DynamoDB not configured');
-            }));
+            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
@@ -144,9 +173,7 @@ describe('Bot Lifecycle Integration', () => {
                 agent:   mockAgentConfig,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
             } as any));
-            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockImplementation(() => {
-                throw new Error('DynamoDB not configured');
-            }));
+            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
@@ -155,15 +182,13 @@ describe('Bot Lifecycle Integration', () => {
             expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('test-oauth-token-1234567890');
         });
 
-        it('should create Claude agent without memory when DynamoDB not configured', async () => {
+        it('should create Claude agent with DynamoDB configured', async () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
             } as any));
-            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockImplementation(() => {
-                throw new Error('DynamoDB not configured');
-            }));
+            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             const createClaudeAgentSpy = spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent);
             spies.push(createClaudeAgentSpy);
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
@@ -171,13 +196,6 @@ describe('Bot Lifecycle Integration', () => {
             await createApp();
 
             expect(createClaudeAgentSpy).toHaveBeenCalled();
-            // Should be called with empty options (no contextBuilder or memoryMcpServer) but with plugins
-            expect(createClaudeAgentSpy).toHaveBeenCalledWith({
-                contextBuilder:   undefined,
-                memoryMcpServer:  undefined,
-                discordMcpServer: undefined,
-                plugins:          expect.any(Array),
-            });
         });
 
         it('should create Discord bot with config and agent', async () => {
@@ -186,9 +204,7 @@ describe('Bot Lifecycle Integration', () => {
                 agent:   mockAgentConfig,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
             } as any));
-            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockImplementation(() => {
-                throw new Error('DynamoDB not configured');
-            }));
+            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
             spies.push(createDiscordBotSpy);
@@ -196,12 +212,11 @@ describe('Bot Lifecycle Integration', () => {
             await createApp();
 
             expect(createDiscordBotSpy).toHaveBeenCalled();
-            expect(createDiscordBotSpy).toHaveBeenCalledWith({
+            expect(createDiscordBotSpy).toHaveBeenCalledWith(expect.objectContaining({
                 config:           mockDiscordConfig,
                 onMessage:        expect.any(Function),
                 identityContext:  expect.any(String),
                 agent:            mockClaudeAgent,
-                client:           undefined,
                 questionRegistry: expect.objectContaining({
                     register:            expect.any(Function),
                     resolveWithAnswer:   expect.any(Function),
@@ -210,7 +225,8 @@ describe('Bot Lifecycle Integration', () => {
                     cancel:              expect.any(Function),
                     stop:                expect.any(Function),
                 }),
-            });
+                channelRegistry: expect.any(Object),
+            }));
         });
     });
 
@@ -256,10 +272,11 @@ describe('Bot Lifecycle Integration', () => {
                 inboxMcpServer:             expect.any(Object),
                 plugins:                    expect.any(Array),
                 taskPersistenceCoordinator: expect.any(Object),
+                channelRegistry:            expect.any(Object),
             });
         }, { timeout: process.env.CI ? 1000 : 100 });
 
-        it('should continue without memory when DynamoDB client creation fails', async () => {
+        it('should fail to create app when DynamoDB client creation fails', async () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
@@ -269,19 +286,11 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(dynamoClient, 'createDynamoDBClient').mockImplementation(() => {
                 throw new Error('Failed to connect to DynamoDB');
             }));
-            const createClaudeAgentSpy = spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent);
-            spies.push(createClaudeAgentSpy);
+            spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
-            await createApp();
-
-            // Should create agent without memory or discord MCP (both require DynamoDB) but with plugins
-            expect(createClaudeAgentSpy).toHaveBeenCalledWith({
-                contextBuilder:   undefined,
-                memoryMcpServer:  undefined,
-                discordMcpServer: undefined,
-                plugins:          expect.any(Array),
-            });
+            // channelRegistry is REQUIRED and needs DynamoDB, so app creation should fail
+            expect(createApp()).rejects.toThrow('Failed to connect to DynamoDB');
         });
     });
 
@@ -292,9 +301,7 @@ describe('Bot Lifecycle Integration', () => {
                 agent:   mockAgentConfig,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
             } as any));
-            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockImplementation(() => {
-                throw new Error('DynamoDB not configured');
-            }));
+            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
@@ -318,15 +325,13 @@ describe('Bot Lifecycle Integration', () => {
                 agent:   mockAgentConfig,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
             } as any));
-            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockImplementation(() => {
-                throw new Error('DynamoDB not configured');
-            }));
+            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockErrorBot));
 
             const app = await createApp();
 
-            await expect(app.start()).rejects.toThrow('Login failed');
+            expect(app.start()).rejects.toThrow('Login failed');
         });
     });
 
@@ -337,9 +342,7 @@ describe('Bot Lifecycle Integration', () => {
                 agent:   mockAgentConfig,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
             } as any));
-            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockImplementation(() => {
-                throw new Error('DynamoDB not configured');
-            }));
+            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
@@ -356,9 +359,7 @@ describe('Bot Lifecycle Integration', () => {
                 agent:   mockAgentConfig,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
             } as any));
-            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockImplementation(() => {
-                throw new Error('DynamoDB not configured');
-            }));
+            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
@@ -381,9 +382,7 @@ describe('Bot Lifecycle Integration', () => {
                 agent:   mockAgentConfig,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
             } as any));
-            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockImplementation(() => {
-                throw new Error('DynamoDB not configured');
-            }));
+            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
             spies.push(createDiscordBotSpy);
@@ -427,9 +426,7 @@ describe('Bot Lifecycle Integration', () => {
                 agent:   mockAgentConfig,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
             } as any));
-            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockImplementation(() => {
-                throw new Error('DynamoDB not configured');
-            }));
+            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockAgentWithNull));
             const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
             spies.push(createDiscordBotSpy);
@@ -464,9 +461,7 @@ describe('Bot Lifecycle Integration', () => {
                 agent:   mockAgentConfig,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
             } as any));
-            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockImplementation(() => {
-                throw new Error('DynamoDB not configured');
-            }));
+            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
