@@ -1,38 +1,34 @@
 import { Resource } from 'sst';
+import type { Resource as SstResource } from 'sst';
 import _ from 'lodash';
 import { configSchema, dynamoDBConfigSchema, type Config, type DynamoDBConfig } from './schemas';
 
-export interface ResourceProvider {
-    NodeEnv:                       { value: string | undefined }
-    LogLevel:                      { value: string | undefined }
-    Port:                          { value: string | undefined }
-    ClaudeCodeOAuthToken:          { value: string | undefined }
-    CaldavUrl:                     { value: string | undefined }
-    CaldavUsername:                { value: string | undefined }
-    CaldavPassword:                { value: string | undefined }
-    ImapHost:                      { value: string | undefined }
-    ImapPort:                      { value: string | undefined }
-    SmtpHost:                      { value: string | undefined }
-    SmtpPort:                      { value: string | undefined }
-    EmailUser:                     { value: string | undefined }
-    EmailPassword:                 { value: string | undefined }
-    DiscordBotToken:               { value: string | undefined }
-    DiscordApplicationId:          { value: string | undefined }
-    DiscordHomeGuildId:            { value: string | undefined }
-    BoxClientId:                   { value: string | undefined }
-    BoxClientSecret:               { value: string | undefined }
-    PerchEnabled:                  { value: string | undefined }
-    PerchTestModeForceSlot:        { value: string | undefined }
-    PerchTestModeTriggerOnStartup: { value: string | undefined }
-}
+/**
+ * Keys in SST Resource that have a value property (configs and secrets).
+ * Excludes App and IsambardMemory which have different shapes.
+ */
+type ConfigKeys = Exclude<keyof SstResource, 'App' | 'IsambardMemory'>;
 
-export interface DynamoDBResourceProvider {
-    DynamoDBTableName: { value: string | undefined }
-    DynamoDBRegion:    { value: string | undefined }
-    DynamoDBEndpoint:  { value: string | undefined }
-}
+/**
+ * Extract value type from SST Resource property.
+ * Properties with value get their value type; properties without get optional string.
+ */
+type ValueOf<T> = T extends { value: infer V } ? { value: V | undefined } : { value?: string };
 
-export function loadConfig(resources: ResourceProvider = Resource as unknown as ResourceProvider): Config {
+/**
+ * Type for SST Resource provider that only requires the value properties.
+ * Production code uses the full SST Resource; tests can use simpler mocks.
+ */
+export type ResourceProvider = {
+    [K in ConfigKeys]: ValueOf<SstResource[K]>
+};
+
+/**
+ * Subset of Resource needed for DynamoDB config.
+ */
+export type DynamoDBResourceProvider = Pick<ResourceProvider, 'DynamoDBTableName' | 'DynamoDBRegion' | 'DynamoDBEndpoint'>;
+
+export function loadConfig(resources: ResourceProvider = Resource as ResourceProvider): Config {
     const rawConfig = {
         app: {
             nodeEnv:  resources.NodeEnv.value,
@@ -82,7 +78,7 @@ export function loadConfig(resources: ResourceProvider = Resource as unknown as 
                 testMode:          resources.PerchTestModeTriggerOnStartup?.value === 'true'
                     ? {
                         triggerOnStartup: true,
-                        forceSlot:        resources.PerchTestModeForceSlot?.value as 'pre-dawn' | 'mid-morning' | 'afternoon' | 'evening' | 'late-night' | undefined,
+                        forceSlot:        (resources.PerchTestModeForceSlot as { value?: string } | undefined)?.value as 'pre-dawn' | 'mid-morning' | 'afternoon' | 'evening' | 'late-night' | undefined,
                     }
                     : undefined,
             }
@@ -113,7 +109,7 @@ export function loadDynamoDBConfig(resources: DynamoDBResourceProvider): DynamoD
     const rawConfig = {
         tableName: resources.DynamoDBTableName.value,
         region:    resources.DynamoDBRegion.value,
-        endpoint:  resources.DynamoDBEndpoint.value,
+        endpoint:  (resources.DynamoDBEndpoint as { value?: string })?.value,
     };
 
     const result = dynamoDBConfigSchema.safeParse(rawConfig);

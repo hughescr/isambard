@@ -6,6 +6,7 @@ export const claudeCodeOAuthToken = new sst.Secret('ClaudeCodeOAuthToken');
 
 // Discord
 export const discordBotToken = new sst.Secret('DiscordBotToken');
+export const discordHomeGuildId = new sst.Secret('DiscordHomeGuildId');
 
 // Apple Calendar (CalDAV)
 export const caldavPassword = new sst.Secret('CaldavPassword');

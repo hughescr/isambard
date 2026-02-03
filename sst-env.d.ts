@@ -38,6 +38,10 @@ declare module "sst" {
       "type": "sst.sst.Secret"
       "value": string
     }
+    "DiscordHomeGuildId": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
     "DiscordMonitoredChannels": {
       "type": "sst.sst.Linkable"
       "value": string

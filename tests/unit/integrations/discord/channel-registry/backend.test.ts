@@ -406,11 +406,11 @@ describe('ChannelRegistryBackend', () => {
 
         test('should fetch full records for each well-known channel found', async () => {
             const channel1 = createStorageRecord({
-                channelId: createChannelId('111'),
+                channelId:   createChannelId('111'),
                 isWellKnown: 'general'
             });
             const channel2 = createStorageRecord({
-                channelId: createChannelId('222'),
+                channelId:   createChannelId('222'),
                 isWellKnown: 'catch-up'
             });
 
@@ -427,8 +427,8 @@ describe('ChannelRegistryBackend', () => {
                 .resolvesOnce({
                     Item: {
                         ...channel1,
-                        PK: `CHANNEL#${channel1.channelId}`,
-                        SK: 'METADATA',
+                        PK:     `CHANNEL#${channel1.channelId}`,
+                        SK:     'METADATA',
                         GSI1PK: `GUILD#${guildId}`,
                         GSI2PK: 'WELLKNOWN#general',
                         GSI2SK: 'CHANNEL',
@@ -437,8 +437,8 @@ describe('ChannelRegistryBackend', () => {
                 .resolvesOnce({
                     Item: {
                         ...channel2,
-                        PK: `CHANNEL#${channel2.channelId}`,
-                        SK: 'METADATA',
+                        PK:     `CHANNEL#${channel2.channelId}`,
+                        SK:     'METADATA',
                         GSI1PK: `GUILD#${guildId}`,
                         GSI2PK: 'WELLKNOWN#catch-up',
                         GSI2SK: 'CHANNEL',
@@ -468,12 +468,12 @@ describe('ChannelRegistryBackend', () => {
 
         test('should filter out null results from channels not found', async () => {
             const channel1 = createStorageRecord({
-                channelId: createChannelId('111'),
+                channelId:   createChannelId('111'),
                 isWellKnown: 'general'
             });
             const channel2Id = createChannelId('222');
             const channel3 = createStorageRecord({
-                channelId: createChannelId('333'),
+                channelId:   createChannelId('333'),
                 isWellKnown: 'catch-up'
             });
 
@@ -491,8 +491,8 @@ describe('ChannelRegistryBackend', () => {
                 .resolvesOnce({
                     Item: {
                         ...channel1,
-                        PK: `CHANNEL#${channel1.channelId}`,
-                        SK: 'METADATA',
+                        PK:     `CHANNEL#${channel1.channelId}`,
+                        SK:     'METADATA',
                         GSI1PK: `GUILD#${guildId}`,
                     },
                 })
@@ -500,8 +500,8 @@ describe('ChannelRegistryBackend', () => {
                 .resolvesOnce({
                     Item: {
                         ...channel3,
-                        PK: `CHANNEL#${channel3.channelId}`,
-                        SK: 'METADATA',
+                        PK:     `CHANNEL#${channel3.channelId}`,
+                        SK:     'METADATA',
                         GSI1PK: `GUILD#${guildId}`,
                     },
                 });
