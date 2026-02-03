@@ -422,6 +422,7 @@ async function determineResponseContext(
         }
     }
 
+    // Muting applies at the channel level only. Threads inherit their parent channel's mute state.
     // For thread messages, check parent channel mute state
     // If parent is muted, threads inherit the mute unless override conditions apply
     let shouldRespond = channelRegistry.shouldProcess(channelId, isDM, isMention, isReplyToBot);

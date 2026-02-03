@@ -201,6 +201,7 @@ export function createMockBotStateManager() {
         getMode:                mock(constant('idle' as const)),
         goIdle:                 mock(constant(undefined)),
         startProcessingMessage: mock(constant(undefined)),
+        getSessionType:         mock((isDM: boolean) => (isDM ? 'dm' : 'guild')),
     };
 }
 

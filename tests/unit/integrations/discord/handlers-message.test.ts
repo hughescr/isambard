@@ -5,7 +5,7 @@
 /* eslint-disable lodash/prefer-constant -- Test callbacks */
 import _ from 'lodash';
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
-import type { Message, User, Guild, TextChannel, DMChannel } from 'discord.js';
+import type { Message, User, Guild, TextChannel, DMChannel, Client } from 'discord.js';
 import { mockLogger, mockWithDiscordRetry, createMockBotStateManager, createMockResponseRouter } from '../../../setup';
 import { createMessageHandler } from '@/integrations/discord/handlers';
 import type { DiscordMessageContext, UserId, ChannelId } from '@/integrations/discord/types';
@@ -15,6 +15,10 @@ import type { PendingQuestion } from '@/agent/question-registry/types';
 import type { AnswerClassifier } from '@/agent/answer-classifier';
 import type { ClassificationResult } from '@/agent/answer-classifier/types';
 import { WellKnownChannelNotFoundError } from '@/integrations/discord/channel-registry';
+// Note: We don't need to mock the rate limiter module because:
+// 1. The rate limiter internally calls message.reply() which we mock in tests
+// 2. The sendResponse function uses the rate limiter transparently
+// 3. Tests verify the end result (message.reply was called) rather than internal implementation
 
 describe('Discord Event Handlers', () => {
     beforeEach(() => {
@@ -79,6 +83,17 @@ describe('Discord Event Handlers', () => {
                 channelId:    '333333333333333333',
                 createdAt:    new Date('2025-01-15T12:00:00.000Z'),
                 reply:        mock(async () => mockMessage), // Return mockMessage for chaining replies
+                client:       {
+                    channels: {
+                        fetch: mock(async (id: string) => {
+                            // Return mockTextChannel for the test channel ID
+                            if(id === '333333333333333333') {
+                                return mockTextChannel;
+                            }
+                            return null;
+                        }),
+                    },
+                } as unknown as Client,
             } as unknown as Message;
         });
 
@@ -496,6 +511,7 @@ describe('Discord Event Handlers', () => {
             getMode:                mock(() => 'idle' as const),
             goIdle:                 mock(() => undefined),
             startProcessingMessage: mock(() => undefined),
+            getSessionType:         mock((isDM: boolean) => (isDM ? 'dm' : 'guild')),
         };
 
         it('should accept optional presenceManager and agent in options', async () => {
@@ -516,6 +532,7 @@ describe('Discord Event Handlers', () => {
                 getMode:                mock(() => 'idle' as const),
                 goIdle:                 mock(() => undefined),
                 startProcessingMessage: mock(() => undefined),
+                getSessionType:         mock((isDM: boolean) => (isDM ? 'dm' : 'guild')),
             };
 
             const handler = createMessageHandler({

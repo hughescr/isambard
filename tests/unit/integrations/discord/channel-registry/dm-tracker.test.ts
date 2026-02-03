@@ -2,66 +2,36 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { Client, DMChannel } from 'discord.js';
 import _ from 'lodash';
-import { DMTracker, formatDMChannelName, extractUsernameFromDM, isDMChannelName } from '../../../../../src/integrations/discord/channel-registry/dm-tracker';
+import { DMTracker, formatDMChannelName, isDMChannelName } from '../../../../../src/integrations/discord/channel-registry/dm-tracker';
 import type { ChannelRegistryManager } from '../../../../../src/integrations/discord/channel-registry/manager';
 import { createChannelId, createUserId } from '../../../../../src/integrations/discord/types';
 
 describe('DM Tracker Utilities', () => {
     describe('formatDMChannelName', () => {
         test('should format username as DM channel name', () => {
-            expect(formatDMChannelName('alice')).toBe('DM - alice');
+            expect(formatDMChannelName('alice')).toBe('@alice');
         });
 
         test('should handle usernames with spaces', () => {
-            expect(formatDMChannelName('alice smith')).toBe('DM - alice smith');
+            expect(formatDMChannelName('alice smith')).toBe('@alice smith');
         });
 
         test('should handle usernames with special characters', () => {
-            expect(formatDMChannelName('alice_123')).toBe('DM - alice_123');
+            expect(formatDMChannelName('alice_123')).toBe('@alice_123');
         });
 
         test('should handle empty username', () => {
-            expect(formatDMChannelName('')).toBe('DM - ');
-        });
-    });
-
-    describe('extractUsernameFromDM', () => {
-        test('should extract username from valid DM channel name', () => {
-            expect(extractUsernameFromDM('DM - alice')).toBe('alice');
-        });
-
-        test('should extract username with spaces', () => {
-            expect(extractUsernameFromDM('DM - alice smith')).toBe('alice smith');
-        });
-
-        test('should extract username with special characters', () => {
-            expect(extractUsernameFromDM('DM - alice_123')).toBe('alice_123');
-        });
-
-        test('should return null for non-DM channel name', () => {
-            expect(extractUsernameFromDM('general')).toBeNull();
-        });
-
-        test('should return null for empty string', () => {
-            expect(extractUsernameFromDM('')).toBeNull();
-        });
-
-        test('should return null for partial prefix', () => {
-            expect(extractUsernameFromDM('DM')).toBeNull();
-        });
-
-        test('should handle empty username in DM format', () => {
-            expect(extractUsernameFromDM('DM - ')).toBe('');
+            expect(formatDMChannelName('')).toBe('@');
         });
     });
 
     describe('isDMChannelName', () => {
         test('should return true for valid DM channel name', () => {
-            expect(isDMChannelName('DM - alice')).toBe(true);
+            expect(isDMChannelName('@alice')).toBe(true);
         });
 
         test('should return true for DM with empty username', () => {
-            expect(isDMChannelName('DM - ')).toBe(true);
+            expect(isDMChannelName('@')).toBe(true);
         });
 
         test('should return false for non-DM channel name', () => {
@@ -202,7 +172,7 @@ describe('DMTracker', () => {
             const upsertCall = (mockManager.upsertChannel as any).mock.calls[0][0];
             expect(upsertCall.channelId).toBe(channelId);
             expect(upsertCall.guildId).toBe('DM');
-            expect(upsertCall.channelName).toBe('DM - alice');
+            expect(upsertCall.channelName).toBe('@alice');
             expect(upsertCall.isMuted).toBe(false);
             expect(upsertCall.discoveredAt).toBeDefined();
             expect(upsertCall.discoveredAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
@@ -495,7 +465,7 @@ describe('DMTracker', () => {
             const upsertCall = (mockManager.upsertChannel as any).mock.calls[0][0];
             expect(upsertCall.channelId).toBe(channelId);
             expect(upsertCall.guildId).toBe('DM');
-            expect(upsertCall.channelName).toBe('DM - alice');
+            expect(upsertCall.channelName).toBe('@alice');
             expect(upsertCall.isMuted).toBe(false);
             expect(upsertCall.discoveredAt).toBeDefined();
             expect(upsertCall.discoveredAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
@@ -515,7 +485,7 @@ describe('DMTracker', () => {
             await tracker.trackFromMessage(userId, channelId, username);
 
             const upsertCall = (mockManager.upsertChannel as any).mock.calls[0][0];
-            expect(upsertCall.channelName).toBe('DM - alice_123');
+            expect(upsertCall.channelName).toBe('@alice_123');
         });
     });
 });

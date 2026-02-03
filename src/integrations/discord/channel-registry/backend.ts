@@ -330,6 +330,45 @@ export class ChannelRegistryBackend {
     }
 
     /**
+     * Removes well-known designation from a channel (admin operation).
+     * Removes the isWellKnown attribute and GSI2 keys.
+     *
+     * @param channelId - Discord channel ID
+     * @throws {ItemNotFoundError} If channel doesn't exist
+     */
+    async unmarkAsWellKnown(channelId: ChannelId): Promise<void> {
+        const now = new Date().toISOString();
+
+        const command = new UpdateCommand({
+            TableName: this.tableName,
+            Key:       {
+                PK: `CHANNEL#${channelId}`,
+                SK: 'METADATA',
+            },
+            UpdateExpression:          'REMOVE isWellKnown, GSI2PK, GSI2SK SET updatedAt = :now',
+            ExpressionAttributeValues: {
+                ':now': now,
+            },
+            ConditionExpression: 'attribute_exists(PK)', // Ensure channel exists
+        });
+
+        try {
+            await withDynamoTimeout(
+                () => this.docClient.send(command),
+                {
+                    timeoutMs: this.timeoutMs,
+                    operation: 'ChannelRegistry.unmarkAsWellKnown',
+                }
+            );
+        } catch (error) {
+            if(_.isObject(error) && 'name' in error && error.name === 'ConditionalCheckFailedException') {
+                throw new ItemNotFoundError(channelId);
+            }
+            throw error;
+        }
+    }
+
+    /**
      * Deletes a channel (for cleanup).
      *
      * @param channelId - Discord channel ID

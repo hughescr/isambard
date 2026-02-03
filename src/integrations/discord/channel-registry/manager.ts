@@ -110,8 +110,7 @@ export class ChannelRegistryManager {
 
         // Fetch channel info from Discord API
         try {
-            const discordChannel = this.client.channels.cache.get(channelId)
-              ?? await this.client.channels.fetch(channelId);
+            const discordChannel = await this.fetchDiscordChannel(channelId);
             if(!discordChannel) {
                 // Channel was deleted on Discord
                 // Stryker disable next-line all: Logging for observability
@@ -269,8 +268,7 @@ export class ChannelRegistryManager {
 
         // Fetch channel info from Discord API
         try {
-            const discordChannel = this.client.channels.cache.get(storedRecord.channelId)
-              ?? await this.client.channels.fetch(storedRecord.channelId);
+            const discordChannel = await this.fetchDiscordChannel(storedRecord.channelId);
             if(!discordChannel) {
                 // Channel was deleted on Discord
                 // Stryker disable next-line all: Logging for observability
@@ -338,6 +336,7 @@ export class ChannelRegistryManager {
             // Update cache only on success
             const channel = this.channelCache.get(channelId);
             if(channel) {
+                // Intentional mutation - mute state is global and should propagate immediately to all references.
                 channel.isMuted = true;
                 channel.updatedAt = new Date().toISOString();
             }
@@ -362,6 +361,7 @@ export class ChannelRegistryManager {
             // Update cache only on success
             const channel = this.channelCache.get(channelId);
             if(channel) {
+                // Intentional mutation - mute state is global and should propagate immediately to all references.
                 channel.isMuted = false;
                 channel.updatedAt = new Date().toISOString();
             }
@@ -390,6 +390,35 @@ export class ChannelRegistryManager {
     }
 
     /**
+     * Remove well-known designation from a channel (admin operation).
+     * Updates both cache and backend.
+     * If backend update fails, cache is invalidated to prevent inconsistency.
+     */
+    async unmarkAsWellKnown(channelId: ChannelId): Promise<void> {
+        try {
+            // Update backend
+            await this.backend.unmarkAsWellKnown(channelId);
+
+            // Update cache only on success
+            const channel = this.channelCache.get(channelId);
+            if(channel) {
+                // Remove from well-known cache if it was well-known
+                if(channel.isWellKnown) {
+                    this.wellKnownCache.delete(channel.isWellKnown);
+                }
+                // Remove well-known designation
+                channel.isWellKnown = undefined;
+                channel.updatedAt = new Date().toISOString();
+            }
+        } catch (error) {
+            // Invalidate cache to prevent stale data
+            this.invalidateCache(channelId);
+            // Re-throw to inform caller of failure
+            throw error;
+        }
+    }
+
+    /**
      * Get the home guild ID.
      */
     get homeGuild(): GuildId {
@@ -404,10 +433,35 @@ export class ChannelRegistryManager {
         record: ChannelStorageRecord,
         discordChannel: Channel
     ): ChannelMetadata {
+        let channelName: string;
+
+        // For DM channels, format as @username
+        if(record.guildId === 'DM') {
+            // Try to get username from Discord DMChannel recipient
+            if('recipient' in discordChannel && discordChannel.recipient) {
+                channelName = `@${discordChannel.recipient.username}`;
+            } else if('name' in discordChannel && discordChannel.name) {
+                // Fallback: if already in "DM - username" format, convert to @username
+                if(_.startsWith(discordChannel.name, 'DM - ')) {
+                    channelName = `@${discordChannel.name.slice(5)}`;
+                } else if(_.startsWith(discordChannel.name, '@')) {
+                    // Already in @username format
+                    channelName = discordChannel.name;
+                } else {
+                    channelName = `@${discordChannel.name}`;
+                }
+            } else {
+                channelName = '@Unknown';
+            }
+        } else {
+            // Regular channels - use existing logic
+            channelName = ('name' in discordChannel ? discordChannel.name : null) ?? 'Unknown';
+        }
+
         return {
             channelId:    record.channelId,
             guildId:      record.guildId,
-            channelName:  ('name' in discordChannel ? discordChannel.name : null) ?? 'Unknown',
+            channelName,
             isMuted:      record.isMuted,
             isWellKnown:  record.isWellKnown,
             discoveredAt: record.createdAt,
@@ -431,14 +485,24 @@ export class ChannelRegistryManager {
     }
 
     /**
+     * Fetches a Discord channel by ID.
+     * Checks cache first, then fetches from Discord API if not cached.
+     * @param channelId - The channel ID to fetch
+     * @returns The Discord channel or null if not found
+     */
+    private async fetchDiscordChannel(channelId: ChannelId): Promise<Channel | null> {
+        return this.client.channels.cache.get(channelId)
+          ?? await this.client.channels.fetch(channelId);
+    }
+
+    /**
      * Fetch Discord channel data and cache it.
      * Returns null if channel is not found or inaccessible.
      * Logs warnings for skipped channels.
      */
     private async fetchAndCacheChannel(record: ChannelStorageRecord): Promise<ChannelMetadata | null> {
         try {
-            const discordChannel = this.client.channels.cache.get(record.channelId)
-              ?? await this.client.channels.fetch(record.channelId);
+            const discordChannel = await this.fetchDiscordChannel(record.channelId);
             if(!discordChannel) {
                 // Stryker disable next-line all: Logging for observability
                 logger.warn({ channelId: record.channelId, msg: 'Skipping channel: not found on Discord (possibly deleted)' });

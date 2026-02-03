@@ -45,8 +45,22 @@ describe('sendResponse', () => {
         } as unknown as ResponseRouter;
 
         // Mock bot state manager
+        const getModeMock = mock(_.constant('idle'));
         mockBotStateManager = {
-            getMode: mock(_.constant('idle')),
+            getMode:        getModeMock,
+            getSessionType: mock((isDMChannel?: boolean) => {
+                const mode = getModeMock();
+                if(mode === 'catching_up') {
+                    return 'catching_up';
+                }
+                if(mode === 'perching') {
+                    return 'perching';
+                }
+                if(isDMChannel) {
+                    return 'dm';
+                }
+                return 'processing_message';
+            }),
         } as unknown as BotStateManager;
 
         // Mock rate limiter

@@ -6,29 +6,17 @@ import { createChannelId, createUserId } from '../types';
 
 /**
  * Formats a DM channel name from a username.
- * @example formatDMChannelName("alice") → "DM - alice"
+ * @example formatDMChannelName("alice") → "@alice"
  */
 export function formatDMChannelName(username: string): string {
-    return `DM - ${username}`;
-}
-
-/**
- * Extracts username from a DM channel name.
- * @example extractUsernameFromDM("DM - alice") → "alice"
- * @returns null if not a valid DM channel name format
- */
-export function extractUsernameFromDM(channelName: string): string | null {
-    if(!_.startsWith(channelName, 'DM - ')) {
-        return null;
-    }
-    return channelName.slice(5);
+    return `@${username}`;
 }
 
 /**
  * Checks if a channel name is a DM channel format.
  */
 export function isDMChannelName(channelName: string): boolean {
-    return _.startsWith(channelName, 'DM - ');
+    return _.startsWith(channelName, '@');
 }
 
 /**

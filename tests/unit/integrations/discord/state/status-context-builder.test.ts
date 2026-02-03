@@ -13,10 +13,22 @@ import { createChannelId } from '@/integrations/discord/types';
  */
 function createMockStateManager(state: BotState): BotStateManager {
     return {
-        getState:               () => state,
-        getMode:                () => state.mode,
-        isInterrupted:          () => state.interrupted,
-        shouldUpdatePresence:   constant(true),
+        getState:             () => state,
+        getMode:              () => state.mode,
+        isInterrupted:        () => state.interrupted,
+        shouldUpdatePresence: constant(true),
+        getSessionType:       (isDMChannel?: boolean) => {
+            if(state.mode === 'catching_up') {
+                return 'catching_up';
+            }
+            if(state.mode === 'perching') {
+                return 'perching';
+            }
+            if(isDMChannel) {
+                return 'dm';
+            }
+            return 'processing_message';
+        },
         startCatchUp:           _,
         startProcessingMessage: _,
         startPerching:          _,

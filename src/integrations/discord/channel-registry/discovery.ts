@@ -4,6 +4,8 @@ import type { ChannelRegistryManager } from './manager';
 import type { ChannelMetadata } from './types';
 import { createChannelId, createGuildId } from '../types';
 
+// Note: We only discover channels, not threads. Threads inherit mute state from their parent channel.
+
 export interface DiscoveryResult {
     /** Number of channels discovered (newly added) */
     discovered: number

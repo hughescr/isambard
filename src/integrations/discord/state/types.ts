@@ -397,6 +397,16 @@ export const stateChangeSchema = z.object({
 // Stryker restore StringLiteral,ObjectLiteral,ArrayDeclaration
 
 // ============================================================================
+// Session Type
+// ============================================================================
+
+/**
+ * Session type for routing responses.
+ * Determines which channel responses should be sent to.
+ */
+export type SessionType = 'processing_message' | 'catching_up' | 'perching' | 'dm';
+
+// ============================================================================
 // BotStateManager Interface
 // ============================================================================
 
@@ -461,6 +471,15 @@ export interface BotStateManager {
      * for throttle calculations.
      */
     recordPresenceUpdate(): void
+
+    /**
+     * Get the session type based on current mode and optional channel context.
+     * Used for routing responses to the correct channel.
+     *
+     * @param isDMChannel - Whether the channel is a DM channel (optional)
+     * @returns Session type for response routing
+     */
+    getSessionType(isDMChannel?: boolean): SessionType
 
     // ========================================================================
     // Mode Transitions

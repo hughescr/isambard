@@ -48,7 +48,8 @@ export type {
     PerchingModeContext,
     ModeContext,
     BotStateManager,
-    InterruptingMessageDetails
+    InterruptingMessageDetails,
+    SessionType
 } from './types';
 
 // Schemas from types.ts

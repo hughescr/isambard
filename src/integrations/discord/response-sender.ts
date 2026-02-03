@@ -2,7 +2,7 @@ import type { Message, TextChannel, Client } from 'discord.js';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { ChannelId } from './types';
-import type { ResponseRouter, SessionType, RoutingResult } from './channel-registry';
+import type { ResponseRouter, RoutingResult } from './channel-registry';
 import type { BotStateManager } from './state';
 import { WellKnownChannelNotFoundError } from './channel-registry';
 import { splitMessage } from './messages';
@@ -55,20 +55,11 @@ export interface SendResponseResult {
  * @param config - Configuration for sending the response
  * @returns Result indicating success/failure and routing metadata
  */
-// eslint-disable-next-line complexity -- Message sending involves multiple branching paths for routing, splitting, and error handling
 export async function sendResponse(config: SendResponseConfig): Promise<SendResponseResult> {
     const { responseRouter, botStateManager, response, message, rateLimiter, client, useFallbackOnError } = config;
 
     // Determine session type from bot state
-    const mode = botStateManager.getMode();
-    let sessionType: SessionType = 'processing_message';
-    if(mode === 'catching_up') {
-        sessionType = 'catching_up';
-    } else if(mode === 'perching') {
-        sessionType = 'perching';
-    } else if(message.channel.isDMBased()) {
-        sessionType = 'dm';
-    }
+    const sessionType = botStateManager.getSessionType(message.channel.isDMBased());
 
     // Route response based on session type
     let routing: RoutingResult;

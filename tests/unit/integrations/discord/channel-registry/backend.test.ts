@@ -488,6 +488,74 @@ describe('ChannelRegistryBackend', () => {
         });
     });
 
+    describe('unmarkAsWellKnown', () => {
+        test('should remove well-known designation and GSI2 keys', async () => {
+            ddbMock.on(UpdateCommand).resolves({});
+
+            await backend.unmarkAsWellKnown(channelId);
+
+            const calls = ddbMock.commandCalls(UpdateCommand);
+            expect(calls).toHaveLength(1);
+            const call = calls[0];
+            expect(call.args[0].input.TableName).toBe(tableName);
+            expect(call.args[0].input.Key).toEqual({
+                PK: `CHANNEL#${channelId}`,
+                SK: 'METADATA',
+            });
+
+            // Should use REMOVE expression for GSI2 keys and isWellKnown
+            expect(call.args[0].input.UpdateExpression).toContain('REMOVE');
+            expect(call.args[0].input.UpdateExpression).toContain('GSI2PK');
+            expect(call.args[0].input.UpdateExpression).toContain('GSI2SK');
+            expect(call.args[0].input.UpdateExpression).toContain('isWellKnown');
+
+            // Should SET updatedAt timestamp
+            expect(call.args[0].input.UpdateExpression).toContain('SET');
+            expect(call.args[0].input.UpdateExpression).toContain('updatedAt');
+            expect(call.args[0].input.ExpressionAttributeValues?.[':now']).toBeDefined();
+
+            // Should have condition to ensure channel exists
+            expect(call.args[0].input.ConditionExpression).toBe('attribute_exists(PK)');
+
+            // Verify operation name passed to withDynamoTimeout
+            expect(withDynamoTimeoutSpy).toHaveBeenCalledWith(
+                expect.any(Function),
+                expect.objectContaining({ operation: 'ChannelRegistry.unmarkAsWellKnown' })
+            );
+        });
+
+        test('should throw ItemNotFoundError when channel does not exist', async () => {
+            const conditionalCheckError = new Error('ConditionalCheckFailedException');
+            (conditionalCheckError as { name: string }).name = 'ConditionalCheckFailedException';
+            ddbMock.on(UpdateCommand).rejects(conditionalCheckError);
+
+            expect(backend.unmarkAsWellKnown(channelId)).rejects.toThrow(ItemNotFoundError);
+        });
+
+        test('should propagate other errors', async () => {
+            const otherError = new Error('Network error');
+            ddbMock.on(UpdateCommand).rejects(otherError);
+
+            expect(backend.unmarkAsWellKnown(channelId)).rejects.toThrow('Network error');
+        });
+
+        test('should include updatedAt timestamp', async () => {
+            ddbMock.on(UpdateCommand).resolves({});
+
+            const before = new Date().toISOString();
+            await backend.unmarkAsWellKnown(channelId);
+            const after = new Date().toISOString();
+
+            const calls = ddbMock.commandCalls(UpdateCommand);
+            const command = calls[0].args[0].input;
+            const updatedAt = command.ExpressionAttributeValues?.[':now'] as string | undefined;
+
+            expect(updatedAt).toBeDefined();
+            expect(updatedAt! >= before).toBe(true);
+            expect(updatedAt! <= after).toBe(true);
+        });
+    });
+
     describe('deleteChannel', () => {
         test('should delete a channel', async () => {
             ddbMock.on(DeleteCommand).resolves({});

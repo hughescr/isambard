@@ -38,7 +38,7 @@ export { ChannelRegistryManager } from './manager';
 export type { ChannelRegistryManagerConfig } from './manager';
 
 // DM tracker
-export { formatDMChannelName, extractUsernameFromDM, isDMChannelName, DMTracker } from './dm-tracker';
+export { formatDMChannelName, isDMChannelName, DMTracker } from './dm-tracker';
 
 // Sentinel
 export { NO_RESPONSE_SENTINEL, hasSentinel, stripSentinel, processResponse } from './sentinel';

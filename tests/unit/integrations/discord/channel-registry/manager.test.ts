@@ -60,6 +60,7 @@ describe('ChannelRegistryManager', () => {
             muteChannel:         mock(() => Promise.resolve()),
             unmuteChannel:       mock(() => Promise.resolve()),
             markAsWellKnown:     mock(() => Promise.resolve()),
+            unmarkAsWellKnown:   mock(() => Promise.resolve()),
         } as unknown as ChannelRegistryBackend;
 
         // Create mock Discord client
@@ -926,6 +927,103 @@ describe('ChannelRegistryManager', () => {
         });
     });
 
+    describe('unmarkAsWellKnown', () => {
+        it('should successfully unmark a well-known channel', async () => {
+            const channel = createMockChannel({ isWellKnown: 'general' });
+            await manager.upsertChannel(channel);
+
+            // Mock the backend method
+            backend.unmarkAsWellKnown = mock(() => Promise.resolve());
+
+            await manager.unmarkAsWellKnown(channel.channelId);
+
+            expect(backend.unmarkAsWellKnown).toHaveBeenCalledTimes(1);
+            expect(backend.unmarkAsWellKnown).toHaveBeenCalledWith(channel.channelId);
+
+            // Verify cache was updated
+            const cached = await manager.getChannel(channel.channelId);
+            expect(cached?.isWellKnown).toBeUndefined();
+        });
+
+        it('should clear well-known cache when unmarking', async () => {
+            const channel = createMockChannel({ isWellKnown: 'general' });
+            await manager.upsertChannel(channel);
+
+            // Mock the backend method
+            backend.unmarkAsWellKnown = mock(() => Promise.resolve());
+
+            await manager.unmarkAsWellKnown(channel.channelId);
+
+            // Well-known lookup should now return null
+            backend.getWellKnownChannel = mock(() => Promise.resolve(null));
+            const result = await manager.getWellKnownChannel('general');
+            expect(result).toBeNull();
+        });
+
+        it('should handle channel not in cache', async () => {
+            const channelId = createChannelId('not-cached');
+
+            // Mock the backend method
+            backend.unmarkAsWellKnown = mock(() => Promise.resolve());
+
+            // Should not throw even if channel is not in cache
+            await manager.unmarkAsWellKnown(channelId);
+
+            expect(backend.unmarkAsWellKnown).toHaveBeenCalledTimes(1);
+            expect(backend.unmarkAsWellKnown).toHaveBeenCalledWith(channelId);
+        });
+
+        it('should handle channel that was not well-known', async () => {
+            const channel = createMockChannel({ isWellKnown: undefined });
+            await manager.upsertChannel(channel);
+
+            // Mock the backend method
+            backend.unmarkAsWellKnown = mock(() => Promise.resolve());
+
+            // Should succeed without error
+            await manager.unmarkAsWellKnown(channel.channelId);
+
+            expect(backend.unmarkAsWellKnown).toHaveBeenCalledTimes(1);
+
+            // Verify cache still updated
+            const cached = await manager.getChannel(channel.channelId);
+            expect(cached?.isWellKnown).toBeUndefined();
+        });
+
+        it('should invalidate cache when backend fails', async () => {
+            const channel = createMockChannel({ isWellKnown: 'general' });
+            await manager.upsertChannel(channel);
+
+            // Verify channel is in cache
+            let cached = await manager.getChannel(channel.channelId);
+            expect(cached?.isWellKnown).toBe('general');
+
+            // Make backend fail
+            const error = new Error('Backend failure');
+            backend.unmarkAsWellKnown = mock(() => Promise.reject(error));
+
+            // Attempt to unmark should fail and invalidate cache
+            expect(manager.unmarkAsWellKnown(channel.channelId)).rejects.toThrow('Backend failure');
+
+            // Verify cache was invalidated by checking for backend fallback
+            backend.getChannel = mock(() => Promise.resolve(createMockStorageRecord({ channelId: channel.channelId, guildId: channel.guildId, isMuted: channel.isMuted, isWellKnown: channel.isWellKnown })));
+            cached = await manager.getChannel(channel.channelId);
+            expect(backend.getChannel).toHaveBeenCalledTimes(1);
+        });
+
+        it('should re-throw error after cache invalidation', async () => {
+            const channel = createMockChannel({ isWellKnown: 'general' });
+            await manager.upsertChannel(channel);
+
+            // Make backend fail
+            const error = new Error('DynamoDB timeout');
+            backend.unmarkAsWellKnown = mock(() => Promise.reject(error));
+
+            // Error should be re-thrown
+            expect(manager.unmarkAsWellKnown(channel.channelId)).rejects.toThrow('DynamoDB timeout');
+        });
+    });
+
     describe('homeGuild getter', () => {
         it('should return home guild ID', () => {
             expect(manager.homeGuild).toBe(homeGuildId);
@@ -977,6 +1075,141 @@ describe('ChannelRegistryManager', () => {
 
             // Should fall back to 'Unknown'
             expect(result?.channelName).toBe('Unknown');
+        });
+    });
+
+    describe('DM channel name formatting', () => {
+        it('should format DM channel name using recipient username', async () => {
+            const dmChannelId = createChannelId('dm-channel-1');
+
+            // Mock backend to return a DM channel record
+            backend.getChannel = mock(() => Promise.resolve(createMockStorageRecord({
+                channelId: dmChannelId,
+                guildId:   'DM' as const,
+                isMuted:   false
+            })));
+
+            // Mock Discord client to return a DM channel with recipient
+            client.channels.fetch = mock(() => Promise.resolve({
+                id:        dmChannelId,
+                recipient: { username: 'testuser' },
+            } as unknown as import('discord.js').Channel)) as unknown as typeof client.channels.fetch;
+
+            const result = await manager.getChannel(dmChannelId);
+
+            // Should format as @username
+            expect(result?.channelName).toBe('@testuser');
+        });
+
+        it('should convert "DM - username" format to @username', async () => {
+            const dmChannelId = createChannelId('dm-channel-2');
+
+            // Mock backend to return a DM channel record
+            backend.getChannel = mock(() => Promise.resolve(createMockStorageRecord({
+                channelId: dmChannelId,
+                guildId:   'DM' as const,
+                isMuted:   false
+            })));
+
+            // Mock Discord client to return a DM channel with old format name
+            client.channels.fetch = mock(() => Promise.resolve({
+                id:   dmChannelId,
+                name: 'DM - olduser',
+            } as unknown as import('discord.js').Channel)) as unknown as typeof client.channels.fetch;
+
+            const result = await manager.getChannel(dmChannelId);
+
+            // Should convert to @username format
+            expect(result?.channelName).toBe('@olduser');
+        });
+
+        it('should preserve @username format if already present', async () => {
+            const dmChannelId = createChannelId('dm-channel-3');
+
+            // Mock backend to return a DM channel record
+            backend.getChannel = mock(() => Promise.resolve(createMockStorageRecord({
+                channelId: dmChannelId,
+                guildId:   'DM' as const,
+                isMuted:   false
+            })));
+
+            // Mock Discord client to return a DM channel with @username format
+            client.channels.fetch = mock(() => Promise.resolve({
+                id:   dmChannelId,
+                name: '@existinguser',
+            } as unknown as import('discord.js').Channel)) as unknown as typeof client.channels.fetch;
+
+            const result = await manager.getChannel(dmChannelId);
+
+            // Should preserve @username format
+            expect(result?.channelName).toBe('@existinguser');
+        });
+
+        it('should add @ prefix to plain name in DM channel', async () => {
+            const dmChannelId = createChannelId('dm-channel-4');
+
+            // Mock backend to return a DM channel record
+            backend.getChannel = mock(() => Promise.resolve(createMockStorageRecord({
+                channelId: dmChannelId,
+                guildId:   'DM' as const,
+                isMuted:   false
+            })));
+
+            // Mock Discord client to return a DM channel with plain name
+            client.channels.fetch = mock(() => Promise.resolve({
+                id:   dmChannelId,
+                name: 'plainuser',
+            } as unknown as import('discord.js').Channel)) as unknown as typeof client.channels.fetch;
+
+            const result = await manager.getChannel(dmChannelId);
+
+            // Should add @ prefix
+            expect(result?.channelName).toBe('@plainuser');
+        });
+
+        it('should fallback to @Unknown when DM channel has no recipient or name', async () => {
+            const dmChannelId = createChannelId('dm-channel-5');
+
+            // Mock backend to return a DM channel record
+            backend.getChannel = mock(() => Promise.resolve(createMockStorageRecord({
+                channelId: dmChannelId,
+                guildId:   'DM' as const,
+                isMuted:   false
+            })));
+
+            // Mock Discord client to return a DM channel with no recipient or name
+            client.channels.fetch = mock(() => Promise.resolve({
+                id: dmChannelId,
+                // No recipient or name
+            } as unknown as import('discord.js').Channel)) as unknown as typeof client.channels.fetch;
+
+            const result = await manager.getChannel(dmChannelId);
+
+            // Should fall back to @Unknown
+            expect(result?.channelName).toBe('@Unknown');
+        });
+
+        it('should use recipient over name when both are present', async () => {
+            const dmChannelId = createChannelId('dm-channel-6');
+
+            // Mock backend to return a DM channel record
+            backend.getChannel = mock(() => Promise.resolve(createMockStorageRecord({
+                channelId: dmChannelId,
+                guildId:   'DM' as const,
+                isMuted:   false
+            })));
+
+            // Mock Discord client to return a DM channel with both recipient and name
+            client.channels.fetch = mock(() => Promise.resolve({
+                id:        dmChannelId,
+                recipient: { username: 'recipient-user' },
+                name:      'DM - old-user',
+            } as unknown as import('discord.js').Channel)) as unknown as typeof client.channels.fetch;
+
+            const result = await manager.getChannel(dmChannelId);
+
+            // Should prefer recipient username
+            expect(result?.channelName).toBe('@recipient-user');
         });
     });
 });

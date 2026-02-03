@@ -17,6 +17,7 @@ import {
     type PerchingModeContext,
     type ModeContext,
     type InterruptingMessageDetails,
+    type SessionType,
     createDefaultBotState
 } from './types';
 import { type ChannelId } from '../types';
@@ -173,6 +174,20 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
         const now = Date.now();
         // Stryker disable next-line EqualityOperator: Boundary condition >= vs > makes no practical difference
         return (now - lastPresenceUpdateTime) >= updateThrottleMs;
+    }
+
+    function getSessionType(isDMChannel?: boolean): SessionType {
+        const mode = currentState.mode;
+        if(mode === 'catching_up') {
+            return 'catching_up';
+        }
+        if(mode === 'perching') {
+            return 'perching';
+        }
+        if(isDMChannel) {
+            return 'dm';
+        }
+        return 'processing_message';
     }
 
     // ========================================================================
@@ -490,6 +505,7 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
         getMode,
         isInterrupted,
         shouldUpdatePresence,
+        getSessionType,
 
         // Mode transitions
         startCatchUp,

@@ -747,4 +747,78 @@ describe('BotStateManager', () => {
             }).toThrow();
         });
     });
+
+    describe('getSessionType', () => {
+        it('should return "catching_up" when in catching_up mode', () => {
+            const context: CatchingUpModeContext = {
+                viewedChannels:      new Set(),
+                sessionId:           null,
+                startedAt:           new Date(),
+                unreadCount:         5,
+                channelNames:        [],
+                topAuthors:          [],
+                timeSinceLastActive: null,
+            };
+            manager.startCatchUp(context);
+
+            expect(manager.getSessionType()).toBe('catching_up');
+        });
+
+        it('should return "catching_up" when in catching_up mode even if isDMChannel is true', () => {
+            const context: CatchingUpModeContext = {
+                viewedChannels:      new Set(),
+                sessionId:           null,
+                startedAt:           new Date(),
+                unreadCount:         5,
+                channelNames:        [],
+                topAuthors:          [],
+                timeSinceLastActive: null,
+            };
+            manager.startCatchUp(context);
+
+            expect(manager.getSessionType(true)).toBe('catching_up');
+        });
+
+        it('should return "perching" when in perching mode', () => {
+            manager.startPerching('Observing');
+
+            expect(manager.getSessionType()).toBe('perching');
+        });
+
+        it('should return "perching" when in perching mode even if isDMChannel is true', () => {
+            manager.startPerching('Observing');
+
+            expect(manager.getSessionType(true)).toBe('perching');
+        });
+
+        it('should return "dm" when in processing_message mode and isDMChannel is true', () => {
+            manager.startProcessingMessage(testChannelId, 'Test');
+
+            expect(manager.getSessionType(true)).toBe('dm');
+        });
+
+        it('should return "processing_message" when in processing_message mode and isDMChannel is false', () => {
+            manager.startProcessingMessage(testChannelId, 'Test');
+
+            expect(manager.getSessionType(false)).toBe('processing_message');
+        });
+
+        it('should return "processing_message" when in processing_message mode and isDMChannel is not provided', () => {
+            manager.startProcessingMessage(testChannelId, 'Test');
+
+            expect(manager.getSessionType()).toBe('processing_message');
+        });
+
+        it('should return "dm" when in idle mode and isDMChannel is true', () => {
+            expect(manager.getSessionType(true)).toBe('dm');
+        });
+
+        it('should return "processing_message" when in idle mode and isDMChannel is false', () => {
+            expect(manager.getSessionType(false)).toBe('processing_message');
+        });
+
+        it('should return "processing_message" when in idle mode and isDMChannel is not provided', () => {
+            expect(manager.getSessionType()).toBe('processing_message');
+        });
+    });
 });
