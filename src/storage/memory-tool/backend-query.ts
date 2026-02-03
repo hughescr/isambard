@@ -1,5 +1,5 @@
-import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { map as _map, sortBy as _sortBy, takeRight as _takeRight } from 'lodash';
+import { DynamoDBDocumentClient, QueryCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
+import { map as _map, sortBy as _sortBy, takeRight as _takeRight, filter as _filter, chain as _chain } from 'lodash';
 import {
     type MemoryToolItemData,
     type MemoryToolItem,
@@ -150,6 +150,7 @@ export class MemoryToolBackendQuery {
         layer?: LayerName,
         options?: ListOptions
     ): Promise<ListResult<MemoryToolItemData>> {
+        // Step 1: Query GSI2 to get PKs and SKs
         const queryParams = this.buildSearchByTagQuery(tag, layer, options);
         this.applyPaginationOptions(queryParams, options);
 
@@ -160,7 +161,31 @@ export class MemoryToolBackendQuery {
             })
         );
 
-        const items = _map((result.Items ?? []) as MemoryToolItem[], item => this.stripKeys(item));
+        // Stryker disable next-line all: Performance optimization - early return to avoid unnecessary work
+        if(!result.Items || result.Items.length === 0) {
+            const nextCursor = this.encodeCursor(result.LastEvaluatedKey as Record<string, unknown> | undefined);
+            return { items: [], nextCursor };
+        }
+
+        // Step 2: Extract PKs and SKs and fetch full records in parallel
+        // Note: Using individual GetCommand calls instead of BatchGetCommand due to Bun compatibility
+        const fetchPromises = _map(result.Items, item =>
+            this.docClient.send(new GetCommand({
+                TableName: this.tableName,
+                Key:       {
+                    PK: item.PK as string,
+                    SK: item.SK as string,
+                },
+            }))
+        );
+
+        const fullResults = await Promise.all(fetchPromises);
+        const fullItems = _chain(fullResults)
+            .map('Item')
+            .filter((item): item is MemoryToolItem => item !== undefined)
+            .value();
+
+        const items = _map(fullItems, item => this.stripKeys(item));
         const nextCursor = this.encodeCursor(result.LastEvaluatedKey as Record<string, unknown> | undefined);
 
         return { items, nextCursor };

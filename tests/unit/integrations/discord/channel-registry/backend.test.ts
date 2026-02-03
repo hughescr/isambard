@@ -269,6 +269,8 @@ describe('ChannelRegistryBackend', () => {
     describe('getWellKnownChannel', () => {
         test('should return well-known channel when found', async () => {
             const storageRecord = createStorageRecord({ isWellKnown: 'general' });
+
+            // Mock the GSI2 query to return the PK
             ddbMock.on(QueryCommand).resolves({
                 Items: [
                     {
@@ -281,24 +283,50 @@ describe('ChannelRegistryBackend', () => {
                 ],
             });
 
+            // Mock the GetCommand to return the full record
+            ddbMock.on(GetCommand).resolves({
+                Item: {
+                    ...storageRecord,
+                    PK:     `CHANNEL#${channelId}`,
+                    SK:     'METADATA',
+                    GSI1PK: `GUILD#${guildId}`,
+                    GSI2PK: 'WELLKNOWN#general',
+                    GSI2SK: 'CHANNEL',
+                },
+            });
+
             const result = await backend.getWellKnownChannel('general');
 
             expect(result).toEqual(storageRecord);
 
-            const calls = ddbMock.commandCalls(QueryCommand);
-            const call = calls[0];
-            expect(call.args[0].input.IndexName).toBe('GSI2');
-            expect(call.args[0].input.KeyConditionExpression).toBe('GSI2PK = :wellKnownPk AND GSI2SK = :channelSk');
-            expect(call.args[0].input.ExpressionAttributeValues).toEqual({
+            // Verify GSI2 query
+            const queryCalls = ddbMock.commandCalls(QueryCommand);
+            const queryCall = queryCalls[0];
+            expect(queryCall.args[0].input.IndexName).toBe('GSI2');
+            expect(queryCall.args[0].input.KeyConditionExpression).toBe('GSI2PK = :wellKnownPk AND GSI2SK = :channelSk');
+            expect(queryCall.args[0].input.ExpressionAttributeValues).toEqual({
                 ':wellKnownPk': 'WELLKNOWN#general',
                 ':channelSk':   'CHANNEL',
             });
-            expect(call.args[0].input.Limit).toBe(1);
+            expect(queryCall.args[0].input.Limit).toBe(1);
 
-            // Verify operation name passed to withDynamoTimeout
+            // Verify GetCommand was called with correct key
+            const getCalls = ddbMock.commandCalls(GetCommand);
+            expect(getCalls).toHaveLength(1);
+            const getCall = getCalls[0];
+            expect(getCall.args[0].input.Key).toEqual({
+                PK: `CHANNEL#${channelId}`,
+                SK: 'METADATA',
+            });
+
+            // Verify operation names passed to withDynamoTimeout
             expect(withDynamoTimeoutSpy).toHaveBeenCalledWith(
                 expect.any(Function),
-                expect.objectContaining({ operation: 'ChannelRegistry.getWellKnownChannel' })
+                expect.objectContaining({ operation: 'ChannelRegistry.getWellKnownChannel.gsi2Query' })
+            );
+            expect(withDynamoTimeoutSpy).toHaveBeenCalledWith(
+                expect.any(Function),
+                expect.objectContaining({ operation: 'ChannelRegistry.getChannel' })
             );
         });
 
@@ -316,6 +344,197 @@ describe('ChannelRegistryBackend', () => {
             const result = await backend.getWellKnownChannel('catch-up');
 
             expect(result).toBeNull();
+        });
+    });
+
+    describe('getAllWellKnownChannels', () => {
+        test('should return empty array when Items is empty array', async () => {
+            ddbMock.on(ScanCommand).resolves({ Items: [] });
+
+            const result = await backend.getAllWellKnownChannels();
+
+            expect(result).toEqual([]);
+
+            // Verify getChannel is NOT called when Items is empty
+            const getCalls = ddbMock.commandCalls(GetCommand);
+            expect(getCalls).toHaveLength(0);
+        });
+
+        test('should return empty array when Items is undefined', async () => {
+            ddbMock.on(ScanCommand).resolves({});
+
+            const result = await backend.getAllWellKnownChannels();
+
+            expect(result).toEqual([]);
+
+            // Verify getChannel is NOT called when Items is undefined
+            const getCalls = ddbMock.commandCalls(GetCommand);
+            expect(getCalls).toHaveLength(0);
+        });
+
+        test('should early return when Items exists but is empty array without calling getChannel', async () => {
+            // This test ensures the early return happens and getChannel is never called
+            ddbMock.on(ScanCommand).resolves({ Items: [] });
+
+            // Set up GetCommand to throw if it's called (it should not be)
+            ddbMock.on(GetCommand).rejects(new Error('GetCommand should not be called for empty Items'));
+
+            const result = await backend.getAllWellKnownChannels();
+
+            // Result should be empty
+            expect(result).toEqual([]);
+
+            // GetCommand should NOT have been called at all - if it was, the error above would have been thrown
+            const getCalls = ddbMock.commandCalls(GetCommand);
+            expect(getCalls).toHaveLength(0);
+        });
+
+        test('should early return when Items is null/falsy without calling getChannel', async () => {
+            // This test ensures the first part of the OR condition (!result.Items) works
+            ddbMock.on(ScanCommand).resolves({ Items: undefined });
+
+            // Set up GetCommand to throw if it's called (it should not be)
+            ddbMock.on(GetCommand).rejects(new Error('GetCommand should not be called for undefined Items'));
+
+            const result = await backend.getAllWellKnownChannels();
+
+            expect(result).toEqual([]);
+
+            // If GetCommand was called, the error above would have been thrown
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
+        });
+
+        test('should fetch full records for each well-known channel found', async () => {
+            const channel1 = createStorageRecord({
+                channelId: createChannelId('111'),
+                isWellKnown: 'general'
+            });
+            const channel2 = createStorageRecord({
+                channelId: createChannelId('222'),
+                isWellKnown: 'catch-up'
+            });
+
+            // Mock ScanCommand to return PKs from GSI2
+            ddbMock.on(ScanCommand).resolves({
+                Items: [
+                    { PK: `CHANNEL#${channel1.channelId}`, GSI2PK: 'WELLKNOWN#general', GSI2SK: 'CHANNEL' },
+                    { PK: `CHANNEL#${channel2.channelId}`, GSI2PK: 'WELLKNOWN#catch-up', GSI2SK: 'CHANNEL' },
+                ],
+            });
+
+            // Mock GetCommand to return full records
+            ddbMock.on(GetCommand)
+                .resolvesOnce({
+                    Item: {
+                        ...channel1,
+                        PK: `CHANNEL#${channel1.channelId}`,
+                        SK: 'METADATA',
+                        GSI1PK: `GUILD#${guildId}`,
+                        GSI2PK: 'WELLKNOWN#general',
+                        GSI2SK: 'CHANNEL',
+                    },
+                })
+                .resolvesOnce({
+                    Item: {
+                        ...channel2,
+                        PK: `CHANNEL#${channel2.channelId}`,
+                        SK: 'METADATA',
+                        GSI1PK: `GUILD#${guildId}`,
+                        GSI2PK: 'WELLKNOWN#catch-up',
+                        GSI2SK: 'CHANNEL',
+                    },
+                });
+
+            const result = await backend.getAllWellKnownChannels();
+
+            expect(result).toHaveLength(2);
+
+            // Verify getChannel was called for each channelId
+            const getCalls = ddbMock.commandCalls(GetCommand);
+            expect(getCalls).toHaveLength(2);
+            expect(getCalls[0].args[0].input.Key).toEqual({
+                PK: `CHANNEL#${channel1.channelId}`,
+                SK: 'METADATA',
+            });
+            expect(getCalls[1].args[0].input.Key).toEqual({
+                PK: `CHANNEL#${channel2.channelId}`,
+                SK: 'METADATA',
+            });
+
+            // Verify full records are returned
+            expect(result[0]).toEqual(channel1);
+            expect(result[1]).toEqual(channel2);
+        });
+
+        test('should filter out null results from channels not found', async () => {
+            const channel1 = createStorageRecord({
+                channelId: createChannelId('111'),
+                isWellKnown: 'general'
+            });
+            const channel2Id = createChannelId('222');
+            const channel3 = createStorageRecord({
+                channelId: createChannelId('333'),
+                isWellKnown: 'catch-up'
+            });
+
+            // Mock ScanCommand to return 3 PKs
+            ddbMock.on(ScanCommand).resolves({
+                Items: [
+                    { PK: `CHANNEL#${channel1.channelId}`, GSI2PK: 'WELLKNOWN#general', GSI2SK: 'CHANNEL' },
+                    { PK: `CHANNEL#${channel2Id}`, GSI2PK: 'WELLKNOWN#deleted', GSI2SK: 'CHANNEL' },
+                    { PK: `CHANNEL#${channel3.channelId}`, GSI2PK: 'WELLKNOWN#catch-up', GSI2SK: 'CHANNEL' },
+                ],
+            });
+
+            // Mock GetCommand to return null for the second channel
+            ddbMock.on(GetCommand)
+                .resolvesOnce({
+                    Item: {
+                        ...channel1,
+                        PK: `CHANNEL#${channel1.channelId}`,
+                        SK: 'METADATA',
+                        GSI1PK: `GUILD#${guildId}`,
+                    },
+                })
+                .resolvesOnce({}) // Channel not found
+                .resolvesOnce({
+                    Item: {
+                        ...channel3,
+                        PK: `CHANNEL#${channel3.channelId}`,
+                        SK: 'METADATA',
+                        GSI1PK: `GUILD#${guildId}`,
+                    },
+                });
+
+            const result = await backend.getAllWellKnownChannels();
+
+            // Only 2 records should be returned (third was null)
+            expect(result).toHaveLength(2);
+            expect(result[0]).toEqual(channel1);
+            expect(result[1]).toEqual(channel3);
+        });
+
+        test('should use correct GSI2 scan parameters', async () => {
+            ddbMock.on(ScanCommand).resolves({ Items: [] });
+
+            await backend.getAllWellKnownChannels();
+
+            const calls = ddbMock.commandCalls(ScanCommand);
+            expect(calls).toHaveLength(1);
+            const call = calls[0];
+
+            expect(call.args[0].input.TableName).toBe(tableName);
+            expect(call.args[0].input.IndexName).toBe('GSI2');
+            expect(call.args[0].input.FilterExpression).toBe('begins_with(GSI2PK, :wellKnownPrefix)');
+            expect(call.args[0].input.ExpressionAttributeValues).toEqual({
+                ':wellKnownPrefix': 'WELLKNOWN#',
+            });
+
+            // Verify operation name passed to withDynamoTimeout
+            expect(withDynamoTimeoutSpy).toHaveBeenCalledWith(
+                expect.any(Function),
+                expect.objectContaining({ operation: 'ChannelRegistry.getAllWellKnownChannels.gsi2Scan' })
+            );
         });
     });
 

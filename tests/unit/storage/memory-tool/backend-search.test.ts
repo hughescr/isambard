@@ -55,7 +55,10 @@ describe('MemoryToolBackend - Search Operations', () => {
                     updatedAt:   '2024-01-01T00:00:00.000Z',
                 },
             ];
+            // Mock QueryCommand to return items from GSI2
             ddbMock.on(QueryCommand).resolves({ Items: items });
+            // Mock GetCommand to return full items
+            ddbMock.on(_GetCommand).resolves({ Item: items[0] });
 
             const result = await backend.searchByTag('important');
 
@@ -83,7 +86,10 @@ describe('MemoryToolBackend - Search Operations', () => {
                     updatedAt:   '2024-01-01T00:00:00.000Z',
                 },
             ];
+            // Mock QueryCommand to return items from GSI2
             ddbMock.on(QueryCommand).resolves({ Items: items });
+            // Mock GetCommand to return full items
+            ddbMock.on(_GetCommand).resolves({ Item: items[0] });
 
             const result = await backend.searchByTag('active', 'state' as LayerName);
 
@@ -101,6 +107,54 @@ describe('MemoryToolBackend - Search Operations', () => {
             const result = await backend.searchByTag('nonexistent');
 
             expect(result.items).toEqual([]);
+
+            // Verify GetCommand is NOT called when Items is empty
+            const getCalls = ddbMock.commandCalls(_GetCommand);
+            expect(getCalls).toHaveLength(0);
+        });
+
+        test('should return empty array when Items is undefined', async () => {
+            ddbMock.on(QueryCommand).resolves({});
+
+            const result = await backend.searchByTag('nonexistent');
+
+            expect(result.items).toEqual([]);
+
+            // Verify GetCommand is NOT called when Items is undefined
+            const getCalls = ddbMock.commandCalls(_GetCommand);
+            expect(getCalls).toHaveLength(0);
+        });
+
+        test('should early return when Items exists but is empty array without calling GetCommand', async () => {
+            // This test ensures the early return happens and GetCommand is never called
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            // Set up GetCommand to throw if it's called (it should not be)
+            ddbMock.on(_GetCommand).rejects(new Error('GetCommand should not be called for empty Items'));
+
+            const result = await backend.searchByTag('test');
+
+            // Result should be empty
+            expect(result.items).toEqual([]);
+
+            // GetCommand should NOT have been called at all - if it was, the error above would have been thrown
+            const getCalls = ddbMock.commandCalls(_GetCommand);
+            expect(getCalls).toHaveLength(0);
+        });
+
+        test('should early return when Items is null/falsy without calling GetCommand', async () => {
+            // This test ensures the first part of the OR condition (!result.Items) works
+            ddbMock.on(QueryCommand).resolves({ Items: undefined });
+
+            // Set up GetCommand to throw if it's called (it should not be)
+            ddbMock.on(_GetCommand).rejects(new Error('GetCommand should not be called for undefined Items'));
+
+            const result = await backend.searchByTag('test');
+
+            expect(result.items).toEqual([]);
+
+            // If GetCommand was called, the error above would have been thrown
+            expect(ddbMock.commandCalls(_GetCommand)).toHaveLength(0);
         });
 
         test('should support pagination with cursor', async () => {
@@ -196,6 +250,77 @@ describe('MemoryToolBackend - Search Operations', () => {
             const queryInput = calls[0].args[0].input;
             expect(queryInput.KeyConditionExpression).toBe('GSI2PK = :gsi2pk AND begins_with(GSI2SK, :layerPrefix)');
             expect(queryInput.ExpressionAttributeValues?.[':layerPrefix']).toBe('LAYER#identity#');
+        });
+
+        test('should call GetCommand with correct PK and SK from GSI2 results', async () => {
+            const gsi2Items = [
+                {
+                    PK:     'DIR#/identity',
+                    SK:     'FILE#values.md',
+                    GSI2PK: 'TAG#important',
+                    GSI2SK: 'LAYER#identity#UPDATED#2024-01-01T00:00:00.000Z',
+                },
+                {
+                    PK:     'DIR#/state',
+                    SK:     'FILE#current.md',
+                    GSI2PK: 'TAG#important',
+                    GSI2SK: 'LAYER#state#UPDATED#2024-01-02T00:00:00.000Z',
+                },
+            ];
+
+            // Mock QueryCommand to return GSI2 items
+            ddbMock.on(QueryCommand).resolves({ Items: gsi2Items });
+
+            // Mock GetCommand to return full items
+            ddbMock.on(_GetCommand)
+                .resolvesOnce({ Item: { ...gsi2Items[0], content: 'Content 1', contentType: 'text/markdown', metadata: {}, version: 1, createdAt: '2024-01-01T00:00:00.000Z', updatedAt: '2024-01-01T00:00:00.000Z', path: '/identity/values.md' } })
+                .resolvesOnce({ Item: { ...gsi2Items[1], content: 'Content 2', contentType: 'text/markdown', metadata: {}, version: 1, createdAt: '2024-01-02T00:00:00.000Z', updatedAt: '2024-01-02T00:00:00.000Z', path: '/state/current.md' } });
+
+            await backend.searchByTag('important');
+
+            // Verify GetCommand was called with exact PK and SK from GSI2 results
+            const getCalls = ddbMock.commandCalls(_GetCommand);
+            expect(getCalls).toHaveLength(2);
+
+            // First GetCommand call
+            expect(getCalls[0].args[0].input.Key).toEqual({
+                PK: 'DIR#/identity',
+                SK: 'FILE#values.md',
+            });
+
+            // Second GetCommand call
+            expect(getCalls[1].args[0].input.Key).toEqual({
+                PK: 'DIR#/state',
+                SK: 'FILE#current.md',
+            });
+        });
+
+        test('should fail if GetCommand is called with empty Key object', async () => {
+            // This test ensures the mutant that removes the Key object is killed
+            const gsi2Items = [
+                {
+                    PK:     'DIR#/identity',
+                    SK:     'FILE#test.md',
+                    GSI2PK: 'TAG#test',
+                    GSI2SK: 'LAYER#identity#UPDATED#2024-01-01T00:00:00.000Z',
+                },
+            ];
+
+            ddbMock.on(QueryCommand).resolves({ Items: gsi2Items });
+            ddbMock.on(_GetCommand).resolves({ Item: { ...gsi2Items[0], content: 'Test', contentType: 'text/plain', metadata: {}, version: 1, createdAt: '2024-01-01T00:00:00.000Z', updatedAt: '2024-01-01T00:00:00.000Z', path: '/identity/test.md' } });
+
+            await backend.searchByTag('test');
+
+            const getCalls = ddbMock.commandCalls(_GetCommand);
+            expect(getCalls).toHaveLength(1);
+
+            // Verify the Key object has both PK and SK - if it's empty {}, this would fail
+            const keyObject = getCalls[0].args[0].input.Key;
+            expect(keyObject).toBeDefined();
+            expect(keyObject).toHaveProperty('PK');
+            expect(keyObject).toHaveProperty('SK');
+            expect(keyObject?.PK).toBe('DIR#/identity');
+            expect(keyObject?.SK).toBe('FILE#test.md');
         });
     });
 

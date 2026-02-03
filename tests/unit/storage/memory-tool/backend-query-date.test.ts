@@ -2,7 +2,8 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import {
     DynamoDBDocumentClient,
-    QueryCommand
+    QueryCommand,
+    GetCommand
 } from '@aws-sdk/lib-dynamodb';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryToolItem, MemoryPath, LayerName } from '@/storage/memory-tool/types';
@@ -345,7 +346,10 @@ describe('MemoryToolBackend - Date Filtering', () => {
                     updatedAt:   '2024-06-15T00:00:00.000Z',
                 },
             ];
+            // Mock QueryCommand to return items from GSI2
             ddbMock.on(QueryCommand).resolves({ Items: items });
+            // Mock GetCommand to return full items
+            ddbMock.on(GetCommand).resolves({ Item: items[0] });
 
             const result = await backend.searchByTag('important', 'identity' as LayerName, {
                 startDate: '2024-01-01T00:00:00.000Z',
@@ -376,7 +380,10 @@ describe('MemoryToolBackend - Date Filtering', () => {
                     updatedAt:   '2024-01-15T00:00:00.000Z',
                 },
             ];
+            // Mock QueryCommand to return items from GSI2
             ddbMock.on(QueryCommand).resolves({ Items: items });
+            // Mock GetCommand to return full items
+            ddbMock.on(GetCommand).resolves({ Item: items[0] });
 
             const result = await backend.searchByTag('test', 'identity' as LayerName, {
                 startDate: '2024-01-01T00:00:00.000Z',

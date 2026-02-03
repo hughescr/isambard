@@ -147,13 +147,14 @@ export class ChannelRegistryBackend {
 
     /**
      * Gets a well-known channel storage record by type.
-     * Uses GSI2 for efficient lookup.
+     * Uses GSI2 for efficient lookup, then fetches full record from main table.
      * Manager layer is responsible for merging with Discord API data.
      *
      * @param type - Well-known channel type
      * @returns Channel storage record or null if not found
      */
     async getWellKnownChannel(type: WellKnownChannel): Promise<ChannelStorageRecord | null> {
+        // Step 1: Query GSI2 to find the channel PK
         const command = new QueryCommand({
             TableName:                 this.tableName,
             IndexName:                 'GSI2',
@@ -169,7 +170,7 @@ export class ChannelRegistryBackend {
             () => this.docClient.send(command),
             {
                 timeoutMs: this.timeoutMs,
-                operation: 'ChannelRegistry.getWellKnownChannel',
+                operation: 'ChannelRegistry.getWellKnownChannel.gsi2Query',
             }
         );
 
@@ -177,7 +178,57 @@ export class ChannelRegistryBackend {
             return null;
         }
 
-        return stripDynamoKeys(result.Items[0]) as ChannelStorageRecord;
+        // Step 2: Extract channelId from PK and fetch full record
+        const pk = result.Items[0].PK as string;
+        const channelId = _.replace(pk, 'CHANNEL#', '') as ChannelId;
+
+        return this.getChannel(channelId);
+    }
+
+    /**
+     * Gets all well-known channel storage records.
+     * Uses GSI2 scan to find all well-known channels, then BatchGetItem to fetch full records.
+     * Manager layer is responsible for merging with Discord API data.
+     *
+     * @returns Array of well-known channel storage records
+     */
+    async getAllWellKnownChannels(): Promise<ChannelStorageRecord[]> {
+        // Step 1: Scan GSI2 to find all well-known channels
+        const command = new ScanCommand({
+            TableName:                 this.tableName,
+            IndexName:                 'GSI2',
+            FilterExpression:          'begins_with(GSI2PK, :wellKnownPrefix)',
+            ExpressionAttributeValues: {
+                ':wellKnownPrefix': 'WELLKNOWN#',
+            },
+        });
+
+        const result = await withDynamoTimeout(
+            () => this.docClient.send(command),
+            {
+                timeoutMs: this.timeoutMs,
+                operation: 'ChannelRegistry.getAllWellKnownChannels.gsi2Scan',
+            }
+        );
+
+        // Stryker disable next-line all: Performance optimization - early return to avoid unnecessary work
+        if(!result.Items || result.Items.length === 0) {
+            return [];
+        }
+
+        // Step 2: Extract channelIds from PKs
+        const channelIds = _.map(result.Items, (item) => {
+            const pk = item.PK as string;
+            return _.replace(pk, 'CHANNEL#', '') as ChannelId;
+        });
+
+        // Step 3: Fetch all full records in parallel using Promise.all
+        // Note: Using individual GetCommand calls instead of BatchGetCommand due to Bun compatibility
+        const fetchPromises = _.map(channelIds, channelId => this.getChannel(channelId));
+        const results = await Promise.all(fetchPromises);
+
+        // Filter out null results (channels that weren't found)
+        return _.filter(results, (item): item is ChannelStorageRecord => item !== null);
     }
 
     /**
