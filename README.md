@@ -130,7 +130,8 @@ The project uses git worktrees to separate development from production execution
 ```
 isambard/                      # Main development (develop branch)
 ├── running/                   # Production worktree (running branch)
-│   └── .env                   # SCRATCH_DIR=../scratch
+│   ├── .env -> ../.env        # Symlink to parent's 1Password env
+│   └── .env.local             # SCRATCH_DIR=../scratch
 ├── scratch/                   # Shared runtime directory
 │   └── izzy-codebase/         # Izzy's self-modification worktree
 └── src/...                    # Source code
@@ -144,6 +145,15 @@ isambard/                      # Main development (develop branch)
 | `scratch/izzy-codebase/` | `izzy-codebase` | Izzy's code access |
 
 This separation allows editing code in the main directory without triggering hot-reload restarts in the running instance.
+
+**Initial worktree setup:**
+```bash
+git branch running develop
+git worktree add running running
+cd running && bun install
+ln -s ../.env .env           # Symlink 1Password credentials
+echo "SCRATCH_DIR=../scratch" > .env.local
+```
 
 **Running Izzy (production):**
 ```bash
