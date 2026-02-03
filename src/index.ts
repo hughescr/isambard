@@ -183,7 +183,7 @@ export async function createApp(): Promise<App> {
     }
 
     // Verify channel registry was initialized (required for bot to function)
-    if(!channelRegistry!) {
+    if(!channelRegistry) {
         throw new Error('Channel registry not initialized. The bot cannot start without it.');
     }
 

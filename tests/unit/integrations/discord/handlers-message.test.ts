@@ -78,7 +78,7 @@ describe('Discord Event Handlers', () => {
                 channel:      mockTextChannel,
                 channelId:    '333333333333333333',
                 createdAt:    new Date('2025-01-15T12:00:00.000Z'),
-                reply:        mock(async () => ({})),
+                reply:        mock(async () => mockMessage), // Return mockMessage for chaining replies
             } as unknown as Message;
         });
 
@@ -273,10 +273,6 @@ describe('Discord Event Handlers', () => {
             const longResponse = _.repeat('a', 1901);
             mockOnMessage = mock(async () => longResponse);
 
-            // Add a mock for channel.send
-            const sendMock = mock(async () => ({}));
-            (mockTextChannel as unknown as { send: typeof sendMock }).send = sendMock;
-
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
                 botUserId:       '999999999999999999' as UserId,
@@ -287,19 +283,13 @@ describe('Discord Event Handlers', () => {
 
             await handler(mockMessage);
 
-            // First chunk should use reply()
-            expect(mockMessage.reply).toHaveBeenCalledTimes(1);
-            // Second chunk should use channel.send()
-            expect(sendMock).toHaveBeenCalledTimes(1);
+            // Both chunks should use reply() to maintain threading
+            expect(mockMessage.reply).toHaveBeenCalledTimes(2);
         });
 
         it('should log chunk info when sending multiple messages', async () => {
             const longResponse = _.repeat('x', 1901);
             mockOnMessage = mock(async () => longResponse);
-
-            // Add a mock for channel.send
-            const sendMock = mock(async () => ({}));
-            (mockTextChannel as unknown as { send: typeof sendMock }).send = sendMock;
 
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,

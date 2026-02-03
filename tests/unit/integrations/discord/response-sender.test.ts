@@ -359,10 +359,10 @@ describe('sendResponse', () => {
             });
 
             expect(result.sent).toBe(true);
-            // First chunk uses reply
-            expect(mockReplyToMessage).toHaveBeenCalledTimes(1);
-            // Subsequent chunks use sendToChannel
-            expect(mockSendToChannel).toHaveBeenCalled();
+            // First chunk uses reply to original message, continuation chunks reply to first message
+            expect(mockReplyToMessage).toHaveBeenCalledTimes(2);
+            // sendToChannel should not be used for threaded responses
+            expect(mockSendToChannel).not.toHaveBeenCalled();
         });
 
         test('sends exactly N messages for N chunks without attempting extra', async () => {

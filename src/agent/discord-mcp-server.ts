@@ -431,10 +431,10 @@ export function createDiscordMCPServer(
     searchService: MessageSearchService,
     client: Client,
     questionRegistry: QuestionRegistry,
-    channelRegistry?: ChannelRegistryManager
+    channelRegistry: ChannelRegistryManager
 ) {
     // Create DMTracker for username resolution (requires channelRegistry)
-    const dmTracker = channelRegistry ? new DMTracker(channelRegistry, client) : undefined;
+    const dmTracker = new DMTracker(channelRegistry, client);
 
     return createSdkMcpServer({
         name:    'discord',
@@ -592,13 +592,6 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         // Resolve @username to channel ID if needed
                         let resolvedChannelId = args.channelId;
                         if(_.startsWith(args.channelId, '@')) {
-                            if(!dmTracker) {
-                                return {
-                                    content: [{ type: 'text' as const, text: 'Error: DM functionality not available (channel registry not configured)' }],
-                                    isError: true,
-                                };
-                            }
-
                             const username = args.channelId.slice(1); // Remove @
                             const dmChannelId = await dmTracker.getOrCreateDMByUsername(username);
                             if(!dmChannelId) {
@@ -856,12 +849,6 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     channelId: z.string().describe('Discord channel ID to mute'),
                 },
                 async (args): Promise<CallToolResult> => {
-                    if(!channelRegistry) {
-                        return {
-                            content: [{ type: 'text' as const, text: 'Error: Channel registry not available' }],
-                            isError: true,
-                        };
-                    }
                     try {
                         await channelRegistry.muteChannel(args.channelId as ChannelId);
                         // Stryker disable next-line all: Logging for observability
@@ -889,12 +876,6 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     channelId: z.string().describe('Discord channel ID to unmute'),
                 },
                 async (args): Promise<CallToolResult> => {
-                    if(!channelRegistry) {
-                        return {
-                            content: [{ type: 'text' as const, text: 'Error: Channel registry not available' }],
-                            isError: true,
-                        };
-                    }
                     try {
                         await channelRegistry.unmuteChannel(args.channelId as ChannelId);
                         // Stryker disable next-line all: Logging for observability
@@ -922,12 +903,6 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     includesMuted: z.boolean().optional().describe('Include muted channels in the list (default: false)'),
                 },
                 async (args): Promise<CallToolResult> => {
-                    if(!channelRegistry) {
-                        return {
-                            content: [{ type: 'text' as const, text: 'Error: Channel registry not available' }],
-                            isError: true,
-                        };
-                    }
                     try {
                         // Get channels based on includesMuted parameter (default false)
                         const includesMuted = args.includesMuted === true;

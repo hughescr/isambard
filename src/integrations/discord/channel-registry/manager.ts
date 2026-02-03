@@ -1,5 +1,6 @@
 import _ from 'lodash';
 import type { Client, Channel } from 'discord.js';
+import { logger } from '@hughescr/logger';
 import type { ChannelRegistryBackend } from './backend';
 import type { ChannelMetadata, WellKnownChannel, ChannelStorageRecord } from './types';
 import type { ChannelId, GuildId } from '../types';
@@ -54,26 +55,7 @@ export class ChannelRegistryManager {
         const storedRecords = await this.backend.getAllChannels();
 
         for(const record of storedRecords) {
-            // Stryker disable BlockStatement: Defensive error handling for Discord API failures
-            // Fetch channel info from Discord API
-            try {
-                const discordChannel = this.client.channels.cache.get(record.channelId)
-                  ?? await this.client.channels.fetch(record.channelId);
-                if(!discordChannel) {
-                    // Channel was deleted on Discord, skip it
-                    continue;
-                }
-
-                // Merge Discord API data with stored data
-                const metadata = this.buildChannelMetadata(record, discordChannel);
-
-                this.addToCache(metadata);
-            } catch{
-                // Discord API failure - channel might be deleted or inaccessible
-                // Skip this channel and continue
-                continue;
-            }
-            // Stryker restore BlockStatement
+            await this.fetchAndCacheChannel(record);
         }
 
         this.cacheWarmed = true;
@@ -132,6 +114,8 @@ export class ChannelRegistryManager {
               ?? await this.client.channels.fetch(channelId);
             if(!discordChannel) {
                 // Channel was deleted on Discord
+                // Stryker disable next-line all: Logging for observability
+                logger.warn({ channelId, msg: 'Channel not found on Discord (possibly deleted)' });
                 return null;
             }
 
@@ -140,9 +124,11 @@ export class ChannelRegistryManager {
 
             this.addToCache(metadata);
             return metadata;
-        } catch{
+        } catch (error) {
             // Discord API failure - channel might be deleted or inaccessible
-            // Return null rather than crashing
+            const errorMsg = _.isError(error) ? error.message : String(error);
+            // Stryker disable next-line all: Logging for observability
+            logger.warn({ channelId, error: errorMsg, msg: 'Failed to fetch channel from Discord API' });
             return null;
         }
     }
@@ -210,25 +196,10 @@ export class ChannelRegistryManager {
 
         // Fetch channel info from Discord for each record
         for(const record of storedRecords) {
-            // Stryker disable BlockStatement: Defensive error handling for Discord API failures
-            try {
-                const discordChannel = this.client.channels.cache.get(record.channelId)
-                  ?? await this.client.channels.fetch(record.channelId);
-                if(!discordChannel) {
-                    // Channel was deleted on Discord, skip it
-                    continue;
-                }
-
-                // Merge Discord API data with stored data
-                const metadata = this.buildChannelMetadata(record, discordChannel);
-
-                this.addToCache(metadata);
+            const metadata = await this.fetchAndCacheChannel(record);
+            if(metadata) {
                 results.push(metadata);
-            } catch{
-                // Discord API failure - skip this channel
-                continue;
             }
-            // Stryker restore BlockStatement
         }
 
         return results;
@@ -257,29 +228,11 @@ export class ChannelRegistryManager {
 
         // Fetch channel info from Discord for each record
         for(const record of storedRecords) {
-            // Stryker disable BlockStatement: Defensive error handling for Discord API failures
-            try {
-                const discordChannel = this.client.channels.cache.get(record.channelId)
-                  ?? await this.client.channels.fetch(record.channelId);
-                if(!discordChannel) {
-                    // Channel was deleted on Discord, skip it
-                    continue;
-                }
-
-                // Merge Discord API data with stored data
-                const metadata = this.buildChannelMetadata(record, discordChannel);
-
-                this.addToCache(metadata);
-
-                // Only include unmuted channels
-                if(!metadata.isMuted) {
-                    results.push(metadata);
-                }
-            } catch{
-                // Discord API failure - skip this channel
-                continue;
+            const metadata = await this.fetchAndCacheChannel(record);
+            // Only include unmuted channels
+            if(metadata && !metadata.isMuted) {
+                results.push(metadata);
             }
-            // Stryker restore BlockStatement
         }
 
         return results;
@@ -320,6 +273,8 @@ export class ChannelRegistryManager {
               ?? await this.client.channels.fetch(storedRecord.channelId);
             if(!discordChannel) {
                 // Channel was deleted on Discord
+                // Stryker disable next-line all: Logging for observability
+                logger.warn({ channelId: storedRecord.channelId, wellKnownType: type, msg: 'Well-known channel not found on Discord (possibly deleted)' });
                 return null;
             }
 
@@ -328,8 +283,11 @@ export class ChannelRegistryManager {
 
             this.addToCache(metadata);
             return metadata;
-        } catch{
+        } catch (error) {
             // Discord API failure - channel might be deleted or inaccessible
+            const errorMsg = _.isError(error) ? error.message : String(error);
+            // Stryker disable next-line all: Logging for observability
+            logger.warn({ channelId: storedRecord.channelId, wellKnownType: type, error: errorMsg, msg: 'Failed to fetch well-known channel from Discord API' });
             return null;
         }
     }
@@ -469,6 +427,32 @@ export class ChannelRegistryManager {
         // Track well-known channels
         if(channel.isWellKnown) {
             this.wellKnownCache.set(channel.isWellKnown, channel.channelId);
+        }
+    }
+
+    /**
+     * Fetch Discord channel data and cache it.
+     * Returns null if channel is not found or inaccessible.
+     * Logs warnings for skipped channels.
+     */
+    private async fetchAndCacheChannel(record: ChannelStorageRecord): Promise<ChannelMetadata | null> {
+        try {
+            const discordChannel = this.client.channels.cache.get(record.channelId)
+              ?? await this.client.channels.fetch(record.channelId);
+            if(!discordChannel) {
+                // Stryker disable next-line all: Logging for observability
+                logger.warn({ channelId: record.channelId, msg: 'Skipping channel: not found on Discord (possibly deleted)' });
+                return null;
+            }
+
+            const metadata = this.buildChannelMetadata(record, discordChannel);
+            this.addToCache(metadata);
+            return metadata;
+        } catch (error) {
+            const errorMsg = _.isError(error) ? error.message : String(error);
+            // Stryker disable next-line all: Logging for observability
+            logger.warn({ channelId: record.channelId, error: errorMsg, msg: 'Skipping channel: Discord API error' });
+            return null;
         }
     }
 }

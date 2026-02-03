@@ -157,21 +157,20 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
         // Otherwise, send all chunks to target channel
         if(targetChannelId === message.channel.id) {
             // First chunk uses reply() to thread the response (with retry and rate limiting)
-            await withDiscordRetry(
+            const firstReply = await withDiscordRetry(
                 () => rateLimiter.replyToMessage(message, chunks[0]),
                 // Stryker disable next-line StringLiteral: Operation name for logging only
                 'replyToMessage'
             );
             logger.info({ messageId: message.id, chunkIndex: 0, totalChunks: chunks.length, msg: 'Reply sent successfully' });
 
-            // Subsequent chunks use channel.send() to continue the conversation (with retry and rate limiting)
-            const channel = message.channel as TextChannel;
+            // Subsequent chunks reply to our first message to maintain threading
             // Stryker disable next-line EqualityOperator: Loop starts at 1 to skip already-sent first chunk
             for(let i = 1; i < chunks.length; i++) {
                 await withDiscordRetry(
-                    () => rateLimiter.sendToChannel(channel, chunks[i]),
+                    () => rateLimiter.replyToMessage(firstReply, chunks[i]),
                     // Stryker disable next-line StringLiteral: Operation name for logging
-                    'sendToChannel'
+                    'replyToMessage'
                 );
                 logger.info({ messageId: message.id, chunkIndex: i, totalChunks: chunks.length, msg: 'Continuation sent successfully' });
             }

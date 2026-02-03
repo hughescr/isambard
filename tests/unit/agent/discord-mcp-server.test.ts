@@ -48,6 +48,8 @@ describe('createDiscordMCPServer', () => {
     let mockClient: any;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock question registry for testing
     let mockQuestionRegistry: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock channel registry for testing
+    let mockChannelRegistry: any;
 
     beforeEach(() => {
         // Clear conversation context before each test
@@ -85,6 +87,15 @@ describe('createDiscordMCPServer', () => {
                 channelId:  '123456789012345678',
             }))),
         };
+
+        // Mock channel registry
+        mockChannelRegistry = {
+            muteChannel:        mock(_constant(Promise.resolve())),
+            unmuteChannel:      mock(_constant(Promise.resolve())),
+            getAllChannels:     mock(_constant([])),
+            getUnmutedChannels: mock(_constant(Promise.resolve([]))),
+            getOrCreateDM:      mock(_constant(Promise.resolve('dm-channel-id' as ChannelId))),
+        };
     });
 
     // Helper function to get tool handler from server instance
@@ -101,7 +112,7 @@ describe('createDiscordMCPServer', () => {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-return -- Accessing server version and mock return value
             ['version', (server: ReturnType<typeof createDiscordMCPServer>) => (server.instance as any).server._serverInfo.version, '1.0.0'],
         ])('should create MCP server with correct %s', (_name, accessor, expected) => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             expect(accessor(server)).toEqual(expected);
         });
 
@@ -121,7 +132,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             ['addReaction', 'Add one or more emoji reactions to a Discord message'],
             ['askUserQuestion', 'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit).'],
         ])('should have %s tool with description', (toolName, expectedDescription) => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing registered tools
             const tool = (server.instance as any)._registeredTools[toolName];
 
@@ -133,7 +144,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             ['getRecentMessages', ['channelId', 'limit']],
             ['getMessageById', ['channelId', 'messageId']],
         ])('should have %s tool with correct input schema fields', (toolName, expectedFields) => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing registered tools
             const tool = (server.instance as any)._registeredTools[toolName];
 
@@ -163,7 +174,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 },
             }));
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'searchMessages');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -185,7 +196,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
         test('should parse startTime from ISO string', async () => {
             mockSearchService.searchMessages = mock(async () => createMockSearchResponse());
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'searchMessages');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -204,7 +215,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
         test('should parse endTime from ISO string', async () => {
             mockSearchService.searchMessages = mock(async () => createMockSearchResponse());
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'searchMessages');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -225,7 +236,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 throw new Error('Discord API error');
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'searchMessages');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -253,7 +264,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 throw 'Network failure';
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'searchMessages');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -278,7 +289,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 },
             }));
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'searchMessages');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -308,7 +319,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 },
             }));
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'getRecentMessages');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -330,7 +341,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 throw new Error('Channel not found');
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'getRecentMessages');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -354,7 +365,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 throw { code: 'TIMEOUT' };
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'getRecentMessages');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -374,7 +385,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             });
             mockSearchService.getMessageById = mock(async () => mockMessage);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'getMessageById');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -397,7 +408,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
         test('should return "Message not found" when message does not exist', async () => {
             mockSearchService.getMessageById = mock(_constant(Promise.resolve(null)));
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'getMessageById');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -420,7 +431,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 throw new Error('Access denied');
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'getMessageById');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -447,7 +458,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 throw 'Unknown error';
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'getMessageById');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -468,7 +479,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             ];
             mockSearchService.getMessagesById = mock(async () => mockMessages);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'getMessageById');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -495,7 +506,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             ];
             mockSearchService.getMessagesById = mock(async () => mockMessages);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'getMessageById');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -512,7 +523,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
         test('should handle empty array', async () => {
             mockSearchService.getMessagesById = mock(async () => []);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'getMessageById');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -535,7 +546,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             ];
             mockSearchService.getMessagesById = mock(async () => mockMessages);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'getMessageById');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -555,7 +566,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 throw new Error('Batch fetch failed');
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'getMessageById');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -570,7 +581,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
         });
 
         test('should accept union schema for messageId (string or array)', () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing registered tools
             const byIdTool = (server.instance as any)._registeredTools.getMessageById;
 
@@ -599,7 +610,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             ['getRecentMessages', 100, true],
             ['getRecentMessages', 101, false],
         ])('should validate %s limit schema for value %d (expect success: %s)', (toolName, value, expectedSuccess) => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing registered tools
             const tool = (server.instance as any)._registeredTools[toolName];
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Accessing schema
@@ -611,7 +622,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
     describe('sendDiscordMessage tool', () => {
         test('should have sendDiscordMessage tool with correct description', () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing registered tools
             const tool = (server.instance as any)._registeredTools.sendDiscordMessage;
 
@@ -627,7 +638,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should have correct input schema fields', () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing registered tools
             const tool = (server.instance as any)._registeredTools.sendDiscordMessage;
 
@@ -651,7 +662,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -689,7 +700,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             // Create content just over 2000 chars (will be split into 2 chunks)
@@ -750,7 +761,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const longContent = _repeat('a', 2001);
@@ -775,7 +786,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -794,7 +805,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
             mockClient.channels.fetch = mock(async () => null);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -814,7 +825,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should return error when missing threadName with createThread', async () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -830,7 +841,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should return error when createThread is true with empty threadName', async () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -862,7 +873,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -894,7 +905,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -916,7 +927,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should not create thread when threadName is undefined even with createThread true', async () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -948,7 +959,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -983,7 +994,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1017,7 +1028,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1148,25 +1159,11 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(result.isError).toBe(true);
             expect(result.content[0].text).toBe('Error: Could not find user @nonexistent in any server');
         });
-
-        test('should return error when @username used without channel registry', async () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
-            const handler = getToolHandler(server, 'sendDiscordMessage');
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            const result = await handler({
-                channelId: '@alice',
-                content:   'Test DM message',
-            });
-
-            expect(result.isError).toBe(true);
-            expect(result.content[0].text).toBe('Error: DM functionality not available (channel registry not configured)');
-        });
     });
 
     describe('askUserQuestion tool', () => {
         test('should have askUserQuestion tool with correct description', () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing registered tools
             const tool = (server.instance as any)._registeredTools.askUserQuestion;
 
@@ -1174,7 +1171,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should have correct input schema fields', () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing registered tools
             const tool = (server.instance as any)._registeredTools.askUserQuestion;
 
@@ -1201,7 +1198,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1226,7 +1223,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1255,7 +1252,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1280,7 +1277,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1315,7 +1312,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1343,7 +1340,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1381,7 +1378,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 channelId: '123456789012345678',
             }));
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1418,7 +1415,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 channelId:  '123456789012345678',
             }));
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1444,7 +1441,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1465,7 +1462,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
             mockClient.channels.fetch = mock(async () => null);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1483,7 +1480,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should return error when more than 25 options provided', async () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // Create 26 options
@@ -1514,7 +1511,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1541,7 +1538,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1567,7 +1564,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1595,7 +1592,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1622,7 +1619,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1654,7 +1651,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 currentChannelId: '123456789012345678' as ChannelId,
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1682,7 +1679,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             // Ensure context is cleared
             clearConversationContext();
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1717,7 +1714,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             // Ensure context is cleared
             clearConversationContext();
 
-            const server = createDiscordMCPServer(mockSearchService, clientWithoutUser as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, clientWithoutUser as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1742,7 +1739,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // Set context
@@ -1789,7 +1786,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
             mockClient.channels.fetch = mock(async () => null);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -1974,17 +1971,6 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(mockChannelRegistry.getAllChannels).not.toHaveBeenCalled();
         });
 
-        test('should return error when channel registry is not available', async () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
-            const handler = getToolHandler(server, 'listChannels');
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            const result = await handler({});
-
-            expect(result.isError).toBe(true);
-            expect(result.content[0].text).toBe('Error: Channel registry not available');
-        });
-
         test('should handle errors from getUnmutedChannels', async () => {
             const mockChannelRegistry = {
                 getAllChannels:     mock(() => []),
@@ -2019,7 +2005,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'addReaction');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -2051,7 +2037,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'addReaction');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
@@ -2087,7 +2073,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'addReaction');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
