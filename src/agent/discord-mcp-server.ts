@@ -14,6 +14,7 @@ import { withDiscordRetry } from '../integrations/discord/retry';
 import { splitMessage } from '../integrations/discord/messages';
 import type { ChannelRegistryManager } from '../integrations/discord/channel-registry';
 import { DMTracker, resolveChannelId } from '../integrations/discord/channel-registry';
+import { validateFilePaths, PathSecurityError } from '../utils/path-validator';
 
 /**
  * Context for the current Discord conversation.
@@ -112,14 +113,20 @@ async function fetchAndValidateChannel(
 }
 
 /**
- * Helper: Sends a message to a Discord channel, with optional reply.
+ * Helper: Sends a message to a Discord channel, with optional reply and files.
  * Returns the sent message.
  */
 async function sendMessage(
     channel: TextChannel,
     content: string,
-    replyToMessageId?: string
+    replyToMessageId?: string,
+    files?: string[]
 ): Promise<Message> {
+    const messageOptions: MessageCreateOptions = { content };
+    if(files && files.length > 0) {
+        messageOptions.files = files;
+    }
+
     if(replyToMessageId) {
         const originalMessage = await withDiscordRetry(
             () => channel.messages.fetch(replyToMessageId),
@@ -127,14 +134,14 @@ async function sendMessage(
             'fetchMessage'
         );
         return withDiscordRetry(
-            () => originalMessage.reply(content),
+            () => originalMessage.reply(messageOptions),
             // Stryker disable next-line StringLiteral: Operation name for logging
             'replyToMessage'
         );
     }
 
     return withDiscordRetry(
-        () => channel.send(content),
+        () => channel.send(messageOptions),
         // Stryker disable next-line StringLiteral: Operation name for logging
         'sendMessage'
     );
@@ -584,6 +591,8 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     createThread:     z.boolean().optional().describe('Create a new thread for this message'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     threadName:       z.string().optional().describe('Thread name (required if createThread is true)'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    files:            z.union([z.string(), z.array(z.string())]).optional().describe('File path(s) to attach. Must be inside the working directory (no symlinks).'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
@@ -591,6 +600,24 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         const threadError = validateThreadCreation(args.createThread, args.threadName);
                         if(threadError) {
                             return threadError;
+                        }
+
+                        // Validate file paths if provided
+                        let validatedFiles: string[] | undefined;
+                        if(args.files) {
+                            try {
+                                validatedFiles = await validateFilePaths(args.files);
+                            } catch (error) {
+                                if(error instanceof PathSecurityError) {
+                                    // Stryker disable next-line all: Logging parameters don't affect behavior
+                                    logger.warn({ tool: 'sendDiscordMessage', error: error.message, path: error.path }, 'Discord tool returned security error');
+                                    return {
+                                        content: [{ type: 'text' as const, text: `Security Error: ${error.message}` }],
+                                        isError: true,
+                                    };
+                                }
+                                throw error;
+                            }
                         }
 
                         // Resolve channel identifier (handle #channel-name and @username)
@@ -622,15 +649,16 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         const chunks = splitMessage(args.content);
                         const sentMessages: Message[] = [];
 
-                        // Send first chunk (with reply if specified)
+                        // Send first chunk (with reply and files if specified)
                         const firstMessage = await sendMessage(
                             channelResult.channel,
                             chunks[0],
-                            args.replyToMessageId
+                            args.replyToMessageId,
+                            validatedFiles
                         );
                         sentMessages.push(firstMessage);
 
-                        // Send remaining chunks (no reply reference)
+                        // Send remaining chunks (no reply reference, no files)
                         // Stryker disable next-line EqualityOperator: Inverted loop condition creates infinite loop
                         for(let i = 1; i < chunks.length; i++) {
                             const msg = await sendMessage(channelResult.channel, chunks[i]);
@@ -650,6 +678,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             messageIds:  _.map(sentMessages, 'id'),
                             chunksCount: chunks.length,
                             ...(threadId && { threadId }),
+                            ...(validatedFiles && { filesAttached: validatedFiles.length }),
                         };
 
                         return {

@@ -281,9 +281,15 @@ mock.module('heic-convert', () => ({
     'default': mockHeicConvert,
 }));
 
+// No-op placeholder for backward compatibility with tests that call resetPathValidatorMocks
+// Path validator is no longer globally mocked - tests use real implementation with mockFsPromises
+export function resetPathValidatorMocks(): void {
+    // No-op - path validator uses real implementation
+}
+
 // Mock node:fs/promises to avoid filesystem I/O cold-start cost
 // Returns in-memory fake filesystem without calling real FS APIs
-const mockFs = new Map<string, { type: 'file' | 'dir', content?: string }>();
+const mockFs = new Map<string, { type: 'file' | 'dir' | 'symlink', content?: string, target?: string }>();
 
 // Define original implementations
 const originalAccessImpl = async (path: string) => {
@@ -302,8 +308,23 @@ const originalStatImpl = async (path: string) => {
         throw err;
     }
     return {
-        isDirectory: () => entry.type === 'dir',
-        isFile:      () => entry.type === 'file',
+        isDirectory:    () => entry.type === 'dir',
+        isFile:         () => entry.type === 'file',
+        isSymbolicLink: constant(false),
+    };
+};
+
+const originalLstatImpl = async (path: string) => {
+    const entry = mockFs.get(path);
+    if(!entry) {
+        const err = new Error(`ENOENT: no such file or directory, lstat '${path}'`) as NodeJS.ErrnoException;
+        err.code = 'ENOENT';
+        throw err;
+    }
+    return {
+        isDirectory:    () => entry.type === 'dir',
+        isFile:         () => entry.type === 'file',
+        isSymbolicLink: () => entry.type === 'symlink',
     };
 };
 
@@ -321,7 +342,7 @@ const originalReaddirImpl = async (path: string, options?: { withFileTypes?: boo
     // Find all direct children of this directory
     const entries = Array.from(mockFs.entries());
     const children = chain(entries)
-        .filter(([childPath]: [string, { type: 'file' | 'dir', content?: string }]) => {
+        .filter(([childPath]: [string, { type: 'file' | 'dir' | 'symlink', content?: string, target?: string }]) => {
             // Must start with parent path
             if(!startsWith(childPath, normalizedPath + '/')) {
                 return false;
@@ -331,14 +352,15 @@ const originalReaddirImpl = async (path: string, options?: { withFileTypes?: boo
             // Only include direct children (no nested slashes)
             return relative && !includes(relative, '/');
         })
-        .map(([childPath, childEntry]: [string, { type: 'file' | 'dir', content?: string }]) => {
+        .map(([childPath, childEntry]: [string, { type: 'file' | 'dir' | 'symlink', content?: string, target?: string }]) => {
             const parts = split(childPath, '/');
             const name = last(parts) ?? '';
             if(options?.withFileTypes) {
                 return {
                     name,
-                    isDirectory: () => childEntry.type === 'dir',
-                    isFile:      () => childEntry.type === 'file',
+                    isDirectory:    () => childEntry.type === 'dir',
+                    isFile:         () => childEntry.type === 'file',
+                    isSymbolicLink: () => childEntry.type === 'symlink',
                 };
             }
             return name;
@@ -405,9 +427,14 @@ const originalCpImpl = async (_source: string, _dest: string, _options?: unknown
     return Promise.resolve();
 };
 
+const originalSymlinkImpl = async (target: string, path: string) => {
+    mockFs.set(path, { type: 'symlink', target });
+};
+
 export const mockFsPromises = {
     access:    mock(originalAccessImpl),
     stat:      mock(originalStatImpl),
+    lstat:     mock(originalLstatImpl),
     readdir:   mock(originalReaddirImpl),
     readFile:  mock(originalReadFileImpl),
     writeFile: mock(originalWriteFileImpl),
@@ -415,6 +442,7 @@ export const mockFsPromises = {
     rm:        mock(originalRmImpl),
     unlink:    mock(originalUnlinkImpl),
     cp:        mock(originalCpImpl),
+    symlink:   mock(originalSymlinkImpl),
 };
 
 // Export a helper to reset the mock filesystem between tests
@@ -425,6 +453,8 @@ export function resetMockFs(): void {
     mockFsPromises.access.mockImplementation(originalAccessImpl);
     mockFsPromises.stat.mockReset();
     mockFsPromises.stat.mockImplementation(originalStatImpl);
+    mockFsPromises.lstat.mockReset();
+    mockFsPromises.lstat.mockImplementation(originalLstatImpl);
     mockFsPromises.readdir.mockReset();
     mockFsPromises.readdir.mockImplementation(originalReaddirImpl);
     mockFsPromises.readFile.mockReset();
@@ -439,6 +469,8 @@ export function resetMockFs(): void {
     mockFsPromises.unlink.mockImplementation(originalUnlinkImpl);
     mockFsPromises.cp.mockReset();
     mockFsPromises.cp.mockImplementation(originalCpImpl);
+    mockFsPromises.symlink.mockReset();
+    mockFsPromises.symlink.mockImplementation(originalSymlinkImpl);
 }
 
 // Reset only paths matching a prefix - for test isolation
@@ -453,6 +485,8 @@ export function resetMockFsPrefix(prefix: string): void {
     mockFsPromises.access.mockImplementation(originalAccessImpl);
     mockFsPromises.stat.mockReset();
     mockFsPromises.stat.mockImplementation(originalStatImpl);
+    mockFsPromises.lstat.mockReset();
+    mockFsPromises.lstat.mockImplementation(originalLstatImpl);
     mockFsPromises.readdir.mockReset();
     mockFsPromises.readdir.mockImplementation(originalReaddirImpl);
     mockFsPromises.readFile.mockReset();
@@ -467,6 +501,8 @@ export function resetMockFsPrefix(prefix: string): void {
     mockFsPromises.unlink.mockImplementation(originalUnlinkImpl);
     mockFsPromises.cp.mockReset();
     mockFsPromises.cp.mockImplementation(originalCpImpl);
+    mockFsPromises.symlink.mockReset();
+    mockFsPromises.symlink.mockImplementation(originalSymlinkImpl);
 }
 
 // Note: Tests should call resetMockFs() or resetMockFsPrefix() in their own afterEach hooks

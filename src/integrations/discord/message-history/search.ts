@@ -1,8 +1,8 @@
 /**
  * Message Search Service
  *
- * Orchestrates the fetcher, cache, and summarizer to provide comprehensive
- * Discord message search functionality. Handles caching strategy, text filtering,
+ * Orchestrates the fetcher and summarizer to provide comprehensive
+ * Discord message search functionality. Handles text filtering,
  * pagination with overflow summaries, and time range queries.
  */
 
@@ -10,11 +10,7 @@ import _ from 'lodash';
 import type { z } from 'zod';
 import type { MessageFetcher } from '@/integrations/discord/message-history/fetcher';
 import type { MessageSummarizer } from '@/integrations/discord/message-history/summarizer';
-import type { MessageCache } from '@/storage/message-cache/cache';
-import type { CachedMessage } from '@/storage/message-cache/types';
-import { createMessageId } from '@/storage/message-cache/types';
-import { timestampToSnowflake, snowflakeToTimestamp } from '@/integrations/discord/message-history/snowflake';
-import { createChannelId, type ChannelId } from '@/integrations/discord/types';
+import { createChannelId } from '@/integrations/discord/types';
 import type { DiscordSearchResult, SearchResponse } from '@/integrations/discord/message-history/types';
 import { searchParamsSchema } from '@/integrations/discord/message-history/types';
 
@@ -40,8 +36,6 @@ const DEFAULT_TIME_RANGE_DAYS = 7;
 export interface MessageSearchServiceOptions {
     /** Message fetcher for Discord API calls */
     fetcher:               MessageFetcher
-    /** Message cache for storing/retrieving cached messages */
-    cache:                 MessageCache
     /** Message summarizer for overflow handling */
     summarizer:            MessageSummarizer
     /** Default number of messages to return (default: 10) */
@@ -56,7 +50,7 @@ export interface MessageSearchServiceOptions {
 export interface MessageSearchService {
     /**
      * Search messages with optional filtering by time range and text query.
-     * Automatically handles caching and overflow summaries.
+     * Automatically handles overflow summaries.
      *
      * @param params - Search parameters including channelId, query, time range, and limit
      * @returns Search response with messages, optional overflow summaries, and metadata
@@ -92,60 +86,10 @@ export interface MessageSearchService {
 }
 
 /**
- * Converts a CachedMessage to a DiscordSearchResult.
+ * Creates a message search service that orchestrates fetcher and summarizer.
  *
- * Note: Since the cache stores minimal data, some fields will have default values:
- * - guildId: null
- * - author.username: 'unknown'
- * - author.displayName: 'Unknown User'
- * - attachments, embeds, reactions: empty arrays
- *
- * @param cached - The cached message
- * @param channelId - The channel ID for the message
- * @returns A DiscordSearchResult with partial data
- */
-function convertCachedToSearchResult(cached: CachedMessage, channelId: ChannelId): DiscordSearchResult {
-    return {
-        id:      cached.id as string,
-        channelId,
-        guildId: null,
-        author:  {
-            id:          cached.authorId,
-            // Stryker disable next-line StringLiteral: Default display string not tested
-            username:    'unknown',
-            // Stryker disable next-line StringLiteral: Default display string not tested
-            displayName: 'Unknown User',
-        },
-        content:     cached.content,
-        timestamp:   cached.timestamp,
-        attachments: [],
-        embeds:      [],
-        reactions:   [],
-    };
-}
-
-/**
- * Converts a DiscordSearchResult to a CachedMessage for storage.
- *
- * @param result - The Discord search result
- * @returns A CachedMessage with minimal data
- */
-function convertSearchResultToCached(result: DiscordSearchResult): CachedMessage {
-    return {
-        id:        createMessageId(result.id),
-        content:   result.content,
-        authorId:  result.author.id,
-        timestamp: result.timestamp,
-    };
-}
-
-/**
- * Creates a message search service that orchestrates fetcher, cache, and summarizer.
- *
- * The service implements a caching strategy where:
- * - Cache is checked first for any available messages
- * - Gaps in the cache are filled by fetching from Discord API
- * - Newly fetched messages are cached only if the time range is in the past (closed window)
+ * The service fetches messages directly from Discord API and applies filtering:
+ * - Messages are fetched from Discord API in the specified time range
  * - Results are filtered by text query if provided
  * - Overflow messages beyond the limit are summarized using Haiku
  *
@@ -156,7 +100,6 @@ function convertSearchResultToCached(result: DiscordSearchResult): CachedMessage
  * ```typescript
  * const searchService = createMessageSearchService({
  *   fetcher: createMessageFetcher(discordClient),
- *   cache: new MessageCache(docClient, tableName),
  *   summarizer: createMessageSummarizer({ anthropicClient }),
  * });
  *
@@ -179,7 +122,6 @@ function convertSearchResultToCached(result: DiscordSearchResult): CachedMessage
 export function createMessageSearchService(options: MessageSearchServiceOptions): MessageSearchService {
     const {
         fetcher,
-        cache,
         summarizer,
         defaultLimit = DEFAULT_LIMIT,
         defaultTimeRangeDays = DEFAULT_TIME_RANGE_DAYS,
@@ -199,52 +141,20 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
         const effectiveEnd = endTime ?? now;
         const effectiveStart = startTime ?? new Date(now.getTime() - defaultTimeRangeDays * 24 * 60 * 60 * 1000);
 
-        // 2. Convert to snowflakes
-        const startSnowflake = timestampToSnowflake(effectiveStart);
-        const endSnowflake = timestampToSnowflake(effectiveEnd);
-
-        // 3. Get messages from cache
-        const cacheResult = await cache.getMessagesInRange(
+        // 2. Fetch messages from Discord API
+        const fetchResult = await fetcher.fetchMessages({
             channelId,
-            createMessageId(startSnowflake),
-            createMessageId(endSnowflake)
-        );
+            startTime: effectiveStart,
+            endTime:   effectiveEnd,
+        });
 
-        // 4. Convert cached messages to DiscordSearchResult format
-        let allMessages: DiscordSearchResult[] = _.map(
-            cacheResult.messages,
-            cached => convertCachedToSearchResult(cached, channelId)
-        );
+        // 3. Start with all fetched messages
+        let allMessages: DiscordSearchResult[] = fetchResult.messages;
 
-        // 5. Fetch any gaps from Discord API
-        for(const gap of cacheResult.gaps) {
-            const gapStartTime = snowflakeToTimestamp(gap.start as string);
-            const gapEndTime = snowflakeToTimestamp(gap.end as string);
-
-            const fetchResult = await fetcher.fetchMessages({
-                channelId,
-                startTime: gapStartTime,
-                endTime:   gapEndTime,
-            });
-
-            // 6. Cache if gap endTime is in the past (closed window)
-            if(gapEndTime < now) {
-                const cachedMessages = _.map(fetchResult.messages, convertSearchResultToCached);
-                await cache.storeMessages(
-                    channelId,
-                    gap.start,
-                    gap.end,
-                    cachedMessages
-                );
-            }
-
-            allMessages = allMessages.concat(fetchResult.messages);
-        }
-
-        // 7. Sort by timestamp (oldest first) - snowflakes sort chronologically
+        // 4. Sort by timestamp (oldest first) - snowflakes sort chronologically
         allMessages = _.sortBy(allMessages, 'id');
 
-        // 8. Filter by text query if provided
+        // 5. Filter by text query if provided
         // Stryker disable next-line ConditionalExpression: if(true) is equivalent since _.includes(x, '') is always true
         if(query) {
             const lowerQuery = _.toLower(query);
@@ -253,7 +163,7 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
             );
         }
 
-        // 9. Apply limit and handle overflow
+        // 6. Apply limit and handle overflow
         const totalFound = allMessages.length;
         const returnMessages = _.take(allMessages, limit);
 

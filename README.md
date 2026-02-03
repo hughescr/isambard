@@ -214,7 +214,6 @@ src/
 │   ├── memory-tool/          # Three-layer memory system
 │   │   ├── backend*.ts       # Backend operations
 │   │   └── handlers.ts       # Memory tool handlers
-│   ├── message-cache/        # Discord message cache
 │   ├── models/               # Entity definitions
 │   ├── repositories/         # Data access
 │   ├── client.ts             # DynamoDB client

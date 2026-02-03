@@ -101,16 +101,6 @@ Message search and caching for historical context:
   - `search.ts` - Message search service
   - `summarizer.ts` - Overflow message summarization
 
-### Message Cache
-DynamoDB-backed cache for Discord messages:
-- `src/storage/message-cache/` - Message caching layer
-  - `types.ts` - Cache types (CachedMessage, CachedSegment, CacheGap)
-  - `key-generator.ts` - DynamoDB key generation
-  - `segment-manager.ts` - Segment management for contiguous message ranges
-  - `backend.ts` - DynamoDB operations
-  - `cache.ts` - Cache facade
-  - `index.ts` - Public exports
-
 ### Memory Tool Subsystem
 Custom memory tool implementation with DynamoDB backend and three-layer architecture:
 - `src/storage/memory-tool/` - Complete memory tool implementation

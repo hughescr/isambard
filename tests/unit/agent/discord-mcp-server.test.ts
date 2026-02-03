@@ -2,14 +2,15 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- Handler return values are typed as any in tests */
 /* eslint-disable @typescript-eslint/no-unsafe-argument -- Mock objects used throughout tests */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Mock object access in tests */
-import { constant as _constant, isArray as _isArray, forEach as _forEach, repeat as _repeat, isString as _isString } from 'lodash';
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { constant as _constant, isArray as _isArray, forEach as _forEach, repeat as _repeat, isString as _isString, startsWith as _startsWith } from 'lodash';
+import { describe, test, expect, beforeEach, mock, afterEach } from 'bun:test';
 import type { Client, MessageCreateOptions } from 'discord.js';
 import { createDiscordMCPServer, setConversationContext, clearConversationContext } from '../../../src/agent/discord-mcp-server';
 import type { MessageSearchService } from '../../../src/integrations/discord/message-history/search';
 import type { SearchResponse, DiscordSearchResult } from '../../../src/integrations/discord/message-history/types';
 import type { ChannelId, GuildId, UserId } from '../../../src/integrations/discord/types';
 import type { ChannelRegistryManager } from '../../../src/integrations/discord/channel-registry';
+import { mockFsPromises, resetMockFsPrefix } from '../../setup';
 
 // Helper to create mock search result
 const createMockSearchResult = (overrides: Partial<DiscordSearchResult> = {}): DiscordSearchResult => ({
@@ -681,7 +682,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toEqual(['sent-message-id']);
             expect(parsed.chunksCount).toBe(1);
-            expect(mockChannel.send).toHaveBeenCalledWith('Test message');
+            expect(mockChannel.send).toHaveBeenCalledWith({ content: 'Test message' });
         });
 
         test('should resolve #channel-name to channel ID via registry', async () => {
@@ -722,7 +723,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toEqual(['sent-message-id']);
             expect(parsed.chunksCount).toBe(1);
-            expect(mockChannel.send).toHaveBeenCalledWith('Test message');
+            expect(mockChannel.send).toHaveBeenCalledWith({ content: 'Test message' });
             expect(mockChannelRegistry.getAllChannels).toHaveBeenCalled();
         });
 
@@ -935,7 +936,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(parsed.messageIds).toEqual(['sent-message-id']);
             expect(parsed.chunksCount).toBe(1);
             expect(parsed.threadId).toBeUndefined();
-            expect(mockChannel.send).toHaveBeenCalledWith('Test message');
+            expect(mockChannel.send).toHaveBeenCalledWith({ content: 'Test message' });
         });
 
         test('should not create thread when createThread is undefined even with threadName', async () => {
@@ -967,7 +968,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(parsed.messageIds).toEqual(['sent-message-id']);
             expect(parsed.chunksCount).toBe(1);
             expect(parsed.threadId).toBeUndefined();
-            expect(mockChannel.send).toHaveBeenCalledWith('Test message');
+            expect(mockChannel.send).toHaveBeenCalledWith({ content: 'Test message' });
         });
 
         test('should not create thread when threadName is undefined even with createThread true', async () => {
@@ -1019,7 +1020,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toEqual(['reply-message-id']);
             expect(parsed.chunksCount).toBe(1);
-            expect(mockMessage.reply).toHaveBeenCalledWith('Reply message');
+            expect(mockMessage.reply).toHaveBeenCalledWith({ content: 'Reply message' });
         });
 
         test('should create thread when createThread is true', async () => {
@@ -1202,6 +1203,150 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBe(true);
             expect(result.content[0].text).toBe('Error: Could not find user @nonexistent in any server');
+        });
+
+        describe('file attachments', () => {
+            afterEach(() => {
+                // Clean up mock filesystem after each test
+                resetMockFsPrefix(process.cwd());
+            });
+
+            test('should attach files when valid paths provided', async () => {
+                // Create test files in mock filesystem within CWD
+                const { join } = await import('node:path');
+                const testFile1 = join(process.cwd(), 'test-file-1.txt');
+                const testFile2 = join(process.cwd(), 'test-file-2.txt');
+
+                // Use mock filesystem
+                await mockFsPromises.writeFile(testFile1, 'test content 1');
+                await mockFsPromises.writeFile(testFile2, 'test content 2');
+
+                const mockChannel = {
+                    id:   '123456789012345678',
+                    send: mock(async (options: MessageCreateOptions) => {
+                        // Verify files are included in options and are absolute paths
+                        expect(options.files).toBeDefined();
+                        expect(_isArray(options.files)).toBe(true);
+                        expect((options.files as string[]).length).toBe(2);
+                        // Files should be absolute paths after validation
+                        _forEach(options.files as string[], (file: string) => {
+                            expect(_startsWith(file, '/')).toBe(true);
+                        });
+                        return { id: 'sent-message-id' };
+                    }),
+                    isTextBased: _constant(true),
+                    isThread:    _constant(false),
+                    isDMBased:   _constant(false),
+                };
+                mockClient.channels.fetch = mock(async () => mockChannel);
+
+                const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+                const handler = getToolHandler(server, 'sendDiscordMessage');
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+                const result = await handler({
+                    channelId: '123456789012345678',
+                    content:   'Test message with files',
+                    files:     [testFile1, testFile2],
+                });
+
+                expect(result.isError).toBeUndefined();
+
+                const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], filesAttached?: number };
+                expect(parsed.success).toBe(true);
+                expect(parsed.filesAttached).toBe(2);
+                expect(mockChannel.send).toHaveBeenCalled();
+            });
+
+            test('should not include files in options when files parameter is omitted', async () => {
+                const mockChannel = {
+                    id:   '123456789012345678',
+                    send: mock(async (options: MessageCreateOptions) => {
+                        // Verify files property is not included
+                        expect(options.files).toBeUndefined();
+                        return { id: 'sent-message-id' };
+                    }),
+                    isTextBased: _constant(true),
+                    isThread:    _constant(false),
+                    isDMBased:   _constant(false),
+                };
+                mockClient.channels.fetch = mock(async () => mockChannel);
+
+                const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+                const handler = getToolHandler(server, 'sendDiscordMessage');
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+                const result = await handler({
+                    channelId: '123456789012345678',
+                    content:   'Test message without files',
+                });
+
+                expect(result.isError).toBeUndefined();
+
+                const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[] };
+                expect(parsed.success).toBe(true);
+                expect(mockChannel.send).toHaveBeenCalled();
+            });
+
+            test('should not include files in options when files array is empty', async () => {
+                const mockChannel = {
+                    id:   '123456789012345678',
+                    send: mock(async (options: MessageCreateOptions) => {
+                        // Verify files property is not included when empty array is provided
+                        expect(options.files).toBeUndefined();
+                        return { id: 'sent-message-id' };
+                    }),
+                    isTextBased: _constant(true),
+                    isThread:    _constant(false),
+                    isDMBased:   _constant(false),
+                };
+                mockClient.channels.fetch = mock(async () => mockChannel);
+
+                const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+                const handler = getToolHandler(server, 'sendDiscordMessage');
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+                const result = await handler({
+                    channelId: '123456789012345678',
+                    content:   'Test message with empty files array',
+                    files:     [],
+                });
+
+                expect(result.isError).toBeUndefined();
+
+                const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[] };
+                expect(parsed.success).toBe(true);
+                expect(mockChannel.send).toHaveBeenCalled();
+            });
+
+            test('should return security error when file validation fails with outside_cwd', async () => {
+                const mockChannel = {
+                    id:          '123456789012345678',
+                    send:        mock(async (_options: MessageCreateOptions) => ({ id: 'should-not-be-called' })),
+                    isTextBased: _constant(true),
+                    isThread:    _constant(false),
+                    isDMBased:   _constant(false),
+                };
+                mockClient.channels.fetch = mock(async () => mockChannel);
+
+                const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+                const handler = getToolHandler(server, 'sendDiscordMessage');
+
+                // Use a path outside CWD (parent directory) to trigger security error
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+                const result = await handler({
+                    channelId: '123456789012345678',
+                    content:   'Test message with bad file',
+                    files:     ['../outside-cwd-file.txt'],
+                });
+
+                expect(result.isError).toBe(true);
+                expect(result.content[0].text).toContain('Security Error:');
+                expect(result.content[0].text).toContain('SECURITY:');
+                expect(result.content[0].text).toContain('outside the working directory');
+                // Send should NOT be called due to security error
+                expect(mockChannel.send).not.toHaveBeenCalled();
+            });
         });
     });
 

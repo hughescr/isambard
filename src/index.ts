@@ -7,7 +7,6 @@ import { resolve } from 'node:path';
 import { loadConfig, loadDynamoDBConfig } from './config/loader';
 import { createDynamoDBClient } from './storage/client';
 import { MemoryToolBackend } from './storage/memory-tool';
-import { MessageCache } from './storage/message-cache/cache';
 import { TaskSessionBackend } from './storage/task-session';
 import { createContextBuilder } from './agent/context-builder';
 import { createMemoryMCPServer } from './agent/memory-mcp-server';
@@ -121,13 +120,11 @@ export async function createApp(): Promise<App> {
 
         // Create message history components
         const messageFetcher = createMessageFetcher(discordClient);
-        const messageCache = new MessageCache(docClient, tableName);
         const messageSummarizer = createMessageSummarizer({});
 
         // Create message search service
         const messageSearchService = createMessageSearchService({
             fetcher:    messageFetcher,
-            cache:      messageCache,
             summarizer: messageSummarizer,
         });
 

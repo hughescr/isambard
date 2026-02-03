@@ -12,3 +12,10 @@ export {
     type DayOfWeek,
     type TimeContext
 } from './time';
+
+export {
+    PathSecurityError,
+    validateFilePath,
+    validateFilePaths,
+    type PathSecurityReason
+} from './path-validator';

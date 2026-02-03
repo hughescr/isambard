@@ -1,7 +1,6 @@
 // Stryker disable StringLiteral: All .describe() calls in this file are documentation only
 import { z } from 'zod';
 import { channelIdSchema, guildIdSchema } from '@/integrations/discord/types';
-import { snowflakeSchema } from '@/integrations/discord/message-history/snowflake';
 
 /**
  * Discord author information from a message.
@@ -176,26 +175,3 @@ export const searchParamsSchema = z
     .describe('Parameters for searching Discord message history');
 
 export type SearchParams = z.infer<typeof searchParamsSchema>;
-
-/**
- * Cached message segment for DynamoDB storage.
- * Stores a range of messages with TTL for automatic expiration.
- */
-export const cachedMessageSegmentSchema = z
-    .object({
-        /** Channel ID this segment belongs to */
-        channelId:      channelIdSchema,
-        /** Start of the snowflake range (inclusive) */
-        startSnowflake: snowflakeSchema,
-        /** End of the snowflake range (inclusive) */
-        endSnowflake:   snowflakeSchema,
-        /** Array of cached messages in this segment */
-        messages:       z.array(discordSearchResultSchema),
-        /** ISO 8601 timestamp when this segment was created */
-        createdAt:      z.string().datetime(),
-        /** Unix timestamp for DynamoDB TTL (seconds since epoch) */
-        ttl:            z.number().int().positive('TTL must be a positive integer'),
-    })
-    .describe('Cached message segment for DynamoDB storage');
-
-export type CachedMessageSegment = z.infer<typeof cachedMessageSegmentSchema>;
