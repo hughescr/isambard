@@ -368,7 +368,9 @@ if(import.meta.main) {
     // Change to scratch directory for containment
     // Use absolute path based on project root to prevent nesting on hot reload
     // import.meta.dir is src/, so go up one level to project root
-    const scratchDir = resolve(import.meta.dir, '..', 'scratch');
+    const scratchDir = process.env.SCRATCH_DIR
+        ? resolve(process.cwd(), process.env.SCRATCH_DIR)
+        : resolve(import.meta.dir, '..', 'scratch');
     try {
         await stat(scratchDir);
     } catch{

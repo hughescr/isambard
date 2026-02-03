@@ -5,6 +5,7 @@ export default [
     {
         ignores: [
             'scratch/', // Izzy's work area
+            'running/', // Running worktree
 
             'dist/',
             'node_modules/',

@@ -113,6 +113,7 @@ Isambard uses OAuth authentication via Claude Max subscription:
 
 | Command | Description |
 |---------|-------------|
+| `bun run deploy:running` | Update running worktree from origin |
 | `bun run dev` | Development with hot reload |
 | `bun run dev:docker` | Start local DynamoDB |
 | `bun test` | Run tests |
@@ -121,6 +122,39 @@ Isambard uses OAuth authentication via Claude Max subscription:
 | `bun run typecheck` | TypeScript validation |
 | `bun run sst-dev` | SST development mode |
 | `bun run sst-deploy` | Deploy to AWS |
+
+### Directory Structure
+
+The project uses git worktrees to separate development from production execution:
+
+```
+isambard/                      # Main development (develop branch)
+├── running/                   # Production worktree (running branch)
+│   └── .env                   # SCRATCH_DIR=../scratch
+├── scratch/                   # Shared runtime directory
+│   └── izzy-codebase/         # Izzy's self-modification worktree
+└── src/...                    # Source code
+```
+
+**Worktrees:**
+| Directory | Branch | Purpose |
+|-----------|--------|---------|
+| `.` (root) | `develop` | Active development |
+| `running/` | `running` | Isolated production execution |
+| `scratch/izzy-codebase/` | `izzy-codebase` | Izzy's code access |
+
+This separation allows editing code in the main directory without triggering hot-reload restarts in the running instance.
+
+**Running Izzy (production):**
+```bash
+cd running && bun run dev:sst
+```
+
+**Deploying updates:**
+```bash
+# Merge develop → running, push, then:
+bun run deploy:running
+```
 
 ### TDD Workflow
 

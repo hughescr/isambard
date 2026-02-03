@@ -56,3 +56,6 @@ neo4j_db/
 
 # Izzy scratch space
 scratch/
+
+# Running worktree
+running/

@@ -13,7 +13,10 @@ coveragePathIgnorePatterns = [
     "tests/**",
     "src/index.ts",
     # Exclude plugins directories - these are external/user-managed
-    "plugins/**"
+    "plugins/**",
+    # Exclude scratch and running directories - these are runtime/worktree areas
+    "scratch/**",
+    "running/**"
 ]
 onlyFailures = true
 timeout = 5
