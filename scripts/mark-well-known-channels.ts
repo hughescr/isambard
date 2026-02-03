@@ -2,30 +2,32 @@
  * Admin script to mark Discord channels as well-known.
  *
  * Usage:
- *   bun run scripts/mark-well-known-channels.ts <channelId> <type>
+ *   sst shell -- bun run scripts/mark-well-known-channels.ts <channelId> <guildId> <type>
  *
  * Types: general, catch-up, perch-time, fallback
  *
  * Examples:
  *   # Mark a channel as the default general channel
- *   bun run scripts/mark-well-known-channels.ts 1451694736166359197 general
+ *   sst shell -- bun run scripts/mark-well-known-channels.ts 1451694736166359197 1451694736166359196 general
  *
  *   # Mark a channel for catch-up session routing
- *   bun run scripts/mark-well-known-channels.ts 1451694736166359198 catch-up
+ *   sst shell -- bun run scripts/mark-well-known-channels.ts 1451694736166359198 1451694736166359196 catch-up
  *
  *   # Mark a channel for perch session routing
- *   bun run scripts/mark-well-known-channels.ts 1451694736166359199 perch-time
+ *   sst shell -- bun run scripts/mark-well-known-channels.ts 1451694736166359199 1451694736166359196 perch-time
  *
  *   # Mark a channel for fallback routing
- *   bun run scripts/mark-well-known-channels.ts 1451694736166359200 fallback
+ *   sst shell -- bun run scripts/mark-well-known-channels.ts 1451694736166359200 1451694736166359196 fallback
  */
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
+import { Resource } from 'sst';
 import { ChannelRegistryBackend } from '../src/integrations/discord/channel-registry/backend';
-import { createChannelId, type ChannelId } from '../src/integrations/discord/types';
+import { createChannelId, createGuildId, type ChannelId, type GuildId } from '../src/integrations/discord/types';
 import { type WellKnownChannel, WELL_KNOWN_CHANNELS } from '../src/integrations/discord/channel-registry/types';
+import { loadDynamoDBConfig, type DynamoDBResourceProvider } from '../src/config/loader';
 
 class UsageError extends Error {
     constructor(message: string) {
@@ -34,37 +36,35 @@ class UsageError extends Error {
     }
 }
 
-class ChannelNotFoundError extends Error {
-    constructor(channelId: ChannelId) {
-        super(`Channel ${channelId} not found. Has it been discovered yet? Hint: Send a message in the channel first to trigger discovery.`);
-        this.name = 'ChannelNotFoundError';
-    }
-}
-
 async function main() {
     const args = process.argv.slice(2);
 
-    if(args.length < 2) {
+    if(args.length < 3) {
         throw new UsageError(
-            'Usage: bun run scripts/mark-well-known-channels.ts <channelId> <type>\n\n'
+            'Usage: sst shell -- bun run scripts/mark-well-known-channels.ts <channelId> <guildId> <type>\n\n'
             + 'Types: general, catch-up, perch-time, fallback'
         );
     }
 
     const channelId = createChannelId(args[0]);
-    const type = args[1] as WellKnownChannel;
+    const guildId = createGuildId(args[1]);
+    const type = args[2] as WellKnownChannel;
 
     if(!type || !WELL_KNOWN_CHANNELS.includes(type)) {
         throw new UsageError(`Invalid type: ${type}. Must be one of: ${WELL_KNOWN_CHANNELS.join(', ')}`);
     }
 
-    const tableName = process.env.DYNAMODB_TABLE_NAME ?? 'IsambardTable';
-    const region = process.env.AWS_REGION ?? 'us-west-2';
+    // Load DynamoDB config from SST resources
+    const dynamoConfig = loadDynamoDBConfig(Resource as unknown as DynamoDBResourceProvider);
 
-    logger.info({ tableName, region, msg: 'Connecting to DynamoDB' });
+    logger.info({ tableName: dynamoConfig.tableName, region: dynamoConfig.region, msg: 'Connecting to DynamoDB' });
 
     // Create DynamoDB client
-    const client = new DynamoDBClient({ region });
+    const clientConfig = {
+        region: dynamoConfig.region,
+        ...(dynamoConfig.endpoint && { endpoint: dynamoConfig.endpoint }),
+    };
+    const client = new DynamoDBClient(clientConfig);
     const docClient = DynamoDBDocumentClient.from(client, {
         marshallOptions: {
             removeUndefinedValues:     true,
@@ -74,36 +74,37 @@ async function main() {
             wrapNumbers: false,
         },
     });
-    const backend = new ChannelRegistryBackend(docClient, tableName);
+    const backend = new ChannelRegistryBackend(docClient, dynamoConfig.tableName);
 
-    await markChannel(backend, channelId, type);
+    await markChannel(backend, channelId, guildId, type);
 }
 
 async function markChannel(
     backend: ChannelRegistryBackend,
     channelId: ChannelId,
+    guildId: GuildId,
     type: WellKnownChannel
 ): Promise<void> {
-    logger.info({ channelId, msg: 'Looking for channel' });
+    logger.info({ channelId, guildId, type, msg: 'Pre-registering channel as well-known' });
 
-    // Verify channel exists in backend
-    const channel = await backend.getChannel(channelId);
+    // Create channel storage record with well-known designation
+    const now = new Date().toISOString();
+    const record = {
+        channelId,
+        guildId,
+        isMuted:     false,
+        isWellKnown: type,
+        createdAt:   now,
+        updatedAt:   now,
+    };
 
-    if(!channel) {
-        throw new ChannelNotFoundError(channelId);
-    }
-
-    logger.info({ channelId, guildId: channel.guildId, msg: 'Found channel' });
-
-    // Mark as well-known
-    await backend.markAsWellKnown(channelId, type);
-    logger.info({ type, channelId, msg: 'Marked channel as well-known' });
+    // Upsert directly (will create if not exists, update if exists)
+    await backend.upsertChannel(record);
+    logger.info({ type, channelId, guildId, msg: 'Successfully pre-registered channel as well-known' });
 }
 
 main().catch((error: unknown) => {
     if(error instanceof UsageError) {
-        logger.error({ msg: error.message });
-    } else if(error instanceof ChannelNotFoundError) {
         logger.error({ msg: error.message });
     } else {
         logger.error({ error, msg: 'Unexpected error' });
