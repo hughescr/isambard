@@ -40,6 +40,9 @@ export type { ChannelRegistryManagerConfig } from './manager';
 // DM tracker
 export { formatDMChannelName, isDMChannelName, DMTracker } from './dm-tracker';
 
+// Resolve
+export { resolveChannelId } from './resolve';
+
 // Sentinel
 export { NO_RESPONSE_SENTINEL, hasSentinel, stripSentinel, processResponse } from './sentinel';
 

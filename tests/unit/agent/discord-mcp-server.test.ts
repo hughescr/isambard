@@ -117,20 +117,21 @@ describe('createDiscordMCPServer', () => {
         });
 
         test.each([
-            ['searchMessages', 'Search Discord message history by text, time range, or both. Returns messages with overflow summaries if results exceed limit.'],
-            ['getRecentMessages', 'Get the most recent messages from a Discord channel'],
-            ['getMessageById', 'Fetch a specific Discord message by its ID, or multiple messages by an array of IDs'],
+            ['searchMessages', 'Search Discord message history by text, time range, or both. Returns messages with overflow summaries if results exceed limit. Accepts channel ID or #channel-name format.'],
+            ['getRecentMessages', 'Get the most recent messages from a Discord channel. Accepts channel ID or #channel-name format.'],
+            ['getMessageById', 'Fetch a specific Discord message by its ID, or multiple messages by an array of IDs. Accepts channel ID or #channel-name format.'],
             ['sendDiscordMessage', `Send a message to a Discord channel or DM to a user. Use this to communicate with users.
 
 CRITICAL: Only use channel IDs from:
 1. The channelId in a message you're responding to (preferred)
 2. Your memory (/state/discord-channels)
-3. Default: 1451694737026449581 (#general)
+3. Channel name: #general, #off-topic, etc.
 4. @username format for DMs (e.g., "@alice" to send a DM)
+5. Default: 1451694737026449581 (#general)
 
 NEVER invent or guess channel IDs. If unsure, use #general.`],
-            ['addReaction', 'Add one or more emoji reactions to a Discord message'],
-            ['askUserQuestion', 'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit).'],
+            ['addReaction', 'Add one or more emoji reactions to a Discord message. Accepts channel ID or #channel-name format.'],
+            ['askUserQuestion', 'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format.'],
         ])('should have %s tool with description', (toolName, expectedDescription) => {
             const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing registered tools
@@ -631,8 +632,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 CRITICAL: Only use channel IDs from:
 1. The channelId in a message you're responding to (preferred)
 2. Your memory (/state/discord-channels)
-3. Default: 1451694737026449581 (#general)
+3. Channel name: #general, #off-topic, etc.
 4. @username format for DMs (e.g., "@alice" to send a DM)
+5. Default: 1451694737026449581 (#general)
 
 NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
@@ -680,6 +682,48 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(parsed.messageIds).toEqual(['sent-message-id']);
             expect(parsed.chunksCount).toBe(1);
             expect(mockChannel.send).toHaveBeenCalledWith('Test message');
+        });
+
+        test('should resolve #channel-name to channel ID via registry', async () => {
+            // Set up channel registry to have a channel named "test-channel"
+            mockChannelRegistry.getAllChannels = mock(_constant([
+                {
+                    channelId:   '999888777666555444' as ChannelId,
+                    channelName: 'test-channel',
+                    isMuted:     false,
+                },
+            ]));
+
+            const mockChannel = {
+                id:          '999888777666555444',
+                send:        mock(async (_content: string) => ({ id: 'sent-message-id' })),
+                isTextBased: _constant(true),
+                isThread:    _constant(false),
+                isDMBased:   _constant(false),
+            };
+            mockClient.channels.fetch = mock(async (channelId: string) => {
+                // Verify we're fetching the RESOLVED channel ID, not the literal #test-channel
+                expect(channelId).toBe('999888777666555444');
+                return mockChannel;
+            });
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'sendDiscordMessage');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '#test-channel',
+                content:   'Test message',
+            });
+
+            expect(result.isError).toBeUndefined();
+
+            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], chunksCount: number };
+            expect(parsed.success).toBe(true);
+            expect(parsed.messageIds).toEqual(['sent-message-id']);
+            expect(parsed.chunksCount).toBe(1);
+            expect(mockChannel.send).toHaveBeenCalledWith('Test message');
+            expect(mockChannelRegistry.getAllChannels).toHaveBeenCalled();
         });
 
         test('should split and send long messages in multiple chunks', async () => {
@@ -1167,7 +1211,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing registered tools
             const tool = (server.instance as any)._registeredTools.askUserQuestion;
 
-            expect(tool.description).toBe('Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit).');
+            expect(tool.description).toBe('Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format.');
         });
 
         test('should have correct input schema fields', () => {
@@ -2089,6 +2133,118 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(parsed.success).toBe(false);
             expect(parsed.addedEmojis).toEqual(['👍', '🎉']);
             expect(parsed.failedEmojis[0].emoji).toBe('❤️');
+        });
+    });
+
+    describe('muteChannel tool', () => {
+        test('should mute channel by numeric ID', async () => {
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'muteChannel');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ channelId: '1451694737026449581' });
+
+            expect(result.isError).toBeUndefined();
+            expect(mockChannelRegistry.muteChannel).toHaveBeenCalledWith('1451694737026449581');
+        });
+
+        test('should mute channel by name with # prefix', async () => {
+            mockChannelRegistry.getAllChannels = mock(_constant([
+                {
+                    channelId:   '1451694737026449581' as ChannelId,
+                    channelName: 'general',
+                    isMuted:     false,
+                },
+                {
+                    channelId:   '9876543210987654321' as ChannelId,
+                    channelName: 'random',
+                    isMuted:     false,
+                },
+            ]));
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'muteChannel');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ channelId: '#general' });
+
+            expect(result.isError).toBeUndefined();
+            expect(mockChannelRegistry.muteChannel).toHaveBeenCalledWith('1451694737026449581');
+        });
+
+        test('should return error when channel name not found', async () => {
+            mockChannelRegistry.getAllChannels = mock(_constant([
+                {
+                    channelId:   '1451694737026449581' as ChannelId,
+                    channelName: 'general',
+                    isMuted:     false,
+                },
+            ]));
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'muteChannel');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ channelId: '#nonexistent' });
+
+            expect(result.isError).toBe(true);
+            expect(result.content[0].text).toContain('Channel not found: nonexistent');
+        });
+    });
+
+    describe('unmuteChannel tool', () => {
+        test('should unmute channel by numeric ID', async () => {
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'unmuteChannel');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ channelId: '1451694737026449581' });
+
+            expect(result.isError).toBeUndefined();
+            expect(mockChannelRegistry.unmuteChannel).toHaveBeenCalledWith('1451694737026449581');
+        });
+
+        test('should unmute channel by name with # prefix', async () => {
+            mockChannelRegistry.getAllChannels = mock(_constant([
+                {
+                    channelId:   '1451694737026449581' as ChannelId,
+                    channelName: 'general',
+                    isMuted:     true,
+                },
+                {
+                    channelId:   '9876543210987654321' as ChannelId,
+                    channelName: 'random',
+                    isMuted:     false,
+                },
+            ]));
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'unmuteChannel');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ channelId: '#general' });
+
+            expect(result.isError).toBeUndefined();
+            expect(mockChannelRegistry.unmuteChannel).toHaveBeenCalledWith('1451694737026449581');
+        });
+
+        test('should return error when channel name not found', async () => {
+            mockChannelRegistry.getAllChannels = mock(_constant([
+                {
+                    channelId:   '1451694737026449581' as ChannelId,
+                    channelName: 'general',
+                    isMuted:     true,
+                },
+            ]));
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'unmuteChannel');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ channelId: '#nonexistent' });
+
+            expect(result.isError).toBe(true);
+            expect(result.content[0].text).toContain('Channel not found: nonexistent');
         });
     });
 });

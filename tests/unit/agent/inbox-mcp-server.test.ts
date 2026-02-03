@@ -8,9 +8,11 @@ import { createChannelId } from '@/integrations/discord/types';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import * as textGenerator from '@/agent/text-generator';
 import type { BotStateManager } from '@/integrations/discord/state';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
 
 describe('createInboxMCPServer', () => {
     let mockInboxManager: InboxManager;
+    let mockChannelRegistry: ChannelRegistryManager;
     const spies: ReturnType<typeof spyOn>[] = [];
 
     beforeEach(() => {
@@ -24,6 +26,10 @@ describe('createInboxMCPServer', () => {
             markAsRead:         mock(async () => { /* intentionally empty */ }),
             markChannelRead:    mock(async () => { /* intentionally empty */ }),
         } as unknown as InboxManager;
+
+        mockChannelRegistry = {
+            getAllChannels: mock(() => []),
+        } as unknown as ChannelRegistryManager;
     });
 
     afterEach(() => {
@@ -58,7 +64,7 @@ describe('createInboxMCPServer', () => {
 
     describe('createInboxMCPServer function', () => {
         test('should create MCP server with correct properties', () => {
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
 
             expect(server).toBeDefined();
             expect(server.name).toBe('inbox');
@@ -70,12 +76,12 @@ describe('createInboxMCPServer', () => {
 
         test.each([
             ['getUnreadOverview', 'Get a high-level overview of unread messages across all channels. Returns counts only, no message content.'],
-            ['getChannelSummary', 'Get an AI-generated summary of unread messages in a channel, plus message metadata for selective reading.'],
-            ['fetchMessages', 'Fetch full content of specific messages by ID. Use after reviewing channel summary to get details.'],
-            ['markAsRead', 'Mark specific messages as read. Updates the checkpoint for the channel.'],
-            ['markChannelRead', 'Mark all messages in a channel as read. Updates the checkpoint to the latest message.'],
+            ['getChannelSummary', 'Get an AI-generated summary of unread messages in a channel, plus message metadata for selective reading. Accepts channel ID or #channel-name format.'],
+            ['fetchMessages', 'Fetch full content of specific messages by ID. Use after reviewing channel summary to get details. Accepts channel ID or #channel-name format.'],
+            ['markAsRead', 'Mark specific messages as read. Updates the checkpoint for the channel. Accepts channel ID or #channel-name format.'],
+            ['markChannelRead', 'Mark all messages in a channel as read. Updates the checkpoint to the latest message. Accepts channel ID or #channel-name format.'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const tool = (server.instance as any)._registeredTools[toolName] as { description: string };
 
@@ -90,7 +96,7 @@ describe('createInboxMCPServer', () => {
                 channels:    [],
             }));
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'getUnreadOverview');
 
             const result: CallToolResult = await handler({});
@@ -125,7 +131,7 @@ describe('createInboxMCPServer', () => {
 
             mockInboxManager.getUnreadOverview = mock(() => overview);
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'getUnreadOverview');
 
             const result: CallToolResult = await handler({});
@@ -142,7 +148,7 @@ describe('createInboxMCPServer', () => {
                 throw new Error('Test error');
             });
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'getUnreadOverview');
 
             const result: CallToolResult = await handler({});
@@ -157,7 +163,7 @@ describe('createInboxMCPServer', () => {
                 throw new Error('string error');
             });
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'getUnreadOverview');
 
             const result: CallToolResult = await handler({});
@@ -172,7 +178,7 @@ describe('createInboxMCPServer', () => {
         test('should return empty summary when no messages', async () => {
             mockInboxManager.getChannelMessages = mock(() => []);
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'getChannelSummary');
 
             const result: CallToolResult = await handler({ channelId: '123456789' });
@@ -217,7 +223,7 @@ describe('createInboxMCPServer', () => {
             const spy = spyOn(textGenerator, 'generateTextWithSystemPrompt').mockResolvedValue('Alice greeted everyone and Bob responded.');
             spies.push(spy);
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'getChannelSummary');
 
             const result: CallToolResult = await handler({ channelId: '123456789' });
@@ -259,7 +265,7 @@ describe('createInboxMCPServer', () => {
             const spy = spyOn(textGenerator, 'generateTextWithSystemPrompt').mockResolvedValue(null as unknown as string);
             spies.push(spy);
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'getChannelSummary');
 
             const result: CallToolResult = await handler({ channelId: '123456789' });
@@ -299,7 +305,7 @@ describe('createInboxMCPServer', () => {
             const spy = spyOn(textGenerator, 'generateTextWithSystemPrompt').mockResolvedValue('Alice sent two messages.');
             spies.push(spy);
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'getChannelSummary');
 
             const result: CallToolResult = await handler({ channelId: '123456789' });
@@ -350,7 +356,7 @@ describe('createInboxMCPServer', () => {
             const spy = spyOn(textGenerator, 'generateTextWithSystemPrompt').mockResolvedValue('Conversation summary.');
             spies.push(spy);
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'getChannelSummary');
 
             const result: CallToolResult = await handler({ channelId: '123456789' });
@@ -369,7 +375,7 @@ describe('createInboxMCPServer', () => {
                 throw new Error('Test error');
             });
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'getChannelSummary');
 
             const result: CallToolResult = await handler({ channelId: '123456789' });
@@ -384,7 +390,7 @@ describe('createInboxMCPServer', () => {
         test('should return empty array when no messages found', async () => {
             mockInboxManager.getMessage = mock(() => undefined);
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'fetchMessages');
 
             const result: CallToolResult = await handler({
@@ -432,7 +438,7 @@ describe('createInboxMCPServer', () => {
                 return undefined;
             });
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'fetchMessages');
 
             const result: CallToolResult = await handler({
@@ -471,7 +477,7 @@ describe('createInboxMCPServer', () => {
                 return undefined;
             });
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'fetchMessages');
 
             const result: CallToolResult = await handler({
@@ -491,7 +497,7 @@ describe('createInboxMCPServer', () => {
                 throw new Error('Test error');
             });
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'fetchMessages');
 
             const result: CallToolResult = await handler({
@@ -510,7 +516,7 @@ describe('createInboxMCPServer', () => {
         test('should mark messages as read', async () => {
             mockInboxManager.markAsRead = mock(async () => { /* intentionally empty */ });
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'markAsRead');
 
             const result: CallToolResult = await handler({
@@ -534,7 +540,7 @@ describe('createInboxMCPServer', () => {
         test('should handle empty message list', async () => {
             mockInboxManager.markAsRead = mock(async () => { /* intentionally empty */ });
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'markAsRead');
 
             const result: CallToolResult = await handler({
@@ -554,7 +560,7 @@ describe('createInboxMCPServer', () => {
                 throw new Error('Test error');
             });
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'markAsRead');
 
             const result: CallToolResult = await handler({
@@ -573,7 +579,7 @@ describe('createInboxMCPServer', () => {
         test('should mark channel as read', async () => {
             mockInboxManager.markChannelRead = mock(async () => { /* intentionally empty */ });
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'markChannelRead');
 
             const result: CallToolResult = await handler({ channelId: '123456789' });
@@ -594,7 +600,7 @@ describe('createInboxMCPServer', () => {
                 throw new Error('Test error');
             });
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'markChannelRead');
 
             const result: CallToolResult = await handler({ channelId: '123456789' });
@@ -629,7 +635,7 @@ describe('createInboxMCPServer', () => {
                 markChannelViewed: mock(_.noop),
             } as unknown as BotStateManager;
 
-            const server = createInboxMCPServer(mockInboxManager, mockStateManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry, mockStateManager);
             const handler = getToolHandler(server, 'getChannelSummary');
 
             await handler({ channelId: '123456789' });
@@ -656,7 +662,7 @@ describe('createInboxMCPServer', () => {
             const spy = spyOn(textGenerator, 'generateTextWithSystemPrompt').mockResolvedValue('Test summary');
             spies.push(spy);
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'getChannelSummary');
 
             const result = await handler({ channelId: '123456789' });
@@ -683,7 +689,7 @@ describe('createInboxMCPServer', () => {
                 markChannelViewed: mock(_.noop),
             } as unknown as BotStateManager;
 
-            const server = createInboxMCPServer(mockInboxManager, mockStateManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry, mockStateManager);
             const handler = getToolHandler(server, 'fetchMessages');
 
             await handler({ channelId: '123456789', messageIds: ['111'] });
@@ -706,7 +712,7 @@ describe('createInboxMCPServer', () => {
 
             mockInboxManager.getMessage = mock(() => message);
 
-            const server = createInboxMCPServer(mockInboxManager);
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
             const handler = getToolHandler(server, 'fetchMessages');
 
             const result = await handler({ channelId: '123456789', messageIds: ['111'] });

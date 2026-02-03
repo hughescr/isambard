@@ -8,6 +8,8 @@ import type { ChannelSummaryResponse, MessageMetadata } from '../integrations/di
 import { createChannelId } from '../integrations/discord/types';
 import { generateTextWithSystemPrompt } from './text-generator';
 import type { BotStateManager } from '@/integrations/discord/state';
+import type { ChannelRegistryManager } from '../integrations/discord/channel-registry';
+import { resolveChannelId } from '../integrations/discord/channel-registry';
 
 /**
  * System prompt for generating channel summaries.
@@ -54,10 +56,12 @@ function textResult(text: string, isError = false): CallToolResult {
  * loaded on startup by fetching messages since the last checkpoint.
  *
  * @param inboxManager - Inbox manager for accessing unread messages
+ * @param channelRegistry - Channel registry for resolving channel names
  * @param stateManager - Optional bot state manager for tracking viewed channels
  */
 export function createInboxMCPServer(
     inboxManager: InboxManager,
+    channelRegistry: ChannelRegistryManager,
     stateManager?: BotStateManager
 ) {
     return createSdkMcpServer({
@@ -90,14 +94,14 @@ export function createInboxMCPServer(
 
             tool(
                 'getChannelSummary',
-                'Get an AI-generated summary of unread messages in a channel, plus message metadata for selective reading.',
+                'Get an AI-generated summary of unread messages in a channel, plus message metadata for selective reading. Accepts channel ID or #channel-name format.',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    channelId: z.string().describe('Discord channel ID'),
+                    channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const channelId = createChannelId(args.channelId);
+                        const channelId = createChannelId(resolveChannelId(args.channelId, channelRegistry));
                         const messages = inboxManager.getChannelMessages(channelId);
 
                         // Track that this channel was viewed during catch-up
@@ -181,16 +185,16 @@ export function createInboxMCPServer(
 
             tool(
                 'fetchMessages',
-                'Fetch full content of specific messages by ID. Use after reviewing channel summary to get details.',
+                'Fetch full content of specific messages by ID. Use after reviewing channel summary to get details. Accepts channel ID or #channel-name format.',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    channelId:  z.string().describe('Discord channel ID'),
+                    channelId:  z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     messageIds: z.array(z.string()).describe('Array of message IDs to fetch'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const channelId = createChannelId(args.channelId);
+                        const channelId = createChannelId(resolveChannelId(args.channelId, channelRegistry));
 
                         // Track that this channel was viewed during catch-up
                         if(stateManager) {
@@ -230,16 +234,16 @@ export function createInboxMCPServer(
 
             tool(
                 'markAsRead',
-                'Mark specific messages as read. Updates the checkpoint for the channel.',
+                'Mark specific messages as read. Updates the checkpoint for the channel. Accepts channel ID or #channel-name format.',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    channelId:  z.string().describe('Discord channel ID'),
+                    channelId:  z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     messageIds: z.array(z.string()).describe('Array of message IDs to mark as read'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const channelId = createChannelId(args.channelId);
+                        const channelId = createChannelId(resolveChannelId(args.channelId, channelRegistry));
                         await inboxManager.markAsRead(channelId, args.messageIds);
 
                         // Stryker disable all: Logger info object
@@ -260,14 +264,14 @@ export function createInboxMCPServer(
 
             tool(
                 'markChannelRead',
-                'Mark all messages in a channel as read. Updates the checkpoint to the latest message.',
+                'Mark all messages in a channel as read. Updates the checkpoint to the latest message. Accepts channel ID or #channel-name format.',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    channelId: z.string().describe('Discord channel ID'),
+                    channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const channelId = createChannelId(args.channelId);
+                        const channelId = createChannelId(resolveChannelId(args.channelId, channelRegistry));
                         await inboxManager.markChannelRead(channelId);
 
                         // Stryker disable all: Logger info object

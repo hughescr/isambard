@@ -13,7 +13,7 @@ import { createChannelId, createUserId, type UserId, type ChannelId } from '../i
 import { withDiscordRetry } from '../integrations/discord/retry';
 import { splitMessage } from '../integrations/discord/messages';
 import type { ChannelRegistryManager } from '../integrations/discord/channel-registry';
-import { DMTracker } from '../integrations/discord/channel-registry';
+import { DMTracker, resolveChannelId } from '../integrations/discord/channel-registry';
 
 /**
  * Context for the current Discord conversation.
@@ -442,10 +442,10 @@ export function createDiscordMCPServer(
         tools:   [
             tool(
                 'searchMessages',
-                'Search Discord message history by text, time range, or both. Returns messages with overflow summaries if results exceed limit.',
+                'Search Discord message history by text, time range, or both. Returns messages with overflow summaries if results exceed limit. Accepts channel ID or #channel-name format.',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    channelId: z.string().describe('Discord channel ID to search in'),
+                    channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     query:     z.string().optional().describe('Text to search for in message content'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
@@ -457,8 +457,9 @@ export function createDiscordMCPServer(
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
+                        const channelId = resolveChannelId(args.channelId, channelRegistry);
                         const result = await searchService.searchMessages({
-                            channelId: args.channelId,
+                            channelId,
                             query:     args.query,
                             startTime: args.startTime ? new Date(args.startTime) : undefined,
                             endTime:   args.endTime ? new Date(args.endTime) : undefined,
@@ -482,17 +483,18 @@ export function createDiscordMCPServer(
 
             tool(
                 'getRecentMessages',
-                'Get the most recent messages from a Discord channel',
+                'Get the most recent messages from a Discord channel. Accepts channel ID or #channel-name format.',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    channelId: z.string().describe('Discord channel ID'),
+                    channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit:     z.number().int().positive().max(100).optional().describe('Number of messages to return (default 10, max 100)'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
+                        const channelId = resolveChannelId(args.channelId, channelRegistry);
                         const result = await searchService.getRecentMessages(
-                            args.channelId,
+                            channelId,
                             // Stryker disable next-line LogicalOperator: ?? operator provides default value, tested via integration
                             args.limit ?? 10
                         );
@@ -513,19 +515,20 @@ export function createDiscordMCPServer(
 
             tool(
                 'getMessageById',
-                'Fetch a specific Discord message by its ID, or multiple messages by an array of IDs',
+                'Fetch a specific Discord message by its ID, or multiple messages by an array of IDs. Accepts channel ID or #channel-name format.',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    channelId: z.string().describe('Discord channel ID'),
+                    channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     messageId: z.union([z.string(), z.array(z.string())]).describe('Discord message ID or array of message IDs'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
+                        const channelId = resolveChannelId(args.channelId, channelRegistry);
                         // Handle array input
                         if(_.isArray(args.messageId)) {
                             const results = await searchService.getMessagesById(
-                                args.channelId,
+                                channelId,
                                 args.messageId
                             );
                             return {
@@ -535,7 +538,7 @@ export function createDiscordMCPServer(
 
                         // Handle single string input (existing logic)
                         const result = await searchService.getMessageById(
-                            args.channelId,
+                            channelId,
                             args.messageId
                         );
                         if(!result) {
@@ -565,13 +568,14 @@ export function createDiscordMCPServer(
 CRITICAL: Only use channel IDs from:
 1. The channelId in a message you're responding to (preferred)
 2. Your memory (/state/discord-channels)
-3. Default: 1451694737026449581 (#general)
+3. Channel name: #general, #off-topic, etc.
 4. @username format for DMs (e.g., "@alice" to send a DM)
+5. Default: 1451694737026449581 (#general)
 
 NEVER invent or guess channel IDs. If unsure, use #general.`,
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    channelId:        z.string().describe('Target channel ID, or @username for DM - use from message context, memory, or default: 1451694737026449581 (#general)'),
+                    channelId:        z.string().describe('Target channel ID, #channel-name, or @username for DM - use from message context, memory, or default: 1451694737026449581 (#general)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     content:          z.string().describe('Message content (max 2000 chars)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
@@ -589,8 +593,10 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             return threadError;
                         }
 
-                        // Resolve @username to channel ID if needed
+                        // Resolve channel identifier (handle #channel-name and @username)
                         let resolvedChannelId = args.channelId;
+
+                        // First, check for @username (DM resolution)
                         if(_.startsWith(args.channelId, '@')) {
                             const username = args.channelId.slice(1); // Remove @
                             const dmChannelId = await dmTracker.getOrCreateDMByUsername(username);
@@ -601,6 +607,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                                 };
                             }
                             resolvedChannelId = dmChannelId;
+                        } else {
+                            // If not @username, try to resolve as #channel-name or pass through numeric ID
+                            resolvedChannelId = resolveChannelId(args.channelId, channelRegistry);
                         }
 
                         // Fetch and validate channel
@@ -660,10 +669,10 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
 
             tool(
                 'askUserQuestion',
-                'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit).',
+                'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format.',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    channelId:      z.string().describe('Channel to ask in'),
+                    channelId:      z.string().describe('Channel to ask in - channel ID or #channel-name (e.g., #general)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     question:       z.string().describe('Question text'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
@@ -685,15 +694,18 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             return optionsError;
                         }
 
-                        // 2. Normalize channel ID (handles threads)
-                        const normalizeResult = await normalizeChannelId(client, args.channelId);
+                        // 2. Resolve channel name to ID if needed
+                        const channelId = resolveChannelId(args.channelId, channelRegistry);
+
+                        // 3. Normalize channel ID (handles threads)
+                        const normalizeResult = await normalizeChannelId(client, channelId);
                         if('error' in normalizeResult) {
                             return normalizeResult.error;
                         }
 
                         const { normalizedChannelId, existingThreadId, channel } = normalizeResult;
 
-                        // 3. Build message with optional buttons
+                        // 4. Build message with optional buttons
                         const questionId = randomUUID();
                         const messageOptions = buildQuestionMessage(
                             questionId,
@@ -702,7 +714,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             args.options
                         );
 
-                        // 4. Prepare target channel (existing thread or create new)
+                        // 5. Prepare target channel (existing thread or create new)
                         const { targetChannel, threadId } = await prepareQuestionChannel(
                             existingThreadId ? await client.channels.fetch(existingThreadId) : channel,
                             channel,
@@ -711,7 +723,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             args.threadName
                         );
 
-                        // 5. Send question
+                        // 6. Send question
                         const sentMessage = await withDiscordRetry(
                             () => targetChannel.send(messageOptions),
                             // Stryker disable next-line StringLiteral: Operation name for logging
@@ -730,7 +742,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         });
                         // Stryker restore all
 
-                        // 6. Register question and wait for answer
+                        // 7. Register question and wait for answer
                         const result = await registerAndWaitForAnswer(questionRegistry, {
                             questionId,
                             normalizedChannelId,
@@ -744,7 +756,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             timeoutSeconds: args.timeoutSeconds,
                         });
 
-                        // 7. Format and return result
+                        // 8. Format and return result
                         return formatQuestionResult(result, questionId, args.channelId, threadId);
                     } catch (error) {
                         // Stryker disable all: Error handling path
@@ -761,10 +773,10 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
 
             tool(
                 'addReaction',
-                'Add one or more emoji reactions to a Discord message',
+                'Add one or more emoji reactions to a Discord message. Accepts channel ID or #channel-name format.',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    channelId: z.string().describe('Discord channel ID'),
+                    channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     messageId: z.string().describe('Discord message ID to react to'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
@@ -772,8 +784,11 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
+                        // Resolve channel name to ID if needed
+                        const channelId = resolveChannelId(args.channelId, channelRegistry);
+
                         // Fetch and validate channel
-                        const channelResult = await fetchAndValidateChannel(client, args.channelId);
+                        const channelResult = await fetchAndValidateChannel(client, channelId);
                         if('error' in channelResult) {
                             return channelResult.error;
                         }
@@ -843,18 +858,19 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
 
             tool(
                 'muteChannel',
-                'Mute a Discord channel so the bot will not respond to messages in it. Use this when you want to observe a channel without participating.',
+                'Mute a Discord channel so the bot will not respond to messages in it. Use this when you want to observe a channel without participating. Accepts either a numeric channel ID or channel name with # prefix (e.g., #general).',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    channelId: z.string().describe('Discord channel ID to mute'),
+                    channelId: z.string().describe('Discord channel ID or name with # prefix (e.g., #general)'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        await channelRegistry.muteChannel(args.channelId as ChannelId);
+                        const channelId = resolveChannelId(args.channelId, channelRegistry);
+                        await channelRegistry.muteChannel(channelId);
                         // Stryker disable next-line all: Logging for observability
-                        logger.info({ tool: 'muteChannel', channelId: args.channelId, msg: 'Channel muted' });
+                        logger.info({ tool: 'muteChannel', channelId, msg: 'Channel muted' });
                         return {
-                            content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId: args.channelId, muted: true }) }],
+                            content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId, muted: true }) }],
                         };
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);
@@ -870,18 +886,19 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
 
             tool(
                 'unmuteChannel',
-                'Unmute a Discord channel so the bot will respond to messages in it again.',
+                'Unmute a Discord channel so the bot will respond to messages in it again. Accepts either a numeric channel ID or channel name with # prefix (e.g., #general).',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    channelId: z.string().describe('Discord channel ID to unmute'),
+                    channelId: z.string().describe('Discord channel ID or name with # prefix (e.g., #general)'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        await channelRegistry.unmuteChannel(args.channelId as ChannelId);
+                        const channelId = resolveChannelId(args.channelId, channelRegistry);
+                        await channelRegistry.unmuteChannel(channelId);
                         // Stryker disable next-line all: Logging for observability
-                        logger.info({ tool: 'unmuteChannel', channelId: args.channelId, msg: 'Channel unmuted' });
+                        logger.info({ tool: 'unmuteChannel', channelId, msg: 'Channel unmuted' });
                         return {
-                            content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId: args.channelId, muted: false }) }],
+                            content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId, muted: false }) }],
                         };
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);

@@ -522,4 +522,18 @@ describe('loadDynamoDBConfig', () => {
         };
         expect(() => loadDynamoDBConfig(resources)).toThrow();
     });
+
+    test('should handle undefined DynamoDBEndpoint resource (missing optional chaining)', () => {
+        // This tests the optional chaining on line 112
+        // If ?. is removed, accessing undefined.value would throw
+        const resources = {
+            DynamoDBTableName: { value: 'IsambardMemory' },
+            DynamoDBRegion:    { value: 'us-west-2' },
+            DynamoDBEndpoint:  undefined as unknown as { value: string | undefined },
+        };
+
+        expect(() => loadDynamoDBConfig(resources)).not.toThrow();
+        const config = loadDynamoDBConfig(resources);
+        expect(config.endpoint).toBeUndefined();
+    });
 });

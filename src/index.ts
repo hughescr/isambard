@@ -155,7 +155,7 @@ export async function createApp(): Promise<App> {
         });
 
         // Create inbox MCP server with bot state manager for tracking viewed channels
-        inboxMcpServer = createInboxMCPServer(inboxManager, botStateManager);
+        inboxMcpServer = createInboxMCPServer(inboxManager, channelRegistry, botStateManager);
 
         // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
         logger.info('Inbox system initialized');
