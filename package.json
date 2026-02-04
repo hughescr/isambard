@@ -6,7 +6,6 @@
   "main": "src/index.ts",
   "scripts": {
     "deploy:running": "cd running && git fetch origin running && git reset --hard origin/running && bun install",
-    "dev:docker": "docker compose -f docker/docker-compose.yml up --build",
     "dev:sst": "sst shell -- bun --hot src/index.ts",
     "lint": "eslint --cache --format unix .",
     "lint:fix": "eslint --cache --fix --format overview .",

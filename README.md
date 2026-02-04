@@ -46,7 +46,6 @@ Isambard uses OAuth authentication via Claude Max subscription:
 ### Prerequisites
 
 - [Bun](https://bun.sh/) >= 1.0
-- [Docker](https://docker.com/) (for local DynamoDB)
 - [1Password CLI](https://developer.1password.com/docs/cli/) (for secrets)
 - AWS account (for SST deployment)
 
@@ -137,7 +136,6 @@ Isambard uses OAuth authentication via Claude Max subscription:
 |---------|-------------|
 | `bun run deploy:running` | Update running worktree from origin |
 | `bun run dev` | Development with hot reload |
-| `bun run dev:docker` | Start local DynamoDB |
 | `bun test` | Run tests |
 | `bun run mutate` | Mutation testing (Stryker) |
 | `bun run lint` | ESLint check |
