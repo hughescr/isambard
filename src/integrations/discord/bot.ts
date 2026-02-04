@@ -45,7 +45,7 @@ import {
     type PerchConfig
 } from '@/agent/perch';
 import { discoverAllChannels, setupChannelEventHandlers, DMTracker, ResponseRouter, type ChannelRegistryManager } from './channel-registry';
-import { sendResponse } from './response-sender';
+import { sendResponse, sendResponseToWellKnownChannel } from './response-sender';
 
 /**
  * Global state for Discord client to survive Bun hot reload.
@@ -680,6 +680,9 @@ interface SetupCatchUpRunnerParams {
     botStateManager:        BotStateManager
     presenceManager:        PresenceManager | undefined
     dynamicStatusGenerator: ReturnType<typeof createDynamicStatusGenerator> | undefined
+    responseRouter:         ResponseRouter
+    rateLimiter:            DiscordRateLimiter
+    client:                 Client
 }
 
 /**
@@ -696,6 +699,9 @@ function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): CatchUpSes
         botStateManager,
         presenceManager,
         dynamicStatusGenerator,
+        responseRouter,
+        rateLimiter,
+        client,
     } = params;
 
     return createCatchUpSessionRunner({
@@ -740,6 +746,27 @@ function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): CatchUpSes
                 streamEventHandler.complete();
             }
 
+            // Log session completion
+            logger.info({
+                sessionType:    'catching_up',
+                hasResponse:    Boolean(result.response),
+                responseLength: result.response?.length ?? 0,
+                wasInterrupted: result.wasInterrupted,
+                sessionId:      result.sessionId,
+                msg:            'Session completed',
+            });
+
+            // Route response to well-known channel if present
+            if(result.response && !result.wasInterrupted) {
+                await sendResponseToWellKnownChannel({
+                    response:    result.response,
+                    sessionType: 'catching_up',
+                    responseRouter,
+                    rateLimiter,
+                    client,
+                });
+            }
+
             return {
                 completed: !result.wasInterrupted,
                 sessionId: result.sessionId,
@@ -761,6 +788,9 @@ interface SetupPerchParams {
     botStateManager:        BotStateManager
     presenceManager:        PresenceManager | undefined
     dynamicStatusGenerator: ReturnType<typeof createDynamicStatusGenerator> | undefined
+    responseRouter:         ResponseRouter
+    rateLimiter:            DiscordRateLimiter
+    client:                 Client
 }
 
 /**
@@ -779,6 +809,9 @@ function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
         botStateManager,
         presenceManager,
         dynamicStatusGenerator,
+        responseRouter,
+        rateLimiter,
+        client,
     } = params;
 
     const runner = createPerchSessionRunner({
@@ -809,6 +842,27 @@ function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
             // Complete presence updates
             if(streamEventHandler) {
                 streamEventHandler.complete();
+            }
+
+            // Log session completion
+            logger.info({
+                sessionType:    'perching',
+                hasResponse:    Boolean(result.response),
+                responseLength: result.response?.length ?? 0,
+                wasInterrupted: result.wasInterrupted,
+                sessionId:      result.sessionId,
+                msg:            'Session completed',
+            });
+
+            // Route response to well-known channel if present
+            if(result.response && !result.wasInterrupted) {
+                await sendResponseToWellKnownChannel({
+                    response:    result.response,
+                    sessionType: 'perching',
+                    responseRouter,
+                    rateLimiter,
+                    client,
+                });
             }
 
             return {
@@ -1220,6 +1274,12 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             }
         }
 
+        // Create DMTracker and ResponseRouter (after client is ready, BEFORE session runners)
+        const dmTracker = new DMTracker(channelRegistry, readyClient);
+        const responseRouter = new ResponseRouter({
+            manager: channelRegistry,
+        });
+
         // Create catch-up session runner if all dependencies available (must be created before inbox init)
         if(inboxManager && agent && memoryBackend) {
             catchUpSessionRunner = setupCatchUpSessionRunner({
@@ -1229,6 +1289,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 botStateManager,
                 presenceManager,
                 dynamicStatusGenerator,
+                responseRouter,
+                rateLimiter,
+                client: readyClient,
             });
         }
 
@@ -1240,16 +1303,13 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 botStateManager,
                 presenceManager,
                 dynamicStatusGenerator,
+                responseRouter,
+                rateLimiter,
+                client:      readyClient,
             });
             perchSessionRunner = perchSetup.runner;
             perchScheduler = perchSetup.scheduler;
         }
-
-        // Create DMTracker and ResponseRouter (after client is ready)
-        const dmTracker = new DMTracker(channelRegistry, readyClient);
-        const responseRouter = new ResponseRouter({
-            manager: channelRegistry,
-        });
 
         // Initialize channel registry BEFORE setting up message handlers
         // Pass rateLimiter for error notification (may be undefined if not created yet)

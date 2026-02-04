@@ -44,6 +44,22 @@ export interface SendResponseResult {
 }
 
 /**
+ * Configuration for sending a response to a well-known channel.
+ */
+export interface SendToWellKnownConfig {
+    /** Response router for routing decisions */
+    responseRouter: ResponseRouter
+    /** The response text to send */
+    response:       string | null | undefined
+    /** Session type (catching_up or perching) */
+    sessionType:    'catching_up' | 'perching'
+    /** Rate limiter for Discord API calls */
+    rateLimiter:    DiscordRateLimiter
+    /** Discord client for fetching channels */
+    client:         Client
+}
+
+/**
  * Shared helper function for routing and sending responses.
  * Handles:
  * - Determining session type from bot state
@@ -122,9 +138,11 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
     if(!shouldSend) {
         // Agent chose not to respond (@@NO_RESPONSE@@ sentinel)
         // Stryker disable all: Logging for observability
-        logger.debug({
-            messageId: message.id,
-            msg:       'Agent chose not to respond (@@NO_RESPONSE@@ sentinel)',
+        logger.info({
+            messageId:    message.id,
+            sessionType,
+            fullResponse: response,
+            msg:          'Agent chose not to respond (@@NO_RESPONSE@@ sentinel detected)',
         });
         // Stryker restore all
         return {
@@ -197,6 +215,117 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
     } catch (replyError) {
         const err = _.isError(replyError) ? replyError : new Error(String(replyError));
         logger.error({ error: err, messageId: message.id, msg: `Failed to send response: ${err.message}` });
+        return {
+            sent:  false,
+            routing,
+            error: err,
+        };
+    }
+}
+
+/**
+ * Sends a response to a well-known channel (catch-up or perch-time).
+ * This is used for autonomous sessions (perch/catch-up) that don't have a triggering message.
+ *
+ * @param config - Configuration for sending the response
+ * @returns Result indicating success/failure and routing metadata
+ */
+export async function sendResponseToWellKnownChannel(config: SendToWellKnownConfig): Promise<SendResponseResult> {
+    const { response, sessionType, responseRouter, rateLimiter, client } = config;
+
+    // Handle empty/null responses
+    if(!response || response.length === 0) {
+        logger.info({
+            sessionType,
+            msg: 'No response to send (empty response from agent)',
+        });
+        return {
+            sent:       false,
+            skipReason: 'Empty response from agent',
+        };
+    }
+
+    // Route response based on session type (no origin channel for autonomous sessions)
+    let routing: RoutingResult;
+    try {
+        routing = await responseRouter.routeResponse(
+            sessionType,
+            response,
+            // No origin channel for autonomous sessions - pass undefined
+            undefined as unknown as ChannelId
+        );
+    } catch (routeError: unknown) {
+        if(routeError instanceof WellKnownChannelNotFoundError) {
+            logger.error({
+                error:       routeError,
+                sessionType,
+                channelType: routeError.channelType,
+                msg:         `Cannot route response: well-known channel #${routeError.channelType} not configured. Response skipped.`,
+            });
+            return {
+                sent:       false,
+                skipReason: `Well-known channel #${routeError.channelType} not configured`,
+            };
+        }
+        throw routeError;
+    }
+
+    const shouldSend = routing.shouldSend;
+    const content = routing.content;
+    const targetChannelId = routing.targetChannelId;
+
+    if(!shouldSend) {
+        // Agent chose not to respond (@@NO_RESPONSE@@ sentinel)
+        logger.info({
+            sessionType,
+            fullResponse: response,
+            msg:          'Agent chose not to respond (@@NO_RESPONSE@@ sentinel detected)',
+        });
+        return {
+            sent:       false,
+            routing,
+            skipReason: 'Agent chose not to respond (@@NO_RESPONSE@@ sentinel detected)',
+        };
+    }
+
+    logger.info({
+        responseLength: content.length,
+        msg:            `Response generated (${content.length} chars)`,
+    });
+
+    // Split long messages into Discord-safe chunks
+    const chunks = splitMessage(content);
+
+    try {
+        // Fetch target channel
+        const targetChannel = await client.channels.fetch(targetChannelId);
+        if(!targetChannel?.isTextBased()) {
+            throw new Error(`Target channel ${targetChannelId} not found or not a text channel`);
+        }
+
+        // Send all chunks to the well-known channel
+        for(let i = 0; i < chunks.length; i++) {
+            await withDiscordRetry(
+                () => rateLimiter.sendToChannel(targetChannel as TextChannel, chunks[i]),
+                'sendToChannel'
+            );
+            logger.info({
+                sessionType,
+                channelType: sessionType === 'catching_up' ? 'catch-up' : 'perch-time',
+                targetChannelId,
+                chunkIndex:  i,
+                totalChunks: chunks.length,
+                msg:         i === 0 ? 'Response sent to well-known channel' : 'Continuation sent to well-known channel',
+            });
+        }
+
+        return {
+            sent: true,
+            routing,
+        };
+    } catch (sendError) {
+        const err = _.isError(sendError) ? sendError : new Error(String(sendError));
+        logger.error({ error: err, sessionType, msg: `Failed to send response: ${err.message}` });
         return {
             sent:  false,
             routing,

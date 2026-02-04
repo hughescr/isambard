@@ -529,4 +529,238 @@ describe('sendResponse', () => {
             // Warning should not be logged (verified by mutation test)
         });
     });
+
+    describe('sendResponseToWellKnownChannel', () => {
+        test('returns skipReason when response is null', async () => {
+            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
+
+            const result = await sendResponseToWellKnownChannel({
+                response:       null,
+                sessionType:    'catching_up',
+                responseRouter: mockResponseRouter,
+                rateLimiter:    mockRateLimiter,
+                client:         mockClient,
+            });
+
+            expect(result.sent).toBe(false);
+            expect(result.skipReason).toBe('Empty response from agent');
+            expect(mockRouteResponse).not.toHaveBeenCalled();
+        });
+
+        test('returns skipReason when response is undefined', async () => {
+            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
+
+            const result = await sendResponseToWellKnownChannel({
+                response:       undefined,
+                sessionType:    'perching',
+                responseRouter: mockResponseRouter,
+                rateLimiter:    mockRateLimiter,
+                client:         mockClient,
+            });
+
+            expect(result.sent).toBe(false);
+            expect(result.skipReason).toBe('Empty response from agent');
+            expect(mockRouteResponse).not.toHaveBeenCalled();
+        });
+
+        test('returns skipReason when response is empty string', async () => {
+            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
+
+            const result = await sendResponseToWellKnownChannel({
+                response:       '',
+                sessionType:    'catching_up',
+                responseRouter: mockResponseRouter,
+                rateLimiter:    mockRateLimiter,
+                client:         mockClient,
+            });
+
+            expect(result.sent).toBe(false);
+            expect(result.skipReason).toBe('Empty response from agent');
+            expect(mockRouteResponse).not.toHaveBeenCalled();
+        });
+
+        test('detects sentinel and logs full response', async () => {
+            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
+
+            mockRouteResponse.mockResolvedValue({
+                targetChannelId: 'catch-up-channel-789' as ChannelId,
+                shouldSend:      false,
+                content:         '',
+                isFallback:      false,
+            });
+
+            const result = await sendResponseToWellKnownChannel({
+                response:       'Nothing to report today. @@NO_RESPONSE@@',
+                sessionType:    'catching_up',
+                responseRouter: mockResponseRouter,
+                rateLimiter:    mockRateLimiter,
+                client:         mockClient,
+            });
+
+            expect(result.sent).toBe(false);
+            expect(result.skipReason).toBe('Agent chose not to respond (@@NO_RESPONSE@@ sentinel detected)');
+            expect(mockSendToChannel).not.toHaveBeenCalled();
+        });
+
+        test('sends response to catch-up well-known channel', async () => {
+            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
+
+            mockRouteResponse.mockResolvedValue({
+                targetChannelId: 'catch-up-channel-789' as ChannelId,
+                shouldSend:      true,
+                content:         'Caught up on 5 messages',
+                isFallback:      false,
+            });
+
+            (mockClient.channels.fetch as ReturnType<typeof mock>).mockResolvedValue(mockTargetChannel);
+
+            const result = await sendResponseToWellKnownChannel({
+                response:       'Caught up on 5 messages',
+                sessionType:    'catching_up',
+                responseRouter: mockResponseRouter,
+                rateLimiter:    mockRateLimiter,
+                client:         mockClient,
+            });
+
+            expect(result.sent).toBe(true);
+            expect(mockRouteResponse).toHaveBeenCalledWith(
+                'catching_up',
+                'Caught up on 5 messages',
+                undefined
+            );
+            expect(mockSendToChannel).toHaveBeenCalledWith(
+                mockTargetChannel,
+                'Caught up on 5 messages'
+            );
+        });
+
+        test('sends response to perch-time well-known channel', async () => {
+            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
+
+            mockRouteResponse.mockResolvedValue({
+                targetChannelId: 'perch-time-channel-890' as ChannelId,
+                shouldSend:      true,
+                content:         'Perch reflection complete',
+                isFallback:      false,
+            });
+
+            (mockClient.channels.fetch as ReturnType<typeof mock>).mockResolvedValue(mockTargetChannel);
+
+            const result = await sendResponseToWellKnownChannel({
+                response:       'Perch reflection complete',
+                sessionType:    'perching',
+                responseRouter: mockResponseRouter,
+                rateLimiter:    mockRateLimiter,
+                client:         mockClient,
+            });
+
+            expect(result.sent).toBe(true);
+            expect(mockRouteResponse).toHaveBeenCalledWith(
+                'perching',
+                'Perch reflection complete',
+                undefined
+            );
+            expect(mockSendToChannel).toHaveBeenCalledWith(
+                mockTargetChannel,
+                'Perch reflection complete'
+            );
+        });
+
+        test('splits long messages into chunks', async () => {
+            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
+
+            const longResponse = _.repeat('a', 2500); // Exceeds 2000 char limit
+
+            mockRouteResponse.mockResolvedValue({
+                targetChannelId: 'catch-up-channel-789' as ChannelId,
+                shouldSend:      true,
+                content:         longResponse,
+                isFallback:      false,
+            });
+
+            (mockClient.channels.fetch as ReturnType<typeof mock>).mockResolvedValue(mockTargetChannel);
+
+            const result = await sendResponseToWellKnownChannel({
+                response:       longResponse,
+                sessionType:    'catching_up',
+                responseRouter: mockResponseRouter,
+                rateLimiter:    mockRateLimiter,
+                client:         mockClient,
+            });
+
+            expect(result.sent).toBe(true);
+            // Should send at least 2 chunks
+            expect(mockSendToChannel.mock.calls.length).toBeGreaterThanOrEqual(2);
+        });
+
+        test('handles send errors gracefully', async () => {
+            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
+
+            const sendError = new Error('Failed to send to channel');
+
+            mockRouteResponse.mockResolvedValue({
+                targetChannelId: 'catch-up-channel-789' as ChannelId,
+                shouldSend:      true,
+                content:         'test response',
+                isFallback:      false,
+            });
+
+            (mockClient.channels.fetch as ReturnType<typeof mock>).mockResolvedValue(mockTargetChannel);
+            mockSendToChannel.mockRejectedValue(sendError);
+
+            const result = await sendResponseToWellKnownChannel({
+                response:       'test response',
+                sessionType:    'catching_up',
+                responseRouter: mockResponseRouter,
+                rateLimiter:    mockRateLimiter,
+                client:         mockClient,
+            });
+
+            expect(result.sent).toBe(false);
+            expect(result.error).toBe(sendError);
+        });
+
+        test('handles well-known channel not found error', async () => {
+            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
+
+            const notFoundError = new WellKnownChannelNotFoundError('catch-up');
+            mockRouteResponse.mockRejectedValue(notFoundError);
+
+            const result = await sendResponseToWellKnownChannel({
+                response:       'test response',
+                sessionType:    'catching_up',
+                responseRouter: mockResponseRouter,
+                rateLimiter:    mockRateLimiter,
+                client:         mockClient,
+            });
+
+            expect(result.sent).toBe(false);
+            expect(result.skipReason).toContain('catch-up');
+            expect(mockSendToChannel).not.toHaveBeenCalled();
+        });
+
+        test('handles target channel not found', async () => {
+            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
+
+            mockRouteResponse.mockResolvedValue({
+                targetChannelId: 'nonexistent-channel' as ChannelId,
+                shouldSend:      true,
+                content:         'test response',
+                isFallback:      false,
+            });
+
+            (mockClient.channels.fetch as ReturnType<typeof mock>).mockResolvedValue(null);
+
+            const result = await sendResponseToWellKnownChannel({
+                response:       'test response',
+                sessionType:    'catching_up',
+                responseRouter: mockResponseRouter,
+                rateLimiter:    mockRateLimiter,
+                client:         mockClient,
+            });
+
+            expect(result.sent).toBe(false);
+            expect(result.error?.message).toContain('not found');
+        });
+    });
 });
