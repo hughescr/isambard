@@ -6,8 +6,19 @@ import { configSchema, dynamoDBConfigSchema, type Config, type DynamoDBConfig } 
 /**
  * Keys in SST Resource that have a value property (configs and secrets).
  * Excludes App and IsambardMemory which have different shapes.
+ * Also excludes planned-but-not-implemented secrets and deprecated/removed configs.
  */
-type ConfigKeys = Exclude<keyof SstResource, 'App' | 'IsambardMemory'>;
+type ConfigKeys = Exclude<keyof SstResource,
+  | 'App' | 'IsambardMemory'
+  // Deprecated/removed (moved to env vars):
+  | 'LogTimezone' | 'PerchEnabled' | 'PerchTestModeForceSlot' | 'PerchTestModeTriggerOnStartup'
+  // Stale entries from sst-env.d.ts (not in actual config):
+  | 'DiscordMonitoredChannels' | 'DynamoDBEndpoint' | 'DynamoDBRegion' | 'DynamoDBTableName'
+  // Planned integrations (not yet implemented):
+  | 'CaldavUrl' | 'CaldavUsername' | 'CaldavPassword'
+  | 'ImapHost' | 'ImapPort' | 'SmtpHost' | 'SmtpPort' | 'EmailUser' | 'EmailPassword'
+  | 'BoxClientId' | 'BoxClientSecret'
+>;
 
 /**
  * Extract value type from SST Resource property.
@@ -40,19 +51,6 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
         agent: {
             oauthToken: resources.ClaudeCodeOAuthToken.value,
         },
-        caldav: {
-            url:      resources.CaldavUrl.value,
-            username: resources.CaldavUsername.value,
-            password: resources.CaldavPassword.value,
-        },
-        email: {
-            imapHost: resources.ImapHost.value,
-            imapPort: resources.ImapPort.value,
-            smtpHost: resources.SmtpHost.value,
-            smtpPort: resources.SmtpPort.value,
-            user:     resources.EmailUser.value,
-            password: resources.EmailPassword.value,
-        },
         discord: {
             botToken:      resources.DiscordBotToken.value,
             applicationId: resources.DiscordApplicationId.value,
@@ -66,11 +64,7 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
                 idleRefreshIntervalMs: 300000,      // Refresh idle status every 5 minutes to maintain visibility
             },
         },
-        box: {
-            clientId:     resources.BoxClientId.value,
-            clientSecret: resources.BoxClientSecret.value,
-        },
-        perch: (resources.PerchEnabled?.value ?? 'true') === 'true'
+        perch: (process.env.PERCH_ENABLED ?? 'true') === 'true'
             ? {
                 enabled:           true,
                 timezone:          'America/Los_Angeles',
@@ -78,14 +72,32 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
                 jitterMinutes:     15,
                 maxSessionMinutes: 45,
                 // Stryker disable next-line StringLiteral: Mutating 'false' to '' is equivalent - both fail === 'true' check
-                testMode:          (resources.PerchTestModeTriggerOnStartup?.value ?? 'false') === 'true'
+                testMode:          (process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP ?? 'false') === 'true'
                     ? {
                         triggerOnStartup: true,
-                        forceSlot:        (resources.PerchTestModeForceSlot as { value?: string } | undefined)?.value as 'pre-dawn' | 'mid-morning' | 'afternoon' | 'evening' | 'late-night' | undefined,
+                        forceSlot:        process.env.PERCH_TEST_MODE_FORCE_SLOT as 'pre-dawn' | 'mid-morning' | 'afternoon' | 'evening' | 'late-night' | undefined,
                     }
                     : undefined,
             }
             : undefined,
+        // Planned integrations (commented out until implemented):
+        // caldav: {
+        //     url:      resources.CaldavUrl.value,
+        //     username: resources.CaldavUsername.value,
+        //     password: resources.CaldavPassword.value,
+        // },
+        // email: {
+        //     imapHost: resources.ImapHost.value,
+        //     imapPort: resources.ImapPort.value,
+        //     smtpHost: resources.SmtpHost.value,
+        //     smtpPort: resources.SmtpPort.value,
+        //     user:     resources.EmailUser.value,
+        //     password: resources.EmailPassword.value,
+        // },
+        // box: {
+        //     clientId:     resources.BoxClientId.value,
+        //     clientSecret: resources.BoxClientSecret.value,
+        // },
     };
 
     const result = configSchema.safeParse(rawConfig);

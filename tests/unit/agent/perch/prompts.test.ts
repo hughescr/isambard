@@ -13,7 +13,7 @@ import {
 import type { PerchSlot } from '@/agent/perch/types';
 
 describe.concurrent('buildPerchPrompt', () => {
-    describe('unscheduled slot', () => {
+    describe.concurrent('unscheduled slot', () => {
         test('should return only BASE_PROMPT for unscheduled', () => {
             const prompt = buildPerchPrompt('unscheduled');
             expect(prompt).toBe(BASE_PROMPT);
@@ -26,8 +26,8 @@ describe.concurrent('buildPerchPrompt', () => {
         });
     });
 
-    describe('scheduled slots', () => {
-        describe('pre-dawn slot', () => {
+    describe.concurrent('scheduled slots', () => {
+        describe.concurrent('pre-dawn slot', () => {
             test('should include BASE_PROMPT', () => {
                 const prompt = buildPerchPrompt('pre-dawn');
                 expect(prompt).toContain(BASE_PROMPT);
@@ -51,7 +51,7 @@ describe.concurrent('buildPerchPrompt', () => {
             });
         });
 
-        describe('mid-morning slot', () => {
+        describe.concurrent('mid-morning slot', () => {
             test('should include BASE_PROMPT', () => {
                 const prompt = buildPerchPrompt('mid-morning');
                 expect(prompt).toContain(BASE_PROMPT);
@@ -68,7 +68,7 @@ describe.concurrent('buildPerchPrompt', () => {
             });
         });
 
-        describe('afternoon slot', () => {
+        describe.concurrent('afternoon slot', () => {
             test('should include BASE_PROMPT', () => {
                 const prompt = buildPerchPrompt('afternoon');
                 expect(prompt).toContain(BASE_PROMPT);
@@ -85,7 +85,7 @@ describe.concurrent('buildPerchPrompt', () => {
             });
         });
 
-        describe('evening slot', () => {
+        describe.concurrent('evening slot', () => {
             test('should include BASE_PROMPT', () => {
                 const prompt = buildPerchPrompt('evening');
                 expect(prompt).toContain(BASE_PROMPT);
@@ -102,7 +102,7 @@ describe.concurrent('buildPerchPrompt', () => {
             });
         });
 
-        describe('late-night slot', () => {
+        describe.concurrent('late-night slot', () => {
             test('should include BASE_PROMPT', () => {
                 const prompt = buildPerchPrompt('late-night');
                 expect(prompt).toContain(BASE_PROMPT);
@@ -120,7 +120,7 @@ describe.concurrent('buildPerchPrompt', () => {
         });
     });
 
-    describe('prompt structure', () => {
+    describe.concurrent('prompt structure', () => {
         test('all scheduled slots should follow same structure', () => {
             const scheduledSlots: PerchSlot[] = ['pre-dawn', 'mid-morning', 'afternoon', 'evening', 'late-night'];
 
@@ -140,14 +140,14 @@ describe.concurrent('buildPerchPrompt', () => {
 });
 
 describe.concurrent('getSuggestionLevelDescription', () => {
-    describe('unscheduled slot', () => {
+    describe.concurrent('unscheduled slot', () => {
         test('should return "none" for unscheduled', () => {
             const description = getSuggestionLevelDescription('unscheduled');
             expect(description).toBe('none');
         });
     });
 
-    describe('scheduled slots', () => {
+    describe.concurrent('scheduled slots', () => {
         test('should return correct description for pre-dawn (strongly_suggestive)', () => {
             const description = getSuggestionLevelDescription('pre-dawn');
             expect(description).toBe('strongly suggestive (high-value timing)');
@@ -174,7 +174,7 @@ describe.concurrent('getSuggestionLevelDescription', () => {
         });
     });
 
-    describe('suggestion level mapping', () => {
+    describe.concurrent('suggestion level mapping', () => {
         test('all scheduled slots should return valid descriptions', () => {
             const scheduledSlots: PerchSlot[] = ['pre-dawn', 'mid-morning', 'afternoon', 'evening', 'late-night'];
             const validDescriptions = [

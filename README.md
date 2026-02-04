@@ -84,48 +84,26 @@ Isambard uses OAuth authentication via Claude Max subscription:
    bunx sst secret set DiscordApplicationId <application-id>
    ```
 
-   **Optional:**
+   **Optional environment variables (in `.env`):**
    ```bash
    # Logger timezone (IANA format, defaults to system timezone)
-   bunx sst secret set LogTimezone America/Los_Angeles
+   LOG_TIMEZONE=America/Los_Angeles
+
+   # Perch autonomous scheduling (defaults shown)
+   PERCH_ENABLED=true
+   PERCH_TEST_MODE_FORCE_SLOT=
+   PERCH_TEST_MODE_TRIGGER_ON_STARTUP=false
    ```
 
-   **Planned (not yet implemented):**
-   ```bash
-   # Apple Calendar (CalDAV)
-   bunx sst secret set CaldavUrl https://caldav.icloud.com
-   bunx sst secret set CaldavUsername <apple-id@icloud.com>
-   bunx sst secret set CaldavPassword <app-specific-password>
-
-   # Email (IMAP/SMTP)
-   bunx sst secret set ImapHost mail.example.com
-   bunx sst secret set ImapPort 993
-   bunx sst secret set SmtpHost mail.example.com
-   bunx sst secret set SmtpPort 587
-   bunx sst secret set EmailUser <email@example.com>
-   bunx sst secret set EmailPassword <app-specific-password>
-
-   # Box Documents
-   bunx sst secret set BoxClientId <client-id>
-   bunx sst secret set BoxClientSecret <client-secret>
-   ```
-
-   **Optional (with defaults shown):**
-   ```bash
-   # Perch autonomous scheduling
-   bunx sst secret set PerchEnabled true
-   bunx sst secret set PerchTestModeForceSlot <slot-name>
-   bunx sst secret set PerchTestModeTriggerOnStartup false
-   ```
+   **Planned integrations (not yet implemented - secrets commented out in `sst/secrets.ts`):**
+   - Apple Calendar (CalDAV): `CaldavUrl`, `CaldavUsername`, `CaldavPassword`
+   - Email (IMAP/SMTP): `ImapHost`, `ImapPort`, `SmtpHost`, `SmtpPort`, `EmailUser`, `EmailPassword`
+   - Box Documents: `BoxClientId`, `BoxClientSecret`
 
 4. **Start development**
    ```bash
-   # Option A: Full stack with SST
+   # Full stack with SST
    bun run sst-dev
-
-   # Option B: Local DynamoDB only
-   bun run dev:docker
-   bun run dev
    ```
 
 ## Development

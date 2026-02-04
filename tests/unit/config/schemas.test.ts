@@ -305,36 +305,35 @@ describe('configSchema', () => {
             agent: {
                 oauthToken: 'test-token',
             },
-            caldav: {
-                url:      'https://caldav.example.com',
-                username: 'user@example.com',
-                password: 'secure-password',
-            },
-            email: {
-                imapHost: 'imap.example.com',
-                imapPort: '993',
-                smtpHost: 'smtp.example.com',
-                smtpPort: '587',
-                user:     'user@example.com',
-                password: 'secure-password',
-            },
             discord: {
                 botToken:      'token',
                 applicationId: '123',
                 homeGuildId:   createGuildId('home-guild-123'),
             },
-            box: {
-                clientId:     'id',
-                clientSecret: 'secret',
-            },
+            // Planned integrations are optional:
+            // caldav: {
+            //     url:      'https://caldav.example.com',
+            //     username: 'user@example.com',
+            //     password: 'secure-password',
+            // },
+            // email: {
+            //     imapHost: 'imap.example.com',
+            //     imapPort: '993',
+            //     smtpHost: 'smtp.example.com',
+            //     smtpPort: '587',
+            //     user:     'user@example.com',
+            //     password: 'secure-password',
+            // },
+            // box: {
+            //     clientId:     'id',
+            //     clientSecret: 'secret',
+            // },
         };
 
         const result = configSchema.safeParse(configWithStrings);
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data.app.port).toBe(3000);
-            expect(result.data.email.imapPort).toBe(993);
-            expect(result.data.email.smtpPort).toBe(587);
         }
     });
 });

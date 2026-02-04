@@ -381,7 +381,7 @@ if(import.meta.main) {
     }
 
     // Configure logger timezone (env var or system default)
-    const logTimezone = (Resource as { LogTimezone?: { value?: string } }).LogTimezone?.value
+    const logTimezone = process.env.LOG_TIMEZONE
       ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
     setTimezone(logTimezone);
 

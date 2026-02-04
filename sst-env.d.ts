@@ -6,32 +6,12 @@
 
 declare module "sst" {
   export interface Resource {
-    "BoxClientId": {
-      "type": "sst.sst.Linkable"
-      "value": string
-    }
-    "BoxClientSecret": {
-      "type": "sst.sst.Secret"
-      "value": string
-    }
-    "CaldavPassword": {
-      "type": "sst.sst.Secret"
-      "value": string
-    }
-    "CaldavUrl": {
-      "type": "sst.sst.Linkable"
-      "value": string
-    }
-    "CaldavUsername": {
-      "type": "sst.sst.Linkable"
-      "value": string
-    }
     "ClaudeCodeOAuthToken": {
       "type": "sst.sst.Secret"
       "value": string
     }
     "DiscordApplicationId": {
-      "type": "sst.sst.Linkable"
+      "type": "sst.sst.Secret"
       "value": string
     }
     "DiscordBotToken": {
@@ -42,22 +22,6 @@ declare module "sst" {
       "type": "sst.sst.Secret"
       "value": string
     }
-    "EmailPassword": {
-      "type": "sst.sst.Secret"
-      "value": string
-    }
-    "EmailUser": {
-      "type": "sst.sst.Linkable"
-      "value": string
-    }
-    "ImapHost": {
-      "type": "sst.sst.Linkable"
-      "value": string
-    }
-    "ImapPort": {
-      "type": "sst.sst.Linkable"
-      "value": string
-    }
     "IsambardMemory": {
       "name": string
       "type": "sst.aws.Dynamo"
@@ -66,34 +30,11 @@ declare module "sst" {
       "type": "sst.sst.Linkable"
       "value": string
     }
-    "LogTimezone": {
-      "type": "sst.sst.Secret"
-      "value": string
-    }
     "NodeEnv": {
       "type": "sst.sst.Linkable"
       "value": string
     }
-    "PerchEnabled": {
-      "type": "sst.sst.Linkable"
-      "value": string
-    }
-    "PerchTestModeForceSlot": {
-      "type": "sst.sst.Linkable"
-    }
-    "PerchTestModeTriggerOnStartup": {
-      "type": "sst.sst.Linkable"
-      "value": string
-    }
     "Port": {
-      "type": "sst.sst.Linkable"
-      "value": string
-    }
-    "SmtpHost": {
-      "type": "sst.sst.Linkable"
-      "value": string
-    }
-    "SmtpPort": {
       "type": "sst.sst.Linkable"
       "value": string
     }

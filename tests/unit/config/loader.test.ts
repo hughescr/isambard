@@ -10,28 +10,25 @@ function createMockResources(
     overrides?: Partial<Record<keyof ResourceProvider, { value: string | undefined }>>
 ): ResourceProvider {
     const defaults: ResourceProvider = {
-        NodeEnv:                       { value: 'development' },
-        LogLevel:                      { value: 'info' },
-        Port:                          { value: '3000' },
-        LogTimezone:                   { value: undefined },
-        CaldavUrl:                     { value: 'https://caldav.example.com' },
-        CaldavUsername:                { value: 'user' },
-        CaldavPassword:                { value: 'password' },
-        ImapHost:                      { value: 'mail.example.com' },
-        ImapPort:                      { value: '993' },
-        SmtpHost:                      { value: 'mail.example.com' },
-        SmtpPort:                      { value: '587' },
-        EmailUser:                     { value: 'user@example.com' },
-        EmailPassword:                 { value: 'emailpass' },
-        DiscordBotToken:               { value: 'bot-token-123' },
-        DiscordApplicationId:          { value: 'app-id-456' },
-        DiscordHomeGuildId:            { value: 'home-guild-123' },
-        BoxClientId:                   { value: 'box-client-id' },
-        BoxClientSecret:               { value: 'box-secret' },
-        ClaudeCodeOAuthToken:          { value: 'test-oauth-token-12345' },
-        PerchEnabled:                  { value: 'true' },
-        PerchTestModeForceSlot:        { value: undefined },
-        PerchTestModeTriggerOnStartup: { value: 'false' },
+        NodeEnv:              { value: 'development' },
+        LogLevel:             { value: 'info' },
+        Port:                 { value: '3000' },
+        DiscordBotToken:      { value: 'bot-token-123' },
+        DiscordApplicationId: { value: 'app-id-456' },
+        DiscordHomeGuildId:   { value: 'home-guild-123' },
+        ClaudeCodeOAuthToken: { value: 'test-oauth-token-12345' },
+        // Planned integrations (not yet implemented):
+        // CaldavUrl:                     { value: 'https://caldav.example.com' },
+        // CaldavUsername:                { value: 'user' },
+        // CaldavPassword:                { value: 'password' },
+        // ImapHost:                      { value: 'mail.example.com' },
+        // ImapPort:                      { value: '993' },
+        // SmtpHost:                      { value: 'mail.example.com' },
+        // SmtpPort:                      { value: '587' },
+        // EmailUser:                     { value: 'user@example.com' },
+        // EmailPassword:                 { value: 'emailpass' },
+        // BoxClientId:                   { value: 'box-client-id' },
+        // BoxClientSecret:               { value: 'box-secret' },
     };
     return { ...defaults, ...overrides };
 }
@@ -50,49 +47,33 @@ describe.concurrent('loadConfig', () => {
             // Agent config
             expect(config.agent.oauthToken).toBe('test-oauth-token-12345');
 
-            // CalDAV config
-            expect(config.caldav.url).toBe('https://caldav.example.com');
-            expect(config.caldav.username).toBe('user');
-            expect(config.caldav.password).toBe('password');
-
-            // Email config
-            expect(config.email.imapHost).toBe('mail.example.com');
-            expect(config.email.imapPort).toBe(993);
-            expect(config.email.smtpHost).toBe('mail.example.com');
-            expect(config.email.smtpPort).toBe(587);
-            expect(config.email.user).toBe('user@example.com');
-            expect(config.email.password).toBe('emailpass');
-
             // Discord config
             expect(config.discord.botToken).toBe('bot-token-123');
             expect(config.discord.applicationId).toBe('app-id-456');
 
-            // Box config
-            expect(config.box.clientId).toBe('box-client-id');
-            expect(config.box.clientSecret).toBe('box-secret');
+            // Planned integrations should be undefined
+            expect(config.caldav).toBeUndefined();
+            expect(config.email).toBeUndefined();
+            expect(config.box).toBeUndefined();
         });
 
         test('should map SST Resource names to schema fields correctly', () => {
             const resources = createMockResources({
-                NodeEnv:   { value: 'production' },
-                Port:      { value: '8080' },
-                EmailUser: { value: 'admin@example.com' },
+                NodeEnv: { value: 'production' },
+                Port:    { value: '8080' },
             });
             const config = loadConfig(resources);
 
             expect(config.app.nodeEnv).toBe('production');
             expect(config.app.port).toBe(8080);
-            expect(config.email.user).toBe('admin@example.com');
         });
     });
 
     describe('Missing Resources', () => {
         test.each([
             { field: 'NodeEnv',              expectedPattern: /app\.nodeEnv/ },
-            { field: 'CaldavPassword',       expectedPattern: /caldav\.password|password/ },
             { field: 'DiscordBotToken',      expectedPattern: /discord\.botToken|botToken/ },
             { field: 'ClaudeCodeOAuthToken', expectedPattern: /agent\.oauthToken|oauthToken/ },
-            { field: 'BoxClientSecret',      expectedPattern: /box\.clientSecret|clientSecret/ },
         ] as const)('should throw descriptive error when $field is undefined', ({ field, expectedPattern }) => {
             const resources = createMockResources({
                 [field]: { value: undefined },
@@ -103,34 +84,12 @@ describe.concurrent('loadConfig', () => {
     });
 
     describe('Malformed Values', () => {
-        test.each([
-            { field: 'Port',     value: 'not-a-number', expectedPattern: /Expected number|Invalid/i },
-            { field: 'ImapPort', value: 'abc',          expectedPattern: /Expected number|Invalid/i },
-        ])('should throw error for invalid port: $field', ({ field, value, expectedPattern }) => {
+        test('should throw error for invalid port: Port', () => {
             const resources = createMockResources({
-                [field]: { value },
+                Port: { value: 'not-a-number' },
             });
 
-            expect(() => loadConfig(resources)).toThrow(expectedPattern);
-        });
-
-        test.each([
-            { field: 'SmtpPort', value: '99999', expectedPattern: /Too big|expected number to be <=/i },
-            { field: 'ImapPort', value: '-1',    expectedPattern: /Too small|expected number to be >=/i },
-        ])('should throw error for port out of range: $field = $value', ({ field, value, expectedPattern }) => {
-            const resources = createMockResources({
-                [field]: { value },
-            });
-
-            expect(() => loadConfig(resources)).toThrow(expectedPattern);
-        });
-
-        test('should throw error for invalid URL format', () => {
-            const resources = createMockResources({
-                CaldavUrl: { value: 'not-a-valid-url' },
-            });
-
-            expect(() => loadConfig(resources)).toThrow(/Invalid url|url/i);
+            expect(() => loadConfig(resources)).toThrow(/Expected number|Invalid/i);
         });
 
         test('should throw error for invalid nodeEnv value', () => {
@@ -151,26 +110,8 @@ describe.concurrent('loadConfig', () => {
     });
 
     describe('Secret Redaction (SECURITY CRITICAL)', () => {
-        test('should NOT contain actual secret values in error messages', () => {
-            const resources = createMockResources({
-                CaldavPassword: { value: 'super-secret-password-123' },
-                Port:           { value: 'invalid' }, // Force an error
-            });
-
-            try {
-                loadConfig(resources);
-                expect.unreachable('Should have thrown an error');
-            } catch (error: unknown) {
-                const errorMessage = _.isError(error) ? error.message : String(error);
-                expect(errorMessage).not.toContain('super-secret-password-123');
-            }
-        });
-
         test.each([
-            { field: 'CaldavPassword',       fieldPath: 'caldav.password' },
-            { field: 'EmailPassword',        fieldPath: 'email.password' },
             { field: 'DiscordBotToken',      fieldPath: 'discord.botToken' },
-            { field: 'BoxClientSecret',      fieldPath: 'box.clientSecret' },
             { field: 'ClaudeCodeOAuthToken', fieldPath: 'agent.oauthToken' },
         ])('should show [REDACTED] for sensitive field errors: $fieldPath', ({ field, fieldPath }) => {
             const resources = createMockResources({
@@ -187,13 +128,9 @@ describe.concurrent('loadConfig', () => {
             }
         });
 
-        test.each([
-            { field: 'EmailPassword',   sensitiveWord: 'Password' },
-            { field: 'DiscordBotToken', sensitiveWord: 'Token' },
-            { field: 'BoxClientSecret', sensitiveWord: 'Secret' },
-        ])('should redact based on case-insensitive matching ($sensitiveWord)', ({ field }) => {
+        test('should redact based on case-insensitive matching (Token)', () => {
             const resources = createMockResources({
-                [field]: { value: undefined },
+                DiscordBotToken: { value: undefined },
             });
 
             try {
@@ -205,13 +142,9 @@ describe.concurrent('loadConfig', () => {
             }
         });
 
-        test.each([
-            { field: 'Port',           value: 'not-a-number',    fieldPath: 'app.port',         expectedPattern: /Expected number|Invalid/i },
-            { field: 'CaldavUrl',      value: 'not-a-valid-url', fieldPath: 'caldav.url',       expectedPattern: /Invalid url|url/i },
-            { field: 'CaldavUsername', value: '',                fieldPath: 'caldav.username',  expectedPattern: /.*/ },
-        ])('should NOT redact non-sensitive field errors: $fieldPath', ({ field, value, fieldPath, expectedPattern }) => {
+        test('should NOT redact non-sensitive field errors: app.port', () => {
             const resources = createMockResources({
-                [field]: { value },
+                Port: { value: 'not-a-number' },
             });
 
             try {
@@ -220,17 +153,15 @@ describe.concurrent('loadConfig', () => {
             } catch (error: unknown) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 expect(errorMessage).not.toContain('[REDACTED]');
-                expect(errorMessage).toContain(fieldPath);
-                expect(errorMessage).toMatch(expectedPattern);
+                expect(errorMessage).toContain('app.port');
+                expect(errorMessage).toMatch(/Expected number|Invalid/i);
             }
         });
 
         test('should handle multiple errors with mixed sensitivity', () => {
             const resources = createMockResources({
-                Port:            { value: 'invalid' },      // Non-sensitive
-                EmailPassword:   { value: '' },             // Sensitive
-                CaldavUrl:       { value: 'bad-url' },      // Non-sensitive
-                DiscordBotToken: { value: '' },            // Sensitive
+                Port:            { value: 'invalid' },  // Non-sensitive
+                DiscordBotToken: { value: '' },         // Sensitive
             });
 
             try {
@@ -241,25 +172,19 @@ describe.concurrent('loadConfig', () => {
 
                 // Sensitive fields should be redacted
                 expect(errorMessage).toContain('[REDACTED]');
-                expect(errorMessage).toContain('email.password');
                 expect(errorMessage).toContain('discord.botToken');
 
                 // Non-sensitive fields should show actual errors
                 expect(errorMessage).toContain('app.port');
-                expect(errorMessage).toContain('caldav.url');
 
                 // Should have actual error messages for non-sensitive fields
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Parsing JSON from error message
                 const parsed = JSON.parse(_.replace(errorMessage, 'Config validation failed: ', ''));
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Lodash find needed for partial object matching
                 const portError = _.find(parsed, { path: 'app.port' });
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Lodash find result
-                const urlError = _.find(parsed, { path: 'caldav.url' });
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Testing error message property
                 expect(portError?.message).not.toBe('[REDACTED]');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Testing error message property
-                expect(urlError?.message).not.toBe('[REDACTED]');
             }
         });
     });
@@ -288,10 +213,9 @@ describe.concurrent('loadConfig', () => {
     });
 
     describe('Perch Config', () => {
-        test('should load perch config when PerchEnabled is true', () => {
-            const resources = createMockResources({
-                PerchEnabled: { value: 'true' },
-            });
+        test('should load perch config when PERCH_ENABLED is true', () => {
+            process.env.PERCH_ENABLED = 'true';
+            const resources = createMockResources();
             const config = loadConfig(resources);
 
             expect(config.perch).toBeDefined();
@@ -301,35 +225,41 @@ describe.concurrent('loadConfig', () => {
             expect(config.perch?.jitterMinutes).toBe(15);
             expect(config.perch?.maxSessionMinutes).toBe(45);
             expect(config.perch?.testMode).toBeUndefined();
+
+            delete process.env.PERCH_ENABLED;
         });
 
         test('should load perch test mode when triggerOnStartup is true', () => {
-            const resources = createMockResources({
-                PerchEnabled:                  { value: 'true' },
-                PerchTestModeTriggerOnStartup: { value: 'true' },
-            });
+            process.env.PERCH_ENABLED = 'true';
+            process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP = 'true';
+            const resources = createMockResources();
             const config = loadConfig(resources);
 
             expect(config.perch?.testMode).toBeDefined();
             expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
             expect(config.perch?.testMode?.forceSlot).toBeUndefined();
+
+            delete process.env.PERCH_ENABLED;
+            delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
         });
 
         test('should load perch test mode with forceSlot', () => {
-            const resources = createMockResources({
-                PerchEnabled:                  { value: 'true' },
-                PerchTestModeTriggerOnStartup: { value: 'true' },
-                PerchTestModeForceSlot:        { value: 'pre-dawn' },
-            });
+            process.env.PERCH_ENABLED = 'true';
+            process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP = 'true';
+            process.env.PERCH_TEST_MODE_FORCE_SLOT = 'pre-dawn';
+            const resources = createMockResources();
             const config = loadConfig(resources);
 
             expect(config.perch?.testMode?.forceSlot).toBe('pre-dawn');
+
+            delete process.env.PERCH_ENABLED;
+            delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
+            delete process.env.PERCH_TEST_MODE_FORCE_SLOT;
         });
 
-        test('should default perch to enabled when PerchEnabled is undefined', () => {
-            const resources = createMockResources({
-                PerchEnabled: { value: undefined },
-            });
+        test('should default perch to enabled when PERCH_ENABLED is undefined', () => {
+            delete process.env.PERCH_ENABLED;
+            const resources = createMockResources();
             const config = loadConfig(resources);
 
             // With the new default, undefined becomes 'true'
@@ -337,53 +267,42 @@ describe.concurrent('loadConfig', () => {
             expect(config.perch?.enabled).toBe(true);
         });
 
-        test('should set perch to undefined when PerchEnabled is false', () => {
-            const resources = createMockResources({
-                PerchEnabled: { value: 'false' },
-            });
+        test('should set perch to undefined when PERCH_ENABLED is false', () => {
+            process.env.PERCH_ENABLED = 'false';
+            const resources = createMockResources();
             const config = loadConfig(resources);
 
             expect(config.perch).toBeUndefined();
+
+            delete process.env.PERCH_ENABLED;
         });
 
-        test('should handle undefined PerchEnabled resource (missing optional chaining)', () => {
-            // This tests the optionalChaining mutant on line 71
-            // If ?? is removed, accessing undefined.value would throw
-            const resources = createMockResources({
-                // PerchEnabled is undefined, not { value: undefined }
-            });
+        test('should handle undefined PERCH_ENABLED env var (default behavior)', () => {
+            delete process.env.PERCH_ENABLED;
+            const resources = createMockResources();
 
-            // Replace with actual undefined object (not wrapped)
-            const resourcesWithUndefined = {
-                ...resources,
-                PerchEnabled: undefined as unknown as { value: string | undefined },
-            };
-
-            expect(() => loadConfig(resourcesWithUndefined as typeof resources)).not.toThrow();
-            const config = loadConfig(resourcesWithUndefined as typeof resources);
+            expect(() => loadConfig(resources)).not.toThrow();
+            const config = loadConfig(resources);
             // With the new default, undefined becomes 'true'
             expect(config.perch).toBeDefined();
             expect(config.perch?.enabled).toBe(true);
         });
 
-        test('should handle undefined PerchTestModeTriggerOnStartup resource (missing optional chaining)', () => {
-            // This tests the optionalChaining mutant
-            // If ?? is removed, accessing undefined.value would throw
-            const resources = createMockResources({
-                PerchEnabled:                  { value: 'true' },
-                PerchTestModeTriggerOnStartup: undefined as unknown as { value: string | undefined },
-            });
+        test('should handle undefined PERCH_TEST_MODE_TRIGGER_ON_STARTUP (default behavior)', () => {
+            process.env.PERCH_ENABLED = 'true';
+            delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
+            const resources = createMockResources();
 
             expect(() => loadConfig(resources)).not.toThrow();
             const config = loadConfig(resources);
             expect(config.perch?.testMode).toBeUndefined();
+
+            delete process.env.PERCH_ENABLED;
         });
 
-        test('should handle PerchEnabled = undefined and not throw', () => {
-            const resources = {
-                ...createMockResources(),
-                PerchEnabled: undefined as unknown as { value: string | undefined },
-            };
+        test('should handle PERCH_ENABLED = undefined and not throw', () => {
+            delete process.env.PERCH_ENABLED;
+            const resources = createMockResources();
 
             const config = loadConfig(resources);
             // Should not throw, and perch should be enabled (default)
@@ -391,12 +310,10 @@ describe.concurrent('loadConfig', () => {
             expect(config.perch?.enabled).toBe(true);
         });
 
-        test('should handle both PerchEnabled and PerchTestModeTriggerOnStartup = undefined', () => {
-            const resources = {
-                ...createMockResources(),
-                PerchEnabled:                  undefined as unknown as { value: string | undefined },
-                PerchTestModeTriggerOnStartup: undefined as unknown as { value: string | undefined },
-            };
+        test('should handle both PERCH_ENABLED and PERCH_TEST_MODE_TRIGGER_ON_STARTUP = undefined', () => {
+            delete process.env.PERCH_ENABLED;
+            delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
+            const resources = createMockResources();
 
             const config = loadConfig(resources);
             // Should not throw, and perch should be enabled (default) with no test mode (default)
@@ -406,68 +323,69 @@ describe.concurrent('loadConfig', () => {
         });
 
         test('should load perch test mode with triggerOnStartup = true', () => {
-            const resources = createMockResources({
-                PerchEnabled:                  { value: 'true' },
-                PerchTestModeTriggerOnStartup: { value: 'true' },
-            });
+            process.env.PERCH_ENABLED = 'true';
+            process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP = 'true';
+            const resources = createMockResources();
             const config = loadConfig(resources);
 
             expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
+
+            delete process.env.PERCH_ENABLED;
+            delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
         });
 
         test('should set testMode to undefined when triggerOnStartup is not true', () => {
-            const resources = createMockResources({
-                PerchEnabled: { value: 'true' },
-            });
+            process.env.PERCH_ENABLED = 'true';
+            delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
+            const resources = createMockResources();
             const config = loadConfig(resources);
 
             expect(config.perch?.testMode).toBeUndefined();
+
+            delete process.env.PERCH_ENABLED;
         });
 
         test('should load perch test mode with all options', () => {
-            const resources = createMockResources({
-                PerchEnabled:                  { value: 'true' },
-                PerchTestModeForceSlot:        { value: 'afternoon' },
-                PerchTestModeTriggerOnStartup: { value: 'true' },
-            });
+            process.env.PERCH_ENABLED = 'true';
+            process.env.PERCH_TEST_MODE_FORCE_SLOT = 'afternoon';
+            process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP = 'true';
+            const resources = createMockResources();
             const config = loadConfig(resources);
 
             expect(config.perch?.testMode?.forceSlot).toBe('afternoon');
             expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
+
+            delete process.env.PERCH_ENABLED;
+            delete process.env.PERCH_TEST_MODE_FORCE_SLOT;
+            delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
         });
 
-        test('should handle undefined PerchTestModeForceSlot resource (missing optional chaining)', () => {
-            // This tests the optionalChaining mutant
-            // If ?. is removed, accessing undefined.value would throw
-            const resources = createMockResources({
-                PerchEnabled:                  { value: 'true' },
-                PerchTestModeTriggerOnStartup: { value: 'true' },
-                PerchTestModeForceSlot:        undefined as unknown as { value: string | undefined },
-            });
+        test('should handle undefined PERCH_TEST_MODE_FORCE_SLOT env var', () => {
+            process.env.PERCH_ENABLED = 'true';
+            process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP = 'true';
+            delete process.env.PERCH_TEST_MODE_FORCE_SLOT;
+            const resources = createMockResources();
 
             expect(() => loadConfig(resources)).not.toThrow();
             const config = loadConfig(resources);
             expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
             expect(config.perch?.testMode?.forceSlot).toBeUndefined();
+
+            delete process.env.PERCH_ENABLED;
+            delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
         });
     });
 
     describe('Type Coercion', () => {
         test('should coerce string ports to numbers', () => {
             const resources = createMockResources({
-                Port:     { value: '9000' },
-                ImapPort: { value: '993' },
-                SmtpPort: { value: '465' },
+                Port: { value: '9000' },
             });
 
             const config = loadConfig(resources);
 
             expect(config.app.port).toBe(9000);
             expect(typeof config.app.port).toBe('number');
-            expect(config.email.imapPort).toBe(993);
-            expect(typeof config.email.imapPort).toBe('number');
-            expect(config.email.smtpPort).toBe(465);
-            expect(typeof config.email.smtpPort).toBe('number');
         });
 
         test('should apply default logLevel when not provided and accept valid values', () => {

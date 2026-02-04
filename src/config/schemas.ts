@@ -82,15 +82,16 @@ export const perchConfigSchema = z.object({
 }).optional();
 /* Stryker restore BooleanLiteral,StringLiteral */
 
-// Full config schema (all sections required)
+// Full config schema (planned integrations are optional)
 export const configSchema = z.object({
     app:     appConfigSchema,
     agent:   agentConfigSchema,
-    caldav:  caldavConfigSchema,
-    email:   emailConfigSchema,
     discord: discordConfigSchema,
-    box:     boxConfigSchema,
     perch:   perchConfigSchema,
+    // Planned integrations (optional until implemented):
+    caldav:  caldavConfigSchema.optional(),
+    email:   emailConfigSchema.optional(),
+    box:     boxConfigSchema.optional(),
 });
 
 // Type exports
