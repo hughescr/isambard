@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, afterEach } from 'bun:test';
 import _ from 'lodash';
 import { loadConfig, loadDynamoDBConfig, type ResourceProvider, type DynamoDBResourceProvider } from '@/config/loader';
 
@@ -212,170 +212,6 @@ describe.concurrent('loadConfig', () => {
         });
     });
 
-    describe('Perch Config', () => {
-        test('should load perch config when PERCH_ENABLED is true', () => {
-            process.env.PERCH_ENABLED = 'true';
-            const resources = createMockResources();
-            const config = loadConfig(resources);
-
-            expect(config.perch).toBeDefined();
-            expect(config.perch?.enabled).toBe(true);
-            expect(config.perch?.timezone).toBe('America/Los_Angeles');
-            expect(config.perch?.intervalMinutes).toBe(60);
-            expect(config.perch?.jitterMinutes).toBe(15);
-            expect(config.perch?.maxSessionMinutes).toBe(45);
-            expect(config.perch?.testMode).toBeUndefined();
-
-            delete process.env.PERCH_ENABLED;
-        });
-
-        test('should load perch test mode when triggerOnStartup is true', () => {
-            process.env.PERCH_ENABLED = 'true';
-            process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP = 'true';
-            const resources = createMockResources();
-            const config = loadConfig(resources);
-
-            expect(config.perch?.testMode).toBeDefined();
-            expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
-            expect(config.perch?.testMode?.forceSlot).toBeUndefined();
-
-            delete process.env.PERCH_ENABLED;
-            delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
-        });
-
-        test('should load perch test mode with forceSlot', () => {
-            process.env.PERCH_ENABLED = 'true';
-            process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP = 'true';
-            process.env.PERCH_TEST_MODE_FORCE_SLOT = 'pre-dawn';
-            const resources = createMockResources();
-            const config = loadConfig(resources);
-
-            expect(config.perch?.testMode?.forceSlot).toBe('pre-dawn');
-
-            delete process.env.PERCH_ENABLED;
-            delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
-            delete process.env.PERCH_TEST_MODE_FORCE_SLOT;
-        });
-
-        test('should default perch to enabled when PERCH_ENABLED is undefined', () => {
-            delete process.env.PERCH_ENABLED;
-            const resources = createMockResources();
-            const config = loadConfig(resources);
-
-            // With the new default, undefined becomes 'true'
-            expect(config.perch).toBeDefined();
-            expect(config.perch?.enabled).toBe(true);
-        });
-
-        test('should set perch to undefined when PERCH_ENABLED is false', () => {
-            process.env.PERCH_ENABLED = 'false';
-            const resources = createMockResources();
-            const config = loadConfig(resources);
-
-            expect(config.perch).toBeUndefined();
-
-            delete process.env.PERCH_ENABLED;
-        });
-
-        test('should handle undefined PERCH_ENABLED env var (default behavior)', () => {
-            delete process.env.PERCH_ENABLED;
-            const resources = createMockResources();
-
-            expect(() => loadConfig(resources)).not.toThrow();
-            const config = loadConfig(resources);
-            // With the new default, undefined becomes 'true'
-            expect(config.perch).toBeDefined();
-            expect(config.perch?.enabled).toBe(true);
-        });
-
-        test('should handle undefined PERCH_TEST_MODE_TRIGGER_ON_STARTUP (default behavior)', () => {
-            process.env.PERCH_ENABLED = 'true';
-            delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
-            const resources = createMockResources();
-
-            expect(() => loadConfig(resources)).not.toThrow();
-            const config = loadConfig(resources);
-            expect(config.perch?.testMode).toBeUndefined();
-
-            delete process.env.PERCH_ENABLED;
-        });
-
-        test('should handle PERCH_ENABLED = undefined and not throw', () => {
-            delete process.env.PERCH_ENABLED;
-            const resources = createMockResources();
-
-            const config = loadConfig(resources);
-            // Should not throw, and perch should be enabled (default)
-            expect(config.perch).toBeDefined();
-            expect(config.perch?.enabled).toBe(true);
-        });
-
-        test('should handle both PERCH_ENABLED and PERCH_TEST_MODE_TRIGGER_ON_STARTUP = undefined', () => {
-            delete process.env.PERCH_ENABLED;
-            delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
-            const resources = createMockResources();
-
-            const config = loadConfig(resources);
-            // Should not throw, and perch should be enabled (default) with no test mode (default)
-            expect(config.perch).toBeDefined();
-            expect(config.perch?.enabled).toBe(true);
-            expect(config.perch?.testMode).toBeUndefined();
-        });
-
-        test('should load perch test mode with triggerOnStartup = true', () => {
-            process.env.PERCH_ENABLED = 'true';
-            process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP = 'true';
-            const resources = createMockResources();
-            const config = loadConfig(resources);
-
-            expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
-
-            delete process.env.PERCH_ENABLED;
-            delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
-        });
-
-        test('should set testMode to undefined when triggerOnStartup is not true', () => {
-            process.env.PERCH_ENABLED = 'true';
-            delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
-            const resources = createMockResources();
-            const config = loadConfig(resources);
-
-            expect(config.perch?.testMode).toBeUndefined();
-
-            delete process.env.PERCH_ENABLED;
-        });
-
-        test('should load perch test mode with all options', () => {
-            process.env.PERCH_ENABLED = 'true';
-            process.env.PERCH_TEST_MODE_FORCE_SLOT = 'afternoon';
-            process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP = 'true';
-            const resources = createMockResources();
-            const config = loadConfig(resources);
-
-            expect(config.perch?.testMode?.forceSlot).toBe('afternoon');
-            expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
-
-            delete process.env.PERCH_ENABLED;
-            delete process.env.PERCH_TEST_MODE_FORCE_SLOT;
-            delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
-        });
-
-        test('should handle undefined PERCH_TEST_MODE_FORCE_SLOT env var', () => {
-            process.env.PERCH_ENABLED = 'true';
-            process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP = 'true';
-            delete process.env.PERCH_TEST_MODE_FORCE_SLOT;
-            const resources = createMockResources();
-
-            expect(() => loadConfig(resources)).not.toThrow();
-            const config = loadConfig(resources);
-            expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
-            expect(config.perch?.testMode?.forceSlot).toBeUndefined();
-
-            delete process.env.PERCH_ENABLED;
-            delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
-        });
-    });
-
     describe('Type Coercion', () => {
         test('should coerce string ports to numbers', () => {
             const resources = createMockResources({
@@ -401,6 +237,152 @@ describe.concurrent('loadConfig', () => {
             const configWithDebug = loadConfig(resourcesWithDebug);
             expect(configWithDebug.app.logLevel).toBe('debug');
         });
+    });
+});
+
+// Perch Config tests run sequentially (not concurrent) because they mutate process.env
+describe('loadConfig - Perch Config', () => {
+    afterEach(() => {
+        delete process.env.PERCH_ENABLED;
+        delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
+        delete process.env.PERCH_TEST_MODE_FORCE_SLOT;
+    });
+
+    test('should load perch config when PERCH_ENABLED is true', () => {
+        process.env.PERCH_ENABLED = 'true';
+        const resources = createMockResources();
+        const config = loadConfig(resources);
+
+        expect(config.perch).toBeDefined();
+        expect(config.perch?.enabled).toBe(true);
+        expect(config.perch?.timezone).toBe('America/Los_Angeles');
+        expect(config.perch?.intervalMinutes).toBe(60);
+        expect(config.perch?.jitterMinutes).toBe(15);
+        expect(config.perch?.maxSessionMinutes).toBe(45);
+        expect(config.perch?.testMode).toBeUndefined();
+    });
+
+    test('should load perch test mode when triggerOnStartup is true', () => {
+        process.env.PERCH_ENABLED = 'true';
+        process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP = 'true';
+        const resources = createMockResources();
+        const config = loadConfig(resources);
+
+        expect(config.perch?.testMode).toBeDefined();
+        expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
+        expect(config.perch?.testMode?.forceSlot).toBeUndefined();
+    });
+
+    test('should load perch test mode with forceSlot', () => {
+        process.env.PERCH_ENABLED = 'true';
+        process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP = 'true';
+        process.env.PERCH_TEST_MODE_FORCE_SLOT = 'pre-dawn';
+        const resources = createMockResources();
+        const config = loadConfig(resources);
+
+        expect(config.perch?.testMode?.forceSlot).toBe('pre-dawn');
+    });
+
+    test('should default perch to enabled when PERCH_ENABLED is undefined', () => {
+        delete process.env.PERCH_ENABLED;
+        const resources = createMockResources();
+        const config = loadConfig(resources);
+
+        // With the new default, undefined becomes 'true'
+        expect(config.perch).toBeDefined();
+        expect(config.perch?.enabled).toBe(true);
+    });
+
+    test('should set perch to undefined when PERCH_ENABLED is false', () => {
+        process.env.PERCH_ENABLED = 'false';
+        const resources = createMockResources();
+        const config = loadConfig(resources);
+
+        expect(config.perch).toBeUndefined();
+    });
+
+    test('should handle undefined PERCH_ENABLED env var (default behavior)', () => {
+        delete process.env.PERCH_ENABLED;
+        const resources = createMockResources();
+
+        expect(() => loadConfig(resources)).not.toThrow();
+        const config = loadConfig(resources);
+        // With the new default, undefined becomes 'true'
+        expect(config.perch).toBeDefined();
+        expect(config.perch?.enabled).toBe(true);
+    });
+
+    test('should handle undefined PERCH_TEST_MODE_TRIGGER_ON_STARTUP (default behavior)', () => {
+        process.env.PERCH_ENABLED = 'true';
+        delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
+        const resources = createMockResources();
+
+        expect(() => loadConfig(resources)).not.toThrow();
+        const config = loadConfig(resources);
+        expect(config.perch?.testMode).toBeUndefined();
+    });
+
+    test('should handle PERCH_ENABLED = undefined and not throw', () => {
+        delete process.env.PERCH_ENABLED;
+        const resources = createMockResources();
+
+        const config = loadConfig(resources);
+        // Should not throw, and perch should be enabled (default)
+        expect(config.perch).toBeDefined();
+        expect(config.perch?.enabled).toBe(true);
+    });
+
+    test('should handle both PERCH_ENABLED and PERCH_TEST_MODE_TRIGGER_ON_STARTUP = undefined', () => {
+        delete process.env.PERCH_ENABLED;
+        delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
+        const resources = createMockResources();
+
+        const config = loadConfig(resources);
+        // Should not throw, and perch should be enabled (default) with no test mode (default)
+        expect(config.perch).toBeDefined();
+        expect(config.perch?.enabled).toBe(true);
+        expect(config.perch?.testMode).toBeUndefined();
+    });
+
+    test('should load perch test mode with triggerOnStartup = true', () => {
+        process.env.PERCH_ENABLED = 'true';
+        process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP = 'true';
+        const resources = createMockResources();
+        const config = loadConfig(resources);
+
+        expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
+    });
+
+    test('should set testMode to undefined when triggerOnStartup is not true', () => {
+        process.env.PERCH_ENABLED = 'true';
+        delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
+        const resources = createMockResources();
+        const config = loadConfig(resources);
+
+        expect(config.perch?.testMode).toBeUndefined();
+    });
+
+    test('should load perch test mode with all options', () => {
+        process.env.PERCH_ENABLED = 'true';
+        process.env.PERCH_TEST_MODE_FORCE_SLOT = 'afternoon';
+        process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP = 'true';
+        const resources = createMockResources();
+        const config = loadConfig(resources);
+
+        expect(config.perch?.testMode?.forceSlot).toBe('afternoon');
+        expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
+    });
+
+    test('should handle undefined PERCH_TEST_MODE_FORCE_SLOT env var', () => {
+        process.env.PERCH_ENABLED = 'true';
+        process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP = 'true';
+        delete process.env.PERCH_TEST_MODE_FORCE_SLOT;
+        const resources = createMockResources();
+
+        expect(() => loadConfig(resources)).not.toThrow();
+        const config = loadConfig(resources);
+        expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
+        expect(config.perch?.testMode?.forceSlot).toBeUndefined();
     });
 });
 
