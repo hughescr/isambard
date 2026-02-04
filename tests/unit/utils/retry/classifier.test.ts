@@ -4,7 +4,7 @@ import { defaultClassifier, createHttpStatusClassifier } from '../../../../src/u
 import type { ErrorCategory } from '../../../../src/utils/retry/types';
 
 describe.concurrent('defaultClassifier', () => {
-    describe('Error instances', () => {
+    describe.concurrent('Error instances', () => {
         it('should classify Error with message as transient', () => {
             const error = new Error('Network timeout');
             const result = defaultClassifier(error);
@@ -33,7 +33,7 @@ describe.concurrent('defaultClassifier', () => {
         });
     });
 
-    describe('Non-Error values', () => {
+    describe.concurrent('Non-Error values', () => {
         it('should classify string as transient', () => {
             const result = defaultClassifier('Something went wrong');
 
@@ -85,7 +85,7 @@ describe.concurrent('defaultClassifier', () => {
 });
 
 describe.concurrent('createHttpStatusClassifier', () => {
-    describe('Rate limited responses (429)', () => {
+    describe.concurrent('Rate limited responses (429)', () => {
         it('should classify 429 as rate_limited (kills status === 429 condition)', () => {
             const error = { status: 429 };
             const classifier = createHttpStatusClassifier();
@@ -118,7 +118,7 @@ describe.concurrent('createHttpStatusClassifier', () => {
         });
     });
 
-    describe('Transient HTTP errors (5xx)', () => {
+    describe.concurrent('Transient HTTP errors (5xx)', () => {
         it('should classify 500 as transient (lower boundary, kills >= 500 mutant)', () => {
             const error = { status: 500 };
             const classifier = createHttpStatusClassifier();
@@ -161,7 +161,7 @@ describe.concurrent('createHttpStatusClassifier', () => {
         });
     });
 
-    describe('Permanent HTTP errors (4xx except 429)', () => {
+    describe.concurrent('Permanent HTTP errors (4xx except 429)', () => {
         it('should classify 400 as permanent (lower boundary)', () => {
             const error = { status: 400 };
             const classifier = createHttpStatusClassifier();
@@ -192,7 +192,7 @@ describe.concurrent('createHttpStatusClassifier', () => {
         });
     });
 
-    describe('Network timeout errors', () => {
+    describe.concurrent('Network timeout errors', () => {
         it('should classify ECONNREFUSED as transient (kills network error check)', () => {
             const error = { code: 'ECONNREFUSED', message: 'Connection refused' };
             const classifier = createHttpStatusClassifier();
@@ -224,7 +224,7 @@ describe.concurrent('createHttpStatusClassifier', () => {
         });
     });
 
-    describe('Custom permanent status codes', () => {
+    describe.concurrent('Custom permanent status codes', () => {
         it('should classify custom permanent status as permanent', () => {
             const error = { status: 422 };
             const classifier = createHttpStatusClassifier({ permanentStatuses: [422] });
@@ -254,7 +254,7 @@ describe.concurrent('createHttpStatusClassifier', () => {
         });
     });
 
-    describe('Fallback to default classifier', () => {
+    describe.concurrent('Fallback to default classifier', () => {
         it('should use default classifier for non-HTTP errors', () => {
             const error = new Error('Generic error');
             const classifier = createHttpStatusClassifier();
@@ -274,7 +274,7 @@ describe.concurrent('createHttpStatusClassifier', () => {
         });
     });
 
-    describe('Edge cases', () => {
+    describe.concurrent('Edge cases', () => {
         it('should handle status as string', () => {
             const error = { status: '500' };
             const classifier = createHttpStatusClassifier();

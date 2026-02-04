@@ -52,7 +52,7 @@ describe.concurrent('createDynamoDBClient', () => {
         expect(clients.tableName).toBe('MyTable');
     });
 
-    describe('DynamoDBClient configuration', () => {
+    describe.concurrent('DynamoDBClient configuration', () => {
         test('should configure maxAttempts to 3', async () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
@@ -89,7 +89,7 @@ describe.concurrent('createDynamoDBClient', () => {
         });
     });
 
-    describe('DynamoDBDocumentClient configuration', () => {
+    describe.concurrent('DynamoDBDocumentClient configuration', () => {
         test('should configure marshallOptions.removeUndefinedValues to true', () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',

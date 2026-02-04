@@ -11,7 +11,8 @@ export default {
     plugins:          ['@hughescr/stryker-bun-runner', '@stryker-mutator/typescript-checker'],
     coverageAnalysis: 'perTest',
     disableBail:      true, // Do not stop with first failing test, so we can get complete map of mutant:killer-tests
-    mutate:           ['src/**/*.ts', '!src/index.ts', '!src/**/*.test.ts'],
+    mutate:           ['src/**/*.ts', '!src/index.ts'], // Do not mutate the entry point
+    ignorePatterns:   ['**', '!src/**/*.ts', '!tests/**/*.ts', '!bunfig.toml', '!tsconfig.json', '!*.ts', '!*.mjs', '!sst/**/*.ts'], // Only include source and test files in the mutation testing process
     thresholds:       { high: 100, low: 100, 'break': 100 },
     concurrency:      isCI ? 4 : 24,
     tempDirName:      '.stryker-tmp',

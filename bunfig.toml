@@ -6,7 +6,7 @@ root = "./tests"
 preload = ["./tests/setup.ts"]
 coverage = true
 coverageThreshold = { line = 0.95, function = 0.95, statement = 0.95 }
-coverageReporter = ["text", "lcov"]
+coverageReporter = ["text"]
 coverageSkipTestFiles = true
 coveragePathIgnorePatterns = [
     # Exclude all test files and test helpers - these don't need coverage as they are the tests themselves

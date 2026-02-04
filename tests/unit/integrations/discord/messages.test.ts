@@ -7,7 +7,7 @@ import {
 } from '@/integrations/discord/messages';
 
 describe.concurrent('Discord Message Splitting', () => {
-    describe('constants', () => {
+    describe.concurrent('constants', () => {
         test('should export DISCORD_MAX_LENGTH as 2000', () => {
             expect(DISCORD_MAX_LENGTH).toBe(2000);
         });
@@ -21,7 +21,7 @@ describe.concurrent('Discord Message Splitting', () => {
         });
     });
 
-    describe('exceedsLimit', () => {
+    describe.concurrent('exceedsLimit', () => {
         test('should return false when length equals maxLength (boundary test)', () => {
             // Critical: length === maxLength should NOT exceed the limit
             expect(exceedsLimit(50, 50)).toBe(false);
@@ -54,7 +54,7 @@ describe.concurrent('Discord Message Splitting', () => {
 import { splitMessage } from '@/integrations/discord/messages';
 
 describe.concurrent('splitMessage sentence splitting', () => {
-    describe('sentence boundary edge cases', () => {
+    describe.concurrent('sentence boundary edge cases', () => {
         test('should handle empty current chunk correctly when splitting sentences', () => {
             // This test kills mutants on lines 188 and 197:
             // - Line 188: testLength = currentChunk.length + 1 + sentence.length

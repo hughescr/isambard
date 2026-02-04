@@ -7,7 +7,7 @@ import {
 } from '@/storage/memory-tool/layer-config';
 import type { LayerName } from '@/storage/memory-tool/types';
 
-describe('layerConfigSchema', () => {
+describe.concurrent('layerConfigSchema', () => {
     // First Zod parse has slight cold-start, allow 5ms
     test('should validate config with all fields', () => {
         const config = {

@@ -107,7 +107,7 @@ describe('Memory Tool Content Errors', () => {
         });
     });
 
-    describe('Error.captureStackTrace handling', () => {
+    describe.concurrent('Error.captureStackTrace handling', () => {
         test('should use captureStackTrace when available', () => {
             const spy = spyOn(Error, 'captureStackTrace');
             const error = new MemoryToolError('test', 'TEST_CODE');
