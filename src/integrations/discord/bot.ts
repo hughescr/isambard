@@ -557,8 +557,15 @@ function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoo
 
     // Helper to complete presence updates after message processing
     const completePresenceForMessage = (
-        streamEventHandler: ReturnType<typeof createPresenceStreamHandler> | undefined
+        streamEventHandler: ReturnType<typeof createPresenceStreamHandler> | undefined,
+        wasInterrupted: boolean
     ): void => {
+        // Don't transition to idle if session was interrupted for batching
+        // (the coordinator will immediately restart with batched messages)
+        if(wasInterrupted) {
+            return;
+        }
+
         // Transition to idle after completion, but NOT if we're in catch-up interrupted state
         // (the resumed catch-up session will handle presence updates)
         const currentMode = botStateManager.getMode();
@@ -650,7 +657,8 @@ function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoo
             });
 
             // Complete presence updates after processing
-            completePresenceForMessage(streamEventHandler);
+            // Pass wasInterrupted flag to skip idle transition for batching
+            completePresenceForMessage(streamEventHandler, result.wasInterrupted);
 
             return result;
         } finally {
