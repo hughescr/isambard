@@ -21,15 +21,25 @@ import {
 } from 'lodash';
 
 // Mock SST Resource - MUST be mutable so tests can customize values
-export const mockSstResource: Record<string, { value: unknown }> = {
-    App:                      { value: 'test-app' },
-    DiscordToken:             { value: 'test-discord-token' },
-    ClaudeApiKey:             { value: 'test-claude-api-key' },
-    ClaudeCodeOAuthToken:     { value: 'test-oauth-token' },
-    DiscordHomeGuildId:       { value: 'test-guild-123' },
-    DiscordMonitoredChannels: { value: '' },
-    DynamoDBTableName:        { value: 'IsambardMemory' },
-    DynamoDBEndpoint:         { value: undefined },
+export const mockSstResource: Record<string, { value?: unknown, name?: string }> = {
+    App:                           { value: 'test-app' },
+    DiscordToken:                  { value: 'test-discord-token' },
+    ClaudeApiKey:                  { value: 'test-claude-api-key' },
+    ClaudeCodeOAuthToken:          { value: 'test-oauth-token' },
+    DiscordHomeGuildId:            { value: 'test-guild-123' },
+    DiscordApplicationId:          { value: 'test-app-id' },
+    CaldavUrl:                     { value: 'https://caldav.icloud.com' },
+    CaldavUsername:                { value: 'test@icloud.com' },
+    ImapHost:                      { value: 'mail.example.com' },
+    ImapPort:                      { value: '993' },
+    SmtpHost:                      { value: 'mail.example.com' },
+    SmtpPort:                      { value: '587' },
+    EmailUser:                     { value: 'test@example.com' },
+    BoxClientId:                   { value: 'test-box-client-id' },
+    PerchEnabled:                  { value: 'true' },
+    PerchTestModeForceSlot:        { value: undefined },
+    PerchTestModeTriggerOnStartup: { value: 'false' },
+    IsambardMemory:                { name: 'IsambardMemory' },
 };
 
 // Helper to reset SST Resource to defaults
@@ -39,9 +49,19 @@ export function resetMockSstResource(): void {
     mockSstResource.ClaudeApiKey = { value: 'test-claude-api-key' };
     mockSstResource.ClaudeCodeOAuthToken = { value: 'test-oauth-token' };
     mockSstResource.DiscordHomeGuildId = { value: 'test-guild-123' };
-    mockSstResource.DiscordMonitoredChannels = { value: '' };
-    mockSstResource.DynamoDBTableName = { value: 'IsambardMemory' };
-    mockSstResource.DynamoDBEndpoint = { value: undefined };
+    mockSstResource.DiscordApplicationId = { value: 'test-app-id' };
+    mockSstResource.CaldavUrl = { value: 'https://caldav.icloud.com' };
+    mockSstResource.CaldavUsername = { value: 'test@icloud.com' };
+    mockSstResource.ImapHost = { value: 'mail.example.com' };
+    mockSstResource.ImapPort = { value: '993' };
+    mockSstResource.SmtpHost = { value: 'mail.example.com' };
+    mockSstResource.SmtpPort = { value: '587' };
+    mockSstResource.EmailUser = { value: 'test@example.com' };
+    mockSstResource.BoxClientId = { value: 'test-box-client-id' };
+    mockSstResource.PerchEnabled = { value: 'true' };
+    mockSstResource.PerchTestModeForceSlot = { value: undefined };
+    mockSstResource.PerchTestModeTriggerOnStartup = { value: 'false' };
+    mockSstResource.IsambardMemory = { name: 'IsambardMemory' };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup

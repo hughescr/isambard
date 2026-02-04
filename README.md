@@ -73,28 +73,50 @@ Isambard uses OAuth authentication via Claude Max subscription:
    ```
 
 3. **Set SST secrets**
-   ```bash
-   # Claude Agent (OAuth)
-   bunx sst secret set ClaudeCodeOAuthToken <token-from-claude-setup-token>
 
-   # Discord
-   bunx sst secret set DiscordBotToken <token>
-   bunx sst secret set DiscordApplicationId <app-id>
+   **Required:**
+   ```bash
+   # Claude Agent SDK (OAuth token from `claude setup-token`)
+   bunx sst secret set ClaudeCodeOAuthToken <token>
+
+   # Discord bot
+   bunx sst secret set DiscordBotToken <bot-token>
+   bunx sst secret set DiscordHomeGuildId <guild-id>
+   bunx sst secret set DiscordApplicationId <application-id>
    ```
 
-   **Future integrations (not yet implemented):**
+   **Optional:**
    ```bash
-   # Apple Calendar (planned)
-   # bunx sst secret set CaldavUsername <apple-id@icloud.com>
-   # bunx sst secret set CaldavPassword <app-specific-password>
+   # Logger timezone (IANA format, defaults to system timezone)
+   bunx sst secret set LogTimezone America/Los_Angeles
+   ```
 
-   # Email (planned)
-   # bunx sst secret set EmailUser <email@icloud.com>
-   # bunx sst secret set EmailPassword <app-specific-password>
+   **Planned (not yet implemented):**
+   ```bash
+   # Apple Calendar (CalDAV)
+   bunx sst secret set CaldavUrl https://caldav.icloud.com
+   bunx sst secret set CaldavUsername <apple-id@icloud.com>
+   bunx sst secret set CaldavPassword <app-specific-password>
 
-   # Box (planned)
-   # bunx sst secret set BoxClientId <client-id>
-   # bunx sst secret set BoxClientSecret <client-secret>
+   # Email (IMAP/SMTP)
+   bunx sst secret set ImapHost mail.example.com
+   bunx sst secret set ImapPort 993
+   bunx sst secret set SmtpHost mail.example.com
+   bunx sst secret set SmtpPort 587
+   bunx sst secret set EmailUser <email@example.com>
+   bunx sst secret set EmailPassword <app-specific-password>
+
+   # Box Documents
+   bunx sst secret set BoxClientId <client-id>
+   bunx sst secret set BoxClientSecret <client-secret>
+   ```
+
+   **Optional (with defaults shown):**
+   ```bash
+   # Perch autonomous scheduling
+   bunx sst secret set PerchEnabled true
+   bunx sst secret set PerchTestModeForceSlot <slot-name>
+   bunx sst secret set PerchTestModeTriggerOnStartup false
    ```
 
 4. **Start development**

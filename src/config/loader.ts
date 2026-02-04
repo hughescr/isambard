@@ -26,7 +26,9 @@ export type ResourceProvider = {
 /**
  * Subset of Resource needed for DynamoDB config.
  */
-export type DynamoDBResourceProvider = Pick<ResourceProvider, 'DynamoDBTableName' | 'DynamoDBRegion' | 'DynamoDBEndpoint'>;
+export interface DynamoDBResourceProvider {
+    IsambardMemory: { name: string }
+}
 
 export function loadConfig(resources: ResourceProvider = Resource as ResourceProvider): Config {
     const rawConfig = {
@@ -68,14 +70,15 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
             clientId:     resources.BoxClientId.value,
             clientSecret: resources.BoxClientSecret.value,
         },
-        perch: resources.PerchEnabled?.value === 'true'
+        perch: (resources.PerchEnabled?.value ?? 'true') === 'true'
             ? {
                 enabled:           true,
                 timezone:          'America/Los_Angeles',
                 intervalMinutes:   60,
                 jitterMinutes:     15,
                 maxSessionMinutes: 45,
-                testMode:          resources.PerchTestModeTriggerOnStartup?.value === 'true'
+                // Stryker disable next-line StringLiteral: Mutating 'false' to '' is equivalent - both fail === 'true' check
+                testMode:          (resources.PerchTestModeTriggerOnStartup?.value ?? 'false') === 'true'
                     ? {
                         triggerOnStartup: true,
                         forceSlot:        (resources.PerchTestModeForceSlot as { value?: string } | undefined)?.value as 'pre-dawn' | 'mid-morning' | 'afternoon' | 'evening' | 'late-night' | undefined,
@@ -107,9 +110,7 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
 
 export function loadDynamoDBConfig(resources: DynamoDBResourceProvider): DynamoDBConfig {
     const rawConfig = {
-        tableName: resources.DynamoDBTableName.value,
-        region:    resources.DynamoDBRegion.value,
-        endpoint:  (resources.DynamoDBEndpoint as { value?: string })?.value,
+        tableName: resources.IsambardMemory.name,
     };
 
     const result = dynamoDBConfigSchema.safeParse(rawConfig);

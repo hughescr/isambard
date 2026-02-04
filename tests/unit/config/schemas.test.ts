@@ -193,21 +193,18 @@ describe('boxConfigSchema', () => {
 });
 
 describe('dynamoDBConfigSchema', () => {
-    test('should reject invalid endpoint URL', () => {
-        const invalidConfig = {
+    test('should accept valid tableName', () => {
+        const validConfig = {
             tableName: 'my-table',
-            region:    'us-west-2',
-            endpoint:  'not-a-valid-url',
         };
 
-        const result = dynamoDBConfigSchema.safeParse(invalidConfig);
-        expect(result.success).toBe(false);
+        const result = dynamoDBConfigSchema.safeParse(validConfig);
+        expect(result.success).toBe(true);
     });
 
     test('should reject empty tableName', () => {
         const invalidConfig = {
             tableName: '',
-            region:    'us-west-2',
         };
 
         const result = dynamoDBConfigSchema.safeParse(invalidConfig);

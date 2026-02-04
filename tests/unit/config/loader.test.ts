@@ -13,6 +13,7 @@ function createMockResources(
         NodeEnv:                       { value: 'development' },
         LogLevel:                      { value: 'info' },
         Port:                          { value: '3000' },
+        LogTimezone:                   { value: undefined },
         CaldavUrl:                     { value: 'https://caldav.example.com' },
         CaldavUsername:                { value: 'user' },
         CaldavPassword:                { value: 'password' },
@@ -25,16 +26,12 @@ function createMockResources(
         DiscordBotToken:               { value: 'bot-token-123' },
         DiscordApplicationId:          { value: 'app-id-456' },
         DiscordHomeGuildId:            { value: 'home-guild-123' },
-        DiscordMonitoredChannels:      { value: 'channel-1,channel-2' },
         BoxClientId:                   { value: 'box-client-id' },
         BoxClientSecret:               { value: 'box-secret' },
         ClaudeCodeOAuthToken:          { value: 'test-oauth-token-12345' },
-        DynamoDBTableName:             { value: 'test-table' },
-        DynamoDBRegion:                { value: 'us-west-2' },
-        DynamoDBEndpoint:              { value: undefined },
-        PerchEnabled:                  { value: undefined },
+        PerchEnabled:                  { value: 'true' },
         PerchTestModeForceSlot:        { value: undefined },
-        PerchTestModeTriggerOnStartup: { value: undefined },
+        PerchTestModeTriggerOnStartup: { value: 'false' },
     };
     return { ...defaults, ...overrides };
 }
@@ -329,13 +326,15 @@ describe.concurrent('loadConfig', () => {
             expect(config.perch?.testMode?.forceSlot).toBe('pre-dawn');
         });
 
-        test('should set perch to undefined when not enabled', () => {
+        test('should default perch to enabled when PerchEnabled is undefined', () => {
             const resources = createMockResources({
                 PerchEnabled: { value: undefined },
             });
             const config = loadConfig(resources);
 
-            expect(config.perch).toBeUndefined();
+            // With the new default, undefined becomes 'true'
+            expect(config.perch).toBeDefined();
+            expect(config.perch?.enabled).toBe(true);
         });
 
         test('should set perch to undefined when PerchEnabled is false', () => {
@@ -348,7 +347,7 @@ describe.concurrent('loadConfig', () => {
         });
 
         test('should handle undefined PerchEnabled resource (missing optional chaining)', () => {
-            // This tests the optionalChaining mutant on line 81
+            // This tests the optionalChaining mutant on line 71
             // If ?? is removed, accessing undefined.value would throw
             const resources = createMockResources({
                 // PerchEnabled is undefined, not { value: undefined }
@@ -362,7 +361,9 @@ describe.concurrent('loadConfig', () => {
 
             expect(() => loadConfig(resourcesWithUndefined as typeof resources)).not.toThrow();
             const config = loadConfig(resourcesWithUndefined as typeof resources);
-            expect(config.perch).toBeUndefined();
+            // With the new default, undefined becomes 'true'
+            expect(config.perch).toBeDefined();
+            expect(config.perch?.enabled).toBe(true);
         });
 
         test('should handle undefined PerchTestModeTriggerOnStartup resource (missing optional chaining)', () => {
@@ -385,8 +386,9 @@ describe.concurrent('loadConfig', () => {
             };
 
             const config = loadConfig(resources);
-            // Should not throw and perch should be undefined
-            expect(config.perch).toBeUndefined();
+            // Should not throw, and perch should be enabled (default)
+            expect(config.perch).toBeDefined();
+            expect(config.perch?.enabled).toBe(true);
         });
 
         test('should handle both PerchEnabled and PerchTestModeTriggerOnStartup = undefined', () => {
@@ -397,8 +399,10 @@ describe.concurrent('loadConfig', () => {
             };
 
             const config = loadConfig(resources);
-            // Should not throw
-            expect(config.perch).toBeUndefined();
+            // Should not throw, and perch should be enabled (default) with no test mode (default)
+            expect(config.perch).toBeDefined();
+            expect(config.perch?.enabled).toBe(true);
+            expect(config.perch?.testMode).toBeUndefined();
         });
 
         test('should load perch test mode with triggerOnStartup = true', () => {
@@ -485,55 +489,24 @@ describe.concurrent('loadConfig', () => {
 describe('loadDynamoDBConfig', () => {
     test('should load valid DynamoDB configuration', () => {
         const resources: DynamoDBResourceProvider = {
-            DynamoDBTableName: { value: 'IsambardMemory' },
-            DynamoDBRegion:    { value: 'us-west-2' },
-            DynamoDBEndpoint:  { value: undefined },
+            IsambardMemory: { name: 'IsambardMemory' },
         };
         const config = loadDynamoDBConfig(resources);
         expect(config.tableName).toBe('IsambardMemory');
-        expect(config.region).toBe('us-west-2');
-        expect(config.endpoint).toBeUndefined();
-    });
-
-    test('should load config with endpoint for local development', () => {
-        const resources: DynamoDBResourceProvider = {
-            DynamoDBTableName: { value: 'IsambardMemory' },
-            DynamoDBRegion:    { value: 'us-west-2' },
-            DynamoDBEndpoint:  { value: 'http://localhost:8000' },
-        };
-        const config = loadDynamoDBConfig(resources);
-        expect(config.endpoint).toBe('http://localhost:8000');
     });
 
     test('should throw on missing tableName', () => {
         const resources: DynamoDBResourceProvider = {
-            DynamoDBTableName: { value: undefined },
-            DynamoDBRegion:    { value: 'us-west-2' },
-            DynamoDBEndpoint:  { value: undefined },
+            IsambardMemory: { name: '' },
         };
         expect(() => loadDynamoDBConfig(resources)).toThrow('DynamoDB config validation failed');
     });
 
-    test('should throw on missing region', () => {
+    test('should handle different table names', () => {
         const resources: DynamoDBResourceProvider = {
-            DynamoDBTableName: { value: 'IsambardMemory' },
-            DynamoDBRegion:    { value: undefined },
-            DynamoDBEndpoint:  { value: undefined },
+            IsambardMemory: { name: 'CustomTableName' },
         };
-        expect(() => loadDynamoDBConfig(resources)).toThrow();
-    });
-
-    test('should handle undefined DynamoDBEndpoint resource (missing optional chaining)', () => {
-        // This tests the optional chaining on line 112
-        // If ?. is removed, accessing undefined.value would throw
-        const resources = {
-            DynamoDBTableName: { value: 'IsambardMemory' },
-            DynamoDBRegion:    { value: 'us-west-2' },
-            DynamoDBEndpoint:  undefined as unknown as { value: string | undefined },
-        };
-
-        expect(() => loadDynamoDBConfig(resources)).not.toThrow();
         const config = loadDynamoDBConfig(resources);
-        expect(config.endpoint).toBeUndefined();
+        expect(config.tableName).toBe('CustomTableName');
     });
 });

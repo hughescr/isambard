@@ -57,14 +57,12 @@ async function main() {
     // Load DynamoDB config from SST resources
     const dynamoConfig = loadDynamoDBConfig(Resource as unknown as DynamoDBResourceProvider);
 
-    logger.info({ tableName: dynamoConfig.tableName, region: dynamoConfig.region, msg: 'Connecting to DynamoDB' });
+    logger.info({ tableName: dynamoConfig.tableName, msg: 'Connecting to DynamoDB' });
 
-    // Create DynamoDB client
-    const clientConfig = {
-        region: dynamoConfig.region,
-        ...(dynamoConfig.endpoint && { endpoint: dynamoConfig.endpoint }),
-    };
-    const client = new DynamoDBClient(clientConfig);
+    // Create DynamoDB client with default configuration
+    const client = new DynamoDBClient({
+        maxAttempts: 3,
+    });
     const docClient = DynamoDBDocumentClient.from(client, {
         marshallOptions: {
             removeUndefinedValues:     true,

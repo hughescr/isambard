@@ -1,66 +1,26 @@
 import { describe, test, expect, spyOn, beforeEach, afterEach } from 'bun:test';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
+import _ from 'lodash';
 import { createDynamoDBClient, buildClientConfig } from '@/storage/client';
 import type { DynamoDBConfig } from '@/config/schemas';
 
 // AWS SDK is mocked globally in tests/setup.ts
 
 describe.concurrent('buildClientConfig', () => {
-    test('should not include endpoint property when config.endpoint is undefined', () => {
-        // Critical test for mutation: if(config.endpoint) -> if(true)
-        const config: DynamoDBConfig = {
-            tableName: 'TestTable',
-            region:    'us-west-2',
-        };
+    test('should set maxAttempts to 3', () => {
+        const clientConfig = buildClientConfig();
 
-        const clientConfig = buildClientConfig(config);
+        expect(clientConfig.maxAttempts).toBe(3);
+    });
 
-        // Verify endpoint property does NOT exist
+    test('should not include region or endpoint in config', () => {
+        const clientConfig = buildClientConfig();
+
+        // Verify only maxAttempts is set
+        expect(_.keys(clientConfig)).toEqual(['maxAttempts']);
+        expect('region' in clientConfig).toBe(false);
         expect('endpoint' in clientConfig).toBe(false);
-
-        // Verify other properties are set
-        expect(clientConfig.region).toBe('us-west-2');
-        expect(clientConfig.maxAttempts).toBe(3);
-    });
-
-    test('should include endpoint property when config.endpoint is provided', () => {
-        const config: DynamoDBConfig = {
-            tableName: 'TestTable',
-            region:    'us-west-2',
-            endpoint:  'http://localhost:8000',
-        };
-
-        const clientConfig = buildClientConfig(config);
-
-        // Verify endpoint property DOES exist
-        expect('endpoint' in clientConfig).toBe(true);
-        expect(clientConfig.endpoint).toBe('http://localhost:8000');
-
-        // Verify other properties
-        expect(clientConfig.region).toBe('us-west-2');
-        expect(clientConfig.maxAttempts).toBe(3);
-    });
-
-    test('should always set region and maxAttempts', () => {
-        const config1: DynamoDBConfig = {
-            tableName: 'TestTable',
-            region:    'eu-west-1',
-        };
-
-        const clientConfig1 = buildClientConfig(config1);
-        expect(clientConfig1.region).toBe('eu-west-1');
-        expect(clientConfig1.maxAttempts).toBe(3);
-
-        const config2: DynamoDBConfig = {
-            tableName: 'TestTable',
-            region:    'ap-southeast-2',
-            endpoint:  'http://localhost:9000',
-        };
-
-        const clientConfig2 = buildClientConfig(config2);
-        expect(clientConfig2.region).toBe('ap-southeast-2');
-        expect(clientConfig2.maxAttempts).toBe(3);
     });
 });
 
@@ -71,7 +31,6 @@ describe.concurrent('createDynamoDBClient', () => {
 
         const config: DynamoDBConfig = {
             tableName: 'TestTable',
-            region:    'us-west-2',
         };
 
         const clients = createDynamoDBClient(config);
@@ -86,7 +45,6 @@ describe.concurrent('createDynamoDBClient', () => {
     test('should return tableName in clients object', () => {
         const config: DynamoDBConfig = {
             tableName: 'MyTable',
-            region:    'us-west-2',
         };
 
         const clients = createDynamoDBClient(config);
@@ -98,7 +56,6 @@ describe.concurrent('createDynamoDBClient', () => {
         test('should configure maxAttempts to 3', async () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
-                region:    'us-west-2',
             };
 
             const clients = createDynamoDBClient(config);
@@ -108,115 +65,27 @@ describe.concurrent('createDynamoDBClient', () => {
             expect(maxAttempts).toBe(3);
         });
 
-        test('should pass correct region to DynamoDBClient', async () => {
+        test('should use AWS SDK default region', async () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
-                region:    'ap-southeast-1',
             };
 
             const clients = createDynamoDBClient(config);
 
+            // Without explicit region config, SDK uses default (us-west-2 from mock)
             const region = await clients.client.config.region();
-            expect(region).toBe('ap-southeast-1');
+            expect(region).toBe('us-west-2');
         });
 
-        test('should include endpoint when provided', async () => {
+        test('should not include endpoint in config', () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
-                region:    'us-west-2',
-                endpoint:  'http://localhost:8000',
             };
 
             const clients = createDynamoDBClient(config);
 
-            expect(clients.client.config.endpoint).toBeDefined();
-            const endpoint = await clients.client.config.endpoint!();
-            expect(endpoint).toBeDefined();
-            expect(endpoint.hostname).toBe('localhost');
-            expect(endpoint.port).toBe(8000);
-            expect(endpoint.protocol).toBe('http:');
-        });
-
-        test('should not include endpoint when not provided', () => {
-            const config: DynamoDBConfig = {
-                tableName: 'TestTable',
-                region:    'us-west-2',
-            };
-
-            const clients = createDynamoDBClient(config);
-
-            // When no endpoint is provided, endpoint should be undefined
+            // No endpoint should be configured
             expect(clients.client.config.endpoint).toBeUndefined();
-        });
-
-        test('should use different region values correctly', async () => {
-            const regions = ['us-west-1', 'eu-central-1', 'ap-northeast-1'];
-
-            for(const testRegion of regions) {
-                const config: DynamoDBConfig = {
-                    tableName: 'TestTable',
-                    region:    testRegion,
-                };
-
-                const clients = createDynamoDBClient(config);
-                const region = await clients.client.config.region();
-                expect(region).toBe(testRegion);
-            }
-        });
-
-        test('should only set endpoint when explicitly provided (not when undefined)', () => {
-            // Test that endpoint is NOT set when undefined
-            const configNoEndpoint: DynamoDBConfig = {
-                tableName: 'TestTable',
-                region:    'us-west-2',
-                endpoint:  undefined,
-            };
-
-            const clientsNoEndpoint = createDynamoDBClient(configNoEndpoint);
-            expect(clientsNoEndpoint.client.config.endpoint).toBeUndefined();
-
-            // Test that endpoint IS set when provided
-            const configWithEndpoint: DynamoDBConfig = {
-                tableName: 'TestTable',
-                region:    'us-west-2',
-                endpoint:  'http://localhost:8000',
-            };
-
-            const clientsWithEndpoint = createDynamoDBClient(configWithEndpoint);
-            expect(clientsWithEndpoint.client.config.endpoint).toBeDefined();
-        });
-
-        test('should conditionally set endpoint based on config.endpoint truthiness', async () => {
-            // When endpoint is undefined, the AWS SDK should use default endpoint resolution
-            // This means endpoint function will be defined but point to AWS endpoints
-            const configNoEndpoint: DynamoDBConfig = {
-                tableName: 'TestTable',
-                region:    'us-east-1',
-            };
-
-            const clientsNoEndpoint = createDynamoDBClient(configNoEndpoint);
-
-            // With no custom endpoint, should resolve to AWS DynamoDB endpoint
-            if(clientsNoEndpoint.client.config.endpoint) {
-                const defaultEndpoint = await clientsNoEndpoint.client.config.endpoint();
-                // AWS DynamoDB endpoints contain 'amazonaws.com'
-                expect(defaultEndpoint.hostname).toContain('amazonaws.com');
-            }
-
-            // When endpoint is explicitly set, should use that endpoint
-            const configWithEndpoint: DynamoDBConfig = {
-                tableName: 'TestTable',
-                region:    'us-east-1',
-                endpoint:  'http://localhost:8000',
-            };
-
-            const clientsWithEndpoint = createDynamoDBClient(configWithEndpoint);
-            expect(clientsWithEndpoint.client.config.endpoint).toBeDefined();
-            const customEndpoint = await clientsWithEndpoint.client.config.endpoint!();
-
-            // Custom endpoint should be localhost, not AWS
-            expect(customEndpoint.hostname).toBe('localhost');
-            expect(customEndpoint.hostname).not.toContain('amazonaws.com');
         });
     });
 
@@ -224,7 +93,6 @@ describe.concurrent('createDynamoDBClient', () => {
         test('should configure marshallOptions.removeUndefinedValues to true', () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
-                region:    'us-west-2',
             };
 
             // Spy on DynamoDBDocumentClient.from to capture options
@@ -244,7 +112,6 @@ describe.concurrent('createDynamoDBClient', () => {
         test('should configure marshallOptions.convertClassInstanceToMap to true', () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
-                region:    'us-west-2',
             };
 
             const fromSpy = spyOn(DynamoDBDocumentClient, 'from');
@@ -262,7 +129,6 @@ describe.concurrent('createDynamoDBClient', () => {
         test('should configure unmarshallOptions.wrapNumbers to false', () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
-                region:    'us-west-2',
             };
 
             const fromSpy = spyOn(DynamoDBDocumentClient, 'from');
@@ -280,7 +146,6 @@ describe.concurrent('createDynamoDBClient', () => {
         test('should configure all marshallOptions together', () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
-                region:    'us-west-2',
             };
 
             const fromSpy = spyOn(DynamoDBDocumentClient, 'from');
@@ -297,7 +162,6 @@ describe.concurrent('createDynamoDBClient', () => {
         test('should configure all unmarshallOptions correctly', () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
-                region:    'us-west-2',
             };
 
             const fromSpy = spyOn(DynamoDBDocumentClient, 'from');
@@ -313,7 +177,6 @@ describe.concurrent('createDynamoDBClient', () => {
         test('should set both marshallOptions and unmarshallOptions in one call', () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
-                region:    'us-west-2',
             };
 
             const fromSpy = spyOn(DynamoDBDocumentClient, 'from');
@@ -349,7 +212,6 @@ describe.concurrent('DynamoDBDocumentClient marshalling', () => {
     test('should be able to send commands via docClient', async () => {
         const clients = createDynamoDBClient({
             tableName: 'TestTable',
-            region:    'us-west-2',
         });
 
         // Our mock's send method is callable

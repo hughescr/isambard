@@ -63,8 +63,6 @@ describe('Bot Lifecycle Integration', () => {
         // Mock DynamoDB configuration
         mockDynamoDBConfig = {
             tableName: 'IsambardMemory',
-            region:    'us-west-2',
-            endpoint:  undefined,
         };
 
         // Mock Discord Bot

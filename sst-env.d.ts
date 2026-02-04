@@ -42,21 +42,6 @@ declare module "sst" {
       "type": "sst.sst.Secret"
       "value": string
     }
-    "DiscordMonitoredChannels": {
-      "type": "sst.sst.Linkable"
-      "value": string
-    }
-    "DynamoDBEndpoint": {
-      "type": "sst.sst.Linkable"
-    }
-    "DynamoDBRegion": {
-      "type": "sst.sst.Linkable"
-      "value": string
-    }
-    "DynamoDBTableName": {
-      "type": "sst.sst.Linkable"
-      "value": string
-    }
     "EmailPassword": {
       "type": "sst.sst.Secret"
       "value": string
@@ -79,6 +64,10 @@ declare module "sst" {
     }
     "LogLevel": {
       "type": "sst.sst.Linkable"
+      "value": string
+    }
+    "LogTimezone": {
+      "type": "sst.sst.Secret"
       "value": string
     }
     "NodeEnv": {

@@ -57,8 +57,6 @@ export const boxConfigSchema = z.object({
 // DynamoDB config
 export const dynamoDBConfigSchema = z.object({
     tableName: z.string().min(1),
-    region:    z.string().min(1),
-    endpoint:  z.string().url().optional(),
 });
 
 // Perch time configuration schema

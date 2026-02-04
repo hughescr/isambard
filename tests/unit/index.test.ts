@@ -90,8 +90,6 @@ describe('createApp', () => {
 
             const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
-                region:    'us-west-2',
-                endpoint:  undefined,
             });
             spies.push(loadDynamoDBConfigSpy);
 
@@ -170,8 +168,6 @@ describe('createApp', () => {
 
             const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
-                region:    'us-west-2',
-                endpoint:  undefined,
             });
             spies.push(loadDynamoDBConfigSpy);
 
@@ -340,8 +336,6 @@ describe('createApp', () => {
 
             const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
-                region:    'us-west-2',
-                endpoint:  undefined,
             });
             spies.push(loadDynamoDBConfigSpy);
 
@@ -507,8 +501,6 @@ describe('createApp', () => {
 
             const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
-                region:    'us-west-2',
-                endpoint:  undefined,
             });
             spies.push(loadDynamoDBConfigSpy);
 
@@ -637,8 +629,6 @@ describe('createApp', () => {
 
             const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
-                region:    'us-west-2',
-                endpoint:  undefined,
             });
             spies.push(loadDynamoDBConfigSpy);
 
@@ -769,8 +759,6 @@ describe('createApp', () => {
 
             const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
-                region:    'us-west-2',
-                endpoint:  undefined,
             });
             spies.push(loadDynamoDBConfigSpy);
 
@@ -905,8 +893,6 @@ describe('createApp', () => {
 
             const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
-                region:    'us-west-2',
-                endpoint:  undefined,
             });
             spies.push(loadDynamoDBConfigSpy);
 
@@ -1016,8 +1002,6 @@ describe('createApp', () => {
 
             const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
-                region:    'us-west-2',
-                endpoint:  undefined,
             });
             spies.push(loadDynamoDBConfigSpy);
 
@@ -1097,8 +1081,6 @@ describe('createApp', () => {
 
             const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
-                region:    'us-west-2',
-                endpoint:  undefined,
             });
             spies.push(loadDynamoDBConfigSpy);
 
@@ -1181,8 +1163,6 @@ describe('createApp', () => {
 
             const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
-                region:    'us-west-2',
-                endpoint:  undefined,
             });
             spies.push(loadDynamoDBConfigSpy);
 
@@ -1261,8 +1241,6 @@ describe('createApp', () => {
 
             const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
-                region:    'us-west-2',
-                endpoint:  undefined,
             });
             spies.push(loadDynamoDBConfigSpy);
 
@@ -1435,8 +1413,6 @@ describe('createApp', () => {
 
             const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
-                region:    'us-west-2',
-                endpoint:  undefined,
             });
             spies.push(loadDynamoDBConfigSpy);
 

@@ -104,7 +104,7 @@ export async function createApp(): Promise<App> {
         memoryMcpServer = createMemoryMCPServer(memoryBackend);
 
         // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-        logger.info(`Memory system initialized with DynamoDB: ${tableName} in ${dynamoDBConfig.region}`);
+        logger.info(`Memory system initialized with DynamoDB: ${tableName}`);
 
         // Create Discord client early (shared with bot and channel registry)
         discordClient = createDiscordClient(config.discord);
