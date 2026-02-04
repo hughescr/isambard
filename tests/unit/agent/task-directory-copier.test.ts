@@ -85,7 +85,7 @@ describe('copyTaskDirectory', () => {
     });
 
     test('should copy directory when source exists', async () => {
-        const copier = createTaskDirectoryCopier({ logger: mockLogger });
+        const copier = createTaskDirectoryCopier({ logger: mockLogger as unknown as typeof import('@hughescr/logger').logger });
         const previousSessionId = sessionId('old-session-123');
         const newSessionId = sessionId('new-session-456');
 
@@ -102,7 +102,7 @@ describe('copyTaskDirectory', () => {
     });
 
     test('should use COPYFILE_FICLONE mode', async () => {
-        const copier = createTaskDirectoryCopier({ logger: mockLogger });
+        const copier = createTaskDirectoryCopier({ logger: mockLogger as unknown as typeof import('@hughescr/logger').logger });
         const previousSessionId = sessionId('old-session');
         const newSessionId = sessionId('new-session');
 
@@ -118,7 +118,7 @@ describe('copyTaskDirectory', () => {
     });
 
     test('should log info on successful copy', async () => {
-        const copier = createTaskDirectoryCopier({ logger: mockLogger });
+        const copier = createTaskDirectoryCopier({ logger: mockLogger as unknown as typeof import('@hughescr/logger').logger });
         const previousSessionId = sessionId('prev-session');
         const newSessionId = sessionId('new-session');
 
@@ -134,7 +134,7 @@ describe('copyTaskDirectory', () => {
     });
 
     test('should return false when source directory does not exist', async () => {
-        const copier = createTaskDirectoryCopier({ logger: mockLogger });
+        const copier = createTaskDirectoryCopier({ logger: mockLogger as unknown as typeof import('@hughescr/logger').logger });
         const previousSessionId = sessionId('nonexistent-session');
         const newSessionId = sessionId('new-session');
 
@@ -150,7 +150,7 @@ describe('copyTaskDirectory', () => {
     });
 
     test('should log debug when source does not exist', async () => {
-        const copier = createTaskDirectoryCopier({ logger: mockLogger });
+        const copier = createTaskDirectoryCopier({ logger: mockLogger as unknown as typeof import('@hughescr/logger').logger });
         const previousSessionId = sessionId('no-source');
         const newSessionId = sessionId('new-session');
 
@@ -169,7 +169,7 @@ describe('copyTaskDirectory', () => {
     });
 
     test('should return false and log warning when cp fails', async () => {
-        const copier = createTaskDirectoryCopier({ logger: mockLogger });
+        const copier = createTaskDirectoryCopier({ logger: mockLogger as unknown as typeof import('@hughescr/logger').logger });
         const previousSessionId = sessionId('source-session');
         const newSessionId = sessionId('dest-session');
 
@@ -190,7 +190,7 @@ describe('copyTaskDirectory', () => {
     });
 
     test('should not throw on cp failure', async () => {
-        const copier = createTaskDirectoryCopier({ logger: mockLogger });
+        const copier = createTaskDirectoryCopier({ logger: mockLogger as unknown as typeof import('@hughescr/logger').logger });
         const previousSessionId = sessionId('src');
         const newSessionId = sessionId('dst');
 
@@ -203,7 +203,7 @@ describe('copyTaskDirectory', () => {
     });
 
     test('should handle non-Error exceptions from cp', async () => {
-        const copier = createTaskDirectoryCopier({ logger: mockLogger });
+        const copier = createTaskDirectoryCopier({ logger: mockLogger as unknown as typeof import('@hughescr/logger').logger });
         const previousSessionId = sessionId('src');
         const newSessionId = sessionId('dst');
 
@@ -223,7 +223,7 @@ describe('copyTaskDirectory', () => {
     });
 
     test('should handle access errors other than ENOENT', async () => {
-        const copier = createTaskDirectoryCopier({ logger: mockLogger });
+        const copier = createTaskDirectoryCopier({ logger: mockLogger as unknown as typeof import('@hughescr/logger').logger });
         const previousSessionId = sessionId('src');
         const newSessionId = sessionId('dst');
 
@@ -239,7 +239,7 @@ describe('copyTaskDirectory', () => {
     });
 
     test('should construct correct source and destination paths', async () => {
-        const copier = createTaskDirectoryCopier({ logger: mockLogger });
+        const copier = createTaskDirectoryCopier({ logger: mockLogger as unknown as typeof import('@hughescr/logger').logger });
         const previousSessionId = sessionId('prev-123');
         const newSessionId = sessionId('new-456');
 
@@ -255,7 +255,7 @@ describe('copyTaskDirectory', () => {
     });
 
     test('should log both paths on successful copy', async () => {
-        const copier = createTaskDirectoryCopier({ logger: mockLogger });
+        const copier = createTaskDirectoryCopier({ logger: mockLogger as unknown as typeof import('@hughescr/logger').logger });
         const previousSessionId = sessionId('old');
         const newSessionId = sessionId('new');
 
@@ -270,7 +270,7 @@ describe('copyTaskDirectory', () => {
     });
 
     test('should log source path on debug when not found', async () => {
-        const copier = createTaskDirectoryCopier({ logger: mockLogger });
+        const copier = createTaskDirectoryCopier({ logger: mockLogger as unknown as typeof import('@hughescr/logger').logger });
         const previousSessionId = sessionId('missing');
         const newSessionId = sessionId('new');
 
@@ -313,7 +313,7 @@ describe('copyTaskDirectory with cleanup processor', () => {
         };
 
         const copier = createTaskDirectoryCopier({
-            logger:           mockLogger,
+            logger:           mockLogger as unknown as typeof import('@hughescr/logger').logger,
             cleanupProcessor: mockProcessor,
         });
 
@@ -351,7 +351,7 @@ describe('copyTaskDirectory with cleanup processor', () => {
         };
 
         const copier = createTaskDirectoryCopier({
-            logger:           mockLogger,
+            logger:           mockLogger as unknown as typeof import('@hughescr/logger').logger,
             cleanupProcessor: mockProcessor,
         });
 
@@ -387,7 +387,7 @@ describe('copyTaskDirectory with cleanup processor', () => {
     });
 
     test('should use simple copy when cleanup processor not provided', async () => {
-        const copier = createTaskDirectoryCopier({ logger: mockLogger });
+        const copier = createTaskDirectoryCopier({ logger: mockLogger as unknown as typeof import('@hughescr/logger').logger });
         const previousSessionId = sessionId('old-session');
         const newSessionId = sessionId('new-session');
 
@@ -420,7 +420,7 @@ describe('copyTaskDirectory with cleanup processor', () => {
         mockCp.mockImplementation(() => Promise.reject(copyError));
 
         const copier = createTaskDirectoryCopier({
-            logger:           mockLogger,
+            logger:           mockLogger as unknown as typeof import('@hughescr/logger').logger,
             cleanupProcessor: mockProcessor,
         });
 
@@ -461,7 +461,7 @@ describe('copyTaskDirectory with cleanup processor', () => {
         };
 
         const copier = createTaskDirectoryCopier({
-            logger:           mockLogger,
+            logger:           mockLogger as unknown as typeof import('@hughescr/logger').logger,
             cleanupProcessor: mockProcessor,
         });
 

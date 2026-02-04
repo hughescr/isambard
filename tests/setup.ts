@@ -183,14 +183,33 @@ export const mockGenerateText = mock(originalGenerateText);
 export const mockGenerateTextWithSystemPrompt = mock(originalGenerateTextWithSystemPrompt);
 
 // Mock logger to silence output and allow test assertions
-// Type the mock functions properly so .mock.calls[n][0] works correctly
-export const mockLogger = {
-    debug: mock((_obj: Record<string, unknown>) => undefined),
-    info:  mock((_obj: Record<string, unknown>) => undefined),
-    warn:  mock((_obj: Record<string, unknown>) => undefined),
-    error: mock((_obj: Record<string, unknown>) => undefined),
-    child: mock(() => { return mockLogger; }),
+// Create a mock that satisfies both the logger interface and provides mock methods
+import type { Mock } from 'bun:test';
+
+type MockLoggerMethod = Mock<(...args: unknown[]) => typeof mockLogger>;
+
+// Need to declare mockLogger variable first, then assign to it
+// This allows methods to return mockLogger (self-reference)
+export const mockLogger: {
+    debug: MockLoggerMethod
+    info:  MockLoggerMethod
+    warn:  MockLoggerMethod
+    error: MockLoggerMethod
+    child: Mock<() => typeof mockLogger>
+} = {
+    debug: undefined as unknown as MockLoggerMethod,
+    info:  undefined as unknown as MockLoggerMethod,
+    warn:  undefined as unknown as MockLoggerMethod,
+    error: undefined as unknown as MockLoggerMethod,
+    child: undefined as unknown as Mock<() => typeof mockLogger>,
 };
+
+// Now assign the actual mocks after mockLogger is declared
+mockLogger.debug = mock((..._args: unknown[]) => mockLogger);
+mockLogger.info = mock((..._args: unknown[]) => mockLogger);
+mockLogger.warn = mock((..._args: unknown[]) => mockLogger);
+mockLogger.error = mock((..._args: unknown[]) => mockLogger);
+mockLogger.child = mock(() => mockLogger);
 
 // Mock helpers for Discord handlers
 export function createMockBotStateManager() {

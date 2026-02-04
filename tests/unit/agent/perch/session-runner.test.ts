@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/unbound-method -- Tests use mock() with method references */
+/* eslint-disable @typescript-eslint/no-empty-function, lodash/prefer-noop -- test mocks use empty functions to avoid unbound-method errors */
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import _ from 'lodash';
 import type { Logger } from '@hughescr/logger';
@@ -12,14 +14,13 @@ import type { BotStateManager, BotState, PerchingModeContext, InterruptingMessag
 import type { PerchConfig } from '@/agent/perch/types';
 import { type ChannelId } from '@/integrations/discord/types';
 
-/* eslint-disable @typescript-eslint/unbound-method -- Tests use mock() with method references */
 // Mock logger
 function createMockLogger(): Logger {
     return {
-        debug: mock(_.noop),
-        info:  mock(_.noop),
-        warn:  mock(_.noop),
-        error: mock(_.noop),
+        debug: mock(() => {}),
+        info:  mock(() => {}),
+        warn:  mock(() => {}),
+        error: mock(() => {}),
     } as unknown as Logger;
 }
 

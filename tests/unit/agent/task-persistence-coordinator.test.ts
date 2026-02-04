@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
+/* eslint-disable @typescript-eslint/no-empty-function, lodash/prefer-noop -- test mocks use empty functions to avoid unbound-method errors */
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import _ from 'lodash';
 import { createTaskPersistenceCoordinator } from '@/agent/task-persistence-coordinator';
@@ -24,10 +25,10 @@ describe('TaskPersistenceCoordinator', () => {
         };
 
         mockLogger = {
-            debug: mock(_.noop),
-            info:  mock(_.noop),
-            warn:  mock(_.noop),
-            error: mock(_.noop),
+            debug: mock(() => {}),
+            info:  mock(() => {}),
+            warn:  mock(() => {}),
+            error: mock(() => {}),
         } as unknown as Logger;
     });
 

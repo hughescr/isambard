@@ -136,7 +136,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -167,7 +167,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -201,7 +201,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -235,7 +235,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -268,7 +268,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -314,7 +314,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -358,7 +358,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -413,7 +413,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -468,7 +468,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -517,7 +517,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -575,7 +575,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -606,7 +606,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -641,7 +641,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -667,7 +667,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -704,7 +704,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -738,7 +738,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -775,7 +775,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -806,7 +806,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -846,7 +846,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -880,7 +880,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -906,7 +906,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockRejectedValue(new Error('Disk full'));
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -943,7 +943,7 @@ describe('processTaskDirectory', () => {
 
             // Use 7-day retention instead of default 14
             const processor = createTaskCleanupProcessor({
-                logger:        mockLogger,
+                logger:        mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 retentionDays: 7,
                 deps:          createTestDeps(() => NOW),
             });
@@ -975,7 +975,7 @@ describe('processTaskDirectory', () => {
 
             // Use 30-day retention
             const processor = createTaskCleanupProcessor({
-                logger:        mockLogger,
+                logger:        mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 retentionDays: 30,
                 deps:          createTestDeps(() => NOW),
             });
@@ -1019,7 +1019,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -1054,7 +1054,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -1086,7 +1086,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -1158,7 +1158,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger,
+                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
                 deps:   createTestDeps(() => NOW),
             });
 

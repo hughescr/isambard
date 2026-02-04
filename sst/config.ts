@@ -15,6 +15,9 @@ export const config = {
         port: new sst.Linkable('Port', {
             properties: { value: '3000' },
         }),
+        logTimezone: new sst.Linkable('LogTimezone', {
+            properties: { value: undefined },  // Will use system timezone by default
+        }),
     },
 
     // Apple Calendar (CalDAV)

@@ -14,6 +14,7 @@ import * as clientModule from '@/integrations/discord/client';
 import * as channelRegistryModule from '@/integrations/discord/channel-registry';
 import * as presenceModule from '@/integrations/discord/presence';
 import { createBotStateManager } from '@/integrations/discord/state';
+import type { Logger } from '@hughescr/logger';
 import * as loggerModule from '@hughescr/logger';
 
 describe('createDiscordBot', () => {
@@ -36,12 +37,12 @@ describe('createDiscordBot', () => {
         upsertChannel:      mock(() => Promise.resolve()),
     } as unknown as ChannelRegistryManager;
 
-    const mockLogger = {
-        info:  _noop,
-        warn:  _noop,
-        error: _noop,
-        debug: _noop,
-    };
+    const mockLogger: Logger = {
+        info:  (..._args: unknown[]) => mockLogger,
+        warn:  (..._args: unknown[]) => mockLogger,
+        error: (..._args: unknown[]) => mockLogger,
+        debug: (..._args: unknown[]) => mockLogger,
+    } as unknown as Logger;
 
     afterEach(() => {
         for(const spy of spies) {

@@ -30,7 +30,7 @@ import { CheckpointManager, InboxManager } from './integrations/discord/inbox';
 import { createInboxMCPServer } from './agent/inbox-mcp-server';
 import { createBotStateManager, type BotStateManager } from './integrations/discord/state';
 import { ChannelRegistryBackend, ChannelRegistryManager } from './integrations/discord/channel-registry';
-import { logger } from '@hughescr/logger';
+import { logger, setTimezone } from '@hughescr/logger';
 
 export interface App {
     /**
@@ -379,6 +379,11 @@ if(import.meta.main) {
         logger.info(`Changing working directory to: ${scratchDir}`);
         process.chdir(scratchDir);
     }
+
+    // Configure logger timezone (env var or system default)
+    const logTimezone = (Resource as { LogTimezone?: { value?: string } }).LogTimezone?.value
+      ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    setTimezone(logTimezone);
 
     logger.info('Isambard starting...');
 

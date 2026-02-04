@@ -1,4 +1,6 @@
 /* eslint-disable lodash/prefer-constant -- arrow functions needed for test mocks */
+/* eslint-disable @typescript-eslint/unbound-method -- test uses mock() with lodash and checks toHaveBeenCalled */
+/* eslint-disable @typescript-eslint/no-empty-function, lodash/prefer-noop -- test mocks use empty functions to avoid unbound-method errors */
 import { describe, test, expect, beforeEach, afterEach, mock, jest, type Mock } from 'bun:test';
 import _ from 'lodash';
 import type { Logger } from '@hughescr/logger';
@@ -6,14 +8,13 @@ import { createPerchScheduler, type PerchSchedulerDeps } from '@/agent/perch/sch
 import type { BotStateManager, StateChange, OperationalMode, BotState } from '@/integrations/discord/state';
 import type { PerchConfig } from '@/agent/perch/types';
 
-/* eslint-disable @typescript-eslint/unbound-method -- test helper functions use mock() with lodash */
 // Mock logger
 function createMockLogger(): Logger {
     return {
-        debug: mock(_.noop),
-        info:  mock(_.noop),
-        warn:  mock(_.noop),
-        error: mock(_.noop),
+        debug: mock(() => {}),
+        info:  mock(() => {}),
+        warn:  mock(() => {}),
+        error: mock(() => {}),
     } as unknown as Logger;
 }
 
@@ -61,7 +62,6 @@ function createMockStateManager(): BotStateManager {
 
     return stateManager;
 }
-/* eslint-enable @typescript-eslint/unbound-method -- end of test helpers using lodash/mock */
 
 describe('PerchScheduler', () => {
     let mockLogger: Logger;
@@ -76,7 +76,6 @@ describe('PerchScheduler', () => {
 
         mockLogger = createMockLogger();
         mockStateManager = createMockStateManager() as BotStateManager & { _triggerStateChange: (change: StateChange) => void };
-        /* eslint-disable-next-line @typescript-eslint/unbound-method -- creating test mock */
         mockOnPerchTrigger = mock(_.noop);
         config = {
             enabled:           true,
@@ -102,11 +101,9 @@ describe('PerchScheduler', () => {
 
             const scheduler = createPerchScheduler(deps);
             expect(scheduler).toBeDefined();
-            /* eslint-disable @typescript-eslint/unbound-method -- verifying scheduler methods exist */
             expect(scheduler.start).toBeDefined();
             expect(scheduler.stop).toBeDefined();
             expect(scheduler.getState).toBeDefined();
-            /* eslint-enable @typescript-eslint/unbound-method -- end method existence checks */
         });
 
         test('should use default Pacific hour function if not provided', () => {
@@ -148,7 +145,6 @@ describe('PerchScheduler', () => {
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
 
-            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
             expect(mockStateManager.subscribe).toHaveBeenCalled();
 
             scheduler.stop();
@@ -184,7 +180,6 @@ describe('PerchScheduler', () => {
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
 
-            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
             expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('disabled'));
         });
 
@@ -199,7 +194,6 @@ describe('PerchScheduler', () => {
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
 
-            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
             expect(mockLogger.info).toHaveBeenCalledWith(
                 expect.objectContaining({
                     timezone:        'America/Los_Angeles',
@@ -228,10 +222,8 @@ describe('PerchScheduler', () => {
         });
 
         test('should unsubscribe from state changes', () => {
-            /* eslint-disable @typescript-eslint/unbound-method -- test mocks using lodash helpers */
             const unsubscribeMock = mock(_.noop);
             mockStateManager.subscribe = mock(() => unsubscribeMock);
-            /* eslint-enable @typescript-eslint/unbound-method -- end test mock creation */
 
             const deps: PerchSchedulerDeps = {
                 stateManager:   mockStateManager,
@@ -284,7 +276,6 @@ describe('PerchScheduler', () => {
             scheduler.start();
             scheduler.stop();
 
-            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
             expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('stopped'));
         });
     });
@@ -620,7 +611,7 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Verify that debug log was called with scheduling info
-            /* eslint-disable @typescript-eslint/unbound-method,@typescript-eslint/no-unsafe-assignment -- checking mock was called */
+            /* eslint-disable @typescript-eslint/no-unsafe-assignment -- checking mock was called */
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     delaySeconds: expect.any(Number),
@@ -628,7 +619,7 @@ describe('PerchScheduler', () => {
                 }),
                 expect.stringContaining('Next perch trigger scheduled')
             );
-            /* eslint-enable @typescript-eslint/unbound-method,@typescript-eslint/no-unsafe-assignment -- end mock assertion check */
+            /* eslint-enable @typescript-eslint/no-unsafe-assignment -- end mock assertion check */
 
             scheduler.stop();
         });
@@ -730,7 +721,6 @@ describe('PerchScheduler', () => {
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
 
-            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
             expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('test mode'));
 
             scheduler.stop();
@@ -857,7 +847,7 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Should log about triggering on startup
-            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
+
             expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('triggering perch on startup'));
 
             // Advance timer to allow startup delay
@@ -888,14 +878,14 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Should log normal scheduler start
-            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
+
             expect(mockLogger.info).toHaveBeenCalledWith(
                 expect.objectContaining({ timezone: 'America/Los_Angeles' }),
                 'Perch scheduler started with randomized hourly triggers'
             );
 
             // Should not log about test mode
-            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
+
             expect(mockLogger.info).not.toHaveBeenCalledWith(expect.stringContaining('test mode'));
 
             scheduler.stop();
@@ -922,7 +912,7 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Should log normal scheduler start
-            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
+
             expect(mockLogger.info).toHaveBeenCalledWith(
                 expect.objectContaining({ timezone: 'America/Los_Angeles' }),
                 'Perch scheduler started with randomized hourly triggers'
@@ -1030,7 +1020,7 @@ describe('PerchScheduler', () => {
             mockStateManager._triggerStateChange(createStateChange('mode_transition', 'idle'));
 
             // Should log about running deferred perch
-            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
+
             expect(mockLogger.info).toHaveBeenCalledWith(
                 expect.objectContaining({
                     originalSlot: 'mid-morning',
@@ -1057,14 +1047,14 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Verify debug log was called with positive delay
-            /* eslint-disable @typescript-eslint/unbound-method,@typescript-eslint/no-unsafe-assignment -- checking mock was called */
+            /* eslint-disable @typescript-eslint/no-unsafe-assignment -- checking mock was called */
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     delaySeconds: expect.any(Number),
                 }),
                 expect.any(String)
             );
-            /* eslint-enable @typescript-eslint/unbound-method,@typescript-eslint/no-unsafe-assignment -- end mock check */
+            /* eslint-enable @typescript-eslint/no-unsafe-assignment -- end mock check */
 
             scheduler.stop();
         });
@@ -1100,7 +1090,7 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Verify the scheduler logged scheduling info with ISO format
-            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
+
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     delaySeconds: expect.any(Number) as number,
@@ -1124,7 +1114,7 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Verify scheduler started and logged scheduling
-            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
+
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     delaySeconds: expect.any(Number) as number,
@@ -1202,7 +1192,6 @@ describe('PerchScheduler', () => {
 
             jest.advanceTimersByTime(3600000); // 1 hour
 
-            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 { hour: 10, slot: 'mid-morning' },
                 'Perch trigger fired'
@@ -1227,7 +1216,6 @@ describe('PerchScheduler', () => {
 
             jest.advanceTimersByTime(3600000); // 1 hour
 
-            /* eslint-disable-next-line @typescript-eslint/unbound-method -- checking mock was called */
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 { slot: 'mid-morning', mode: 'processing_message' },
                 'Bot busy - deferring perch'
@@ -1325,7 +1313,7 @@ describe('PerchScheduler', () => {
 
             // Get the debug log call for scheduling
 
-            const debugCalls = (mockLogger.debug as Mock<typeof _.noop>).mock.calls;
+            const debugCalls = (mockLogger.debug as unknown as Mock<typeof _.noop>).mock.calls;
             const scheduleCall = _.find(debugCalls, call =>
                 _.isString(call[1]) && call[1].includes('Next perch trigger scheduled')
             );

@@ -3,8 +3,7 @@
  * Following TDD: these tests are written first and will fail until the implementation is complete.
  */
 
-/* eslint-disable @typescript-eslint/unbound-method -- Test file with dynamic assertions */
-
+/* eslint-disable @typescript-eslint/no-empty-function, lodash/prefer-noop -- test mocks use empty functions to avoid unbound-method errors */
 import { describe, it, expect, beforeEach } from 'bun:test';
 import _ from 'lodash';
 import { createBotStateManager, type BotStateManager, type BotStateManagerDeps } from '@/integrations/discord/state/manager';
@@ -19,11 +18,11 @@ describe('BotStateManager', () => {
 
     beforeEach(() => {
         mockLogger = {
-            info:  _.noop,
-            warn:  _.noop,
-            error: _.noop,
-            debug: _.noop,
-        };
+            info:  () => {},
+            warn:  () => {},
+            error: () => {},
+            debug: () => {},
+        } as unknown as BotStateManagerDeps['logger'];
         manager = createBotStateManager({ logger: mockLogger });
         manager.start();
     });
@@ -416,9 +415,12 @@ describe('BotStateManager', () => {
 
             it('should log warning when not in catching_up mode', () => {
                 const warnCalls: unknown[][] = [];
-                mockLogger.warn = (...args: unknown[]) => {
+                /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Test spy needs to capture calls */
+                mockLogger.warn = ((...args: unknown[]) => {
                     warnCalls.push(args);
-                };
+                    return mockLogger;
+                }) as any;
+                /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Re-enable rules after spy setup */
 
                 manager.markChannelViewed(testChannelId);
 
