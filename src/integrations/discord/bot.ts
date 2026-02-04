@@ -231,7 +231,6 @@ function createPresenceStreamHandler(
  * @param client - Discord client (must be ready)
  * @param channelRegistry - Channel registry manager
  * @param responseRouter - Response router for sending notifications
- * @param botStateManager - Bot state manager for determining session type
  * @param rateLimiter - Rate limiter for Discord API calls (optional, created after this function)
  * @returns Promise that resolves when initialization is complete
  */
@@ -239,7 +238,6 @@ async function initializeChannelRegistry(
     client: Client,
     channelRegistry: ChannelRegistryManager,
     responseRouter: ResponseRouter,
-    botStateManager: BotStateManager,
     rateLimiter?: DiscordRateLimiter
 ): Promise<void> {
     try {
@@ -1313,7 +1311,23 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
         // Initialize channel registry BEFORE setting up message handlers
         // Pass rateLimiter for error notification (may be undefined if not created yet)
-        await initializeChannelRegistry(readyClient, channelRegistry, responseRouter, botStateManager, rateLimiter);
+        await initializeChannelRegistry(readyClient, channelRegistry, responseRouter, rateLimiter);
+
+        // Create message coordinator if agent is provided (MUST be before setupMessageProcessing)
+        if(agent) {
+            coordinator = setupCoordinatorIntegration({
+                agent,
+                presenceManager,
+                dynamicStatusGenerator,
+                botStateManager,
+                catchUpSessionRunner,
+                perchSessionRunner,
+                responseRouter,
+                rateLimiter: rateLimiter,
+                readyClient,
+                channelRegistry,
+            });
+        }
 
         // Register message handler AFTER channel registry is initialized
         setupMessageProcessing({
@@ -1346,22 +1360,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 presenceManager,
                 memoryBackend: memoryBackend!,
                 perchConfig:   options.perchConfig,
-            });
-        }
-
-        // Create message coordinator if agent is provided
-        if(agent) {
-            coordinator = setupCoordinatorIntegration({
-                agent,
-                presenceManager,
-                dynamicStatusGenerator,
-                botStateManager,
-                catchUpSessionRunner,
-                perchSessionRunner,
-                responseRouter,
-                rateLimiter: rateLimiter,
-                readyClient,
-                channelRegistry,
             });
         }
     });
