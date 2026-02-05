@@ -566,6 +566,79 @@ describe('CatchUpSessionRunner', () => {
         });
     });
 
+    describe('interrupt - double-interrupt guard', () => {
+        it('should not abort when already interrupted', async () => {
+            // Set up state as already interrupted
+            mockInterrupted = true;
+
+            const runner = createCatchUpSessionRunner(deps);
+
+            // Call interrupt with a message
+            const message: InterruptingMessage = {
+                channelId:   createChannelId('789'),
+                author:      'TestUser2',
+                channelName: 'announcements',
+                content:     'Second interrupt attempt',
+            };
+            runner.interrupt(message);
+
+            // Verify stateManager.interrupt was NOT called (due to early return)
+            expect(mockStateManager.interrupt).not.toHaveBeenCalled();
+        });
+
+        it('should abort when not already interrupted', async () => {
+            // Set up inbox with unread messages
+            mockInboxManager.getUnreadOverview = mock().mockReturnValue({
+                totalUnread: 5,
+                channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 5 }],
+            });
+
+            // Set initial state as NOT interrupted
+            mockInterrupted = false;
+
+            // Mock a long-running agent session
+            let capturedSignal: AbortSignal | null = null;
+            mockRunAgentSession.mockImplementation((options: RunAgentSessionOptions) => {
+                capturedSignal = options.abortSignal;
+                return new Promise((resolve) => {
+                    setTimeout(() => resolve({ completed: true }), 10000);
+                });
+            });
+
+            const runner = createCatchUpSessionRunner(deps);
+
+            // Start catch-up session to create abort controller
+            const startPromise = runner.startCatchUp();
+
+            // Advance time to allow session to start (uses fake timers)
+            jest.advanceTimersByTime(10);
+            // Allow promise microtasks to settle - need multiple cycles for async chain
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Call interrupt with a message
+            const message: InterruptingMessage = {
+                channelId:   createChannelId('456'),
+                author:      'TestUser',
+                channelName: 'random',
+                content:     'First interrupt',
+            };
+            runner.interrupt(message);
+
+            // Verify stateManager.interrupt WAS called
+            expect(mockStateManager.interrupt).toHaveBeenCalled();
+
+            // Verify abort controller WAS aborted
+            expect(capturedSignal).not.toBeNull();
+            expect(capturedSignal!.aborted).toBe(true);
+
+            // Clean up by advancing timers to complete the promise
+            jest.advanceTimersByTime(10000);
+            await startPromise;
+        });
+    });
+
     describe('resumeAfterInterruption', () => {
         it('should return early when NOT in catching_up_interrupted state', async () => {
             // Set mode to idle (not catching_up + interrupted)
@@ -641,9 +714,9 @@ describe('CatchUpSessionRunner', () => {
         });
 
         it('should use buildCatchUpInterruptedPrompt with viewed channels and interrupting message', async () => {
-            // Set up state as catching_up + interrupted
+            // Set up state as catching_up (but not interrupted yet)
             mockMode = 'catching_up';
-            mockInterrupted = true;
+            mockInterrupted = false;
 
             // Mock viewed channels
             const viewedChannel1 = createChannelId('111');

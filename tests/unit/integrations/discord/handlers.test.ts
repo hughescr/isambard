@@ -34,7 +34,7 @@ describe('Discord Event Handlers', () => {
             handler(mockClient);
 
             expect(mockLogger.info).toHaveBeenCalled();
-            const lastCall = mockLogger.info.mock.calls[mockLogger.info.mock.calls.length - 1] as unknown[];
+            const lastCall = mockLogger.info.mock.calls[mockLogger.info.mock.calls.length - 1];
             const message = lastCall[0] as string;
             expect(message.includes('TestBot#1234')).toBe(true);
         });
@@ -51,7 +51,7 @@ describe('Discord Event Handlers', () => {
             handler(mockClient);
 
             expect(mockLogger.info).toHaveBeenCalled();
-            const logMessage = (mockLogger.info.mock.calls[0] as unknown[])[0] as string;
+            const logMessage = (mockLogger.info.mock.calls[0])[0] as string;
             // eslint-disable-next-line lodash/prefer-lodash-method -- Simple string check
             const lower = logMessage.toLowerCase();
 
@@ -80,7 +80,7 @@ describe('Discord Event Handlers', () => {
             handler(mockClient);
 
             expect(mockLogger.info).toHaveBeenCalled();
-            const lastCall = mockLogger.info.mock.calls[mockLogger.info.mock.calls.length - 1] as unknown[];
+            const lastCall = mockLogger.info.mock.calls[mockLogger.info.mock.calls.length - 1];
             expect((lastCall[0] as string).includes('not available')).toBe(true);
         });
     });
@@ -93,7 +93,7 @@ describe('Discord Event Handlers', () => {
             handler(testError);
 
             expect(mockLogger.error).toHaveBeenCalled();
-            const firstCall = mockLogger.error.mock.calls[mockLogger.error.mock.calls.length - 1] as unknown[];
+            const firstCall = mockLogger.error.mock.calls[mockLogger.error.mock.calls.length - 1];
             // logger.error({ error, msg }) - single object with error and msg properties
             const loggedObject = firstCall[0] as { error: Error, msg: string };
             expect(loggedObject).toHaveProperty('error', testError);
@@ -107,7 +107,7 @@ describe('Discord Event Handlers', () => {
             handler(testError);
 
             expect(mockLogger.error).toHaveBeenCalled();
-            const lastCall = mockLogger.error.mock.calls[mockLogger.error.mock.calls.length - 1] as unknown[];
+            const lastCall = mockLogger.error.mock.calls[mockLogger.error.mock.calls.length - 1];
             // logger.error({ error, msg }) - single object with error and msg properties
             const loggedObject = lastCall[0] as { error: Error, msg: string };
             expect(loggedObject).toHaveProperty('error', testError);
@@ -931,7 +931,8 @@ describe('Discord Event Handlers', () => {
 
         it('should call handleCatchUpInterruption when state is catching_up and runner exists', async () => {
             const mockBotStateManager = {
-                getMode: mock(_.constant('catching_up' as const)),
+                getMode:       mock(_.constant('catching_up' as const)),
+                isInterrupted: mock(_.constant(false)),
             };
 
             const mockCatchUpSessionRunner = {
@@ -1039,7 +1040,8 @@ describe('Discord Event Handlers', () => {
 
         it('should NOT call coordinator when interrupting catch-up (prevents duplicate processing)', async () => {
             const mockBotStateManager = {
-                getMode: mock(_.constant('catching_up' as const)),
+                getMode:       mock(_.constant('catching_up' as const)),
+                isInterrupted: mock(_.constant(false)),
             };
 
             const mockCatchUpSessionRunner = {
@@ -1072,6 +1074,45 @@ describe('Discord Event Handlers', () => {
             expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
 
             // CRITICAL: Verify onMessage was NOT called (would cause duplicate processing)
+            expect(onMessage).not.toHaveBeenCalled();
+        });
+
+        it('should NOT interrupt when already interrupted, allowing coordinator to handle message', async () => {
+            const mockBotStateManager = {
+                getMode:       mock(_.constant('catching_up' as const)),
+                isInterrupted: mock(_.constant(true)), // Already interrupted
+            };
+
+            const mockCatchUpSessionRunner = {
+                interrupt: mock(async () => { /* intentionally empty */ }),
+            };
+
+            const mockCoordinator = {
+                handleMessage: mock(() => _.noop()),
+            };
+
+            const onMessage = mock(_.constant(Promise.resolve(null)));
+
+            const handler = createMessageHandler({
+                channelRegistry:      { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId,
+                onMessage,
+                catchUpSessionRunner: mockCatchUpSessionRunner as unknown as import('@/integrations/discord/catchup').CatchUpSessionRunner,
+                coordinator:          mockCoordinator as unknown as import('@/integrations/discord/message-coordinator').MessageCoordinator,
+                botStateManager:      mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
+                responseRouter:       createMockResponseRouter() as any,
+            });
+
+            const message = createMockMessageForCatchUp();
+            await handler(message);
+
+            // CRITICAL: Verify interrupt was NOT called (already interrupted)
+            expect(mockCatchUpSessionRunner.interrupt).not.toHaveBeenCalled();
+
+            // CRITICAL: Verify coordinator WAS called (message routed to coordinator for batching)
+            expect(mockCoordinator.handleMessage).toHaveBeenCalled();
+
+            // Verify onMessage was NOT called (coordinator handles it)
             expect(onMessage).not.toHaveBeenCalled();
         });
     });
@@ -1225,7 +1266,8 @@ describe('Discord Event Handlers', () => {
 
         it('should call handlePerchInterruption when state is perching and runner exists', async () => {
             const mockBotStateManager = {
-                getMode: mock(_.constant('perching' as const)),
+                getMode:       mock(_.constant('perching' as const)),
+                isInterrupted: mock(_.constant(false)),
             };
 
             const mockPerchSessionRunner = {
@@ -1263,7 +1305,8 @@ describe('Discord Event Handlers', () => {
 
         it('should call interrupt with correct message details including channel name', async () => {
             const mockBotStateManager = {
-                getMode: mock(_.constant('perching' as const)),
+                getMode:       mock(_.constant('perching' as const)),
+                isInterrupted: mock(_.constant(false)),
             };
 
             const mockPerchSessionRunner = {
@@ -1295,7 +1338,8 @@ describe('Discord Event Handlers', () => {
 
         it('should use channel ID as fallback when channel name is null', async () => {
             const mockBotStateManager = {
-                getMode: mock(_.constant('perching' as const)),
+                getMode:       mock(_.constant('perching' as const)),
+                isInterrupted: mock(_.constant(false)),
             };
 
             const mockPerchSessionRunner = {
@@ -1419,7 +1463,8 @@ describe('Discord Event Handlers', () => {
 
         it('should NOT call coordinator when interrupting perch (prevents duplicate processing)', async () => {
             const mockBotStateManager = {
-                getMode: mock(_.constant('perching' as const)),
+                getMode:       mock(_.constant('perching' as const)),
+                isInterrupted: mock(_.constant(false)),
             };
 
             const mockPerchSessionRunner = {
@@ -1454,6 +1499,47 @@ describe('Discord Event Handlers', () => {
             expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
 
             // CRITICAL: Verify onMessage was NOT called (would cause duplicate processing)
+            expect(onMessage).not.toHaveBeenCalled();
+        });
+
+        it('should NOT interrupt when already interrupted, allowing coordinator to handle message', async () => {
+            const mockBotStateManager = {
+                getMode:       mock(_.constant('perching' as const)),
+                isInterrupted: mock(_.constant(true)), // Already interrupted
+            };
+
+            const mockPerchSessionRunner = {
+                interrupt: mock(async () => { /* intentionally empty */ }),
+            };
+
+            const mockCoordinator = {
+                handleMessage: mock(() => _.noop()),
+            };
+
+            const onMessage = mock(_.constant(Promise.resolve(null)));
+
+            const mockChannelRegistry = { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(_.constant(Promise.resolve())) };
+
+            const handler = createMessageHandler({
+                channelRegistry:    mockChannelRegistry as any,
+                botUserId,
+                onMessage,
+                perchSessionRunner: mockPerchSessionRunner as unknown as import('@/agent/perch').PerchSessionRunner,
+                coordinator:        mockCoordinator as unknown as import('@/integrations/discord/message-coordinator').MessageCoordinator,
+                botStateManager:    mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
+                responseRouter:     createMockResponseRouter() as any,
+            });
+
+            const message = createMockMessageForPerch();
+            await handler(message);
+
+            // CRITICAL: Verify interrupt was NOT called (already interrupted)
+            expect(mockPerchSessionRunner.interrupt).not.toHaveBeenCalled();
+
+            // CRITICAL: Verify coordinator WAS called (message routed to coordinator for batching)
+            expect(mockCoordinator.handleMessage).toHaveBeenCalled();
+
+            // Verify onMessage was NOT called (coordinator handles it)
             expect(onMessage).not.toHaveBeenCalled();
         });
     });

@@ -502,6 +502,12 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
         },
 
         interrupt(message: InterruptingMessage): void {
+            // If already interrupted, don't abort the resume session
+            // The new message will be routed to coordinator for batching
+            if(deps.stateManager.isInterrupted()) {
+                return;
+            }
+
             // Store the interrupting message AND mark as interrupted in BotStateManager
             // BotStateManager is the SINGLE SOURCE OF TRUTH for all state
             // The error handler will check isInterrupted() and trigger resume

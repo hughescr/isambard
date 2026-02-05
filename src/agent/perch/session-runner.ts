@@ -194,8 +194,8 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
         } finally {
             // Clear resume flag and interrupted state AFTER session completes
             // This ensures presence stays as 🦉💬 (perching_interrupted) while handling the message
-            resumeInProgress = false;
             stateManager.resume();
+            resumeInProgress = false;
         }
     }
 
@@ -375,6 +375,12 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
         },
 
         interrupt(message: InterruptingMessage): void {
+            // If already interrupted, don't abort the resume session
+            // The new message will be routed to coordinator for batching
+            if(stateManager.isInterrupted()) {
+                return;
+            }
+
             // Store the interrupting message AND mark as interrupted in BotStateManager
             // BotStateManager is the SINGLE SOURCE OF TRUTH for all state
             // The error handler will check isInterrupted() and trigger resume

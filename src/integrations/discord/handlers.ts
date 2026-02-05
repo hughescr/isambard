@@ -346,12 +346,20 @@ async function handleModeInterruptions(
 ): Promise<boolean> {
     // Handle catch-up mode interruption
     if(botStateManager?.getMode() === 'catching_up' && catchUpSessionRunner) {
+        // If already interrupted, let message go to coordinator for batching
+        if(botStateManager.isInterrupted()) {
+            return false;
+        }
         await handleCatchUpInterruption(message, catchUpSessionRunner);
         return true;
     }
 
     // Handle perch mode interruption
     if(botStateManager?.getMode() === 'perching' && perchSessionRunner) {
+        // If already interrupted, let message go to coordinator for batching
+        if(botStateManager.isInterrupted()) {
+            return false;
+        }
         await handlePerchInterruption(message, perchSessionRunner);
         return true;
     }

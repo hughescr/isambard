@@ -388,17 +388,13 @@ describe('PerchSessionRunner - Interruption', () => {
     });
 
     test('should resume after interruption with interrupted prompt', async () => {
-        let _resolveFirst: ((value: AgentSessionResult) => void) | null = null;
-        let _rejectFirst: ((error: Error) => void) | null = null;
         let callCount = 0;
 
         const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
             callCount++;
             if(callCount === 1) {
                 // First call - will be interrupted
-                return new Promise<AgentSessionResult>((resolve, reject) => {
-                    _resolveFirst = resolve;
-                    _rejectFirst = reject;
+                return new Promise<AgentSessionResult>((_resolve, reject) => {
                     options.abortSignal.addEventListener('abort', () => {
                         // Reject when aborted
                         const error = new Error('AbortError');
@@ -1394,6 +1390,212 @@ describe('PerchSessionRunner - Session State', () => {
         if(calls[0]?.[0]) {
             expect(calls[0][0].slot).toBe('evening');
         }
+    });
+});
+
+describe('PerchSessionRunner - Double-Interrupt Guard', () => {
+    let mockLogger: Logger;
+    let config: PerchConfig;
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2024-01-01T12:00:00.000Z'));
+
+        mockLogger = createMockLogger();
+        config = {
+            enabled:           true,
+            timezone:          'America/Los_Angeles',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 45,
+        };
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('should not abort when already interrupted', async () => {
+        // Set up state manager that reports already interrupted
+        const mockStateInterrupted = createMockStateManager({ mode: 'idle', interrupted: true });
+
+        const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            // Long-running session that waits for abort
+            return new Promise((resolve) => {
+                options.abortSignal.addEventListener('abort', () => {
+                    resolve({ completed: false });
+                });
+            });
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateInterrupted,
+            logger:          mockLogger,
+            config,
+            runAgentSession: sessionMock,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+
+        // Start perch session (don't await - it will hang)
+        const sessionPromise = runner.startPerch('pre-dawn');
+        await Promise.resolve();
+
+        // Get the abort controller before calling interrupt
+        const controller = runner.getAbortController();
+
+        // Call interrupt when already interrupted
+        const message: InterruptingMessage = {
+            channelId:   'test-channel' as ChannelId,
+            author:      'TestUser',
+            channelName: 'test',
+            content:     'Second interrupt!',
+        };
+        runner.interrupt(message);
+
+        // Verify abort controller was NOT aborted (guard prevented it)
+        expect(controller?.signal.aborted).toBe(false);
+
+        // Verify stateManager.interrupt was NOT called (early return prevented it)
+        expect(mockStateInterrupted.interrupt).not.toHaveBeenCalled();
+
+        // Cleanup
+        controller?.abort();
+        await sessionPromise;
+    });
+
+    test('should abort when not already interrupted', async () => {
+        // Set up state manager that reports NOT interrupted initially
+        let interrupted = false;
+        const mockStateNotInterrupted = createMockStateManager({ mode: 'idle', interrupted: false });
+
+        // Override isInterrupted to track our local flag
+        (mockStateNotInterrupted.isInterrupted as ReturnType<typeof mock>).mockImplementation(() => interrupted);
+
+        // Override interrupt to set our flag
+        (mockStateNotInterrupted.interrupt as ReturnType<typeof mock>).mockImplementation((_message: InterruptingMessageDetails) => {
+            interrupted = true;
+            // Store message in context (like real state manager)
+            const state = mockStateNotInterrupted as unknown as { interrupted: boolean };
+            state.interrupted = true;
+        });
+
+        const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            // Long-running session that waits for abort
+            return new Promise((resolve) => {
+                options.abortSignal.addEventListener('abort', () => {
+                    resolve({ completed: false });
+                });
+            });
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateNotInterrupted,
+            logger:          mockLogger,
+            config,
+            runAgentSession: sessionMock,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+
+        // Start perch session (don't await)
+        const sessionPromise = runner.startPerch('pre-dawn');
+        await Promise.resolve();
+
+        // Get the abort controller before calling interrupt
+        const controller = runner.getAbortController();
+
+        // Call interrupt when NOT already interrupted
+        const message: InterruptingMessage = {
+            channelId:   'test-channel' as ChannelId,
+            author:      'TestUser',
+            channelName: 'test',
+            content:     'First interrupt!',
+        };
+        runner.interrupt(message);
+
+        // Verify abort controller WAS aborted
+        expect(controller?.signal.aborted).toBe(true);
+
+        // Verify stateManager.interrupt WAS called
+        expect(mockStateNotInterrupted.interrupt).toHaveBeenCalledWith(message);
+
+        // Wait for session to complete
+        await sessionPromise;
+    });
+
+    test('should handle multiple rapid interrupts without error', async () => {
+        // Set up state manager that toggles interrupted state
+        let interrupted = false;
+        const mockStateDynamic = createMockStateManager({ mode: 'idle', interrupted: false });
+
+        // Override isInterrupted to track our local flag
+        (mockStateDynamic.isInterrupted as ReturnType<typeof mock>).mockImplementation(() => interrupted);
+
+        // Override interrupt to set our flag
+        (mockStateDynamic.interrupt as ReturnType<typeof mock>).mockImplementation(() => {
+            interrupted = true;
+        });
+
+        const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            // Long-running session
+            return new Promise((resolve) => {
+                options.abortSignal.addEventListener('abort', () => {
+                    resolve({ completed: false });
+                });
+            });
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateDynamic,
+            logger:          mockLogger,
+            config,
+            runAgentSession: sessionMock,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+
+        // Start perch session
+        const sessionPromise = runner.startPerch('pre-dawn');
+        await Promise.resolve();
+
+        // Call interrupt multiple times rapidly
+        const message1: InterruptingMessage = {
+            channelId:   'test-channel' as ChannelId,
+            author:      'User1',
+            channelName: 'test',
+            content:     'First!',
+        };
+
+        const message2: InterruptingMessage = {
+            channelId:   'test-channel' as ChannelId,
+            author:      'User2',
+            channelName: 'test',
+            content:     'Second!',
+        };
+
+        const message3: InterruptingMessage = {
+            channelId:   'test-channel' as ChannelId,
+            author:      'User3',
+            channelName: 'test',
+            content:     'Third!',
+        };
+
+        // Call interrupt multiple times
+        expect(() => {
+            runner.interrupt(message1);
+            runner.interrupt(message2);
+            runner.interrupt(message3);
+        }).not.toThrow();
+
+        // Verify only first interrupt was processed (subsequent ones returned early)
+        expect(mockStateDynamic.interrupt).toHaveBeenCalledTimes(1);
+        expect(mockStateDynamic.interrupt).toHaveBeenCalledWith(message1);
+
+        // Cleanup
+        const controller = runner.getAbortController();
+        controller?.abort();
+        await sessionPromise;
     });
 });
 
