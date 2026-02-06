@@ -10,6 +10,7 @@ import { createDynamoDBClient } from './storage/client';
 import { MemoryToolBackend } from './storage/memory-tool';
 import { TaskSessionBackend } from './storage/task-session';
 import { createContextBuilder } from './agent/context-builder';
+import { createEventDeltaTracker } from './agent/event-delta-tracker';
 import { createMemoryMCPServer } from './agent/memory-mcp-server';
 import { createDiscordMCPServer } from './agent/discord-mcp-server';
 import { createClaudeAgent } from './agent/agent';
@@ -93,6 +94,7 @@ export async function createApp(): Promise<App> {
     let botStateManager: BotStateManager | undefined;
     let taskPersistenceCoordinator: TaskPersistenceCoordinator | undefined;
     let channelRegistry: ChannelRegistryManager;
+    let eventDeltaTracker: ReturnType<typeof createEventDeltaTracker> | undefined;
 
     try {
         // Create memory backend
@@ -100,6 +102,9 @@ export async function createApp(): Promise<App> {
 
         // Create context builder (for core identity + recent context)
         contextBuilder = createContextBuilder({ backend: memoryBackend });
+
+        // Create event delta tracker for enriching resume contexts with new events
+        eventDeltaTracker = createEventDeltaTracker(contextBuilder);
 
         // Create MCP server (for deep memory access)
         memoryMcpServer = createMemoryMCPServer(memoryBackend);
@@ -272,6 +277,7 @@ export async function createApp(): Promise<App> {
         inboxManager,
         botStateManager,
         channelRegistry,
+        eventDeltaTracker,
         memoryBackend: memoryBackend
             ? {
                 storeCompletionSignal: async (signal: CatchUpCompletionSignal) => {

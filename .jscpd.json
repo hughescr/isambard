@@ -1,0 +1,9 @@
+{
+  "threshold": 5,
+  "reporters": ["console", "json"],
+  "ignore": ["**/*.test.ts", "node_modules/**", ".stryker-tmp/**", "dist/**"],
+  "format": ["typescript"],
+  "minLines": 8,
+  "minTokens": 50,
+  "output": "reports/jscpd"
+}

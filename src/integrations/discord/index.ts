@@ -5,12 +5,74 @@
  * Most other exports are internal implementation details used by the bot or agent's Discord-specific MCP servers.
  */
 
-export * from './types';
-export * from './errors';
-export * from './client';
-export * from './handlers';
-export * from './messages';
-export * from './message-coordinator';
-export * from './bot';
-export * from './button-builder';
-export * from './interactions';
+export {
+    guildIdSchema,
+    type GuildId,
+    channelIdSchema,
+    type ChannelId,
+    userIdSchema,
+    type UserId,
+    messageIdSchema,
+    type MessageId,
+    discordMessageContextSchema,
+    type DiscordMessageContext,
+    createGuildId,
+    createChannelId,
+    createUserId,
+    createMessageId,
+    isGuildId,
+    isChannelId,
+    isUserId,
+    isMessageId
+} from './types';
+
+export {
+    DiscordIntegrationError,
+    InvalidTokenError,
+    PermissionError,
+    ChannelNotFoundError,
+    RateLimitError
+} from './errors';
+
+export { createDiscordClient } from './client';
+
+export {
+    extractAttachmentMetadata,
+    createReadyHandler,
+    createErrorHandler,
+    type MessageHandlerOptions,
+    createMessageHandler
+} from './handlers';
+
+export {
+    DISCORD_MAX_LENGTH,
+    DISCORD_SAFE_LENGTH,
+    exceedsLimit,
+    splitMessage
+} from './messages';
+
+export {
+    type ProcessResult,
+    type MessageProcessor,
+    type MessageCoordinatorConfig,
+    type TypingChannel,
+    type MessageCoordinator,
+    createMessageCoordinator
+} from './message-coordinator';
+
+export {
+    type DiscordBotOptions,
+    type DiscordBot,
+    createDiscordBot
+} from './bot';
+
+export {
+    type ButtonBuilderConfig,
+    buildQuestionButtons
+} from './button-builder';
+
+export {
+    type InteractionHandlerConfig,
+    type InteractionHandler,
+    createInteractionHandler
+} from './interactions';

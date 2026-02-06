@@ -1,5 +1,6 @@
 import config from '@hughescr/eslint-config-default';
-import boundariesPlugin from 'eslint-plugin-boundaries';
+import { boundariesConfig } from './eslint-boundaries.config.mjs';
+import noCrossModuleInternal from './tools/eslint-rules/no-cross-module-internal.mjs';
 
 /**
  * ESLint Configuration with Architectural Boundaries
@@ -48,87 +49,18 @@ export default [
             'n/no-unpublished-import': 'off'
         }
     },
+    boundariesConfig,
     {
         files:   ['src/**/*.ts', 'src/**/*.tsx'],
         plugins: {
-            boundaries: boundariesPlugin
-        },
-        settings: {
-            'import/resolver': {
-                node: {
-                    extensions: ['.ts', '.tsx', '.js', '.jsx']
+            local: {
+                rules: {
+                    'no-cross-module-internal': noCrossModuleInternal
                 }
-            },
-            'boundaries/elements': [
-                {
-                    type:    'utils',
-                    pattern: 'src/utils/**'
-                },
-                {
-                    type:    'config',
-                    pattern: 'src/config/**'
-                },
-                {
-                    type:    'storage',
-                    pattern: 'src/storage/**'
-                },
-                {
-                    type:    'agent',
-                    pattern: 'src/agent/**'
-                },
-                {
-                    type:    'discord',
-                    pattern: 'src/integrations/discord/**'
-                },
-                {
-                    type:    'app',
-                    pattern: 'src/index.ts'
-                }
-            ],
-            'boundaries/ignore': [
-                'src/**/*.test.ts',
-                'src/**/*.spec.ts'
-            ]
+            }
         },
         rules: {
-            'boundaries/element-types': ['error', {
-                'default': 'disallow',
-                rules:     [
-                    // utils can't import from any application modules
-                    {
-                        from:     'utils',
-                        disallow: ['agent', 'storage', 'discord', 'config', 'app']
-                    },
-                    // config can only import from utils
-                    {
-                        from:     'config',
-                        disallow: ['agent', 'storage', 'discord', 'app']
-                    },
-                    // storage can import from config and utils, but not agent or discord
-                    {
-                        from:     'storage',
-                        disallow: ['agent', 'discord', 'app']
-                    },
-                    // agent should be platform-agnostic, can't import from discord
-                    // Can import from storage, config, and utils
-                    {
-                        from:     'agent',
-                        allow:    ['storage', 'config', 'utils'],
-                        disallow: ['discord', 'app']
-                    },
-                    // discord can import from everything except app
-                    {
-                        from:     'discord',
-                        allow:    ['agent', 'storage', 'config', 'utils'],
-                        disallow: ['app']
-                    },
-                    // app (composition root) can import from anything
-                    {
-                        from:  'app',
-                        allow: ['agent', 'storage', 'discord', 'config', 'utils']
-                    }
-                ]
-            }]
+            'local/no-cross-module-internal': 'error'
         }
     }
 ];

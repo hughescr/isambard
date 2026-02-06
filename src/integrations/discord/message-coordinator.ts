@@ -23,6 +23,7 @@ import type { Message } from 'discord.js';
 import type { DiscordMessageContext, ChannelId } from './types';
 import type { StreamTracker, StreamProgress } from '../../agent/stream-tracker';
 import type { ResumeContext } from '../../agent/resume-prompt-builder';
+import type { EventDeltaTracker } from '../../agent/event-delta-tracker';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 
@@ -44,9 +45,11 @@ export type MessageProcessor = (
 
 /** Configuration for the coordinator */
 export interface MessageCoordinatorConfig {
-    debounceMs?: number  // Default: 2000ms
+    debounceMs?:        number  // Default: 2000ms
     /** Optional callback invoked when processing completes (not on interruption) */
-    onResponse?: (result: ProcessResult, discordMessage: Message | null) => Promise<void>
+    onResponse?:        (result: ProcessResult, discordMessage: Message | null) => Promise<void>
+    /** Optional event delta tracker for capturing new events during processing */
+    eventDeltaTracker?: EventDeltaTracker
 }
 
 /** Discord channel interface for typing indicator */
@@ -109,6 +112,7 @@ interface ChannelState {
 export function createMessageCoordinator(config?: MessageCoordinatorConfig): MessageCoordinator {
     const debounceMs = config?.debounceMs ?? 2000;
     const onResponse = config?.onResponse;
+    const eventDeltaTracker = config?.eventDeltaTracker;
 
     // Map of channel states
     const channelStates = new Map<ChannelId, ChannelState>();
@@ -195,6 +199,9 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
         // Create the processing promise
         const processingPromise = (async () => {
             try {
+                // Mark event delta start point before processing begins (must await to prevent race)
+                await eventDeltaTracker?.markStart();
+
                 // Call processor
                 const result = await processor(
                     contexts,
@@ -265,11 +272,10 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
         // Stryker disable next-line OptionalChaining: newMessages cannot be empty in reachable paths
         const firstDiscordMessage = state.interruptedFirstMessage ?? newMessages[0]?.discordMessage ?? null;
 
-        // Build resume context if we have partial work
-        const resumeContext: ResumeContext | null = state.partialWork
+        // Build partial resume context (newEvents resolved async in processing block)
+        const partialResumeContext = state.partialWork
             ? {
                 partialWork: state.partialWork,
-                newEvents:   [], // Will integrate with EventDeltaTracker
                 newMessages: _.map(newMessages, 'context'),
             }
             : null;
@@ -287,6 +293,16 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
         // Create the processing promise
         const processingPromise = (async () => {
             try {
+                // Resolve newEvents asynchronously
+                const resumeContext: ResumeContext | null = partialResumeContext
+                    ? {
+                        ...partialResumeContext,
+                        newEvents: eventDeltaTracker
+                            ? await eventDeltaTracker.getNewEvents()
+                            : [],
+                    }
+                    : null;
+
                 // Call processor with resume context
                 const result = await processor(
                     allContexts,

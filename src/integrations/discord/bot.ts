@@ -481,6 +481,7 @@ interface SetupCoordinatorParams {
     rateLimiter:            DiscordRateLimiter
     readyClient:            Client
     channelRegistry:        ChannelRegistryManager
+    eventDeltaTracker?:     import('../../agent/event-delta-tracker').EventDeltaTracker
 }
 
 /**
@@ -504,8 +505,9 @@ function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoo
     } = params;
 
     const coordinator = createMessageCoordinator({
-        debounceMs: 250,
-        onResponse: async (result, discordMessage) => {
+        debounceMs:        250,
+        eventDeltaTracker: params.eventDeltaTracker,
+        onResponse:        async (result, discordMessage) => {
             // Only send response if we have both a response and a message to reply to
             if(result.response && discordMessage) {
                 // Capture rate limiter reference for safe closure access
@@ -983,6 +985,11 @@ export interface DiscordBotOptions {
      * If provided along with agent, enables autonomous perch time.
      */
     perchConfig?: PerchConfig
+
+    /**
+     * Optional event delta tracker for capturing events during message processing interruptions
+     */
+    eventDeltaTracker?: import('../../agent/event-delta-tracker').EventDeltaTracker
 }
 
 /**
@@ -1050,7 +1057,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, onMessage, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry } = options;
+    const { config, onMessage, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker } = options;
 
     // Hot reload protection: Reuse existing client if available in global state
     // During Bun hot reload, the module is re-executed but global state persists.
@@ -1340,6 +1347,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 rateLimiter: rateLimiter,
                 readyClient,
                 channelRegistry,
+                eventDeltaTracker,
             });
         }
 

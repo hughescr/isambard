@@ -5,8 +5,24 @@
  * The presence system automatically updates bot status based on agent activity.
  */
 
-export * from './types.js';
-export * from './errors.js';
+export {
+    type PresencePhase,
+    type PresenceDisplayMode,
+    type SynopsisContext,
+    type CatchUpSynopsisContext,
+    type StatusUpdate,
+    ToolStatusMap,
+    ToolDescriptions,
+    getToolDescription,
+    PresenceConfigSchema,
+    type PresenceConfig
+} from './types.js';
+
+export {
+    PresenceError,
+    StatusGenerationError
+} from './errors.js';
+
 export { createActiveStatusGenerator } from './status-generator-active.js';
 export { createDynamicStatusGenerator, resetDebounceState } from './status-generator-dynamic.js';
 export { createIdleStatusGenerator, type IdleStatusGeneratorDeps } from './status-generator-idle.js';

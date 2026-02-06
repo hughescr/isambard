@@ -6,10 +6,7 @@
 
 export { createClaudeAgent, type ClaudeAgent, type ClaudeAgentOptions } from './agent';
 export { createContextBuilder, type ContextBuilder, type ContextBuilderOptions } from './context-builder';
-
-/** @internal */
 export { createEventDeltaTracker, type EventDeltaTracker } from './event-delta-tracker';
-
 export { createMemoryMCPServer } from './memory-mcp-server';
 export { createDiscordMCPServer, setConversationContext, clearConversationContext, type DiscordMCPServerContext } from './discord-mcp-server';
 export { loadPlugins, type PluginsConfig } from './plugin-loader';

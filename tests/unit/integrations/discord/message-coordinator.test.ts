@@ -94,6 +94,8 @@ describe('MessageCoordinator', () => {
 
             // Wait for async processing to start
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             expect(processorMock).toHaveBeenCalledTimes(1);
             const callArgs = processorMock.mock.calls[0] as unknown[];
@@ -114,6 +116,7 @@ describe('MessageCoordinator', () => {
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(50);
             await Promise.resolve();
+            await Promise.resolve();
 
             // Second message - should receive sessionId from interrupted first call
             const secondContext = { ...mockContext, messageId: 'msg-002', content: 'Second message' };
@@ -121,6 +124,7 @@ describe('MessageCoordinator', () => {
 
             coordinator.handleMessage(secondContext, secondMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve();
             await Promise.resolve();
 
             expect(processorMock).toHaveBeenCalledTimes(2);
@@ -152,6 +156,8 @@ describe('MessageCoordinator', () => {
             // Start first message processing
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Send second message - should NOT interrupt immediately
             const secondContext = { ...mockContext, messageId: 'msg-002', content: 'Interrupt!' };
@@ -164,6 +170,8 @@ describe('MessageCoordinator', () => {
 
             // Wait for debounce timer to expire
             jest.advanceTimersByTime(100);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // NOW abort signal should be triggered
             expect(abortSignalReceived!.aborted).toBe(true);
@@ -251,6 +259,8 @@ describe('MessageCoordinator', () => {
             // Start first message
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Send second message during processing (starts debounce)
             const secondContext = { ...mockContext, messageId: 'msg-002', content: 'Second' };
@@ -259,6 +269,8 @@ describe('MessageCoordinator', () => {
 
             // Advance time for first processing to complete (50ms) + debounce (100ms) + second processing
             jest.advanceTimersByTime(200);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             expect(callCount).toBe(2);
             expect(firstCallInterrupted).toBe(false); // First call should NOT be interrupted
@@ -286,6 +298,8 @@ describe('MessageCoordinator', () => {
             // Send first message
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Send rapid follow-up messages during processing
             const msg2Context = { ...mockContext, messageId: 'msg-002', content: 'Second' };
@@ -293,6 +307,8 @@ describe('MessageCoordinator', () => {
             coordinator.handleMessage(msg2Context, msg2);
 
             jest.advanceTimersByTime(30);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             const msg3Context = { ...mockContext, messageId: 'msg-003', content: 'Third' };
             const msg3 = { ...mockMessage, id: 'msg-003', content: 'Third' } as unknown as Message;
@@ -300,6 +316,8 @@ describe('MessageCoordinator', () => {
 
             // Wait for debounce + processing to complete
             jest.advanceTimersByTime(300);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Should have 2 calls: initial processing + batched resume
             expect(processorMock).toHaveBeenCalledTimes(2);
@@ -325,6 +343,8 @@ describe('MessageCoordinator', () => {
             // Start processing
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Interrupt
             const msg2Context = { ...mockContext, messageId: 'msg-002', content: 'Second' };
@@ -333,6 +353,8 @@ describe('MessageCoordinator', () => {
 
             // Wait less than debounce time
             jest.advanceTimersByTime(50);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Send another message to reset debounce timer
             const msg3Context = { ...mockContext, messageId: 'msg-003', content: 'Third' };
@@ -341,6 +363,8 @@ describe('MessageCoordinator', () => {
 
             // Wait for full debounce from last message + processing
             jest.advanceTimersByTime(250);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // All messages should be batched in the resume call
             const lastCallArgs = processorMock.mock.calls[processorMock.mock.calls.length - 1] as unknown[];
@@ -421,6 +445,8 @@ describe('MessageCoordinator', () => {
             coordinator.handleMessage(channel2Context, channel2Message);
 
             jest.advanceTimersByTime(150);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Should have 2 separate processing calls
             expect(processorMock).toHaveBeenCalledTimes(2);
@@ -438,6 +464,7 @@ describe('MessageCoordinator', () => {
 
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(50);
+            await Promise.resolve();
             await Promise.resolve();
 
             expect(onResponseMock).toHaveBeenCalledTimes(1);
@@ -532,6 +559,8 @@ describe('MessageCoordinator', () => {
             // Should not throw
             expect(() => coordinator.handleMessage(mockContext, mockMessage)).not.toThrow();
             jest.advanceTimersByTime(50);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
         });
 
         it('should invoke onResponse with null message for re-queued messages', async () => {
@@ -592,6 +621,8 @@ describe('MessageCoordinator', () => {
             // Start processing
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Interrupt to create debounce timer
             const msg2Context = { ...mockContext, messageId: 'msg-002' };
@@ -603,6 +634,8 @@ describe('MessageCoordinator', () => {
 
             // Wait to ensure no processing happens
             jest.advanceTimersByTime(250);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Should only have initial call, no debounced call
             expect(processorMock).toHaveBeenCalledTimes(1);
@@ -626,6 +659,8 @@ describe('MessageCoordinator', () => {
 
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             coordinator.stop();
 
@@ -676,12 +711,14 @@ describe('MessageCoordinator', () => {
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(50);
             await Promise.resolve();
+            await Promise.resolve();
 
             // Second message - should NOT have resume context with partial work
             const msg2Context = { ...mockContext, messageId: 'msg-002', content: 'Second' };
             const msg2 = { ...mockMessage, id: 'msg-002', content: 'Second' } as unknown as Message;
             coordinator.handleMessage(msg2Context, msg2);
             jest.advanceTimersByTime(50);
+            await Promise.resolve();
             await Promise.resolve();
 
             expect(callCount).toBe(2);
@@ -771,6 +808,7 @@ describe('MessageCoordinator', () => {
             // First message
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             // Interrupt
@@ -780,6 +818,7 @@ describe('MessageCoordinator', () => {
 
             // Wait for debounce + second call
             jest.advanceTimersByTime(200);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             expect(callCount).toBe(2);
@@ -817,6 +856,7 @@ describe('MessageCoordinator', () => {
             // First message
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(50);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             expect(callCount).toBe(1);
@@ -826,6 +866,7 @@ describe('MessageCoordinator', () => {
             const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
             coordinator.handleMessage(msg2Context, msg2);
             jest.advanceTimersByTime(50);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             expect(callCount).toBe(2);
@@ -986,6 +1027,8 @@ describe('MessageCoordinator', () => {
             // First message
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve();
+            await Promise.resolve();
 
             // Second message during processing (starts debounce)
             const msg2Context = { ...mockContext, messageId: 'msg-002' };
@@ -994,6 +1037,8 @@ describe('MessageCoordinator', () => {
 
             // Wait for debounce (100ms) to trigger interruption + first processing completion (200ms) + second processing to start
             jest.advanceTimersByTime(250);
+            await Promise.resolve();
+            await Promise.resolve();
 
             // Third message during second processing (starts new debounce) - second processing started ~200ms ago
             const msg3Context = { ...mockContext, messageId: 'msg-003' };
@@ -1002,6 +1047,8 @@ describe('MessageCoordinator', () => {
 
             // Wait for second debounce (100ms) + second processing completion (300ms) + third processing
             jest.advanceTimersByTime(500);
+            await Promise.resolve();
+            await Promise.resolve();
 
             expect(callCount).toBe(3);
             expect(resumeContextInThirdCall).not.toBeNull();
@@ -1050,6 +1097,8 @@ describe('MessageCoordinator', () => {
             // First message
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Second message during processing (starts debounce)
             const msg2Context = { ...mockContext, messageId: 'msg-002' };
@@ -1058,6 +1107,8 @@ describe('MessageCoordinator', () => {
 
             // Wait for debounce (100ms) + first processing (200ms) + second processing to start
             jest.advanceTimersByTime(250);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Third message during second processing (starts new debounce)
             const msg3Context = { ...mockContext, messageId: 'msg-003' };
@@ -1066,6 +1117,8 @@ describe('MessageCoordinator', () => {
 
             // Wait for second debounce (100ms) + second processing (300ms) + third processing
             jest.advanceTimersByTime(500);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             expect(callCount).toBe(3);
             // Third call should have sessionId from interrupted second call (session kept for resume)
@@ -1110,6 +1163,8 @@ describe('MessageCoordinator', () => {
             // First message
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Interrupt with second message
             const msg2Context = { ...mockContext, messageId: 'msg-002' };
@@ -1118,6 +1173,8 @@ describe('MessageCoordinator', () => {
 
             // Wait for first processing (150ms) + debounce (100ms) + resume processing
             jest.advanceTimersByTime(300);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             expect(callCount).toBe(2);
 
@@ -1126,6 +1183,8 @@ describe('MessageCoordinator', () => {
             const msg3 = { ...mockMessage, id: 'msg-003' } as unknown as Message;
             coordinator.handleMessage(msg3Context, msg3);
             jest.advanceTimersByTime(50);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             expect(callCount).toBe(3);
             expect(sessionIdInThirdCall).toBeUndefined();
@@ -1157,6 +1216,8 @@ describe('MessageCoordinator', () => {
             // First message
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Interrupt with second message
             const msg2Context = { ...mockContext, messageId: 'msg-002', content: 'Second' };
@@ -1165,6 +1226,8 @@ describe('MessageCoordinator', () => {
 
             // Wait for debounce + processing
             jest.advanceTimersByTime(300);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Should have both original and new message contexts
             expect(receivedContexts.length).toBe(2);
@@ -1194,6 +1257,8 @@ describe('MessageCoordinator', () => {
             // First message
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Second message during active processing (starts debounce)
             const msg2Context = { ...mockContext, messageId: 'msg-002', content: 'Second' };
@@ -1202,12 +1267,16 @@ describe('MessageCoordinator', () => {
 
             // Third message during active processing (resets debounce)
             jest.advanceTimersByTime(50);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
             const msg3Context = { ...mockContext, messageId: 'msg-003', content: 'Third' };
             const msg3 = { ...mockMessage, id: 'msg-003', content: 'Third' } as unknown as Message;
             coordinator.handleMessage(msg3Context, msg3);
 
             // Wait for debounce from last message (100ms) + interruption + first processing completion (200ms) + resume processing
             jest.advanceTimersByTime(400);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Should have contexts properly mapped via lodash operations
             // After interruption and resume, all three messages should be batched
@@ -1232,6 +1301,7 @@ describe('MessageCoordinator', () => {
             // First message completes
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(50);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             // Second message - no interruption, so processWithResume not triggered yet
@@ -1239,6 +1309,7 @@ describe('MessageCoordinator', () => {
             const msg2 = { ...mockMessage, id: 'msg-002', content: 'Second' } as unknown as Message;
             coordinator.handleMessage(msg2Context, msg2);
             jest.advanceTimersByTime(50);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             // Should have processed each message separately
@@ -1318,6 +1389,7 @@ describe('MessageCoordinator', () => {
             // First message - sets state.sessionId = 'previously-set-session' (interrupted)
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(50);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             expect(callCount).toBe(1);
@@ -1327,6 +1399,7 @@ describe('MessageCoordinator', () => {
             const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
             coordinator.handleMessage(msg2Context, msg2);
             jest.advanceTimersByTime(50);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             expect(callCount).toBe(2);
@@ -1336,6 +1409,7 @@ describe('MessageCoordinator', () => {
             const msg3 = { ...mockMessage, id: 'msg-003' } as unknown as Message;
             coordinator.handleMessage(msg3Context, msg3);
             jest.advanceTimersByTime(50);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             expect(callCount).toBe(3);
@@ -1393,13 +1467,17 @@ describe('MessageCoordinator', () => {
 
             // First message - starts processing, gets interrupted with sessionId
             coordinator.handleMessage(mockContext, mockMessage);
-            jest.advanceTimersByTime(50);
+            jest.advanceTimersByTime(200); // Debounce (100) + processor (50) + buffer
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Second message - resume processing, gets interrupted with undefined
             const msg2Context = { ...mockContext, messageId: 'msg-002' };
             const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
             coordinator.handleMessage(msg2Context, msg2);
-            jest.advanceTimersByTime(50);
+            jest.advanceTimersByTime(200); // Debounce (100) + processor (50) + buffer
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             expect(callCount).toBe(2);
 
@@ -1407,7 +1485,9 @@ describe('MessageCoordinator', () => {
             const msg3Context = { ...mockContext, messageId: 'msg-003' };
             const msg3 = { ...mockMessage, id: 'msg-003' } as unknown as Message;
             coordinator.handleMessage(msg3Context, msg3);
-            jest.advanceTimersByTime(50);
+            jest.advanceTimersByTime(200); // Debounce (100) + processor completion + buffer
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             expect(callCount).toBe(3);
             // Critical: If mutant changes if(result.sessionId) to if(true) at line 238,
@@ -1467,6 +1547,8 @@ describe('MessageCoordinator', () => {
             // First message
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Second message during first processing (starts debounce)
             const msg2Context = { ...mockContext, messageId: 'msg-002' };
@@ -1475,6 +1557,8 @@ describe('MessageCoordinator', () => {
 
             // Wait for debounce (100ms) + first processing (200ms) to complete
             jest.advanceTimersByTime(250);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             expect(callCount).toBe(2);
 
@@ -1485,6 +1569,8 @@ describe('MessageCoordinator', () => {
 
             // Wait for second debounce (100ms) + second processing (300ms) + third processing
             jest.advanceTimersByTime(500);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             expect(callCount).toBe(3);
             // If mutant at line 238 changes if(result.sessionId) to if(true),
@@ -1533,6 +1619,8 @@ describe('MessageCoordinator', () => {
             // First message
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Interrupt with second message
             const msg2Context = { ...mockContext, messageId: 'msg-002' };
@@ -1541,6 +1629,7 @@ describe('MessageCoordinator', () => {
 
             // Wait for debounce + first processing + resume
             jest.advanceTimersByTime(350);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             // Should complete without crashing (optional chaining protects against undefined)
@@ -1571,6 +1660,8 @@ describe('MessageCoordinator', () => {
             // First message
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Interrupt with second message
             const msg2Context = { ...mockContext, messageId: 'msg-002' };
@@ -1579,6 +1670,8 @@ describe('MessageCoordinator', () => {
 
             // Wait for debounce + interruption + resume processing
             jest.advanceTimersByTime(300);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Verify resume context has newEvents as empty array
             expect(resumeContextReceived).not.toBeNull();
@@ -1589,12 +1682,135 @@ describe('MessageCoordinator', () => {
         });
     });
 
+    describe('EventDeltaTracker Integration', () => {
+        it('should call markStart when processing begins with tracker provided', async () => {
+            const mockTracker = {
+                markStart:    mock(async () => { /* no-op */ }),
+                getNewEvents: mock(async () => []),
+            };
+
+            coordinator = createMessageCoordinator({
+                eventDeltaTracker: mockTracker,
+            });
+            coordinator.setProcessor(processorMock);
+
+            // Handle message to start processing
+            coordinator.handleMessage(mockContext, mockMessage);
+            jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks so async IIFE executes
+
+            // Verify markStart was called
+            expect(mockTracker.markStart).toHaveBeenCalledTimes(1);
+        });
+
+        it('should populate newEvents in resume context when tracker provided', async () => {
+            const testEvents = ['Event 1 happened', 'Event 2 happened'];
+            const mockTracker = {
+                markStart:    mock(async () => { /* no-op */ }),
+                getNewEvents: mock(async () => testEvents),
+            };
+
+            let resumeContextReceived: ResumeContext | null = null;
+
+            const trackingProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+                resumeContextReceived = resumeContext;
+                await new Promise(resolve => setTimeout(resolve, 200));
+                return {
+                    response:       'Response',
+                    wasInterrupted: abortSignal.aborted,
+                    streamTracker:  createStreamTracker(),
+                };
+            };
+
+            coordinator = createMessageCoordinator({
+                debounceMs:        100,
+                eventDeltaTracker: mockTracker,
+            });
+            coordinator.setProcessor(trackingProcessor);
+
+            // First message
+            coordinator.handleMessage(mockContext, mockMessage);
+            jest.advanceTimersByTime(10);
+
+            // Interrupt with second message
+            const msg2Context = { ...mockContext, messageId: 'msg-002' };
+            const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
+            coordinator.handleMessage(msg2Context, msg2);
+
+            // Wait for debounce (100ms) + first processing (200ms) + second processing (200ms)
+            jest.advanceTimersByTime(550);
+
+            // Verify resume context has actual events
+            expect(resumeContextReceived).not.toBeNull();
+            expect(resumeContextReceived!.newEvents).toEqual(testEvents);
+            expect(mockTracker.getNewEvents).toHaveBeenCalledTimes(1);
+        });
+
+        it('should default to empty array when no tracker provided', async () => {
+            let resumeContextReceived: ResumeContext | null = null;
+
+            const noTrackerProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+                resumeContextReceived = resumeContext;
+                await new Promise(resolve => setTimeout(resolve, 200));
+                return {
+                    response:       'Response',
+                    wasInterrupted: abortSignal.aborted,
+                    streamTracker:  createStreamTracker(),
+                };
+            };
+
+            coordinator = createMessageCoordinator({ debounceMs: 100 }); // No tracker, short debounce
+            coordinator.setProcessor(noTrackerProcessor);
+
+            // First message
+            coordinator.handleMessage(mockContext, mockMessage);
+            jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
+
+            // Interrupt with second message
+            const msg2Context = { ...mockContext, messageId: 'msg-002' };
+            const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
+            coordinator.handleMessage(msg2Context, msg2);
+
+            // Wait for debounce (100ms) + first processing (200ms) + second processing (200ms)
+            jest.advanceTimersByTime(550);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
+
+            // Verify resume context defaults to empty array
+            expect(resumeContextReceived).not.toBeNull();
+            expect(resumeContextReceived!.newEvents).toEqual([]);
+        });
+
+        it('should not call getNewEvents when no interruption occurs', async () => {
+            const mockTracker = {
+                markStart:    mock(async () => { /* no-op */ }),
+                getNewEvents: mock(async () => ['Event 1']),
+            };
+
+            coordinator = createMessageCoordinator({
+                eventDeltaTracker: mockTracker,
+            });
+            coordinator.setProcessor(processorMock);
+
+            // Single message without interruption
+            coordinator.handleMessage(mockContext, mockMessage);
+
+            // Advance time to let processing complete
+            jest.advanceTimersByTime(100);
+
+            // getNewEvents should not be called since no resume occurred
+            expect(mockTracker.getNewEvents).not.toHaveBeenCalled();
+        });
+    });
+
     describe('Mutant Testing - Processor Not Set Error Throwing', () => {
         beforeEach(() => {
             coordinator = createMessageCoordinator();
         });
 
-        it('should explicitly throw error when processor not set (verify !processor check) - Mutants #1816, #1817', () => {
+        it('should explicitly throw error when processor not set (verify !processor check) - Mutants #1816, #1817', async () => {
             // This test kills Mutant #1816 which changes `if(!processor)` to `if(false)` at line 266
             // and Mutant #1817 which replaces the throw block with {} at lines 267-268
 
@@ -1622,13 +1838,15 @@ describe('MessageCoordinator', () => {
             coordinator.setProcessor(processorCallSpy);
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(50);
+            await Promise.resolve();
+            await Promise.resolve();
 
             // Processor should only be called ONCE (from the second handleMessage call)
             // If the error wasn't thrown in the first call, processor would have been called twice
             expect(processorCallSpy).toHaveBeenCalledTimes(1);
         });
 
-        it('should prevent execution after throw (verify code after throw is not reached) - Mutants #1816, #1817', () => {
+        it('should prevent execution after throw (verify code after throw is not reached) - Mutants #1816, #1817', async () => {
             // This test ensures that when the error is thrown, no processing happens
             // If mutants #1816 or #1817 survive, processing would proceed incorrectly
 
@@ -1660,6 +1878,8 @@ describe('MessageCoordinator', () => {
             coordinator.setProcessor(processorSpy);
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve();
+            await Promise.resolve();
 
             // Should be called exactly once (fresh start, no leftover state from failed call)
             expect(processorSpy).toHaveBeenCalledTimes(1);
@@ -1694,6 +1914,8 @@ describe('MessageCoordinator', () => {
             // Start processing
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Reset flag
             timerWasCreated = false;
@@ -1731,6 +1953,8 @@ describe('MessageCoordinator', () => {
             // Start processing
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Reset count after initial processing setup
             timerCreateCount = 0;
@@ -1783,6 +2007,8 @@ describe('MessageCoordinator', () => {
             // Start processing
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Second message during active processing (creates debounce timer)
             const msg2Context = { ...mockContext, messageId: 'msg-002' };
@@ -1823,6 +2049,8 @@ describe('MessageCoordinator', () => {
             // Start processing
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Second message during active processing (creates debounce timer)
             const msg2Context = { ...mockContext, messageId: 'msg-002' };
@@ -1831,6 +2059,8 @@ describe('MessageCoordinator', () => {
 
             // Wait for first processing to complete (50ms) - debounce hasn't expired yet
             jest.advanceTimersByTime(60);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Now we're in "debounce timer active but no active query" state (Case 2)
             // Reset clear count to only track clears after this point
@@ -1870,6 +2100,8 @@ describe('MessageCoordinator', () => {
             // Start processing
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Second message during processing creates debounce timer
             const msg2Context = { ...mockContext, messageId: 'msg-002' };
@@ -1904,6 +2136,8 @@ describe('MessageCoordinator', () => {
 
             // Wait for processing to start
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
         });
@@ -1923,20 +2157,28 @@ describe('MessageCoordinator', () => {
 
             coordinator.handleMessage(mockContext, mockMessage, mockChannel);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Initial typing call
             expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
 
             // After 8 seconds, should refresh
             jest.advanceTimersByTime(8000);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
             expect(mockChannel.sendTyping).toHaveBeenCalledTimes(2);
 
             // After another 8 seconds, should refresh again
             jest.advanceTimersByTime(8000);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
             expect(mockChannel.sendTyping).toHaveBeenCalledTimes(3);
 
             // Complete processing
             jest.advanceTimersByTime(4000);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
             expect(mockChannel.sendTyping).toHaveBeenCalledTimes(3); // No more refreshes
         });
 
@@ -1952,10 +2194,12 @@ describe('MessageCoordinator', () => {
             coordinator.setProcessor(processorMock);
             coordinator.handleMessage(mockContext, mockMessage, mockChannel);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             // Wait for processing to complete
             jest.advanceTimersByTime(100);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             expect(intervalCleared).toBe(true);
@@ -1986,6 +2230,7 @@ describe('MessageCoordinator', () => {
 
             coordinator.handleMessage(mockContext, mockMessage, mockChannel);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             // Interrupt with second message
@@ -1995,10 +2240,12 @@ describe('MessageCoordinator', () => {
 
             // Expire debounce to trigger interrupt
             jest.advanceTimersByTime(2000);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             // Complete the interrupted query
             jest.advanceTimersByTime(5100);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             expect(intervalCleared).toBe(true);
@@ -2016,6 +2263,8 @@ describe('MessageCoordinator', () => {
             expect(() => coordinator.handleMessage(mockContext, mockMessage, mockChannel)).not.toThrow();
 
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Processing should continue despite typing error
             expect(processorMock).toHaveBeenCalledTimes(1);
@@ -2037,6 +2286,8 @@ describe('MessageCoordinator', () => {
             // First message
             coordinator.handleMessage(mockContext, mockMessage, mockChannel);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
             expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
 
             // Second message during processing
@@ -2046,6 +2297,8 @@ describe('MessageCoordinator', () => {
 
             // Typing should continue during debounce
             jest.advanceTimersByTime(8000);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
             expect(mockChannel.sendTyping).toHaveBeenCalledTimes(2);
         });
 
@@ -2065,6 +2318,7 @@ describe('MessageCoordinator', () => {
 
             coordinator.handleMessage(mockContext, mockMessage, mockChannel);
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             const initialCallCount = mockChannel.sendTyping.mock.calls.length;
@@ -2076,10 +2330,12 @@ describe('MessageCoordinator', () => {
 
             // Expire debounce to trigger interrupt
             jest.advanceTimersByTime(2000);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             // Complete the interrupted query
             jest.advanceTimersByTime(5100);
+            await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
             // Should have called sendTyping again when resuming
@@ -2274,6 +2530,8 @@ describe('MessageCoordinator', () => {
             expect(() => coordinator.handleMessage(mockContext, mockMessage)).not.toThrow();
 
             jest.advanceTimersByTime(10);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve(); // Flush again to ensure completion
 
             // Processing should work normally
             expect(processorMock).toHaveBeenCalledTimes(1);
@@ -2297,6 +2555,8 @@ describe('MessageCoordinator', () => {
             // First message - starts typing indicator with first interval
             coordinator.handleMessage(mockContext, mockMessage, mockChannel);
             jest.advanceTimersByTime(10);
+            await Promise.resolve();
+            await Promise.resolve();
 
             // Initial typing call
             expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
@@ -2326,6 +2586,8 @@ describe('MessageCoordinator', () => {
             const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
             coordinator.handleMessage(msg2Context, msg2, mockChannel);
             jest.advanceTimersByTime(10);
+            await Promise.resolve();
+            await Promise.resolve();
 
             // Initial typing call for second message
             expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
@@ -2530,6 +2792,8 @@ describe('MessageCoordinator', () => {
             // Start first message
             coordinator.handleMessage(mockContext, mockMessage, mockChannel);
             jest.advanceTimersByTime(50);
+            await Promise.resolve();
+            await Promise.resolve();
 
             // 1 initial sendTyping call
             expect(mockChannel.sendTyping).toHaveBeenCalledTimes(1);
@@ -2772,6 +3036,8 @@ describe('MessageCoordinator', () => {
                 // Start processing with typing indicator
                 coordinator.handleMessage(mockContext, mockMessage, mockChannel);
                 jest.advanceTimersByTime(10);
+                await Promise.resolve(); // Flush microtasks
+                await Promise.resolve(); // Flush again to ensure completion
 
                 // Remove the channel
                 coordinator.removeChannel(mockContext.channelId);
@@ -2781,6 +3047,7 @@ describe('MessageCoordinator', () => {
 
                 // Clean up processing
                 jest.advanceTimersByTime(100);
+                await Promise.resolve(); // Flush microtasks
                 await Promise.resolve();
             } finally {
                 global.clearInterval = originalClearInterval;
@@ -2811,6 +3078,8 @@ describe('MessageCoordinator', () => {
                 // Start first message
                 coordinator.handleMessage(mockContext, mockMessage, mockChannel);
                 jest.advanceTimersByTime(10);
+                await Promise.resolve(); // Flush microtasks
+                await Promise.resolve(); // Flush again to ensure completion
 
                 // Send second message to create debounce timer
                 const msg2Context = { ...mockContext, messageId: 'msg-002' };
@@ -2828,6 +3097,7 @@ describe('MessageCoordinator', () => {
 
                 // Clean up
                 jest.advanceTimersByTime(10000);
+                await Promise.resolve(); // Flush microtasks
                 await Promise.resolve();
             } finally {
                 global.clearTimeout = originalClearTimeout;
@@ -2855,6 +3125,8 @@ describe('MessageCoordinator', () => {
             // Start processing
             coordinator.handleMessage(mockContext, mockMessage, mockChannel);
             jest.advanceTimersByTime(10);
+            await Promise.resolve();
+            await Promise.resolve();
 
             // Remove channel while processing
             coordinator.removeChannel(mockContext.channelId);
@@ -2901,6 +3173,8 @@ describe('MessageCoordinator', () => {
             coordinator.handleMessage(context2, message2, mockChannel);
             coordinator.handleMessage(context3, message3, mockChannel);
             jest.advanceTimersByTime(10);
+            await Promise.resolve();
+            await Promise.resolve();
 
             // Remove channels 1 and 2 (as if guild was deleted)
             coordinator.removeGuildChannels([channel1Id, channel2Id]);

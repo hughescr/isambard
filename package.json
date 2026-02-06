@@ -5,6 +5,9 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
+    "clones": "jscpd src/",
+    "dead-code": "knip",
+    "dead-code:fix": "knip --fix",
     "deploy:running": "cd running && git fetch origin running && git reset --hard origin/running && bun install",
     "dev:sst": "sst shell -- bun --hot src/index.ts",
     "lint": "eslint --cache --format unix .",
@@ -54,6 +57,8 @@
     "eslint-formatter-unix": "9.0.1",
     "eslint-plugin-boundaries": "5.4.0",
     "eslint-plugin-package-json": "0.88.2",
+    "jscpd": "4.0.8",
+    "knip": "5.83.0",
     "typescript": "5.9.3"
   },
   "trustedDependencies": [

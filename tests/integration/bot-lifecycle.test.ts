@@ -103,7 +103,7 @@ describe('Bot Lifecycle Integration', () => {
             getChannel:         mock(() => null),
             warmCache:          mock(async () => undefined),
             getUnmutedChannels: mock(async () => []),
-            getAllChannels:      mock(() => []),
+            getAllChannels:     mock(() => []),
         };
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mocking class constructors
         const backendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend') as any;
