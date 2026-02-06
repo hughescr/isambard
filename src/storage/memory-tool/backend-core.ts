@@ -41,24 +41,20 @@ export class MemoryToolBackendCore {
 
     private createVersionSnapshot(existing: MemoryToolItemData): MemoryToolItem {
         const versionKeys = MemoryToolKeyGenerator.createVersionKeys(existing.path, existing.version, existing.updatedAt);
-        const existingTagKeys = MemoryToolKeyGenerator.createTagKeys(existing.path, existing.tags, existing.updatedAt);
 
         return {
             ...existing,
             ...versionKeys,
             // GSI1 removed - version snapshots should not appear in layer queries
-            ...(existingTagKeys && { GSI2PK: existingTagKeys.GSI2PK, GSI2SK: existingTagKeys.GSI2SK }),
         };
     }
 
     private buildUpdatedItem(updated: MemoryToolItemData): MemoryToolItem {
         const keys = MemoryToolKeyGenerator.createKeys(updated.path, updated.updatedAt);
-        const tagKeys = MemoryToolKeyGenerator.createTagKeys(updated.path, updated.tags, updated.updatedAt);
 
         return {
             ...updated,
             ...keys,
-            ...(tagKeys && { GSI2PK: tagKeys.GSI2PK, GSI2SK: tagKeys.GSI2SK }),
         };
     }
 
@@ -90,13 +86,9 @@ export class MemoryToolBackendCore {
         const data = result.data;
         const keys = MemoryToolKeyGenerator.createKeys(data.path, data.updatedAt);
 
-        // Create GSI2 keys if tags are present
-        const tagKeys = MemoryToolKeyGenerator.createTagKeys(data.path, data.tags, data.updatedAt);
-
         const item: MemoryToolItem = {
             ...data,
             ...keys,
-            ...(tagKeys && { GSI2PK: tagKeys.GSI2PK, GSI2SK: tagKeys.GSI2SK }),
         };
 
         await this.putItem(item as unknown as Record<string, unknown>);

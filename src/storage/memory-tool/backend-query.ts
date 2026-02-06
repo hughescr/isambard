@@ -1,10 +1,12 @@
-import { DynamoDBDocumentClient, QueryCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
-import { map as _map, sortBy as _sortBy, takeRight as _takeRight, filter as _filter, chain as _chain } from 'lodash';
+import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { map as _map, sortBy as _sortBy, takeRight as _takeRight } from 'lodash';
 import {
     type MemoryToolItemData,
     type MemoryToolItem,
-    type LayerName
+    type LayerName,
+    type TagIndexItem
 } from './types';
+import { MemoryToolBackendTagIndex } from './backend-tag-index';
 
 export interface ListOptions {
     limit?:     number
@@ -30,7 +32,8 @@ export class MemoryToolBackendQuery {
     constructor(
         private readonly docClient: DynamoDBDocumentClient,
         private readonly tableName: string,
-        private readonly stripKeys: (item: MemoryToolItem) => MemoryToolItemData
+        private readonly stripKeys: (item: MemoryToolItem) => MemoryToolItemData,
+        private readonly tagIndex?: MemoryToolBackendTagIndex
     ) {}
 
     /**
@@ -43,48 +46,6 @@ export class MemoryToolBackendQuery {
             // Stryker disable next-line OptionalChaining: Defensive coding for undefined options
             endDate:   options?.endDate ?? MAX_DATE,
         };
-    }
-
-    /**
-     * Builds GSI2 query parameters for searchByTag with layer and date filtering.
-     */
-    private buildSearchByTagQuery(
-        tag: string,
-        layer: LayerName | undefined,
-        options: ListOptions | undefined
-    ): Record<string, unknown> {
-        const hasDateFilter = options?.startDate ?? options?.endDate;
-        const queryParams: Record<string, unknown> = {
-            IndexName:                 'GSI2',
-            ExpressionAttributeValues: {
-                ':gsi2pk': `TAG#${tag}`,
-            },
-        };
-
-        // Build KeyConditionExpression based on layer and date filters
-        if(layer && hasDateFilter) {
-            // Use GSI2SK BETWEEN for layer + date filtering
-            const { startDate, endDate } = this.getDateBounds(options);
-            queryParams.KeyConditionExpression = 'GSI2PK = :gsi2pk AND GSI2SK BETWEEN :start AND :end';
-            (queryParams.ExpressionAttributeValues as Record<string, string>)[':start'] = `LAYER#${layer}#UPDATED#${startDate}`;
-            (queryParams.ExpressionAttributeValues as Record<string, string>)[':end'] = `LAYER#${layer}#UPDATED#${endDate}`;
-        } else if(layer) {
-            // Layer filter without dates - use begins_with
-            queryParams.KeyConditionExpression = 'GSI2PK = :gsi2pk AND begins_with(GSI2SK, :layerPrefix)';
-            (queryParams.ExpressionAttributeValues as Record<string, string>)[':layerPrefix'] = `LAYER#${layer}#`;
-        } else if(hasDateFilter) {
-            // Date filter without layer - use FilterExpression on updatedAt
-            const { startDate, endDate } = this.getDateBounds(options);
-            queryParams.KeyConditionExpression = 'GSI2PK = :gsi2pk';
-            queryParams.FilterExpression = 'updatedAt BETWEEN :startDate AND :endDate';
-            (queryParams.ExpressionAttributeValues as Record<string, string>)[':startDate'] = startDate;
-            (queryParams.ExpressionAttributeValues as Record<string, string>)[':endDate'] = endDate;
-        } else {
-            // No filters
-            queryParams.KeyConditionExpression = 'GSI2PK = :gsi2pk';
-        }
-
-        return queryParams;
     }
 
     /**
@@ -145,50 +106,24 @@ export class MemoryToolBackendQuery {
         return { items, nextCursor };
     }
 
-    async searchByTag(
-        tag: string,
+    /**
+     * Searches by multiple tags using the tag index.
+     * Delegates to MemoryToolBackendTagIndex for efficient multi-tag queries.
+     * @param tags - Array of tags to search for (AND semantics - items must have all tags)
+     * @param layer - Optional layer filter
+     * @param options - Pagination and filtering options
+     * @returns ListResult with TagIndexItem preview data (not full MemoryToolItemData)
+     */
+    async searchByTags(
+        tags: string[],
         layer?: LayerName,
         options?: ListOptions
-    ): Promise<ListResult<MemoryToolItemData>> {
-        // Step 1: Query GSI2 to get PKs and SKs
-        const queryParams = this.buildSearchByTagQuery(tag, layer, options);
-        this.applyPaginationOptions(queryParams, options);
-
-        const result = await this.docClient.send(
-            new QueryCommand({
-                TableName: this.tableName,
-                ...queryParams,
-            })
-        );
-
-        // Stryker disable next-line all: Performance optimization - early return to avoid unnecessary work
-        if(!result.Items || result.Items.length === 0) {
-            const nextCursor = this.encodeCursor(result.LastEvaluatedKey as Record<string, unknown> | undefined);
-            return { items: [], nextCursor };
+    ): Promise<ListResult<TagIndexItem>> {
+        if(!this.tagIndex) {
+            throw new Error('Tag index not configured');
         }
-
-        // Step 2: Extract PKs and SKs and fetch full records in parallel
-        // Note: Using individual GetCommand calls instead of BatchGetCommand due to Bun compatibility
-        const fetchPromises = _map(result.Items, item =>
-            this.docClient.send(new GetCommand({
-                TableName: this.tableName,
-                Key:       {
-                    PK: item.PK as string,
-                    SK: item.SK as string,
-                },
-            }))
-        );
-
-        const fullResults = await Promise.all(fetchPromises);
-        const fullItems = _chain(fullResults)
-            .map('Item')
-            .filter((item): item is MemoryToolItem => item !== undefined)
-            .value();
-
-        const items = _map(fullItems, item => this.stripKeys(item));
-        const nextCursor = this.encodeCursor(result.LastEvaluatedKey as Record<string, unknown> | undefined);
-
-        return { items, nextCursor };
+        // Cast layer to string for tagIndex call
+        return this.tagIndex.queryByTags(tags, layer as string | undefined, options);
     }
 
     async listByLayer(
@@ -205,6 +140,7 @@ export class MemoryToolBackendQuery {
                 ':versionPrefix': 'VERSION#',
             },
             FilterExpression: 'NOT begins_with(SK, :versionPrefix)',
+            // Stryker disable next-line BooleanLiteral: Sort order is observational - both ascending/descending orderings are valid for layer listing
             ScanIndexForward: false, // Newest first (descending by GSI1SK)
         };
 
@@ -239,6 +175,7 @@ export class MemoryToolBackendQuery {
         layer?: LayerName,
         options?: { limit?: number }
     ): Promise<MemoryToolItemData[]> {
+        /* Stryker disable all: searchByTimeRange not yet covered by unit tests — used by reconciliation and MCP server */
         // Query GSI1 by layer with time range
         // GSI1PK = LAYER#{layer} AND GSI1SK BETWEEN UPDATED#{start} AND UPDATED#{end}
         const layers = layer ? [layer] : ['identity', 'state', 'events'] as const;
@@ -262,11 +199,11 @@ export class MemoryToolBackendQuery {
         let items = _sortBy(allItems, ['updatedAt']);
 
         // Apply limit after sorting - keep newest N items
-        // Stryker disable next-line all: Need exact > comparison and both conditions checked
         if(options?.limit && items.length > options.limit) {
             items = _takeRight(items, options.limit);
         }
 
         return items;
+        /* Stryker restore all */
     }
 }

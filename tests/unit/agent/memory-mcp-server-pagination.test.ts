@@ -3,7 +3,7 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
-import type { MemoryPath, ContentType, MemoryToolItemData } from '../../../src/storage/memory-tool/types';
+import type { MemoryPath, ContentType, MemoryToolItemData, TagIndexItem } from '../../../src/storage/memory-tool/types';
 
 // Helper to create mock memory item data
 const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryToolItemData => ({
@@ -17,18 +17,30 @@ const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryTool
     ...overrides,
 });
 
+// Helper to create mock tag index item
+const createMockTagIndexItem = (overrides: Partial<TagIndexItem> = {}): TagIndexItem => ({
+    PK:             'TAG#mock',
+    SK:             'PATH#/mock/path',
+    memoryPath:     '/mock/path',
+    layer:          'state',
+    updatedAt:      '2025-01-01T00:00:00.000Z',
+    tags:           ['mock'],
+    contentPreview: 'mock content',
+    ...overrides,
+});
+
 describe.concurrent('Memory MCP Server Pagination', () => {
     let mockBackend: MemoryToolBackend;
 
     beforeEach(() => {
         mockBackend = {
-            create:      mock(async () => createMockItem()),
-            get:         mock(async () => undefined),
-            update:      mock(async () => createMockItem()),
-            'delete':    mock(async () => { /* intentionally empty */ }),
-            list:        mock(async () => ({ items: [], nextCursor: undefined })),
-            listByLayer: mock(async () => ({ items: [], nextCursor: undefined })),
-            searchByTag: mock(async () => ({ items: [], nextCursor: undefined })),
+            create:       mock(async () => createMockItem()),
+            get:          mock(async () => undefined),
+            update:       mock(async () => createMockItem()),
+            'delete':     mock(async () => { /* intentionally empty */ }),
+            list:         mock(async () => ({ items: [], nextCursor: undefined })),
+            listByLayer:  mock(async () => ({ items: [], nextCursor: undefined })),
+            searchByTags: mock(async () => ({ items: [], nextCursor: undefined })),
         } as unknown as MemoryToolBackend;
     });
 
@@ -196,30 +208,33 @@ describe.concurrent('Memory MCP Server Pagination', () => {
 
         describe('backend calls with cursor', () => {
             test.each([
-                ['cursor only', { tag: 'important', cursor: 'Y3Vyc29y' }, 'important', undefined, { cursor: 'Y3Vyc29y' }],
-                ['limit and cursor', { tag: 'important', limit: 10, cursor: 'Y3Vyc29y' }, 'important', undefined, { limit: 10, cursor: 'Y3Vyc29y' }],
-                ['layer, limit, and cursor', { tag: 'active', layer: 'state', limit: 5, cursor: 'c3RhdGU=' }, 'active', 'state', { limit: 5, cursor: 'c3RhdGU=' }],
-                ['layer and cursor only', { tag: 'test', layer: 'identity', cursor: 'aWRlbnRpdHk=' }, 'test', 'identity', { cursor: 'aWRlbnRpdHk=' }],
-            ])('should pass %s to backend.searchByTag', async (_label, handlerArgs, expectedTag, expectedLayer, expectedOptions) => {
+                ['cursor only', { tags: ['important'], cursor: 'Y3Vyc29y' }, ['important'], undefined, { cursor: 'Y3Vyc29y' }],
+                ['limit and cursor', { tags: ['important'], limit: 10, cursor: 'Y3Vyc29y' }, ['important'], undefined, { limit: 10, cursor: 'Y3Vyc29y' }],
+                ['layer, limit, and cursor', { tags: ['active'], layer: 'state', limit: 5, cursor: 'c3RhdGU=' }, ['active'], 'state', { limit: 5, cursor: 'c3RhdGU=' }],
+                ['layer and cursor only', { tags: ['test'], layer: 'identity', cursor: 'aWRlbnRpdHk=' }, ['test'], 'identity', { cursor: 'aWRlbnRpdHk=' }],
+            ])('should pass %s to backend.searchByTags', async (_label, handlerArgs, expectedTags, expectedLayer, expectedOptions) => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'search');
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler(handlerArgs);
 
-                expect(mockBackend.searchByTag).toHaveBeenCalledWith(expectedTag, expectedLayer, expectedOptions);
+                expect(mockBackend.searchByTags).toHaveBeenCalledWith(expectedTags, expectedLayer, expectedOptions);
             });
         });
 
         describe('nextCursor in response', () => {
             test('should include nextCursor in response when backend returns one', async () => {
                 const returnedCursor = 'c2VhcmNoLW5leHQ=';
-                mockBackend.searchByTag = mock(async () => ({
+                mockBackend.searchByTags = mock(async () => ({
                     items: [
-                        createMockItem({
-                            path:    '/memories/result1' as MemoryPath,
-                            content: 'First result',
-                            tags:    ['important'],
+                        createMockTagIndexItem({
+                            PK:             'TAG#important',
+                            SK:             'PATH#/memories/result1',
+                            memoryPath:     '/memories/result1',
+                            layer:          'events',
+                            tags:           ['important'],
+                            contentPreview: 'First result',
                         }),
                     ],
                     nextCursor: returnedCursor,
@@ -229,7 +244,7 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const handler = getToolHandler(server, 'search');
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                const result = await handler({ tag: 'important', limit: 1 });
+                const result = await handler({ tags: ['important'], limit: 1 });
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain('/memories/result1');
@@ -242,12 +257,14 @@ describe.concurrent('Memory MCP Server Pagination', () => {
             });
 
             test('should not include cursor section when no nextCursor', async () => {
-                mockBackend.searchByTag = mock(async () => ({
+                mockBackend.searchByTags = mock(async () => ({
                     items: [
-                        createMockItem({
-                            path:    '/memories/result1' as MemoryPath,
-                            content: 'Only result',
-                            tags:    ['tag1'],
+                        createMockTagIndexItem({
+                            PK:             'TAG#tag1',
+                            SK:             'PATH#/memories/result1',
+                            memoryPath:     '/memories/result1',
+                            tags:           ['tag1'],
+                            contentPreview: 'Only result',
                         }),
                     ],
                     nextCursor: undefined,
@@ -257,7 +274,7 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const handler = getToolHandler(server, 'search');
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                const result = await handler({ tag: 'tag1' });
+                const result = await handler({ tags: ['tag1'] });
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toBe('/memories/result1: Only result');
@@ -269,17 +286,21 @@ describe.concurrent('Memory MCP Server Pagination', () => {
 
             test('should format multiple results with nextCursor correctly', async () => {
                 const returnedCursor = 'bXVsdGlwbGUtcmVzdWx0cw==';
-                mockBackend.searchByTag = mock(async () => ({
+                mockBackend.searchByTags = mock(async () => ({
                     items: [
-                        createMockItem({
-                            path:    '/memories/result1' as MemoryPath,
-                            content: 'First result',
-                            tags:    ['tag1'],
+                        createMockTagIndexItem({
+                            PK:             'TAG#tag1',
+                            SK:             'PATH#/memories/result1',
+                            memoryPath:     '/memories/result1',
+                            tags:           ['tag1'],
+                            contentPreview: 'First result',
                         }),
-                        createMockItem({
-                            path:    '/memories/result2' as MemoryPath,
-                            content: 'Second result',
-                            tags:    ['tag1'],
+                        createMockTagIndexItem({
+                            PK:             'TAG#tag1',
+                            SK:             'PATH#/memories/result2',
+                            memoryPath:     '/memories/result2',
+                            tags:           ['tag1'],
+                            contentPreview: 'Second result',
                         }),
                     ],
                     nextCursor: returnedCursor,
@@ -289,7 +310,7 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const handler = getToolHandler(server, 'search');
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                const result = await handler({ tag: 'tag1', limit: 2 });
+                const result = await handler({ tags: ['tag1'], limit: 2 });
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain('/memories/result1');
@@ -388,16 +409,16 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 ['both dates', { startDate: '2024-01-01T00:00:00.000Z', endDate: '2024-06-30T23:59:59.999Z' }, { startDate: '2024-01-01T00:00:00.000Z', endDate: '2024-06-30T23:59:59.999Z' }],
                 ['layer and dates', { layer: 'identity', startDate: '2024-01-01T00:00:00.000Z' }, { startDate: '2024-01-01T00:00:00.000Z' }],
                 ['all options', { layer: 'events', limit: 5, cursor: 'Y3Vyc29y', startDate: '2024-01-01T00:00:00.000Z', endDate: '2024-12-31T23:59:59.999Z' }, { limit: 5, cursor: 'Y3Vyc29y', startDate: '2024-01-01T00:00:00.000Z', endDate: '2024-12-31T23:59:59.999Z' }],
-            ])('should pass %s to backend.searchByTag', async (_label, handlerArgs, expectedOptions) => {
+            ])('should pass %s to backend.searchByTags', async (_label, handlerArgs, expectedOptions) => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'search');
-                const tag = 'test';
+                const tags = ['test'];
                 const layer = 'layer' in handlerArgs ? handlerArgs.layer : undefined;
 
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-                await handler({ tag, ...handlerArgs });
+                await handler({ tags, ...handlerArgs });
 
-                expect(mockBackend.searchByTag).toHaveBeenCalledWith(tag, layer, expectedOptions);
+                expect(mockBackend.searchByTags).toHaveBeenCalledWith(tags, layer, expectedOptions);
             });
         });
     });

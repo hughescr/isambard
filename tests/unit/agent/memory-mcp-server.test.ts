@@ -22,13 +22,13 @@ describe.concurrent('createMemoryMCPServer', () => {
 
     beforeEach(() => {
         mockBackend = {
-            create:      mock(async () => createMockItem()),
-            get:         mock(async () => undefined),
-            update:      mock(async () => createMockItem()),
-            'delete':    mock(async () => { /* intentionally empty */ }),
-            list:        mock(async () => ({ items: [], nextCursor: undefined })),
-            listByLayer: mock(async () => ({ items: [], nextCursor: undefined })),
-            searchByTag: mock(async () => ({ items: [], nextCursor: undefined })),
+            create:       mock(async () => createMockItem()),
+            get:          mock(async () => undefined),
+            update:       mock(async () => createMockItem()),
+            'delete':     mock(async () => { /* intentionally empty */ }),
+            list:         mock(async () => ({ items: [], nextCursor: undefined })),
+            listByLayer:  mock(async () => ({ items: [], nextCursor: undefined })),
+            searchByTags: mock(async () => ({ items: [], nextCursor: undefined })),
         } as unknown as MemoryToolBackend;
     });
 
@@ -71,7 +71,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             ['storeSelf', ['layer', 'name', 'content', 'tags']],
             ['storeUserMemory', ['userId', 'name', 'content', 'tags']],
             ['logEvent', ['eventType', 'summary', 'details', 'tags']],
-            ['search', ['tag', 'layer', 'limit']],
+            ['search', ['tags', 'layer', 'limit']],
         ])('should have %s tool with required input schema fields', (toolName, requiredFields) => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
@@ -87,6 +87,16 @@ describe.concurrent('createMemoryMCPServer', () => {
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema field
                 expect(tool.inputSchema.shape[field]).toBeDefined();
             }
+        });
+
+        test('should validate search tags parameter accepts multiple tags', () => {
+            const server = createMemoryMCPServer(mockBackend);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
+            const searchTool = (server.instance as any)._registeredTools.search;
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
+            const result = searchTool.inputSchema.shape.tags.safeParse(['tag1', 'tag2']);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.success).toBe(true);
         });
     });
 

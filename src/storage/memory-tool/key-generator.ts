@@ -1,4 +1,4 @@
-import { startsWith as _startsWith, split as _split } from 'lodash';
+import { startsWith as _startsWith, split as _split, map as _map, toLower as _toLower } from 'lodash';
 import type { MemoryPath } from './types';
 import { extractLayerFromPath } from './types';
 
@@ -7,28 +7,38 @@ import { extractLayerFromPath } from './types';
  */
 export interface MemoryToolKeys {
     /** Primary Key: DIR#{parentPath} - groups files by directory */
-    PK:      string
+    PK:     string
     /** Sort Key: FILE#{filename} - identifies file within directory */
-    SK:      string
+    SK:     string
     /** GSI1 Primary Key: LAYER#{layer} - allows lookup by layer */
-    GSI1PK:  string
+    GSI1PK: string
     /** GSI1 Sort Key: UPDATED#{timestamp} - time-based sorting within layer */
-    GSI1SK:  string
-    /** GSI2 Primary Key: TAG#{tag} - allows lookup by tag (optional) */
-    GSI2PK?: string
-    /** GSI2 Sort Key: LAYER#{layer}#UPDATED#{timestamp} - tag queries with layer and time filtering (optional) */
-    GSI2SK?: string
+    GSI1SK: string
 }
 
 /**
  * Generates a content preview for DynamoDB storage.
- * Truncates content to 100 characters for efficient GSI2 projection.
+ * Truncates content to 100 characters for efficient tag index storage.
  * @param content - The full content string
  * @returns Content truncated to 100 characters
  */
 export function generateContentPreview(content: string): string {
     // Stryker disable next-line ConditionalExpression,EqualityOperator: Equivalent mutant - slice(0,100) on short strings returns original, >= boundary is equivalent
     return content.length > 100 ? content.slice(0, 100) : content;
+}
+
+/**
+ * Normalizes tags by lowercasing and deduplicating.
+ * Applied on all write paths before index/registry operations.
+ * @param tags - Array of tag strings
+ * @returns Normalized, deduplicated, lowercase tags
+ */
+export function normalizeTags(tags: string[] | undefined): string[] {
+    // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - _map handles undefined/empty arrays gracefully
+    if(!tags || tags.length === 0) {
+        return [];
+    }
+    return [...new Set(_map(tags, tag => _toLower(tag)))];
 }
 
 /**
@@ -107,52 +117,6 @@ export class MemoryToolKeyGenerator {
     }
 
     /**
-   * Creates optional GSI2 keys for tag-based queries
-   *
-   * @param path - Full path to the memory file (for extracting layer)
-   * @param tags - Optional array of tags (uses first tag only)
-   * @param timestamp - Optional ISO 8601 timestamp (auto-generated if not provided)
-   * @returns GSI2 keys if tags are present, null otherwise
-   *
-   * @example
-   * ```ts
-   * const tagKeys = MemoryToolKeyGenerator.createTagKeys(
-   *   '/identity/core-values.md' as MemoryPath,
-   *   ['beliefs', 'philosophy'],
-   *   '2024-01-15T10:30:00.000Z'
-   * );
-   * // {
-   * //   GSI2PK: 'TAG#beliefs',
-   * //   GSI2SK: 'LAYER#identity#UPDATED#2024-01-15T10:30:00.000Z'
-   * // }
-   * ```
-   */
-    static createTagKeys(
-        path: MemoryPath,
-        tags?: string[],
-        timestamp?: string
-    ): Pick<MemoryToolKeys, 'GSI2PK' | 'GSI2SK'> | null {
-        // Return null if no tags provided
-        if(!tags || tags.length === 0) {
-            return null;
-        }
-
-        // Use first tag only
-        const tag = tags[0];
-        const ts = timestamp ?? new Date().toISOString();
-
-        // Extract layer from path (or use first path segment as fallback)
-        const layer = extractLayerFromPath(path);
-        // Stryker disable next-line StringLiteral: Empty string and 'unknown' are functionally equivalent here for edge case of root path
-        const layerStr = layer ?? _split(path, '/')[1] ?? 'unknown';
-
-        return {
-            GSI2PK: `TAG#${tag}`,
-            GSI2SK: `LAYER#${layerStr}#UPDATED#${ts}`,
-        };
-    }
-
-    /**
    * Creates DynamoDB keys for version history items
    *
    * @param path - Full path to the memory file
@@ -181,5 +145,79 @@ export class MemoryToolKeyGenerator {
             PK: `DIR#${parentPath}`,
             SK: `VERSION#${version}#${timestamp}`,
         };
+    }
+
+    /**
+   * Creates DynamoDB keys for tag index items.
+   * Returns one key pair per tag. Empty array if no tags.
+   *
+   * @param path - Full path to the memory file
+   * @param tags - Array of tags
+   * @returns Array of PK/SK pairs, one per tag
+   *
+   * @example
+   * ```ts
+   * const keys = MemoryToolKeyGenerator.createTagIndexKeys(
+   *   '/identity/values.md' as MemoryPath,
+   *   ['important', 'core']
+   * );
+   * // [
+   * //   { PK: 'TAG#important', SK: 'PATH#/identity/values.md' },
+   * //   { PK: 'TAG#core', SK: 'PATH#/identity/values.md' }
+   * // ]
+   * ```
+   */
+    static createTagIndexKeys(
+        path: MemoryPath,
+        tags: string[]
+    ): { PK: string, SK: string }[] {
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - _map([]) returns [] anyway
+        if(tags.length === 0) {
+            return [];
+        }
+        return _map(tags, tag => ({
+            PK: `TAG#${tag}`,
+            SK: `PATH#${path}`,
+        }));
+    }
+
+    /**
+   * Parses the tag name from a TAG# partition key.
+   *
+   * @param pk - Partition key in format TAG#tagname
+   * @returns The tag name
+   * @throws Error if pk is not in expected format
+   *
+   * @example
+   * ```ts
+   * const tag = MemoryToolKeyGenerator.parseTagFromPK('TAG#important');
+   * // 'important'
+   * ```
+   */
+    static parseTagFromPK(pk: string): string {
+        if(!_startsWith(pk, 'TAG#')) {
+            throw new Error(`Invalid tag PK format: expected TAG#..., got ${pk}`);
+        }
+        return pk.slice(4);
+    }
+
+    /**
+   * Parses the memory path from a PATH# sort key.
+   *
+   * @param sk - Sort key in format PATH#/path/to/file
+   * @returns The memory path
+   * @throws Error if sk is not in expected format
+   *
+   * @example
+   * ```ts
+   * const path = MemoryToolKeyGenerator.parsePathFromTagSK('PATH#/identity/core.md');
+   * // '/identity/core.md'
+   * ```
+   */
+    static parsePathFromTagSK(sk: string): string {
+        if(!_startsWith(sk, 'PATH#')) {
+            throw new Error(`Invalid tag SK format: expected PATH#..., got ${sk}`);
+        }
+        return sk.slice(5);
     }
 }

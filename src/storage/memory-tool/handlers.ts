@@ -13,7 +13,6 @@ import {
     isError as _isError,
     replace as _replace,
     filter as _filter,
-    every as _every,
     includes as _includes,
     groupBy as _groupBy
 } from 'lodash';
@@ -290,7 +289,7 @@ export async function rename(
         path:        newPath,
         content:     sourceItem.content,
         contentType: sourceItem.contentType,
-        metadata:    sourceItem.metadata,
+        metadata:    { ...sourceItem.metadata, previouslyKnownAs: params.path },
         tags:        sourceItem.tags,
     });
 
@@ -320,19 +319,23 @@ export async function search(
     let items;
 
     if(params.tags && params.tags.length > 0) {
-        // Tag-based search with optional layer filter
-        const result = await backend.searchByTag(params.tags[0], params.layer, { limit: params.limit });
-        items = result.items;
+        // Tag-based search with optional layer filter — uses tag index
+        const result = await backend.searchByTags(params.tags, params.layer, { limit: params.limit });
+        // Tag index items have preview data directly — format from TagIndexItem fields
+        const query = params.tags.join(',');
+        logger.debug({ query, resultCount: result.items.length, msg: `Memory search: "${query}" (${result.items.length} results)` });
 
-        // Apply AND logic for multiple tags
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: Equivalent mutant - changing > 1 to >= 1 makes remainingTags=[], and _every([]) is always true (no-op filter)
-        if(params.tags.length > 1) {
-            // Stryker disable next-line MethodExpression: Equivalent mutant - all items already have params.tags[0] from searchByTag, so including it in filter is redundant
-            const remainingTags = params.tags.slice(1);
-            items = _filter(items, item =>
-                _every(remainingTags, tag => item.tags && _includes(item.tags, tag))
-            );
+        if(result.items.length === 0) {
+            return 'No results found';
         }
+
+        const formatted = _map(result.items, (item) => {
+            const preview = item.contentPreview.length > 100 ? `${item.contentPreview.slice(0, 100)}...` : item.contentPreview;
+            const timestamp = formatShortRelativeTime(new Date(item.updatedAt));
+            return `${item.memoryPath} (${timestamp})\n  ${preview}`;
+        });
+
+        return formatted.join('\n\n');
     } else if(params.time_range) {
         // Time range search with optional layer filter
         items = await backend.searchByTimeRange(
@@ -353,7 +356,7 @@ export async function search(
         return 'No results found';
     }
 
-    const query = params.tags?.join(',') ?? params.layer ?? 'time_range';
+    const query = params.layer ?? 'time_range';
     logger.debug({ query, resultCount: items.length, msg: `Memory search: "${query}" (${items.length} results)` });
 
     if(items.length === 0) {
@@ -367,8 +370,10 @@ export async function search(
             if(!item.content) {
                 return '[no content]';
             }
+            // Stryker disable next-line EqualityOperator: Boundary difference for 100-char content cutoff is cosmetic
             return item.content.length > 100 ? `${item.content.slice(0, 100)}...` : item.content;
         };
+        // Stryker disable next-line ConditionalExpression,EqualityOperator,StringLiteral: Preview truncation indicator is cosmetic formatting
         const getPreviewFromField = () => (item.contentPreview && item.contentPreview.length >= 100 ? `${item.contentPreview}...` : item.contentPreview);
         const preview = item.contentPreview ? getPreviewFromField() : getPreviewFromContent();
         const timestamp = formatShortRelativeTime(new Date(item.updatedAt));

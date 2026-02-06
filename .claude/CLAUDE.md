@@ -112,8 +112,10 @@ Custom memory tool implementation with DynamoDB backend and three-layer architec
   - `backend-core.ts` - Core CRUD operations
   - `backend-query.ts` - Query operations (list, searchByTag)
   - `backend-tag-registry.ts` - Tag registry management for searchable tags
+  - `backend-tag-index.ts` - Tag index CRUD operations with retry logic
   - `backend-versions.ts` - Version history management
   - `handlers.ts` - All memory tool handlers (view, create, delete_memory, insert, str_replace, rename, search, recall, list_by_layer, consolidate)
+  - `reconciliation/` - Tag index reconciliation (reconciler, scheduler, types, errors)
   - `index.ts` - Public exports
 
 ### Storage Subsystem

@@ -381,16 +381,16 @@ describe('createContextBuilder loading methods', () => {
         test('should load recent context with correct tag format and limit', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
-            backend.searchByTag = mock(async () => ({
+            backend.searchByTags = mock(async () => ({
                 items: [
                     {
-                        path:        createMemoryPath('/state/recent1.md'),
-                        content:     'Recent memory 1',
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00Z',
-                        updatedAt:   '2025-01-01T00:00:00Z',
+                        PK:             'TAG#user:user123',
+                        SK:             'PATH#/state/recent1.md',
+                        memoryPath:     '/state/recent1.md',
+                        layer:          'state',
+                        updatedAt:      '2025-01-01T00:00:00Z',
+                        tags:           ['user:user123'],
+                        contentPreview: 'Recent memory 1',
                     },
                 ],
             }));
@@ -398,8 +398,8 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             const context = await contextBuilder.loadRecentContext('user123', 3, now);
 
-            expect(backend.searchByTag).toHaveBeenCalledWith('user:user123', undefined, { limit: 3 });
-            expect(context).toEqual(['- /state/recent1.md (2w ago): Recent memory 1']);
+            expect(backend.searchByTags).toHaveBeenCalledWith(['user:user123'], undefined, { limit: 3 });
+            expect(context).toEqual(['- /state/recent1.md (2w ago): [preview] Recent memory 1... (memory view /state/recent1.md for full)']);
             // Verify logger was called with correct messages
             expect(mockLogger.debug).toHaveBeenCalledWith({ userId: 'user123' }, 'Loading user context');
             expect(mockLogger.debug).toHaveBeenCalledWith({ userId: 'user123', memoryCount: 1 }, 'User context loaded');
@@ -409,16 +409,16 @@ describe('createContextBuilder loading methods', () => {
             { limit: undefined, expectedLimit: 3, description: 'default limit' },
             { limit: 10, expectedLimit: 10, description: 'custom limit' },
         ])('should use $description', async ({ limit, expectedLimit }) => {
-            backend.searchByTag = mock(async () => ({ items: [] }));
+            backend.searchByTags = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
             await contextBuilder.loadRecentContext('user123', limit);
 
-            expect(backend.searchByTag).toHaveBeenCalledWith('user:user123', undefined, { limit: expectedLimit });
+            expect(backend.searchByTags).toHaveBeenCalledWith(['user:user123'], undefined, { limit: expectedLimit });
         });
 
         test('should return empty array when no items found', async () => {
-            backend.searchByTag = mock(async () => ({ items: [] }));
+            backend.searchByTags = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
             const context = await contextBuilder.loadRecentContext('user-empty');
@@ -429,25 +429,25 @@ describe('createContextBuilder loading methods', () => {
         test('should extract content from all returned items', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
-            backend.searchByTag = mock(async () => ({
+            backend.searchByTags = mock(async () => ({
                 items: [
                     {
-                        path:        createMemoryPath('/state/item1.md'),
-                        content:     'Memory 1',
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00Z',
-                        updatedAt:   '2025-01-01T00:00:00Z',
+                        PK:             'TAG#user:user-multi',
+                        SK:             'PATH#/state/item1.md',
+                        memoryPath:     '/state/item1.md',
+                        layer:          'state',
+                        updatedAt:      '2025-01-01T00:00:00Z',
+                        tags:           ['user:user-multi'],
+                        contentPreview: 'Memory 1',
                     },
                     {
-                        path:        createMemoryPath('/state/item2.md'),
-                        content:     'Memory 2',
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00Z',
-                        updatedAt:   '2025-01-01T00:00:00Z',
+                        PK:             'TAG#user:user-multi',
+                        SK:             'PATH#/state/item2.md',
+                        memoryPath:     '/state/item2.md',
+                        layer:          'state',
+                        updatedAt:      '2025-01-01T00:00:00Z',
+                        tags:           ['user:user-multi'],
+                        contentPreview: 'Memory 2',
                     },
                 ],
             }));
@@ -456,8 +456,8 @@ describe('createContextBuilder loading methods', () => {
             const context = await contextBuilder.loadRecentContext('user-multi', 3, now);
 
             expect(context).toEqual([
-                '- /state/item1.md (2w ago): Memory 1',
-                '- /state/item2.md (2w ago): Memory 2',
+                '- /state/item1.md (2w ago): [preview] Memory 1... (memory view /state/item1.md for full)',
+                '- /state/item2.md (2w ago): [preview] Memory 2... (memory view /state/item2.md for full)',
             ]);
         });
     });
@@ -799,20 +799,20 @@ describe('createContextBuilder loading methods', () => {
         test.each([
             { contentLength: 150, description: 'over 100 chars', shouldTruncate: true },
             { contentLength: 100, description: 'exactly 100 chars', shouldTruncate: false },
-        ])('should handle content truncation when $description', async ({ contentLength, shouldTruncate }) => {
+        ])('should handle content truncation when $description', async ({ contentLength, shouldTruncate: _shouldTruncate }) => {
             const now = new Date('2025-01-15T12:00:00.000Z');
             const content = _.repeat('x', contentLength);
 
-            backend.searchByTag = mock(async () => ({
+            backend.searchByTags = mock(async () => ({
                 items: [
                     {
-                        path:        createMemoryPath('/state/test.md'),
-                        content,
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-15T10:00:00.000Z',
-                        updatedAt:   '2025-01-15T10:00:00.000Z',
+                        PK:             'TAG#user:user123',
+                        SK:             'PATH#/state/test.md',
+                        memoryPath:     '/state/test.md',
+                        layer:          'state',
+                        updatedAt:      '2025-01-15T10:00:00.000Z',
+                        tags:           ['user:user123'],
+                        contentPreview: content.slice(0, 100),
                     },
                 ],
             }));
@@ -821,30 +821,23 @@ describe('createContextBuilder loading methods', () => {
             const result = await contextBuilder.loadRecentContext('user123', 3, now);
 
             expect(result).toHaveLength(1);
-            if(shouldTruncate) {
-                expect(result[0]).toContain(_.repeat('x', 100) + '...');
-                expect(result[0]).not.toContain(_.repeat('x', 101));
-            } else {
-                expect(result[0]).toBe(`- /state/test.md (2h ago): ${content}`);
-                expect(result[0]).not.toContain('...');
-            }
+            // TagIndexItem only has contentPreview (max 100 chars), so always shows preview format
+            expect(result[0]).toBe(`- /state/test.md (2h ago): [preview] ${content.slice(0, 100)}... (memory view /state/test.md for full)`);
         });
 
-        test('should handle GSI2 projection (content undefined, contentPreview present)', async () => {
+        test('should handle TagIndexItem (contentPreview present)', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Simulating GSI2 projection where content is undefined
-            backend.searchByTag = mock(async (): Promise<any> => ({
+            backend.searchByTags = mock(async () => ({
                 items: [
                     {
-                        path:           createMemoryPath('/state/gsi2-item.md'),
-                        content:        undefined, // GSI2 projection does not include content
-                        contentPreview: 'This is a preview from GSI2...',
-                        contentType:    'text/markdown' as const,
-                        metadata:       {},
-                        version:        1,
-                        createdAt:      '2025-01-15T10:00:00.000Z',
+                        PK:             'TAG#user:user123',
+                        SK:             'PATH#/state/gsi2-item.md',
+                        memoryPath:     '/state/gsi2-item.md',
+                        layer:          'state',
                         updatedAt:      '2025-01-15T10:00:00.000Z',
+                        tags:           ['user:user123'],
+                        contentPreview: 'This is a preview from GSI2...',
                     },
                 ],
             }));
@@ -856,21 +849,20 @@ describe('createContextBuilder loading methods', () => {
             expect(result[0]).toBe('- /state/gsi2-item.md (2h ago): [preview] This is a preview from GSI2...... (memory view /state/gsi2-item.md for full)');
         });
 
-        test('should handle both content and contentPreview undefined', async () => {
+        test('should handle contentPreview undefined', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Simulating edge case where both content and preview are undefined
-            backend.searchByTag = mock(async (): Promise<any> => ({
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Simulating edge case where preview is undefined
+            backend.searchByTags = mock(async (): Promise<any> => ({
                 items: [
                     {
-                        path:           createMemoryPath('/state/no-content.md'),
-                        content:        undefined,
-                        contentPreview: undefined,
-                        contentType:    'text/markdown' as const,
-                        metadata:       {},
-                        version:        1,
-                        createdAt:      '2025-01-15T10:00:00.000Z',
+                        PK:             'TAG#user:user123',
+                        SK:             'PATH#/state/no-content.md',
+                        memoryPath:     '/state/no-content.md',
+                        layer:          'state',
                         updatedAt:      '2025-01-15T10:00:00.000Z',
+                        tags:           ['user:user123'],
+                        contentPreview: undefined,
                     },
                 ],
             }));
@@ -882,20 +874,19 @@ describe('createContextBuilder loading methods', () => {
             expect(result[0]).toBe('- /state/no-content.md (2h ago): [no content]');
         });
 
-        test('should use full content when available (not preview)', async () => {
+        test('should use contentPreview from TagIndexItem', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
-            backend.searchByTag = mock(async () => ({
+            backend.searchByTags = mock(async () => ({
                 items: [
                     {
-                        path:           createMemoryPath('/state/full-content.md'),
-                        content:        'This is the full content',
-                        contentPreview: 'This is just a preview', // Should be ignored when content is present
-                        contentType:    'text/markdown' as const,
-                        metadata:       {},
-                        version:        1,
-                        createdAt:      '2025-01-15T10:00:00.000Z',
+                        PK:             'TAG#user:user123',
+                        SK:             'PATH#/state/full-content.md',
+                        memoryPath:     '/state/full-content.md',
+                        layer:          'state',
                         updatedAt:      '2025-01-15T10:00:00.000Z',
+                        tags:           ['user:user123'],
+                        contentPreview: 'This is just a preview',
                     },
                 ],
             }));
@@ -904,33 +895,32 @@ describe('createContextBuilder loading methods', () => {
             const result = await contextBuilder.loadRecentContext('user123', 3, now);
 
             expect(result).toHaveLength(1);
-            expect(result[0]).toBe('- /state/full-content.md (2h ago): This is the full content');
-            expect(result[0]).not.toContain('[preview]');
-            expect(result[0]).not.toContain('This is just a preview');
+            expect(result[0]).toBe('- /state/full-content.md (2h ago): [preview] This is just a preview... (memory view /state/full-content.md for full)');
+            expect(result[0]).toContain('[preview]');
         });
 
         test('should format multiple context items with correct timestamps', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
-            backend.searchByTag = mock(async () => ({
+            backend.searchByTags = mock(async () => ({
                 items: [
                     {
-                        path:        createMemoryPath('/state/task1.md'),
-                        content:     'First task',
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-15T11:00:00.000Z',
-                        updatedAt:   '2025-01-15T11:00:00.000Z',
+                        PK:             'TAG#user:user123',
+                        SK:             'PATH#/state/task1.md',
+                        memoryPath:     '/state/task1.md',
+                        layer:          'state',
+                        updatedAt:      '2025-01-15T11:00:00.000Z',
+                        tags:           ['user:user123'],
+                        contentPreview: 'First task',
                     },
                     {
-                        path:        createMemoryPath('/state/task2.md'),
-                        content:     'Second task',
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-14T12:00:00.000Z',
-                        updatedAt:   '2025-01-14T12:00:00.000Z',
+                        PK:             'TAG#user:user123',
+                        SK:             'PATH#/state/task2.md',
+                        memoryPath:     '/state/task2.md',
+                        layer:          'state',
+                        updatedAt:      '2025-01-14T12:00:00.000Z',
+                        tags:           ['user:user123'],
+                        contentPreview: 'Second task',
                     },
                 ],
             }));
@@ -939,8 +929,8 @@ describe('createContextBuilder loading methods', () => {
             const result = await contextBuilder.loadRecentContext('user123', 3, now);
 
             expect(result).toEqual([
-                '- /state/task1.md (1h ago): First task',
-                '- /state/task2.md (1d ago): Second task',
+                '- /state/task1.md (1h ago): [preview] First task... (memory view /state/task1.md for full)',
+                '- /state/task2.md (1d ago): [preview] Second task... (memory view /state/task2.md for full)',
             ]);
         });
     });

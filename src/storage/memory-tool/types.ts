@@ -44,7 +44,7 @@ export const memoryToolItemSchema = z.object({
     createdAt:      z.string().datetime(),
     updatedAt:      z.string().datetime(),
     tags:           z.array(z.string()).optional(),
-    contentPreview: z.string().max(100).optional(), // First 100 chars of content for GSI2 projection
+    contentPreview: z.string().max(100).optional(), // First 100 chars of content for tag index preview
 });
 
 export type MemoryToolItemData = z.infer<typeof memoryToolItemSchema>;
@@ -58,8 +58,20 @@ export interface MemoryToolItem extends MemoryToolItemData {
     SK:      string   // FILE#{filename} or VERSION#{version}#{timestamp} for snapshots
     GSI1PK?: string   // LAYER#{layer} - allows lookup by layer (optional, not set on version snapshots)
     GSI1SK?: string   // UPDATED#{timestamp} - time-based sorting within layer (optional, not set on version snapshots)
-    GSI2PK?: string   // TAG#{tag} - allows lookup by tag (optional)
-    GSI2SK?: string   // LAYER#{layer}#UPDATED#{timestamp} - tag queries with layer and time filtering (optional)
+}
+
+/**
+ * DynamoDB item structure for tag index entries.
+ * Fat pointer carrying preview data to enable search results without fetching full items.
+ */
+export interface TagIndexItem {
+    PK:             string    // TAG#tagname
+    SK:             string    // PATH#memoryPath
+    memoryPath:     string
+    layer:          string
+    updatedAt:      string    // ISO 8601
+    tags:           string[]  // Full normalized tags array
+    contentPreview: string    // First 100 chars of content
 }
 
 /**
@@ -116,6 +128,7 @@ export function extractLayerFromPath(path: MemoryPath): LayerName | null {
  * Metadata for layered memory organization.
  * Enables prioritization, access tracking, and relationship mapping.
  */
+/* Stryker disable ObjectLiteral,MethodExpression: Zod schema definition with defaults — config defaults are not behavioral */
 export const layeredMemoryMetadataSchema = z.object({
     layer:        layerNameSchema,
     importance:   z.number().int().min(1).max(10).default(5),
@@ -123,33 +136,6 @@ export const layeredMemoryMetadataSchema = z.object({
     accessCount:  z.number().int().min(0).default(0),
     relatedPaths: z.array(memoryPathSchema).default([]),
 });
+/* Stryker restore ObjectLiteral,MethodExpression */
 
 export type LayeredMemoryMetadata = z.infer<typeof layeredMemoryMetadataSchema>;
-
-/**
- * Creates DynamoDB keys for a MemoryTool entity.
- */
-export function createMemoryToolKeys(
-    path: MemoryPath,
-    tags?: string[],
-    updatedAt?: string
-): Pick<MemoryToolItem, 'PK' | 'SK' | 'GSI1PK' | 'GSI1SK'> {
-    const pk = `TOOL_MEMORY#${path}`;
-    const sk = `TOOL_MEMORY#${path}`;
-
-    // GSI1PK: Use first tag if available, otherwise fall back to path
-    // Stryker disable next-line all: Conditional and length check are both needed for tag array validation
-    const gsi1pk = tags && tags.length > 0
-        ? `TOOL_MEMORY#TAG#${tags[0]}`
-        : `TOOL_MEMORY#${path}`;
-
-    // GSI1SK: Use updatedAt for time-based sorting
-    const gsi1sk = updatedAt ?? '';
-
-    return {
-        PK:     pk,
-        SK:     sk,
-        GSI1PK: gsi1pk,
-        GSI1SK: gsi1sk,
-    };
-}

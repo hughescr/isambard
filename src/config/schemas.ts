@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { PresenceConfigSchema } from '@/integrations/discord/presence/types';
 import { inboxConfigSchema } from '@/integrations/discord/inbox/config';
 import { guildIdSchema } from '@/integrations/discord/types';
+import { reconciliationConfigSchema } from '@/storage/memory-tool/reconciliation/types';
 
 // Log level enum schema
 // Stryker disable next-line all: Log level enum values are configuration
@@ -84,15 +85,19 @@ export const perchConfigSchema = z.object({
 
 // Full config schema (planned integrations are optional)
 export const configSchema = z.object({
-    app:     appConfigSchema,
-    agent:   agentConfigSchema,
-    discord: discordConfigSchema,
-    perch:   perchConfigSchema,
+    app:            appConfigSchema,
+    agent:          agentConfigSchema,
+    discord:        discordConfigSchema,
+    perch:          perchConfigSchema,
+    reconciliation: reconciliationConfigSchema.optional(),
     // Planned integrations (optional until implemented):
-    caldav:  caldavConfigSchema.optional(),
-    email:   emailConfigSchema.optional(),
-    box:     boxConfigSchema.optional(),
+    caldav:         caldavConfigSchema.optional(),
+    email:          emailConfigSchema.optional(),
+    box:            boxConfigSchema.optional(),
 });
+
+// Re-export reconciliation schema for external use
+export { reconciliationConfigSchema };
 
 // Type exports
 export type LogLevel = z.infer<typeof logLevelSchema>;
@@ -104,4 +109,5 @@ export type DiscordConfig = z.infer<typeof discordConfigSchema>;
 export type BoxConfig = z.infer<typeof boxConfigSchema>;
 export type DynamoDBConfig = z.infer<typeof dynamoDBConfigSchema>;
 export type PerchConfig = z.infer<typeof perchConfigSchema>;
+export type ReconciliationConfig = z.infer<typeof reconciliationConfigSchema>;
 export type Config = z.infer<typeof configSchema>;

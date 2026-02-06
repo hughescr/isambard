@@ -784,15 +784,13 @@ describe('MemoryToolBackend - Version Operations', () => {
         });
 
         test.each([
-            { hasTags: true, description: 'include GSI2 keys in version snapshot when tags present' },
-            { hasTags: false, description: 'not include GSI2 keys in version snapshot when tags absent' },
+            { hasTags: true, description: 'NOT include GSI2 keys in version snapshot even when tags present (tag index handles tags)' },
+            { hasTags: false, description: 'NOT include GSI2 keys in version snapshot when tags absent' },
         ])('should $description', async ({ hasTags }) => {
             const item = hasTags
                 ? {
                     ...existingItem,
-                    tags:   ['important'],
-                    GSI2PK: 'TAG#important',
-                    GSI2SK: 'LAYER#test#UPDATED#2024-01-01T00:00:00.000Z',
+                    tags: ['important'],
                 }
                 : existingItem;
 
@@ -804,13 +802,9 @@ describe('MemoryToolBackend - Version Operations', () => {
             const putCalls = ddbMock.commandCalls(PutCommand);
             const versionPut = putCalls[putCalls.length - 2];
 
-            if(hasTags) {
-                expect(versionPut.args[0].input.Item?.GSI2PK).toBe('TAG#important');
-                expect(versionPut.args[0].input.Item?.GSI2SK).toBe('LAYER#test#UPDATED#2024-01-01T00:00:00.000Z');
-            } else {
-                expect(versionPut.args[0].input.Item?.GSI2PK).toBeUndefined();
-                expect(versionPut.args[0].input.Item?.GSI2SK).toBeUndefined();
-            }
+            // GSI2 keys are no longer generated — tag index items handle tag-based queries
+            expect(versionPut.args[0].input.Item?.GSI2PK).toBeUndefined();
+            expect(versionPut.args[0].input.Item?.GSI2SK).toBeUndefined();
         });
     });
 });

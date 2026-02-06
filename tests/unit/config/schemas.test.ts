@@ -8,7 +8,8 @@ import {
     boxConfigSchema,
     dynamoDBConfigSchema,
     configSchema,
-    perchConfigSchema
+    perchConfigSchema,
+    reconciliationConfigSchema
 } from '@/config/schemas';
 import { createGuildId } from '@/integrations/discord/types';
 
@@ -540,5 +541,74 @@ describe('perchConfigSchema', () => {
             expect(result.data?.testMode?.forceSlot).toBe('afternoon');
             expect(result.data?.testMode?.triggerOnStartup).toBe(true);
         }
+    });
+});
+
+describe('reconciliationConfigSchema', () => {
+    test('should apply all defaults when given empty object', () => {
+        const result = reconciliationConfigSchema.safeParse({});
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.enabled).toBe(false);
+            expect(result.data.intervalMs).toBe(24 * 60 * 60 * 1000);
+            expect(result.data.operationDelayMs).toBe(1000);
+            expect(result.data.scanPageSize).toBe(25);
+            expect(result.data.backoff.baseDelayMs).toBe(100);
+            expect(result.data.backoff.maxAttempts).toBe(3);
+            expect(result.data.testMode).toBeUndefined();
+        }
+    });
+
+    test('should accept valid configuration with all fields', () => {
+        const config = {
+            enabled:          true,
+            intervalMs:       3600000,
+            operationDelayMs: 500,
+            scanPageSize:     50,
+            backoff:          {
+                baseDelayMs: 200,
+                maxAttempts: 5,
+            },
+            testMode: {
+                triggerOnStartup: true,
+                runOnce:          true,
+            },
+        };
+
+        const result = reconciliationConfigSchema.safeParse(config);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data).toEqual(config);
+        }
+    });
+
+    test('should accept configuration with partial fields', () => {
+        const config = {
+            enabled:    true,
+            intervalMs: 7200000,
+        };
+
+        const result = reconciliationConfigSchema.safeParse(config);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.enabled).toBe(true);
+            expect(result.data.intervalMs).toBe(7200000);
+            expect(result.data.operationDelayMs).toBe(1000);
+            expect(result.data.scanPageSize).toBe(25);
+        }
+    });
+
+    test('should reject negative intervalMs', () => {
+        const result = reconciliationConfigSchema.safeParse({
+            intervalMs: -1000,
+        });
+        expect(result.success).toBe(false);
+    });
+
+    test('should reject zero intervalMs', () => {
+        const result = reconciliationConfigSchema.safeParse({
+            intervalMs: 0,
+        });
+        expect(result.success).toBe(false);
     });
 });

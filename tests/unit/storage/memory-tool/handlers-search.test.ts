@@ -38,17 +38,16 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
         describe('mock verification', () => {
             it('should search by single tag', async () => {
-                mockBackend.searchByTag = mock(async () => ({
+                mockBackend.searchByTags = mock(async () => ({
                     items: [
                         {
-                            path:        '/state/note.md' as MemoryPath,
-                            content:     'This is a note with some content that is longer than 100 characters to test preview truncation behavior',
-                            contentType: 'text/markdown' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
-                            tags:        ['tag1'],
+                            PK:             'TAG#tag1' as const,
+                            SK:             '/state/note.md',
+                            memoryPath:     '/state/note.md' as MemoryPath,
+                            layer:          'state' as const,
+                            updatedAt:      '2025-01-01T00:00:00.000Z',
+                            tags:           ['tag1'],
+                            contentPreview: 'This is a note with some content that is longer than 100 characters to test preview truncation behavior',
                         },
                     ],
                     nextCursor: undefined,
@@ -58,7 +57,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
                 expect(result).toContain('/state/note.md');
                 expect(result).toContain('This is a note with some content');
-                expect(mockBackend.searchByTag).toHaveBeenCalledWith('tag1', undefined, { limit: undefined });
+                expect(mockBackend.searchByTags).toHaveBeenCalledWith(['tag1'], undefined, { limit: undefined });
             });
 
             it('should search by time range', async () => {
@@ -111,7 +110,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             it('should return "No results found" when no search criteria provided', async () => {
                 // Set up spies to verify backend methods are NOT called
-                mockBackend.searchByTag = mock(async () => ({ items: [], nextCursor: undefined }));
+                mockBackend.searchByTags = mock(async () => ({ items: [], nextCursor: undefined }));
                 mockBackend.searchByTimeRange = mock(async () => []);
                 mockBackend.listByLayer = mock(async () => ({ items: [], nextCursor: undefined }));
 
@@ -119,23 +118,22 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
                 expect(result).toBe('No results found');
                 // Verify backend search methods were NOT called since no criteria provided
-                expect(mockBackend.searchByTag).not.toHaveBeenCalled();
+                expect(mockBackend.searchByTags).not.toHaveBeenCalled();
                 expect(mockBackend.searchByTimeRange).not.toHaveBeenCalled();
                 expect(mockBackend.listByLayer).not.toHaveBeenCalled();
             });
 
             it('should apply limit parameter', async () => {
-                mockBackend.searchByTag = mock(async () => ({
+                mockBackend.searchByTags = mock(async () => ({
                     items: [
                         {
-                            path:        '/state/note1.md' as MemoryPath,
-                            content:     'Note 1',
-                            contentType: 'text/markdown' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
-                            tags:        ['tag1'],
+                            PK:             'TAG#tag1' as const,
+                            SK:             '/state/note1.md',
+                            memoryPath:     '/state/note1.md' as MemoryPath,
+                            layer:          'state' as const,
+                            updatedAt:      '2025-01-01T00:00:00.000Z',
+                            tags:           ['tag1'],
+                            contentPreview: 'Note 1',
                         },
                     ],
                     nextCursor: undefined,
@@ -144,7 +142,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 const result = await searchHandler(mockBackend, { tags: ['tag1'], limit: 5 });
 
                 expect(result).toContain('/state/note1.md');
-                expect(mockBackend.searchByTag).toHaveBeenCalledWith('tag1', undefined, { limit: 5 });
+                expect(mockBackend.searchByTags).toHaveBeenCalledWith(['tag1'], undefined, { limit: 5 });
             });
 
             it('should pass undefined limit to searchByTimeRange when limit not specified', async () => {
@@ -164,123 +162,19 @@ describe('Memory Tool Handlers - Search Operations', () => {
         });
 
         describe('output formatting', () => {
-            test('should search with multiple tags using AND logic', async () => {
-                const backend = createMockBackend();
-                backend.searchByTag = mock(async () => ({
-                    items: [
-                        {
-                            path:        '/state/note1.md' as MemoryPath,
-                            content:     'Note 1',
-                            contentType: 'text/markdown' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
-                            tags:        ['tag1', 'tag2'],
-                        },
-                        {
-                            path:        '/state/note2.md' as MemoryPath,
-                            content:     'Note 2',
-                            contentType: 'text/markdown' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
-                            tags:        ['tag1'],
-                        },
-                    ],
-                    nextCursor: undefined,
-                }));
-
-                const result = await searchHandler(backend, { tags: ['tag1', 'tag2'] });
-
-                expect(result).toContain('/state/note1.md');
-                expect(result).not.toContain('/state/note2.md');
-            });
-
-            test('should not filter when exactly one tag provided', async () => {
-                const backend = createMockBackend();
-                backend.searchByTag = mock(async () => ({
-                    items: [
-                        {
-                            path:        '/state/note1.md' as MemoryPath,
-                            content:     'Note 1',
-                            contentType: 'text/markdown' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
-                            tags:        ['tag1'],
-                        },
-                        {
-                            path:        '/state/note2.md' as MemoryPath,
-                            content:     'Note 2',
-                            contentType: 'text/markdown' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
-                            tags:        ['tag1'],
-                        },
-                    ],
-                    nextCursor: undefined,
-                }));
-
-                const result = await searchHandler(backend, { tags: ['tag1'] });
-
-                // Both items should be included since we only have one tag
-                expect(result).toContain('/state/note1.md');
-                expect(result).toContain('/state/note2.md');
-            });
-
-            test('should filter with three tags using AND logic', async () => {
-                const backend = createMockBackend();
-                backend.searchByTag = mock(async () => ({
-                    items: [
-                        {
-                            path:        '/state/note1.md' as MemoryPath,
-                            content:     'Note 1',
-                            contentType: 'text/markdown' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
-                            tags:        ['tag1', 'tag2', 'tag3'],
-                        },
-                        {
-                            path:        '/state/note2.md' as MemoryPath,
-                            content:     'Note 2',
-                            contentType: 'text/markdown' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
-                            tags:        ['tag1', 'tag2'],
-                        },
-                    ],
-                    nextCursor: undefined,
-                }));
-
-                const result = await searchHandler(backend, { tags: ['tag1', 'tag2', 'tag3'] });
-
-                expect(result).toContain('/state/note1.md');
-                expect(result).not.toContain('/state/note2.md');
-            });
-
             test('should truncate content preview to 100 characters', async () => {
                 const backend = createMockBackend();
                 const longContent = _repeat('A', 200);
-                backend.searchByTag = mock(async () => ({
+                backend.searchByTags = mock(async () => ({
                     items: [
                         {
-                            path:        '/state/long.md' as MemoryPath,
-                            content:     longContent,
-                            contentType: 'text/markdown' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
-                            tags:        ['tag1'],
+                            PK:             'TAG#tag1' as const,
+                            SK:             '/state/long.md',
+                            memoryPath:     '/state/long.md' as MemoryPath,
+                            layer:          'state' as const,
+                            updatedAt:      '2025-01-01T00:00:00.000Z',
+                            tags:           ['tag1'],
+                            contentPreview: longContent,
                         },
                     ],
                     nextCursor: undefined,
@@ -295,7 +189,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             test('should return "No results found" when search returns empty', async () => {
                 const backend = createMockBackend();
-                backend.searchByTag = mock(async () => ({
+                backend.searchByTags = mock(async () => ({
                     items:      [],
                     nextCursor: undefined,
                 }));
@@ -327,17 +221,16 @@ describe('Memory Tool Handlers - Search Operations', () => {
             test('should not truncate content preview at exactly 100 characters', async () => {
                 const backend = createMockBackend();
                 const exactContent = _repeat('A', 100);
-                backend.searchByTag = mock(async () => ({
+                backend.searchByTags = mock(async () => ({
                     items: [
                         {
-                            path:        '/state/exact.md' as MemoryPath,
-                            content:     exactContent,
-                            contentType: 'text/markdown' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
-                            tags:        ['tag1'],
+                            PK:             'TAG#tag1' as const,
+                            SK:             '/state/exact.md',
+                            memoryPath:     '/state/exact.md' as MemoryPath,
+                            layer:          'state' as const,
+                            updatedAt:      '2025-01-01T00:00:00.000Z',
+                            tags:           ['tag1'],
+                            contentPreview: exactContent,
                         },
                     ],
                     nextCursor: undefined,
@@ -351,27 +244,25 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             test('should join search results with double newline', async () => {
                 const backend = createMockBackend();
-                backend.searchByTag = mock(async () => ({
+                backend.searchByTags = mock(async () => ({
                     items: [
                         {
-                            path:        '/state/note1.md' as MemoryPath,
-                            content:     'Content 1',
-                            contentType: 'text/markdown' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
-                            tags:        ['tag1'],
+                            PK:             'TAG#tag1' as const,
+                            SK:             '/state/note1.md',
+                            memoryPath:     '/state/note1.md' as MemoryPath,
+                            layer:          'state' as const,
+                            updatedAt:      '2025-01-01T00:00:00.000Z',
+                            tags:           ['tag1'],
+                            contentPreview: 'Content 1',
                         },
                         {
-                            path:        '/state/note2.md' as MemoryPath,
-                            content:     'Content 2',
-                            contentType: 'text/markdown' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
-                            tags:        ['tag1'],
+                            PK:             'TAG#tag1' as const,
+                            SK:             '/state/note2.md',
+                            memoryPath:     '/state/note2.md' as MemoryPath,
+                            layer:          'state' as const,
+                            updatedAt:      '2025-01-01T00:00:00.000Z',
+                            tags:           ['tag1'],
+                            contentPreview: 'Content 2',
                         },
                     ],
                     nextCursor: undefined,
@@ -391,17 +282,16 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
                 const updatedAt = twoDaysAgo.toISOString();
 
-                backend.searchByTag = mock(async () => ({
+                backend.searchByTags = mock(async () => ({
                     items: [
                         {
-                            path:        '/state/note.md' as MemoryPath,
-                            content:     'Note content',
-                            contentType: 'text/markdown' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   updatedAt,
-                            updatedAt:   updatedAt,
-                            tags:        ['tag1'],
+                            PK:             'TAG#tag1' as const,
+                            SK:             '/state/note.md',
+                            memoryPath:     '/state/note.md' as MemoryPath,
+                            layer:          'state' as const,
+                            updatedAt:      updatedAt,
+                            tags:           ['tag1'],
+                            contentPreview: 'Note content',
                         },
                     ],
                     nextCursor: undefined,
@@ -421,17 +311,16 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 threeHoursAgo.setHours(threeHoursAgo.getHours() - 3);
                 const updatedAt = threeHoursAgo.toISOString();
 
-                backend.searchByTag = mock(async () => ({
+                backend.searchByTags = mock(async () => ({
                     items: [
                         {
-                            path:        '/state/recent.md' as MemoryPath,
-                            content:     'Recent content',
-                            contentType: 'text/markdown' as ContentType,
-                            metadata:    {},
-                            version:     1,
-                            createdAt:   updatedAt,
-                            updatedAt:   updatedAt,
-                            tags:        ['tag1'],
+                            PK:             'TAG#tag1' as const,
+                            SK:             '/state/recent.md',
+                            memoryPath:     '/state/recent.md' as MemoryPath,
+                            layer:          'state' as const,
+                            updatedAt:      updatedAt,
+                            tags:           ['tag1'],
+                            contentPreview: 'Recent content',
                         },
                     ],
                     nextCursor: undefined,
@@ -441,56 +330,6 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
                 // Should include compact timestamp with hours
                 expect(result).toContain('/state/recent.md (3h ago)');
-            });
-
-            test('should use contentPreview when content is undefined (GSI2 result)', async () => {
-                const backend = createMockBackend();
-                backend.searchByTag = mock(async () => ({
-                    items: [
-                        {
-                            path:           '/state/note.md' as MemoryPath,
-                            content:        undefined as unknown as string,
-                            contentPreview: 'This is a preview from GSI2',
-                            contentType:    'text/markdown' as ContentType,
-                            metadata:       {},
-                            version:        1,
-                            createdAt:      '2025-01-01T00:00:00.000Z',
-                            updatedAt:      '2025-01-01T00:00:00.000Z',
-                            tags:           ['tag1'],
-                        },
-                    ],
-                    nextCursor: undefined,
-                }));
-
-                const result = await searchHandler(backend, { tags: ['tag1'] });
-
-                expect(result).toContain('/state/note.md');
-                expect(result).toContain('This is a preview from GSI2');
-            });
-
-            test('should show "[no content]" when both content and contentPreview are undefined', async () => {
-                const backend = createMockBackend();
-                backend.searchByTag = mock(async () => ({
-                    items: [
-                        {
-                            path:           '/state/empty.md' as MemoryPath,
-                            content:        undefined as unknown as string,
-                            contentPreview: undefined,
-                            contentType:    'text/markdown' as ContentType,
-                            metadata:       {},
-                            version:        1,
-                            createdAt:      '2025-01-01T00:00:00.000Z',
-                            updatedAt:      '2025-01-01T00:00:00.000Z',
-                            tags:           ['tag1'],
-                        },
-                    ],
-                    nextCursor: undefined,
-                }));
-
-                const result = await searchHandler(backend, { tags: ['tag1'] });
-
-                expect(result).toContain('/state/empty.md');
-                expect(result).toContain('[no content]');
             });
         });
     });
@@ -1013,17 +852,16 @@ describe('Memory Tool Handlers - Search Operations', () => {
         };
 
         it('should log search with tags joined by comma as query', async () => {
-            mockBackend.searchByTag = mock(async () => ({
+            mockBackend.searchByTags = mock(async () => ({
                 items: [
                     {
-                        path:        '/state/note.md' as MemoryPath,
-                        content:     'Note content',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                        tags:        ['tag1', 'tag2'],
+                        PK:             'TAG#tag1' as const,
+                        SK:             '/state/note.md',
+                        memoryPath:     '/state/note.md' as MemoryPath,
+                        layer:          'state' as const,
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           ['tag1', 'tag2'],
+                        contentPreview: 'Note content',
                     },
                 ],
                 nextCursor: undefined,
@@ -1109,38 +947,153 @@ describe('Memory Tool Handlers - Search Operations', () => {
             );
         });
 
+        it('should format time_range search with content preview (>100 chars)', async () => {
+            const longContent = _repeat('B', 150);
+            mockBackend.searchByTimeRange = mock(async () => [
+                {
+                    path:        '/events/log.md' as MemoryPath,
+                    content:     longContent,
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T00:00:00.000Z',
+                    updatedAt:   '2025-01-15T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await searchHandler(mockBackend, {
+                time_range: { start: '2025-01-10T00:00:00.000Z', end: '2025-01-20T00:00:00.000Z' },
+            });
+
+            expect(result).toContain(_repeat('B', 100));
+            expect(result).toContain('...');
+            expect(result).not.toContain(_repeat('B', 101));
+        });
+
+        it('should format time_range search with content preview (<=100 chars)', async () => {
+            const shortContent = 'Short event log';
+            mockBackend.searchByTimeRange = mock(async () => [
+                {
+                    path:        '/events/short.md' as MemoryPath,
+                    content:     shortContent,
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T00:00:00.000Z',
+                    updatedAt:   '2025-01-15T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await searchHandler(mockBackend, {
+                time_range: { start: '2025-01-10T00:00:00.000Z', end: '2025-01-20T00:00:00.000Z' },
+            });
+
+            expect(result).toContain('Short event log');
+            expect(result).not.toContain('...');
+        });
+
+        it('should format time_range search with no content', async () => {
+            mockBackend.searchByTimeRange = mock(async () => [
+                {
+                    path:        '/events/empty.md' as MemoryPath,
+                    content:     undefined as unknown as string,
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T00:00:00.000Z',
+                    updatedAt:   '2025-01-15T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await searchHandler(mockBackend, {
+                time_range: { start: '2025-01-10T00:00:00.000Z', end: '2025-01-20T00:00:00.000Z' },
+            });
+
+            expect(result).toContain('[no content]');
+        });
+
+        it('should format time_range search with contentPreview field', async () => {
+            mockBackend.searchByTimeRange = mock(async () => [
+                {
+                    path:           '/events/preview.md' as MemoryPath,
+                    content:        'Full content that is very long',
+                    contentPreview: 'Preview text from field',
+                    contentType:    'text/markdown' as ContentType,
+                    metadata:       {},
+                    version:        1,
+                    createdAt:      '2025-01-15T00:00:00.000Z',
+                    updatedAt:      '2025-01-15T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await searchHandler(mockBackend, {
+                time_range: { start: '2025-01-10T00:00:00.000Z', end: '2025-01-20T00:00:00.000Z' },
+            });
+
+            expect(result).toContain('Preview text from field');
+            expect(result).not.toContain('Full content');
+        });
+
+        it('should join time_range search results with double newline', async () => {
+            mockBackend.searchByTimeRange = mock(async () => [
+                {
+                    path:        '/events/log1.md' as MemoryPath,
+                    content:     'Log 1',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T00:00:00.000Z',
+                    updatedAt:   '2025-01-15T00:00:00.000Z',
+                },
+                {
+                    path:        '/events/log2.md' as MemoryPath,
+                    content:     'Log 2',
+                    contentType: 'text/markdown' as ContentType,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-16T00:00:00.000Z',
+                    updatedAt:   '2025-01-16T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await searchHandler(mockBackend, {
+                time_range: { start: '2025-01-10T00:00:00.000Z', end: '2025-01-20T00:00:00.000Z' },
+            });
+
+            expect(result).toContain('\n\n');
+            expect(result).toContain('log1.md');
+            expect(result).toContain('log2.md');
+        });
+
         it('should log correct result count in search', async () => {
-            mockBackend.searchByTag = mock(async () => ({
+            mockBackend.searchByTags = mock(async () => ({
                 items: [
                     {
-                        path:        '/state/note1.md' as MemoryPath,
-                        content:     'Note 1',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                        tags:        ['tag1'],
+                        PK:             'TAG#tag1' as const,
+                        SK:             '/state/note1.md',
+                        memoryPath:     '/state/note1.md' as MemoryPath,
+                        layer:          'state' as const,
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           ['tag1'],
+                        contentPreview: 'Note 1',
                     },
                     {
-                        path:        '/state/note2.md' as MemoryPath,
-                        content:     'Note 2',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                        tags:        ['tag1'],
+                        PK:             'TAG#tag1' as const,
+                        SK:             '/state/note2.md',
+                        memoryPath:     '/state/note2.md' as MemoryPath,
+                        layer:          'state' as const,
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           ['tag1'],
+                        contentPreview: 'Note 2',
                     },
                     {
-                        path:        '/state/note3.md' as MemoryPath,
-                        content:     'Note 3',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                        tags:        ['tag1'],
+                        PK:             'TAG#tag1' as const,
+                        SK:             '/state/note3.md',
+                        memoryPath:     '/state/note3.md' as MemoryPath,
+                        layer:          'state' as const,
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           ['tag1'],
+                        contentPreview: 'Note 3',
                     },
                 ],
                 nextCursor: undefined,

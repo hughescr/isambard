@@ -42,27 +42,25 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
     describe('search tool', () => {
         test('should return search results when memories found', async () => {
-            mockBackend.searchByTag = mock(async () => ({
+            mockBackend.searchByTags = mock(async () => ({
                 items: [
                     {
-                        path:        '/memories/test1.md' as MemoryPath,
-                        content:     'First memory content',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                        tags:        ['tag1'],
+                        PK:             'TAG#tag1' as const,
+                        SK:             '/memories/test1.md',
+                        memoryPath:     '/memories/test1.md' as MemoryPath,
+                        layer:          'identity' as const,
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           ['tag1'],
+                        contentPreview: 'First memory content',
                     },
                     {
-                        path:        '/memories/test2.md' as MemoryPath,
-                        content:     'Second memory content',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                        tags:        ['tag1'],
+                        PK:             'TAG#tag1' as const,
+                        SK:             '/memories/test2.md',
+                        memoryPath:     '/memories/test2.md' as MemoryPath,
+                        layer:          'identity' as const,
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           ['tag1'],
+                        contentPreview: 'Second memory content',
                     },
                 ],
                 nextCursor: undefined,
@@ -72,7 +70,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const handler = getToolHandler(server, 'search');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            const result = await handler({ tag: 'tag1' });
+            const result = await handler({ tags: ['tag1'] });
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content).toBeDefined();
@@ -89,7 +87,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
         });
 
         test('should return message when no memories found', async () => {
-            mockBackend.searchByTag = mock(async () => ({
+            mockBackend.searchByTags = mock(async () => ({
                 items:      [],
                 nextCursor: undefined,
             }));
@@ -98,14 +96,14 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const handler = getToolHandler(server, 'search');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            const result = await handler({ tag: 'nonexistent' });
+            const result = await handler({ tags: ['nonexistent'] });
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content).toBeDefined();
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].type).toBe('text');
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-            expect(result.content[0].text).toBe('No memories found matching tag');
+            expect(result.content[0].text).toBe('No memories found matching tags');
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBeUndefined();
         });
@@ -115,17 +113,16 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             { length: 200, 'char': 'B', shouldTruncate: false, description: 'not truncate content exactly at 200 characters' },
         ])('should $description', async ({ length, char, shouldTruncate }) => {
             const content = _repeat(char, length);
-            mockBackend.searchByTag = mock(async () => ({
+            mockBackend.searchByTags = mock(async () => ({
                 items: [
                     {
-                        path:        '/memories/test.md' as MemoryPath,
-                        content,
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                        tags:        ['tag1'],
+                        PK:             'TAG#tag1' as const,
+                        SK:             '/memories/test.md',
+                        memoryPath:     '/memories/test.md' as MemoryPath,
+                        layer:          'identity' as const,
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           ['tag1'],
+                        contentPreview: content,
                     },
                 ],
                 nextCursor: undefined,
@@ -135,7 +132,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const handler = getToolHandler(server, 'search');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            const result = await handler({ tag: 'tag1' });
+            const result = await handler({ tags: ['tag1'] });
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toContain(_repeat(char, 200));
@@ -151,27 +148,25 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
         });
 
         test('should join multiple results with double newline', async () => {
-            mockBackend.searchByTag = mock(async () => ({
+            mockBackend.searchByTags = mock(async () => ({
                 items: [
                     {
-                        path:        '/memories/test1.md' as MemoryPath,
-                        content:     'Content 1',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                        tags:        ['tag1'],
+                        PK:             'TAG#tag1' as const,
+                        SK:             '/memories/test1.md',
+                        memoryPath:     '/memories/test1.md' as MemoryPath,
+                        layer:          'identity' as const,
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           ['tag1'],
+                        contentPreview: 'Content 1',
                     },
                     {
-                        path:        '/memories/test2.md' as MemoryPath,
-                        content:     'Content 2',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                        tags:        ['tag1'],
+                        PK:             'TAG#tag1' as const,
+                        SK:             '/memories/test2.md',
+                        memoryPath:     '/memories/test2.md' as MemoryPath,
+                        layer:          'identity' as const,
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           ['tag1'],
+                        contentPreview: 'Content 2',
                     },
                 ],
                 nextCursor: undefined,
@@ -181,7 +176,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const handler = getToolHandler(server, 'search');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            const result = await handler({ tag: 'tag1' });
+            const result = await handler({ tags: ['tag1'] });
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toContain('\n\n');
@@ -189,8 +184,8 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             expect(result.content[0].text).toMatch(/test1\.md.*\n\n.*test2\.md/);
         });
 
-        test('should return error when backend.searchByTag throws Error', async () => {
-            mockBackend.searchByTag = mock(async () => {
+        test('should return error when backend.searchByTags throws Error', async () => {
+            mockBackend.searchByTags = mock(async () => {
                 throw new Error('Search failed');
             });
 
@@ -198,7 +193,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const handler = getToolHandler(server, 'search');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            const result = await handler({ tag: 'tag1' });
+            const result = await handler({ tags: ['tag1'] });
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content).toBeDefined();
@@ -210,8 +205,8 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             expect(result.isError).toBe(true);
         });
 
-        test('should return error when backend.searchByTag throws non-Error', async () => {
-            mockBackend.searchByTag = mock(async () => {
+        test('should return error when backend.searchByTags throws non-Error', async () => {
+            mockBackend.searchByTags = mock(async () => {
                 // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw 'Database timeout';
             });
@@ -220,7 +215,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const handler = getToolHandler(server, 'search');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            const result = await handler({ tag: 'tag1' });
+            const result = await handler({ tags: ['tag1'] });
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].type).toBe('text');
@@ -231,17 +226,16 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
         });
 
         test('should format results with path and content preview', async () => {
-            mockBackend.searchByTag = mock(async () => ({
+            mockBackend.searchByTags = mock(async () => ({
                 items: [
                     {
-                        path:        '/memories/note.md' as MemoryPath,
-                        content:     'This is my note content',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                        tags:        ['tag1'],
+                        PK:             'TAG#tag1' as const,
+                        SK:             '/memories/note.md',
+                        memoryPath:     '/memories/note.md' as MemoryPath,
+                        layer:          'identity' as const,
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           ['tag1'],
+                        contentPreview: 'This is my note content',
                     },
                 ],
                 nextCursor: undefined,
@@ -251,41 +245,10 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const handler = getToolHandler(server, 'search');
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            const result = await handler({ tag: 'tag1' });
+            const result = await handler({ tags: ['tag1'] });
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toBe('/memories/note.md: This is my note content');
-        });
-
-        test('should use contentPreview fallback when content field is undefined', async () => {
-            mockBackend.searchByTag = mock(async () => ({
-                items: [
-                    {
-                        path:           '/memories/gsi2-result.md' as MemoryPath,
-                        content:        undefined as unknown as string, // GSI2 projection may not include content field
-                        contentPreview: 'Preview of GSI2 content',
-                        contentType:    'text/markdown' as ContentType,
-                        metadata:       {},
-                        version:        1,
-                        createdAt:      '2025-01-01T00:00:00.000Z',
-                        updatedAt:      '2025-01-01T00:00:00.000Z',
-                        tags:           ['tag1'],
-                    },
-                ],
-                nextCursor: undefined,
-            }));
-
-            const server = createMemoryMCPServer(mockBackend);
-            const handler = getToolHandler(server, 'search');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            const result = await handler({ tag: 'tag1' });
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-            expect(result.content[0].text).toContain('/memories/gsi2-result.md');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-            expect(result.content[0].text).toContain('Preview of GSI2 content');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-            expect(result.isError).toBeUndefined();
         });
     });
 

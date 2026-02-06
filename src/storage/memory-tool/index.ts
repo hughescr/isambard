@@ -8,11 +8,11 @@ export {
     layeredMemoryMetadataSchema,
     createMemoryPath,
     isMemoryPath,
-    createMemoryToolKeys,
     type MemoryPath,
     type ContentType,
     type MemoryToolItemData,
     type MemoryToolItem,
+    type TagIndexItem,
     type LayerName,
     type LayeredMemoryMetadata
 } from './types';
@@ -32,6 +32,7 @@ export {
 // Key Generation
 export {
     MemoryToolKeyGenerator,
+    normalizeTags,
     type MemoryToolKeys
 } from './key-generator';
 
@@ -43,6 +44,9 @@ export {
     type ListOptions,
     type ListResult
 } from './backend';
+
+// Tag Index Backend
+export { MemoryToolBackendTagIndex } from './backend-tag-index';
 
 // Handlers
 export {
@@ -76,3 +80,18 @@ export {
     type TagRegistry,
     type TagRegistryCallbacks
 } from './backend-tag-registry';
+
+// Reconciliation
+export {
+    reconciliationConfigSchema,
+    ReconciliationError,
+    ReconciliationThrottledError,
+    runReconciliation,
+    createReconciliationScheduler,
+    type ReconciliationConfig,
+    type ReconciliationResult,
+    type ReconciliationScheduler,
+    type ReconciliationSchedulerDeps,
+    type ReconcilerDeps,
+    type ReconcilerOptions
+} from './reconciliation';

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { repeat as _repeat } from 'lodash';
-import { MemoryToolKeyGenerator, generateContentPreview } from '@/storage/memory-tool/key-generator';
+import { MemoryToolKeyGenerator, generateContentPreview, normalizeTags } from '@/storage/memory-tool/key-generator';
 import type { MemoryPath } from '@/storage/memory-tool/types';
 
 describe.concurrent('MemoryToolKeyGenerator', () => {
@@ -174,93 +174,6 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
         });
     });
 
-    describe('createTagKeys', () => {
-        test('should create GSI2 keys with tag and layer', () => {
-            const path = '/identity/core-values.md' as MemoryPath;
-            const tags = ['beliefs', 'philosophy'];
-            const updatedAt = '2024-01-15T10:30:00.000Z';
-
-            const tagKeys = MemoryToolKeyGenerator.createTagKeys(path, tags, updatedAt);
-
-            expect(tagKeys).toEqual({
-                GSI2PK: 'TAG#beliefs',
-                GSI2SK: 'LAYER#identity#UPDATED#2024-01-15T10:30:00.000Z',
-            });
-        });
-
-        test('should use first tag only when multiple tags provided', () => {
-            const path = '/state/current-context.md' as MemoryPath;
-            const tags = ['important', 'urgent', 'active'];
-            const updatedAt = '2024-01-15T10:30:00.000Z';
-
-            const tagKeys = MemoryToolKeyGenerator.createTagKeys(path, tags, updatedAt);
-
-            expect(tagKeys).not.toBeNull();
-            expect(tagKeys!.GSI2PK).toBe('TAG#important');
-        });
-
-        test('should handle path without recognized layer', () => {
-            const path = '/unknown/file.md' as MemoryPath;
-            const tags = ['test'];
-            const updatedAt = '2024-01-15T10:30:00.000Z';
-
-            const tagKeys = MemoryToolKeyGenerator.createTagKeys(path, tags, updatedAt);
-
-            expect(tagKeys).toEqual({
-                GSI2PK: 'TAG#test',
-                GSI2SK: 'LAYER#unknown#UPDATED#2024-01-15T10:30:00.000Z',
-            });
-        });
-
-        test.each([
-            { name: 'empty array', tags: [] as string[] },
-            { name: 'undefined', tags: undefined },
-        ])('should return null if tags is $name', ({ tags }) => {
-            const path = '/identity/core-values.md' as MemoryPath;
-            const updatedAt = '2024-01-15T10:30:00.000Z';
-
-            const tagKeys = MemoryToolKeyGenerator.createTagKeys(path, tags, updatedAt);
-
-            expect(tagKeys).toBeNull();
-        });
-
-        test('should auto-generate timestamp if not provided', () => {
-            const path = '/events/meeting.md' as MemoryPath;
-            const tags = ['meeting'];
-            const beforeCall = new Date().toISOString();
-
-            const tagKeys = MemoryToolKeyGenerator.createTagKeys(path, tags);
-
-            const afterCall = new Date().toISOString();
-            expect(tagKeys).not.toBeNull();
-            if(!tagKeys?.GSI2SK) {
-                throw new Error('tagKeys and GSI2SK should not be null');
-            }
-            expect(tagKeys.GSI2PK).toBe('TAG#meeting');
-            expect(tagKeys.GSI2SK).toMatch(/^LAYER#events#UPDATED#\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-
-            // Extract timestamp from GSI2SK
-            // eslint-disable-next-line lodash/prefer-lodash-method -- String.replace is simpler for single replacement
-            const timestamp = tagKeys.GSI2SK.replace(/^LAYER#events#UPDATED#/, '');
-            expect(timestamp >= beforeCall).toBe(true);
-            expect(timestamp <= afterCall).toBe(true);
-        });
-
-        test('should extract layer from path correctly', () => {
-            const testCases = [
-                { path: '/identity/file.md' as MemoryPath, expectedLayer: 'identity' },
-                { path: '/state/file.md' as MemoryPath, expectedLayer: 'state' },
-                { path: '/events/file.md' as MemoryPath, expectedLayer: 'events' },
-                { path: '/other/file.md' as MemoryPath, expectedLayer: 'other' },
-            ];
-
-            for(const { path, expectedLayer } of testCases) {
-                const tagKeys = MemoryToolKeyGenerator.createTagKeys(path, ['test'], '2024-01-15T10:30:00.000Z');
-                expect(tagKeys!.GSI2SK).toContain(`LAYER#${expectedLayer}#`);
-            }
-        });
-    });
-
     describe('createVersionKeys', () => {
         test.each([
             {
@@ -325,6 +238,152 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
             const content = _repeat('The quick brown fox jumps over the lazy dog. ', 3); // ~135 chars
             const preview = generateContentPreview(content);
             expect(preview).toHaveLength(100);
+        });
+    });
+
+    describe('normalizeTags', () => {
+        test('returns empty array for undefined', () => {
+            expect(normalizeTags(undefined)).toEqual([]);
+        });
+
+        test('returns empty array for empty array', () => {
+            expect(normalizeTags([])).toEqual([]);
+        });
+
+        test('lowercases all tags', () => {
+            expect(normalizeTags(['UPPERCASE', 'MixedCase', 'lowercase'])).toEqual([
+                'uppercase',
+                'mixedcase',
+                'lowercase',
+            ]);
+        });
+
+        test('deduplicates tags', () => {
+            expect(normalizeTags(['tag1', 'tag2', 'tag1', 'tag3'])).toEqual([
+                'tag1',
+                'tag2',
+                'tag3',
+            ]);
+        });
+
+        test('handles mixed case duplicates', () => {
+            expect(normalizeTags(['Craig', 'craig', 'CRAIG'])).toEqual(['craig']);
+        });
+
+        test('preserves order (first occurrence wins after dedup)', () => {
+            expect(normalizeTags(['zebra', 'apple', 'Zebra', 'banana'])).toEqual([
+                'zebra',
+                'apple',
+                'banana',
+            ]);
+        });
+    });
+
+    describe('createTagIndexKeys', () => {
+        test('returns empty array for empty tags', () => {
+            const result = MemoryToolKeyGenerator.createTagIndexKeys(
+                '/identity/core.md' as MemoryPath,
+                []
+            );
+            expect(result).toEqual([]);
+        });
+
+        test('returns correct PK/SK for single tag', () => {
+            const result = MemoryToolKeyGenerator.createTagIndexKeys(
+                '/identity/values.md' as MemoryPath,
+                ['important']
+            );
+            expect(result).toHaveLength(1);
+            expect(result[0]).toEqual({
+                PK: 'TAG#important',
+                SK: 'PATH#/identity/values.md',
+            });
+        });
+
+        test('returns correct PK/SK for multiple tags', () => {
+            const result = MemoryToolKeyGenerator.createTagIndexKeys(
+                '/state/current.md' as MemoryPath,
+                ['active', 'priority', 'work']
+            );
+            expect(result).toHaveLength(3);
+            expect(result[0]).toEqual({
+                PK: 'TAG#active',
+                SK: 'PATH#/state/current.md',
+            });
+            expect(result[1]).toEqual({
+                PK: 'TAG#priority',
+                SK: 'PATH#/state/current.md',
+            });
+            expect(result[2]).toEqual({
+                PK: 'TAG#work',
+                SK: 'PATH#/state/current.md',
+            });
+        });
+
+        test('PK format is TAG#{tag}', () => {
+            const result = MemoryToolKeyGenerator.createTagIndexKeys(
+                '/test/file.md' as MemoryPath,
+                ['mytag']
+            );
+            expect(result[0].PK).toMatch(/^TAG#/);
+            expect(result[0].PK).toBe('TAG#mytag');
+        });
+
+        test('SK format is PATH#{path}', () => {
+            const result = MemoryToolKeyGenerator.createTagIndexKeys(
+                '/identity/test.md' as MemoryPath,
+                ['tag']
+            );
+            expect(result[0].SK).toMatch(/^PATH#/);
+            expect(result[0].SK).toBe('PATH#/identity/test.md');
+        });
+    });
+
+    describe('parseTagFromPK', () => {
+        test('parses tag correctly from TAG#mytag', () => {
+            const tag = MemoryToolKeyGenerator.parseTagFromPK('TAG#mytag');
+            expect(tag).toBe('mytag');
+        });
+
+        test('parses tag with special characters', () => {
+            const tag = MemoryToolKeyGenerator.parseTagFromPK('TAG#my-tag_123');
+            expect(tag).toBe('my-tag_123');
+        });
+
+        test('throws on invalid format (missing TAG# prefix)', () => {
+            expect(() => {
+                MemoryToolKeyGenerator.parseTagFromPK('INVALID#mytag');
+            }).toThrow('Invalid tag PK format: expected TAG#..., got INVALID#mytag');
+        });
+
+        test('throws on empty prefix', () => {
+            expect(() => {
+                MemoryToolKeyGenerator.parseTagFromPK('mytag');
+            }).toThrow('Invalid tag PK format: expected TAG#..., got mytag');
+        });
+    });
+
+    describe('parsePathFromTagSK', () => {
+        test('parses path correctly from PATH#/identity/core.md', () => {
+            const path = MemoryToolKeyGenerator.parsePathFromTagSK('PATH#/identity/core.md');
+            expect(path).toBe('/identity/core.md');
+        });
+
+        test('parses nested paths correctly', () => {
+            const path = MemoryToolKeyGenerator.parsePathFromTagSK('PATH#/events/conversation/2024.md');
+            expect(path).toBe('/events/conversation/2024.md');
+        });
+
+        test('throws on invalid format (missing PATH# prefix)', () => {
+            expect(() => {
+                MemoryToolKeyGenerator.parsePathFromTagSK('INVALID#/test.md');
+            }).toThrow('Invalid tag SK format: expected PATH#..., got INVALID#/test.md');
+        });
+
+        test('throws on empty prefix', () => {
+            expect(() => {
+                MemoryToolKeyGenerator.parsePathFromTagSK('/test.md');
+            }).toThrow('Invalid tag SK format: expected PATH#..., got /test.md');
         });
     });
 });

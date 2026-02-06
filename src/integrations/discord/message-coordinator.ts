@@ -168,6 +168,7 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
      * Stop typing indicator and clear refresh interval.
      */
     function stopTypingIndicator(state: ChannelState): void {
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Guard clause - clearInterval on undefined is harmless but unnecessary
         if(state.typingInterval) {
             clearInterval(state.typingInterval);
             state.typingInterval = undefined;

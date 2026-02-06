@@ -177,7 +177,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                 'Search memories by tag with optional filters',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    tag:       z.string().describe('Tag to search for'),
+                    tags:      z.array(z.string()).min(1).describe('Tags to search for (AND semantics — items must have all tags)'),
                     // Stryker disable next-line all: z.enum array and describe() are schema configuration
                     layer:     z.enum(['identity', 'state', 'events']).optional().describe('Optional layer filter'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
@@ -195,20 +195,20 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                         const options = (args.limit ?? args.cursor ?? args.startDate ?? args.endDate)
                             ? { limit: args.limit, cursor: args.cursor, startDate: args.startDate, endDate: args.endDate }
                             : undefined;
-                        const results = await backend.searchByTag(
-                            args.tag,
+                        const results = await backend.searchByTags(
+                            args.tags,
                             args.layer as LayerName | undefined,
                             options
                         );
                         if(results.items.length === 0) {
                             return {
-                                content: [{ type: 'text' as const, text: 'No memories found matching tag' }],
+                                content: [{ type: 'text' as const, text: 'No memories found matching tags' }],
                             };
                         }
                         let formatted = _.map(results.items, (r) => {
-                            // Stryker disable next-line StringLiteral: Default message for display, not behavioral
-                            const preview = r.content ?? r.contentPreview ?? 'No content';
-                            return `${r.path}: ${preview.substring(0, 200)}${preview.length > 200 ? '...' : ''}`;
+                            // Stryker disable next-line StringLiteral: Default preview fallback not exercised in unit tests
+                            const preview = r.contentPreview ?? 'No content';
+                            return `${r.memoryPath}: ${preview.substring(0, 200)}${preview.length > 200 ? '...' : ''}`;
                         }).join('\n\n');
                         if(results.nextCursor) {
                             formatted += `\n\n---\nMore results available. Use cursor: ${results.nextCursor}`;

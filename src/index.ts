@@ -20,6 +20,11 @@ import { cleanupAllStaleSessions } from './agent/session-cleanup';
 import { createTaskDirectoryCopier } from './agent/task-directory-copier';
 import { createTaskPersistenceCoordinator, type TaskPersistenceCoordinator } from './agent/task-persistence-coordinator';
 import { createTaskCleanupProcessor } from './agent/task-cleanup-processor';
+import {
+    createReconciliationScheduler,
+    runReconciliation,
+    type ReconciliationScheduler,
+} from './storage/memory-tool/reconciliation';
 import { createDiscordBot } from './integrations/discord/bot';
 import type { DiscordBot } from './integrations/discord/bot';
 import type { CatchUpCompletionSignal, CatchUpInProgressSignal } from './integrations/discord/catchup';
@@ -95,6 +100,7 @@ export async function createApp(): Promise<App> {
     let taskPersistenceCoordinator: TaskPersistenceCoordinator | undefined;
     let channelRegistry: ChannelRegistryManager;
     let eventDeltaTracker: ReturnType<typeof createEventDeltaTracker> | undefined;
+    let reconciliationScheduler: ReconciliationScheduler | undefined;
 
     try {
         // Create memory backend
@@ -111,6 +117,25 @@ export async function createApp(): Promise<App> {
 
         // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
         logger.info(`Memory system initialized with DynamoDB: ${tableName}`);
+
+        // Create reconciliation scheduler if enabled
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Optional initialization - equivalent mutant
+        if(config.reconciliation?.enabled) {
+            reconciliationScheduler = createReconciliationScheduler({
+                config:            config.reconciliation,
+                runReconciliation,
+                reconcilerDeps: {
+                    docClient,
+                    tableName,
+                    tagIndex:             memoryBackend.getTagIndexBackend(),
+                    getMemory:            (path) => memoryBackend!.get(path),
+                    updateMemoryMetadata: (path, existing, input) =>
+                        memoryBackend!.updateMetadataOnly(path, existing, input),
+                },
+            });
+            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+            logger.info('Tag index reconciliation scheduler configured');
+        }
 
         // Create Discord client early (shared with bot and channel registry)
         discordClient = createDiscordClient(config.discord);
@@ -377,6 +402,12 @@ export async function createApp(): Promise<App> {
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Starting Isambard application...');
             await bot.start();
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional startup - equivalent mutant
+            if(reconciliationScheduler) {
+                reconciliationScheduler.start();
+                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+                logger.info('Tag index reconciliation scheduler started');
+            }
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Isambard application started successfully');
         },
@@ -391,6 +422,12 @@ export async function createApp(): Promise<App> {
 
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Stopping Isambard application...');
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
+            if(reconciliationScheduler) {
+                reconciliationScheduler.stop();
+                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+                logger.info('Tag index reconciliation scheduler stopped');
+            }
             await bot.stop();
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Isambard application stopped');

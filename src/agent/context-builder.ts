@@ -137,11 +137,12 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             logger.debug({ userId }, 'Loading user context');
 
             // Load recent state/events for this user via tag search
-            const result = await backend.searchByTag(`user:${userId}`, undefined, { limit });
+            const result = await backend.searchByTags([`user:${userId}`], undefined, { limit });
 
             // Format each item with path, age, and content preview
+            // TagIndexItem has memoryPath (not path) and no content field
             const memories = _map(result.items, item =>
-                formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, now)
+                formatMemoryPreview(item.memoryPath as MemoryPath, undefined, item.contentPreview, item.updatedAt, now)
             );
 
             logger.debug({ userId, memoryCount: memories.length }, 'User context loaded');
