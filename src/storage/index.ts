@@ -5,6 +5,7 @@ export { createDynamoDBClient, type DynamoDBClients } from './client';
 export { StorageError, ItemNotFoundError, ConflictError, ValidationError } from './errors';
 
 // Models
+/** @internal */
 export {
     memoryTypeSchema,
     memorySchema,
@@ -15,7 +16,10 @@ export {
 } from './models/memory';
 
 // Repositories
+/** @internal */
 export { BaseRepository, type DynamoDBKey } from './repositories/base';
+
+/** @internal */
 export {
     MemoryRepository,
     type CreateMemoryInput,
@@ -28,4 +32,5 @@ export {
 export { TaskSessionBackend, sessionIdSchema, createSessionId, isSessionId, type SessionId, type TaskSessionItem } from './task-session';
 
 // Utils
+/** @internal */
 export { stripDynamoKeys } from './utils/index.js';

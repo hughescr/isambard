@@ -264,9 +264,15 @@ const runner = createPerchSessionRunner({
   logger,
   runAgentSession: async ({ prompt, sessionId, abortSignal }) => {
     // Your agent execution logic
-    const stream = agent.chat({ prompt, sessionId, abortSignal });
-    // ... process stream ...
-    return { completed: true, sessionId };
+    const abortController = new AbortController();
+    abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
+    const result = await agent.handleInput([], {
+      specialMode: 'perching',
+      perchPrompt: prompt,
+      sessionId,
+      abortController,
+    });
+    return { completed: !result.wasInterrupted, sessionId: result.sessionId };
   },
 });
 

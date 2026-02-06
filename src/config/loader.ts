@@ -1,6 +1,7 @@
 import { Resource } from 'sst';
 import type { Resource as SstResource } from 'sst';
 import _ from 'lodash';
+import env from 'env-var';
 import { configSchema, dynamoDBConfigSchema, type Config, type DynamoDBConfig } from './schemas';
 
 /**
@@ -64,18 +65,17 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
                 idleRefreshIntervalMs: 300000,      // Refresh idle status every 5 minutes to maintain visibility
             },
         },
-        perch: (process.env.PERCH_ENABLED ?? 'true') === 'true'
+        perch: env.get('PERCH_ENABLED').default('true').asBool()
             ? {
                 enabled:           true,
                 timezone:          'America/Los_Angeles',
                 intervalMinutes:   60,
                 jitterMinutes:     15,
                 maxSessionMinutes: 45,
-                // Stryker disable next-line StringLiteral: Mutating 'false' to '' is equivalent - both fail === 'true' check
-                testMode:          (process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP ?? 'false') === 'true'
+                testMode:          env.get('PERCH_TEST_MODE_TRIGGER_ON_STARTUP').default('false').asBool()
                     ? {
                         triggerOnStartup: true,
-                        forceSlot:        process.env.PERCH_TEST_MODE_FORCE_SLOT as 'pre-dawn' | 'mid-morning' | 'afternoon' | 'evening' | 'late-night' | undefined,
+                        forceSlot:        env.get('PERCH_TEST_MODE_FORCE_SLOT').asString() as 'pre-dawn' | 'mid-morning' | 'afternoon' | 'evening' | 'late-night' | undefined,
                     }
                     : undefined,
             }

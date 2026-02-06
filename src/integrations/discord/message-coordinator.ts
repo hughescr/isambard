@@ -61,6 +61,12 @@ export interface MessageCoordinator {
     /** Set the processor function (called to process messages) */
     setProcessor(processor: MessageProcessor): void
 
+    /** Remove a single channel's state (cleanup on channel deletion) */
+    removeChannel(channelId: ChannelId): void
+
+    /** Remove multiple channels' state (cleanup on guild deletion) */
+    removeGuildChannels(channelIds: ChannelId[]): void
+
     /** Stop the coordinator and cleanup */
     stop(): void
 }
@@ -132,21 +138,18 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
             return;
         }
 
+        // Early return if typing is already active - avoids unnecessary work
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Defensive guard - stopTypingIndicator always clears interval before next startTypingIndicator call; prevents leaked intervals if call order changes
+        if(state.typingInterval) {
+            return;
+        }
+
         // Debug logging to trace calls
         logger.debug({
             hasExisting: !!state.typingInterval,
             channelId:   'present',
             msg:         'startTypingIndicator called',
         });
-
-        // Clear any existing interval to prevent leaks.
-        // This is defensive: under normal flow, stopTypingIndicator() is always
-        // called first, but this guard protects against bugs in the complex
-        // async/debounce/interrupt logic.
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Defensive guard - cannot be triggered under normal operation as stopTypingIndicator always clears state.typingInterval
-        if(state.typingInterval) {
-            clearInterval(state.typingInterval);
-        }
 
         // Send initial typing indicator
         void state.typingChannel.sendTyping().catch(() => _.noop());
@@ -418,34 +421,65 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
     }
 
     /**
+     * Cleanup a single channel's state.
+     */
+    function cleanupChannelState(channelId: ChannelId): void {
+        const state = channelStates.get(channelId);
+        if(!state) {
+            return;
+        }
+
+        // Clear debounce timer
+        // Stryker disable next-line ConditionalExpression: clearTimeout(undefined) is a no-op
+        if(state.debounceTimer) {
+            clearTimeout(state.debounceTimer);
+            state.debounceTimer = undefined;
+        }
+
+        // Stop typing indicator
+        stopTypingIndicator(state);
+
+        // Abort any active query
+        if(state.activeQuery) {
+            state.activeQuery.abortController.abort();
+            state.activeQuery = undefined;
+        }
+
+        // Remove from map
+        channelStates.delete(channelId);
+    }
+
+    /**
+     * Remove a single channel's state (cleanup on channel deletion).
+     */
+    function removeChannel(channelId: ChannelId): void {
+        cleanupChannelState(channelId);
+    }
+
+    /**
+     * Remove multiple channels' state (cleanup on guild deletion).
+     */
+    function removeGuildChannels(channelIds: ChannelId[]): void {
+        for(const channelId of channelIds) {
+            cleanupChannelState(channelId);
+        }
+    }
+
+    /**
      * Stop the coordinator and cleanup.
      */
     function stop(): void {
-        // Clear all debounce timers and typing intervals
-        for(const state of channelStates.values()) {
-            // Stryker disable next-line ConditionalExpression: clearTimeout(undefined) is a no-op
-            if(state.debounceTimer) {
-                clearTimeout(state.debounceTimer);
-                state.debounceTimer = undefined;
-            }
-
-            // Stop typing indicators
-            stopTypingIndicator(state);
-
-            // Abort any active queries
-            if(state.activeQuery) {
-                state.activeQuery.abortController.abort();
-                state.activeQuery = undefined;
-            }
+        // Clear all channel states
+        for(const channelId of channelStates.keys()) {
+            cleanupChannelState(channelId);
         }
-
-        // Clear all state
-        channelStates.clear();
     }
 
     return {
         handleMessage,
         setProcessor,
+        removeChannel,
+        removeGuildChannels,
         stop,
     };
 }

@@ -186,7 +186,7 @@ See [.claude/CLAUDE.md](.claude/CLAUDE.md) for full development instructions.
 ```
 src/
 ├── agent/                    # Claude Agent SDK integration
-│   ├── agent.ts              # Main agent with chat() method
+│   ├── agent.ts              # Main agent with handleInput() method
 │   ├── types.ts              # Agent stream event types
 │   ├── context-builder.ts    # Memory context loading
 │   ├── memory-mcp-server.ts  # MCP server for memory tools

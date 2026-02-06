@@ -78,6 +78,7 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
 
             expect(result).toContain('consolidated');
             expect(result).toContain('/test/target.md');
+            expect(result).not.toContain('WARNING');
             expect(mockBackend.create).toHaveBeenCalledWith({
                 path:        '/test/target.md',
                 content:     'Summary of sources',
@@ -218,6 +219,71 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
                     msg: expect.stringContaining('string error'),
                 })
             );
+        });
+
+        it('should return warning message when some source deletions fail', async () => {
+            mockBackend.get = mock(async () => undefined);
+            mockBackend.create = mock(async () => ({
+                path:        '/test/target.md' as MemoryPath,
+                content:     'Summary',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:00.000Z',
+            }));
+
+            let deleteCount = 0;
+            mockBackend.delete = mock(async (_path: MemoryPath) => {
+                deleteCount++;
+                // Fail on the second deletion
+                if(deleteCount === 2) {
+                    throw new Error('Delete failed');
+                }
+            });
+
+            const result = await consolidateHandler(mockBackend, {
+                source_paths: ['/test/source1.md', '/test/source2.md', '/test/source3.md'],
+                target_path:  '/test/target.md',
+                summary:      'Summary',
+            });
+
+            expect(result).toContain('consolidated');
+            expect(result).toContain('WARNING');
+            expect(result).toContain('Failed to delete 1 source(s)');
+            expect(result).toContain('/test/source2.md');
+            expect(mockBackend.delete).toHaveBeenCalledTimes(3);
+        });
+
+        it('should return warning with comma-separated paths when multiple source deletions fail', async () => {
+            mockBackend.get = mock(async () => undefined);
+            mockBackend.create = mock(async () => ({
+                path:        '/test/target.md' as MemoryPath,
+                content:     'Summary',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:00.000Z',
+            }));
+
+            mockBackend.delete = mock(async (path: MemoryPath) => {
+                // Fail on all deletions
+                throw new Error(`Delete failed for ${path}`);
+            });
+
+            const result = await consolidateHandler(mockBackend, {
+                source_paths: ['/test/source1.md', '/test/source2.md', '/test/source3.md'],
+                target_path:  '/test/target.md',
+                summary:      'Summary',
+            });
+
+            expect(result).toContain('consolidated');
+            expect(result).toContain('WARNING');
+            expect(result).toContain('Failed to delete 3 source(s)');
+            // Verify comma-space separator between failed paths
+            expect(result).toContain('/test/source1.md, /test/source2.md, /test/source3.md');
+            expect(mockBackend.delete).toHaveBeenCalledTimes(3);
         });
     });
 

@@ -110,42 +110,36 @@ describe('Discord Presence Flow (Integration)', () => {
         // Create mock agent that simulates stream events
         const streamCallbacks: ((event: AgentStreamEvent) => void)[] = [];
         mockAgent = {
-            chatBatch: mock(async () => ({
-                response:       'Test response',
-                sessionId:      undefined,
-                wasInterrupted: false,
-                streamTracker:  {} as StreamTracker,
-            })),
-            chat: mock(async (_context: DiscordMessageContext, onStreamEvent?: (event: AgentStreamEvent) => void) => {
-                if(onStreamEvent) {
-                    streamCallbacks.push(onStreamEvent);
+            handleInput: mock(async (contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                if(options?.onStreamEvent) {
+                    streamCallbacks.push(options.onStreamEvent);
 
                     // Simulate stream events
                     // 1. Thinking phase
-                    onStreamEvent({
+                    options.onStreamEvent({
                         type:  'assistant',
                         delta: {},
                     } as AgentStreamEvent);
 
                     // 2. Tool usage
-                    onStreamEvent({
+                    options.onStreamEvent({
                         type:      'tool_progress',
                         tool_name: 'mcp__memory__view',
                     } as AgentStreamEvent);
 
                     // 3. Responding phase
-                    onStreamEvent({
+                    options.onStreamEvent({
                         type:  'assistant',
                         delta: { text: 'Hello!' },
                     } as AgentStreamEvent);
 
                     // 4. Result
-                    onStreamEvent({
+                    options.onStreamEvent({
                         type: 'result',
                     } as AgentStreamEvent);
                 }
 
-                return 'Hello! How can I help you?';
+                return { response: 'Hello! How can I help you?', wasInterrupted: false, streamTracker: {} as StreamTracker };
             }),
         } as ClaudeAgent;
 
@@ -162,7 +156,7 @@ describe('Discord Presence Flow (Integration)', () => {
         } as any;
 
         // Don't use onMessage directly if presenceManager and agent are provided
-        // The middleware will call agent.chat instead
+        // The middleware will call agent.handleInput instead
         const messageHandler = createMessageHandler({
             channelRegistry: { shouldProcess: mock(_constant(true)), getChannel: mock(_constant(null)), warmCache: mock(_constant(Promise.resolve())) } as unknown as ChannelRegistryManager,
             botUserId:       'bot-id' as UserId,
@@ -181,7 +175,7 @@ describe('Discord Presence Flow (Integration)', () => {
         expect(mockChannel.sendTyping).toHaveBeenCalled();
 
         // Verify agent was called
-        expect(mockAgent.chat).toHaveBeenCalled();
+        expect(mockAgent.handleInput).toHaveBeenCalled();
 
         // The presence manager should be active (we can't easily verify setPresence calls
         // due to debouncing and timing issues in tests, but the flow should complete without errors)
@@ -227,15 +221,9 @@ describe('Discord Presence Flow (Integration)', () => {
 
         // Create agent that throws an error
         mockAgent = {
-            chat: mock(async () => {
+            handleInput: mock(async (_contexts: DiscordMessageContext[], _options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                 throw new Error('Agent processing failed');
             }),
-            chatBatch: mock(async () => ({
-                response:       null,
-                sessionId:      undefined,
-                wasInterrupted: false,
-                streamTracker:  {} as StreamTracker,
-            })),
         } as ClaudeAgent;
 
         // Create mock bot state manager

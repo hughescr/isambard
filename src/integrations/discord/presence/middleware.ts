@@ -89,7 +89,7 @@ export function createStatusMiddleware(
 
         const userMessage = context.content;
 
-        // Pre-generate thinking synopsis at start (before agent.chat) if update would apply.
+        // Pre-generate thinking synopsis at start (before agent processes input) if update would apply.
         // This allows immediate status display without waiting for the first stream event.
         // The synopsis is cached and reused when transitioning to 'thinking' phase.
         let thinkingSynopsis: string | undefined;
@@ -134,12 +134,12 @@ export function createStatusMiddleware(
             }
 
             // Process message with stream callback
-            const response = await agent.chat(context, onStreamEvent);
+            const result = await agent.handleInput([context], { onStreamEvent });
 
             // Transition to idle after completion
             complete();
 
-            return response;
+            return result.response;
         } catch (error) {
             // Handle errors gracefully
             logger.error(

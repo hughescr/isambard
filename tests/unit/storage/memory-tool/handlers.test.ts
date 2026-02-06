@@ -572,6 +572,61 @@ describe('Memory Tool Handlers', () => {
             );
         });
 
+        it('should report both success and failures in return message when some deletes fail', async () => {
+            mockBackend.get = mock(async () => undefined);
+            mockBackend.list = mock(async () => ({
+                items: [
+                    {
+                        path:        '/test/dir/file1.md' as MemoryPath,
+                        content:     'content1',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                    {
+                        path:        '/test/dir/file2.txt' as MemoryPath,
+                        content:     'content2',
+                        contentType: 'text/plain' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                    {
+                        path:        '/test/dir/file3.json' as MemoryPath,
+                        content:     'content3',
+                        contentType: 'application/json' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            mockBackend.delete = mock(async (path: MemoryPath) => {
+                // Fail for file2.txt and file3.json
+                if(path === '/test/dir/file2.txt' || path === '/test/dir/file3.json') {
+                    throw new Error('Delete failed');
+                }
+            });
+
+            const result = await deleteMemory(mockBackend, { path: '/test/dir' });
+
+            // Should report both success count and failed paths
+            expect(result).toContain('1 memories'); // Success count
+            expect(result).toContain('Failed to delete 2 items'); // Failure count
+            expect(result).toContain('/test/dir/file2.txt'); // Failed path 1
+            expect(result).toContain('/test/dir/file3.json'); // Failed path 2
+
+            // CRITICAL: Verify the exact separator is ', ' (comma-space), not just comma or empty string
+            // This kills the mutant that changes failedPaths.join(', ') to failedPaths.join('')
+            expect(result).toContain('/test/dir/file2.txt, /test/dir/file3.json');
+        });
+
         it('should throw PathNotFoundError when path does not exist', async () => {
             mockBackend.get = mock(async () => undefined);
             mockBackend.list = mock(async () => ({ items: [], nextCursor: undefined }));
@@ -657,6 +712,8 @@ describe('Memory Tool Handlers', () => {
         it.each([
             [10, 'Line 1\nLine 2', 'line number beyond content'],
             [-1, 'Line 1', 'negative line number'],
+            [1.5, 'Line 1\nLine 2', 'decimal line number'],
+            [2.999, 'Line 1\nLine 2', 'decimal line number at boundary'],
         ])('should throw InvalidLineNumberError for invalid line %i (%s)', async (lineNum, content) => {
             mockBackend.get = mock(async () => ({
                 path:        '/test/file.md' as MemoryPath,
@@ -872,6 +929,46 @@ describe('Memory Tool Handlers', () => {
                     msg:   expect.stringContaining('Failed to delete original'),
                 })
             );
+        });
+
+        it('should include warning in return message when original file deletion fails after copy', async () => {
+            mockBackend.get = mock(async (path: MemoryPath) => {
+                if(path === '/test/old.md') {
+                    return {
+                        path:        '/test/old.md' as MemoryPath,
+                        content:     'Content',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    };
+                }
+                return undefined;
+            });
+            mockBackend.create = mock(async () => ({
+                path:        '/test/new.md' as MemoryPath,
+                content:     'Content',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:01.000Z',
+                updatedAt:   '2025-01-01T00:00:01.000Z',
+            }));
+            mockBackend.delete = mock(async () => {
+                throw new Error('Delete failed');
+            });
+
+            const result = await rename(mockBackend, {
+                path:     '/test/old.md',
+                new_path: '/test/new.md',
+            });
+
+            // Should include warning in return message about incomplete deletion
+            expect(result).toContain('renamed');
+            expect(result).toContain('warning');
+            expect(result).toContain('/test/old.md');
+            expect(result).toContain('could not be deleted');
         });
 
         it('should throw PathNotFoundError when source path does not exist', async () => {

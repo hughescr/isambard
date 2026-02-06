@@ -53,7 +53,7 @@ Isambard can propose improvements to its own code:
 
 ### Claude Agent Subsystem
 The agent subsystem connects Discord to Claude with persistent memory:
-- `src/agent/agent.ts` - Claude agent with `chat()` method using `@anthropic-ai/claude-agent-sdk`
+- `src/agent/agent.ts` - Claude agent with `handleInput()` method using `@anthropic-ai/claude-agent-sdk`
 - `src/agent/context-builder.ts` - Memory context loading (identity, user, events)
 - `src/agent/memory-mcp-server.ts` - MCP server exposing memory tools (view, storeSelf, storeUserMemory, logEvent, search, list)
 - `src/agent/discord-mcp-server.ts` - MCP server for Discord message history (searchMessages, getRecentMessages, getMessageById)
@@ -74,7 +74,7 @@ The Discord integration provides bot functionality:
 - `src/integrations/discord/errors.ts` - Error hierarchy
 - `src/integrations/discord/client.ts` - Discord.js client factory
 - `src/integrations/discord/handlers.ts` - Event handlers (ready, error, messageCreate)
-- `src/integrations/discord/bot.ts` - Bot factory with start/stop lifecycle
+- `src/integrations/discord/bot.ts` - Bot factory with start/stop lifecycle and channel/guild cleanup
 - `src/integrations/discord/messages.ts` - Message splitting utilities (splitMessage for Discord's 2000-char limit)
 - `src/integrations/discord/rate-limiter.ts` - Rate limiting for Discord API calls
 - `src/integrations/discord/retry.ts` - Retry logic for Discord operations
@@ -132,7 +132,7 @@ DynamoDB integration and data access layer:
   - `index.ts` - Public exports
 
 ### Configuration Subsystem
-Zod-validated configuration loading:
+Zod-validated configuration loading with env-var for type-safe environment variable parsing:
 - `src/config/schemas.ts` - Zod schemas for configuration validation
 - `src/config/loader.ts` - Configuration loader with environment variable support
 - `src/config/retry-config.ts` - Retry configuration constants
@@ -158,6 +158,8 @@ Zod-validated configuration loading:
 - **Three-Layer Memory Architecture** with paths: `/identity/`, `/state/`, `/events/`, `/users/{userId}/`
 - **Retry Logic with Exponential Backoff** for network resilience (Claude API, DynamoDB, Discord)
 - **Error Classification** for intelligent retry decisions
+- **Module Boundary Enforcement** with eslint-plugin-boundaries for architectural import rules
+- **@internal JSDoc Tags** for marking implementation-only exports
 
 ## Roadmaps
 - [Short-term (Weeks 1-2)](../roadmaps/short-term.md)

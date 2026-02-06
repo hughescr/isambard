@@ -191,6 +191,8 @@ export class InboxManager {
      */
     async loadUnread(): Promise<number> {
         let totalLoaded = 0;
+        let successCount = 0;
+        let failCount = 0;
 
         // Get unmuted channels from registry instead of static list
         const channels = await this.channelRegistry.getUnmutedChannels();
@@ -277,7 +279,9 @@ export class InboxManager {
                         // Stryker restore ObjectLiteral,StringLiteral
                     }
                 }
+                successCount++;
             } catch (error) {
+                failCount++;
                 const message = _.isError(error) ? error.message : String(error);
                 // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
                 logger.warn({
@@ -292,6 +296,11 @@ export class InboxManager {
         }
 
         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+        logger.info({
+            successCount,
+            failCount,
+            msg: 'Loaded unread messages summary',
+        });
         logger.info({
             totalLoaded,
             channelCount: this.unreadMessages.size,

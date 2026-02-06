@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import env from 'env-var';
 import { retryPolicySchema } from '@/utils/retry/types';
 
 // Define the Claude retry policy schema with custom defaults
@@ -36,24 +37,28 @@ export function loadRetryConfig(): RetryConfig {
     // Build override object with only defined values
     const envOverrides: Partial<Record<keyof RetryConfig, unknown>> = {};
 
-    if(process.env.CLAUDE_RETRY_MAX_ATTEMPTS) {
+    // Only parse if env var is actually set (not undefined or empty)
+    const claudeMaxAttemptsRaw = env.get('CLAUDE_RETRY_MAX_ATTEMPTS').asString();
+    if(claudeMaxAttemptsRaw) {
         // Stryker disable next-line ObjectLiteral: Empty object for env override structure
         envOverrides.claude = {
-            maxAttempts: parseInt(process.env.CLAUDE_RETRY_MAX_ATTEMPTS, 10),
+            maxAttempts: env.get('CLAUDE_RETRY_MAX_ATTEMPTS').asInt(),
         };
     }
 
     // Stryker disable BlockStatement,ObjectLiteral: Env override block is optional configuration, tested via integration
-    if(process.env.DISCORD_RETRY_MAX_ATTEMPTS) {
+    const discordMaxAttemptsRaw = env.get('DISCORD_RETRY_MAX_ATTEMPTS').asString();
+    if(discordMaxAttemptsRaw) {
         envOverrides.discord = {
-            maxAttempts: parseInt(process.env.DISCORD_RETRY_MAX_ATTEMPTS, 10),
+            maxAttempts: env.get('DISCORD_RETRY_MAX_ATTEMPTS').asInt(),
         };
     }
     // Stryker restore BlockStatement,ObjectLiteral
 
-    if(process.env.DYNAMODB_TIMEOUT_MS) {
+    const dynamodbTimeoutRaw = env.get('DYNAMODB_TIMEOUT_MS').asString();
+    if(dynamodbTimeoutRaw) {
         envOverrides.dynamodb = {
-            defaultTimeoutMs: parseInt(process.env.DYNAMODB_TIMEOUT_MS, 10),
+            defaultTimeoutMs: env.get('DYNAMODB_TIMEOUT_MS').asInt(),
         };
     }
 

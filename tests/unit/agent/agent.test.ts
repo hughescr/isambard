@@ -288,16 +288,16 @@ describe('createClaudeAgent', () => {
         mockLogger.debug.mockClear();
     });
 
-    test('should create agent with chat method', () => {
+    test('should create agent with handleInput method', () => {
         const agent = createClaudeAgent({});
         expect(agent).toBeDefined();
-        expect(typeof agent.chat).toBe('function');
+        expect(typeof agent.handleInput).toBe('function');
     });
 
     test('should return text content from response', async () => {
         const agent = createClaudeAgent({});
-        const response = await agent.chat(mockMessageContext);
-        expect(response).toBe('Hello! This is a test response.');
+        const result = await agent.handleInput([mockMessageContext]);
+        expect(result.response).toBe('Hello! This is a test response.');
     });
 
     test('should return null on API error', async () => {
@@ -306,8 +306,8 @@ describe('createClaudeAgent', () => {
         });
 
         const agent = createClaudeAgent({});
-        const response = await agent.chat(mockMessageContext);
-        expect(response).toBeNull();
+        const result = await agent.handleInput([mockMessageContext]);
+        expect(result.response).toBeNull();
     });
 
     test('should return null when no text content', async () => {
@@ -322,8 +322,8 @@ describe('createClaudeAgent', () => {
         });
 
         const agent = createClaudeAgent({});
-        const response = await agent.chat(mockMessageContext);
-        expect(response).toBeNull();
+        const result = await agent.handleInput([mockMessageContext]);
+        expect(result.response).toBeNull();
     });
 
     test('should extract latest assistant message from stream', async () => {
@@ -346,14 +346,14 @@ describe('createClaudeAgent', () => {
         });
 
         const agent = createClaudeAgent({});
-        const response = await agent.chat(mockMessageContext);
-        expect(response).toBe('Latest message');
+        const result = await agent.handleInput([mockMessageContext]);
+        expect(result.response).toBe('Latest message');
     });
 
     describe('Configuration constants', () => {
         test('should use "sonnet" as CLAUDE_MODEL', async () => {
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             expect(querySpy).toHaveBeenCalledTimes(1);
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
@@ -365,7 +365,7 @@ describe('createClaudeAgent', () => {
 
         test('should include all required tools in EXPLICIT_TOOLS', async () => {
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -394,7 +394,7 @@ describe('createClaudeAgent', () => {
 
         test('should include each specific tool by name in EXPLICIT_TOOLS', async () => {
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -424,7 +424,7 @@ describe('createClaudeAgent', () => {
 
         test('should define EXPLICIT_AGENTS with correct structure', async () => {
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -460,7 +460,7 @@ describe('createClaudeAgent', () => {
 
         test('should define EXPLICIT_AGENTS as non-empty object', async () => {
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -474,7 +474,7 @@ describe('createClaudeAgent', () => {
 
         test('should include exact tools array for Explore agent', async () => {
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -499,7 +499,7 @@ describe('createClaudeAgent', () => {
 
         test('should include exact tools array for Plan agent', async () => {
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -528,7 +528,7 @@ describe('createClaudeAgent', () => {
     describe('MCP server configuration', () => {
         test('should pass undefined mcpServers when no MCP servers provided', async () => {
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -538,7 +538,7 @@ describe('createClaudeAgent', () => {
         test('should configure memory MCP server when provided', async () => {
             const mockMemoryServer = { command: 'node', args: ['memory-server.js'] };
             const agent = createClaudeAgent({ memoryMcpServer: mockMemoryServer });
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -549,7 +549,7 @@ describe('createClaudeAgent', () => {
         test('should configure discord MCP server when provided', async () => {
             const mockDiscordServer = { command: 'node', args: ['discord-server.js'] };
             const agent = createClaudeAgent({ discordMcpServer: mockDiscordServer });
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -564,7 +564,7 @@ describe('createClaudeAgent', () => {
                 memoryMcpServer:  mockMemoryServer,
                 discordMcpServer: mockDiscordServer,
             });
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -577,7 +577,7 @@ describe('createClaudeAgent', () => {
     describe('Allowed tools configuration', () => {
         test('should include base allowed tools without Discord MCP', async () => {
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -611,7 +611,7 @@ describe('createClaudeAgent', () => {
         test('should include Discord tools when Discord MCP server provided', async () => {
             const mockDiscordServer = { command: 'node', args: ['discord-server.js'] };
             const agent = createClaudeAgent({ discordMcpServer: mockDiscordServer });
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -648,7 +648,7 @@ describe('createClaudeAgent', () => {
         test('should exclude inbox tools when specialMode is undefined (chat)', async () => {
             const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
             const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -662,7 +662,7 @@ describe('createClaudeAgent', () => {
         test('should exclude inbox MCP server when specialMode is undefined (chat)', async () => {
             const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
             const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -673,10 +673,10 @@ describe('createClaudeAgent', () => {
             expect(mcpServers?.inbox).toBeUndefined();
         });
 
-        test('should exclude inbox tools when specialMode is undefined (chatBatch)', async () => {
+        test('should exclude inbox tools when specialMode is undefined (handleInput)', async () => {
             const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
             const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -687,10 +687,10 @@ describe('createClaudeAgent', () => {
             expect(allowedTools).not.toContain('mcp__inbox__*');
         });
 
-        test('should exclude inbox MCP server when specialMode is undefined (chatBatch)', async () => {
+        test('should exclude inbox MCP server when specialMode is undefined (handleInput)', async () => {
             const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
             const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -701,10 +701,10 @@ describe('createClaudeAgent', () => {
             expect(mcpServers?.inbox).toBeUndefined();
         });
 
-        test('should include inbox tools when specialMode is catchup (chatBatch)', async () => {
+        test('should include inbox tools when specialMode is catchup (handleInput)', async () => {
             const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
             const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
-            await agent.chatBatch([mockMessageContext], { specialMode: 'catchup' });
+            await agent.handleInput([mockMessageContext], { specialMode: 'catchup' });
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -715,10 +715,10 @@ describe('createClaudeAgent', () => {
             expect(allowedTools).toContain('mcp__inbox__*');
         });
 
-        test('should include inbox MCP server when specialMode is catchup (chatBatch)', async () => {
+        test('should include inbox MCP server when specialMode is catchup (handleInput)', async () => {
             const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
             const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
-            await agent.chatBatch([mockMessageContext], { specialMode: 'catchup' });
+            await agent.handleInput([mockMessageContext], { specialMode: 'catchup' });
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -733,7 +733,7 @@ describe('createClaudeAgent', () => {
     describe('Plugins configuration', () => {
         test('should pass undefined when plugins array is empty', async () => {
             const agent = createClaudeAgent({ plugins: [] });
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -743,7 +743,7 @@ describe('createClaudeAgent', () => {
 
         test('should pass undefined when plugins is undefined', async () => {
             const agent = createClaudeAgent({ plugins: undefined });
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -753,7 +753,7 @@ describe('createClaudeAgent', () => {
         test('should pass plugins array when non-empty', async () => {
             const mockPlugins = [{ type: 'local' as const, name: 'test-plugin', path: '/path/to/plugin' }];
             const agent = createClaudeAgent({ plugins: mockPlugins });
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
@@ -763,10 +763,10 @@ describe('createClaudeAgent', () => {
         });
     });
 
-    describe('chatBatch', () => {
+    describe('handleInput', () => {
         test('should return response for single message', async () => {
             const agent = createClaudeAgent({});
-            const result = await agent.chatBatch([mockMessageContext]);
+            const result = await agent.handleInput([mockMessageContext]);
 
             expect(result.response).toBe('Hello! This is a test response.');
             expect(result.wasInterrupted).toBe(false);
@@ -776,7 +776,7 @@ describe('createClaudeAgent', () => {
 
         test('should build user message with empty contextPrefix when no contextBuilder', async () => {
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             expect(querySpy).toHaveBeenCalledTimes(1);
             const prompt = querySpy.mock.calls[0][0].prompt as string;
@@ -793,7 +793,7 @@ describe('createClaudeAgent', () => {
             const message1 = { ...mockMessageContext, messageId: 'msg_1', content: 'First message' };
             const message2 = { ...mockMessageContext, messageId: 'msg_2', content: 'Second message' };
 
-            await agent.chatBatch([message1, message2]);
+            await agent.handleInput([message1, message2]);
 
             expect(querySpy).toHaveBeenCalledTimes(1);
             const prompt = querySpy.mock.calls[0][0].prompt as string;
@@ -823,7 +823,7 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            const result = await agent.chatBatch([mockMessageContext]);
+            const result = await agent.handleInput([mockMessageContext]);
 
             // Kills mutant #3: lastAssistantText starts as '', not "Stryker was here!"
             // If it started as "Stryker was here!", we'd get that back instead of null
@@ -854,7 +854,7 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            const result = await agent.chatBatch([mockMessageContext]);
+            const result = await agent.handleInput([mockMessageContext]);
 
             // Kills mutant #4: if (text) check ensures empty text is not assigned
             expect(result.response).toBe('Valid response');
@@ -878,7 +878,7 @@ describe('createClaudeAgent', () => {
 
             // Kills mutant #5 & #6: non-AbortError should be caught by outer try-catch
             // and return null, not be treated as an AbortError
-            const result = await agent.chatBatch([mockMessageContext]);
+            const result = await agent.handleInput([mockMessageContext]);
             expect(result.response).toBeNull();
             expect(result.wasInterrupted).toBe(false); // Should NOT be marked as interrupted
         });
@@ -904,10 +904,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext], { abortController });
+            await agent.handleInput([mockMessageContext], { abortController });
 
             // Kills mutant #7: verify log structure on abort error
-            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const logCalls = mockLogger.info.mock.calls;
             const abortLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort error')) as unknown[] | undefined;
             expect(abortLog).toBeDefined();
             const abortLogData = abortLog![0] as { sessionId?: string, msg?: string };
@@ -926,10 +926,10 @@ describe('createClaudeAgent', () => {
             const message2 = { ...mockMessageContext, messageId: 'msg_2' };
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([message1, message2]);
+            await agent.handleInput([message1, message2]);
 
             // Kills mutant #8: verify log includes 'messageIds' property
-            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const logCalls = mockLogger.info.mock.calls;
             const startLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('starting batch processing')) as unknown[] | undefined;
             expect(startLog).toBeDefined();
             const startLogData = startLog![0] as { messageIds?: string[], msg?: string };
@@ -939,10 +939,10 @@ describe('createClaudeAgent', () => {
 
         test('should log batch start with correct structure', async () => {
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills mutant #9: verify log object is not empty
-            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const logCalls = mockLogger.info.mock.calls;
             const startLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('starting batch processing')) as unknown[] | undefined;
             expect(startLog).toBeDefined();
             const startLogData = startLog![0] as Record<string, unknown>;
@@ -954,10 +954,10 @@ describe('createClaudeAgent', () => {
 
         test('should log batch start with specific message', async () => {
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills mutant #10: verify specific log message
-            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const logCalls = mockLogger.info.mock.calls;
             const startLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg === 'Agent starting batch processing');
             expect(startLog).toBeDefined();
             const startLogData = startLog![0] as { msg: string };
@@ -968,7 +968,7 @@ describe('createClaudeAgent', () => {
         test('should pass plugins when array is non-empty', async () => {
             const mockPlugins = [{ type: 'local' as const, name: 'test-plugin', path: '/path/to/plugin' }];
             const agent = createClaudeAgent({ plugins: mockPlugins });
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills mutant #11: verify plugins are passed when present
             expect(querySpy).toHaveBeenCalledTimes(1);
@@ -983,7 +983,7 @@ describe('createClaudeAgent', () => {
             const message1 = { ...mockMessageContext, messageId: 'msg_1', content: 'First message', timestamp: '2025-01-15T12:00:00Z' };
             const message2 = { ...mockMessageContext, messageId: 'msg_2', content: 'Second message', timestamp: '2025-01-15T12:01:00Z' };
 
-            await agent.chatBatch([message1, message2]);
+            await agent.handleInput([message1, message2]);
 
             expect(querySpy).toHaveBeenCalledTimes(1);
             const prompt = querySpy.mock.calls[0][0].prompt as string;
@@ -1007,7 +1007,7 @@ describe('createClaudeAgent', () => {
                 newMessages: [mockMessageContext],
             };
 
-            await agent.chatBatch([mockMessageContext], { resumeContext });
+            await agent.handleInput([mockMessageContext], { resumeContext });
 
             expect(querySpy).toHaveBeenCalledTimes(1);
             const prompt = querySpy.mock.calls[0][0].prompt as string;
@@ -1038,7 +1038,7 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            const result = await agent.chatBatch([mockMessageContext], { abortController });
+            const result = await agent.handleInput([mockMessageContext], { abortController });
 
             expect(result.wasInterrupted).toBe(true);
             expect(result.response).toBeNull();
@@ -1061,7 +1061,7 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            const result = await agent.chatBatch([mockMessageContext]);
+            const result = await agent.handleInput([mockMessageContext]);
 
             expect(result.streamTracker).toBeDefined();
             const progress = result.streamTracker.getProgress();
@@ -1071,7 +1071,7 @@ describe('createClaudeAgent', () => {
 
         test('should pass sessionId to SDK for resume', async () => {
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext], { sessionId: 'test-session-id' });
+            await agent.handleInput([mockMessageContext], { sessionId: 'test-session-id' });
 
             expect(querySpy).toHaveBeenCalledTimes(1);
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
@@ -1086,7 +1086,7 @@ describe('createClaudeAgent', () => {
             };
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext], { onStreamEvent });
+            await agent.handleInput([mockMessageContext], { onStreamEvent });
 
             expect(callbackInvoked).toBe(true);
         });
@@ -1114,7 +1114,7 @@ describe('createClaudeAgent', () => {
             const cleanupSpy = spyOn(cleanupSessionModule, 'cleanupSession');
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext], { abortController });
+            await agent.handleInput([mockMessageContext], { abortController });
 
             // Session cleanup should NOT be called on interrupt
             expect(cleanupSpy).not.toHaveBeenCalled();
@@ -1145,7 +1145,7 @@ describe('createClaudeAgent', () => {
             const cleanupSpy = spyOn(cleanupSessionModule, 'cleanupSession');
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Session cleanup should be called on completion
             // Use a small delay to allow fire-and-forget to trigger
@@ -1188,12 +1188,12 @@ describe('createClaudeAgent', () => {
             mockLogger.info.mockClear();
 
             const agent = createClaudeAgent({});
-            const result = await agent.chatBatch([mockMessageContext], { abortController });
+            const result = await agent.handleInput([mockMessageContext], { abortController });
 
             // Kills mutant #303: abort signal check (line 634)
             expect(result.wasInterrupted).toBe(true);
             expect(result.response).toBeNull(); // No response when interrupted mid-stream
-            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const logCalls = mockLogger.info.mock.calls;
             const abortLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort signal')) as unknown[] | undefined;
             expect(abortLog).toBeDefined();
         });
@@ -1215,7 +1215,7 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            const result = await agent.chatBatch([mockMessageContext]);
+            const result = await agent.handleInput([mockMessageContext]);
 
             // Kills mutant #310: empty text check (line 644)
             // If the mutant changes "if(text)" to "if(true)", empty string would be assigned
@@ -1242,12 +1242,12 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
 
             // Kills mutant #324: re-throw non-AbortError (lines 656-659)
-            // The error is re-thrown to the outer try-catch in chatBatch, which logs it
+            // The error is re-thrown to the outer try-catch in handleInput, which logs it
             // If the mutant removes "throw error", the error would be silently swallowed
-            const result = await agent.chatBatch([mockMessageContext]);
+            const result = await agent.handleInput([mockMessageContext]);
 
             // Error should be logged by outer try-catch
-            const errorLogCalls = mockLogger.error.mock.calls as unknown[][];
+            const errorLogCalls = mockLogger.error.mock.calls;
             const errorLog = _.find(errorLogCalls, (call: unknown[]) => {
                 const logData = call[0] as { error?: Error };
                 return logData?.error?.message === 'Database connection failed';
@@ -1261,7 +1261,7 @@ describe('createClaudeAgent', () => {
 
         test('should pass undefined plugins when array is empty (Mutant #337)', async () => {
             const agent = createClaudeAgent({ plugins: [] });
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills mutant #337: plugins conditional - empty array check (line 708)
             expect(querySpy).toHaveBeenCalledTimes(1);
@@ -1274,7 +1274,7 @@ describe('createClaudeAgent', () => {
         test('should pass undefined plugins when plugins is null-like (Mutant #340)', async () => {
             // Test the "plugins &&" part of the conditional
             const agent = createClaudeAgent({ plugins: undefined });
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills mutant #340: plugins && check (line 708)
             expect(querySpy).toHaveBeenCalledTimes(1);
@@ -1286,7 +1286,7 @@ describe('createClaudeAgent', () => {
         test('should verify both plugins conditions are checked (Mutant #341)', async () => {
             // Test with plugins = [] to ensure length check matters
             const agent = createClaudeAgent({ plugins: [] });
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills mutant #341: plugins.length > 0 check (line 708)
             expect(querySpy).toHaveBeenCalledTimes(1);
@@ -1299,7 +1299,7 @@ describe('createClaudeAgent', () => {
             querySpy.mockClear();
             const mockPlugins = [{ type: 'local' as const, name: 'test', path: '/test' }];
             const agent2 = createClaudeAgent({ plugins: mockPlugins });
-            await agent2.chatBatch([mockMessageContext]);
+            await agent2.handleInput([mockMessageContext]);
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams2 = querySpy.mock.calls[0][0];
@@ -1310,7 +1310,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             const catchUpPrompt = 'You have 5 unread messages across 2 channels. Use the inbox tools to review them.';
 
-            await agent.chatBatch([], {
+            await agent.handleInput([], {
                 catchUpPrompt,
                 specialMode: 'catchup',
             });
@@ -1327,7 +1327,7 @@ describe('createClaudeAgent', () => {
             const catchUpPrompt = 'Catch up on unread messages.';
 
             // This should not crash even with empty contexts array
-            const result = await agent.chatBatch([], {
+            const result = await agent.handleInput([], {
                 catchUpPrompt,
                 specialMode: 'catchup',
             });
@@ -1363,7 +1363,7 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({ taskPersistenceCoordinator: mockTaskPersistenceCoordinator });
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Verify task persistence was called
             expect(prepareNewSessionCalled).toBe(true);
@@ -1397,14 +1397,14 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({ taskPersistenceCoordinator: mockTaskPersistenceCoordinator });
-            const result = await agent.chatBatch([mockMessageContext]);
+            const result = await agent.handleInput([mockMessageContext]);
 
             // Should complete successfully despite task persistence error
             expect(result.response).toBe('Response despite task error');
             expect(result.wasInterrupted).toBe(false);
 
             // Verify error was logged
-            const logCalls = mockLogger.warn.mock.calls as unknown[][];
+            const logCalls = mockLogger.warn.mock.calls;
             const taskErrorLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { error?: Error };
                 return logData?.error?.message === 'Task persistence failed';
@@ -1416,7 +1416,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             const perchPrompt = 'Autonomous perch time: review your memories and plan improvements.';
 
-            await agent.chatBatch([], {
+            await agent.handleInput([], {
                 perchPrompt,
                 specialMode: 'perching',
             });
@@ -1457,10 +1457,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Find the user event log
-            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const logCalls = mockLogger.debug.mock.calls;
             const userLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string, msg?: string };
                 return logData?.eventType === 'user';
@@ -1506,10 +1506,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Find the tool_response log
-            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const logCalls = mockLogger.debug.mock.calls;
             const toolResponseLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string, toolName?: string };
                 return logData?.eventType === 'tool_response';
@@ -1548,10 +1548,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Find the tool_request log
-            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const logCalls = mockLogger.debug.mock.calls;
             const toolRequestLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string, toolName?: string };
                 return logData?.eventType === 'tool_request' && logData?.toolName === 'Grep';
@@ -1580,10 +1580,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Find the assistant thinking log
-            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const logCalls = mockLogger.debug.mock.calls;
             const thinkingLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string, hasText?: boolean };
                 return logData?.eventType === 'assistant' && logData?.hasText === false;
@@ -1612,10 +1612,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Find the assistant responding log
-            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const logCalls = mockLogger.debug.mock.calls;
             const respondingLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string, hasText?: boolean };
                 return logData?.eventType === 'assistant' && logData?.hasText === true;
@@ -1661,10 +1661,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Find all tool_response logs
-            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const logCalls = mockLogger.debug.mock.calls;
             const toolResponseLogs = _.filter(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'tool_response';
@@ -1715,10 +1715,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Find all user event logs
-            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const logCalls = mockLogger.debug.mock.calls;
             const userLogs = _.filter(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'user';
@@ -1748,10 +1748,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Find the compaction log
-            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const logCalls = mockLogger.info.mock.calls;
             const compactionLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'compaction';
@@ -1782,10 +1782,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Find the compaction log
-            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const logCalls = mockLogger.info.mock.calls;
             const compactionLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'compaction';
@@ -1818,10 +1818,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Find the tool_progress log (kills mutant #2: StringLiteral on line 565)
-            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const logCalls = mockLogger.debug.mock.calls;
             const progressLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'tool_progress';
@@ -1849,10 +1849,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Find the tool_progress log (kills mutant #5: StringLiteral on line 568)
-            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const logCalls = mockLogger.debug.mock.calls;
             const progressLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'tool_progress';
@@ -1878,10 +1878,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills mutant #3: BlockStatement on line 562 - function body must execute
-            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const logCalls = mockLogger.debug.mock.calls;
             const progressLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'tool_progress';
@@ -1904,10 +1904,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills mutant #6: ObjectLiteral on line 578 - log object must not be empty
-            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const logCalls = mockLogger.debug.mock.calls;
             const resultLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'tool_result';
@@ -1937,10 +1937,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills mutant #7: StringLiteral on line 582
-            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const logCalls = mockLogger.debug.mock.calls;
             const resultLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'tool_result';
@@ -1966,10 +1966,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills mutant #4: BlockStatement on line 576 - function body must execute
-            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const logCalls = mockLogger.debug.mock.calls;
             const resultLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'tool_result';
@@ -1998,10 +1998,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills ConditionalExpression mutant on line 592: message.type === 'system'
-            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const logCalls = mockLogger.info.mock.calls;
             const compactionLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'compaction';
@@ -2024,10 +2024,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills ConditionalExpression mutant on line 592: 'subtype' in message
-            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const logCalls = mockLogger.info.mock.calls;
             const compactionLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'compaction';
@@ -2051,10 +2051,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills ConditionalExpression mutant on line 592: message.subtype === 'compact_boundary'
-            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const logCalls = mockLogger.info.mock.calls;
             const compactionLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'compaction';
@@ -2078,11 +2078,11 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills mutants #10 & #11: OptionalChaining on lines 594 & 595
             // Should not crash and should log without token info
-            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const logCalls = mockLogger.info.mock.calls;
             const compactionLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'compaction';
@@ -2113,10 +2113,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills mutants #8 & #9: ConditionalExpression on line 592
-            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const logCalls = mockLogger.info.mock.calls;
             const compactionLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'compaction';
@@ -2148,10 +2148,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills mutants #8 & #9: ConditionalExpression on line 592 (false branch)
-            const logCalls = mockLogger.info.mock.calls as unknown[][];
+            const logCalls = mockLogger.info.mock.calls;
             const compactionLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'compaction';
@@ -2194,10 +2194,10 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({ taskPersistenceCoordinator: mockTaskPersistenceCoordinator });
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills mutant #12: StringLiteral on line 754 - verify error message template
-            const logCalls = mockLogger.warn.mock.calls as unknown[][];
+            const logCalls = mockLogger.warn.mock.calls;
             const errorLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { error?: Error };
                 return logData?.error?.message === 'DynamoDB connection timeout';
@@ -2230,11 +2230,11 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills ArrayDeclaration mutant on line 496: pendingToolRequests must start empty
             // User event should log as message send, not tool response
-            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const logCalls = mockLogger.debug.mock.calls;
             const userLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'user';
@@ -2275,7 +2275,7 @@ describe('createClaudeAgent', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Now reset the state
             const { resetLogStreamState } = await import('../../../src/agent/agent');
@@ -2293,11 +2293,11 @@ describe('createClaudeAgent', () => {
                 return mockGenerator();
             });
 
-            await agent.chatBatch([mockMessageContext]);
+            await agent.handleInput([mockMessageContext]);
 
             // Kills mutant #1: ArrayDeclaration on line 496
             // After reset, next user event should log as message send, not tool response
-            const logCalls = mockLogger.debug.mock.calls as unknown[][];
+            const logCalls = mockLogger.debug.mock.calls;
             const userLog = _.find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'user';

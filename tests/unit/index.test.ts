@@ -202,8 +202,7 @@ describe('createApp', () => {
 
             const agentModule = await import('@/agent/agent');
             const createAgentSpy = spyOn(agentModule, 'createClaudeAgent').mockReturnValue({
-                chat:      mock(async () => 'response'),
-                chatBatch: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as any })),
+                handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as any })),
             });
             spies.push(createAgentSpy);
 
@@ -367,8 +366,7 @@ describe('createApp', () => {
 
             const agentModule = await import('@/agent/agent');
             const createAgentSpy = spyOn(agentModule, 'createClaudeAgent').mockReturnValue({
-                chat:      mock(async () => 'response'),
-                chatBatch: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as any })),
+                handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as any })),
             });
             spies.push(createAgentSpy);
 
@@ -540,8 +538,7 @@ describe('createApp', () => {
 
             const agentModule = await import('@/agent/agent');
             const createAgentSpy = spyOn(agentModule, 'createClaudeAgent').mockReturnValue({
-                chat:      mock(async () => 'response'),
-                chatBatch: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as any })),
+                handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as any })),
             });
             spies.push(createAgentSpy);
 
@@ -670,8 +667,7 @@ describe('createApp', () => {
 
             const agentModule = await import('@/agent/agent');
             const createAgentSpy = spyOn(agentModule, 'createClaudeAgent').mockReturnValue({
-                chat:      mock(async () => 'response'),
-                chatBatch: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as any })),
+                handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as any })),
             });
             spies.push(createAgentSpy);
 
@@ -804,8 +800,7 @@ describe('createApp', () => {
 
             const agentModule = await import('@/agent/agent');
             const createAgentSpy = spyOn(agentModule, 'createClaudeAgent').mockReturnValue({
-                chat:      mock(async () => 'response'),
-                chatBatch: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as any })),
+                handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as any })),
             });
             spies.push(createAgentSpy);
 
@@ -947,8 +942,7 @@ describe('createApp', () => {
 
             const agentModule = await import('@/agent/agent');
             const createAgentSpy = spyOn(agentModule, 'createClaudeAgent').mockReturnValue({
-                chat:      mock(async () => 'response'),
-                chatBatch: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as any })),
+                handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as any })),
             });
             spies.push(createAgentSpy);
 
@@ -1277,8 +1271,7 @@ describe('createApp', () => {
 
             const agentModule = await import('@/agent/agent');
             const createAgentSpy = spyOn(agentModule, 'createClaudeAgent').mockReturnValue({
-                chat:      mock(async () => 'response'),
-                chatBatch: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as any })),
+                handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as any })),
             });
             spies.push(createAgentSpy);
 

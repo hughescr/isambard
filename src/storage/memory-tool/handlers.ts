@@ -171,6 +171,7 @@ export async function delete_memory(
     if(listResult.items.length > 0) {
         // It's a directory - delete all contents
         let deleteCount = 0;
+        const failedPaths: string[] = [];
         for(const item of listResult.items) {
             try {
                 await backend.delete(item.path);
@@ -178,9 +179,15 @@ export async function delete_memory(
             } catch (error: unknown) {
                 const errorMessage = _isError(error) ? error.message : String(error);
                 logger.warn({ path: item.path, error: errorMessage, msg: `Failed to delete ${item.path}: ${errorMessage}` });
+                failedPaths.push(item.path);
             }
         }
-        return `Recursively deleted ${deleteCount} memories under ${params.path}`;
+
+        if(failedPaths.length === 0) {
+            return `Recursively deleted ${deleteCount} memories under ${params.path}`;
+        } else {
+            return `Recursively deleted ${deleteCount} memories under ${params.path}. Failed to delete ${failedPaths.length} items: ${failedPaths.join(', ')}`;
+        }
     }
 
     // Neither file nor directory
@@ -206,7 +213,7 @@ export async function insert(
     const lines = _split(item.content, '\n');
 
     // Validate line number (0-indexed insertion, so valid range is 0 to lines.length)
-    if(params.insert_line < 0 || params.insert_line > lines.length) {
+    if(!Number.isInteger(params.insert_line) || params.insert_line < 0 || params.insert_line > lines.length) {
         throw new InvalidLineNumberError(params.path, params.insert_line, lines.length);
     }
 
@@ -290,12 +297,12 @@ export async function rename(
     // Delete old memory
     try {
         await backend.delete(oldPath);
+        return `Memory renamed from ${params.path} to ${params.new_path}`;
     } catch (error: unknown) {
         const errorMessage = _isError(error) ? error.message : String(error);
         logger.warn({ path: params.path, error: errorMessage, msg: `Failed to delete original memory at ${params.path} after rename: ${errorMessage}` });
+        return `Memory renamed from ${params.path} to ${params.new_path} (warning: original file at ${params.path} could not be deleted)`;
     }
-
-    return `Memory renamed from ${params.path} to ${params.new_path}`;
 }
 
 /**
@@ -491,13 +498,19 @@ export async function consolidate(
 
     // Delete sources if requested
     if(!params.keep_sources) {
+        const failedDeletions: string[] = [];
         for(const sourcePath of sourcePaths) {
             try {
                 await backend.delete(sourcePath);
             } catch (error: unknown) {
+                failedDeletions.push(sourcePath);
                 const errorMessage = _isError(error) ? error.message : String(error);
                 logger.warn({ path: sourcePath, error: errorMessage, msg: `Failed to delete source ${sourcePath} during consolidation: ${errorMessage}` });
             }
+        }
+
+        if(failedDeletions.length > 0) {
+            return `Memories consolidated into ${params.target_path}. WARNING: Failed to delete ${failedDeletions.length} source(s): ${failedDeletions.join(', ')}`;
         }
     }
 

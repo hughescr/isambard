@@ -761,11 +761,11 @@ describe('backend-tag-registry', () => {
 
                 // Find the specific retry debug call (may not be first if other debug logs exist)
                 const retryCall = _.find(debugSpy.mock.calls,
-                    (call: unknown[]) => {
+                    (call) => {
                         const arg: unknown = call[0];
                         return _.isObject(arg) && 'msg' in arg && (arg as { msg: string }).msg === 'Tag registry conflict, retrying';
                     }
-                ) as unknown[] | undefined;
+                );
                 expect(retryCall).toBeDefined();
                 const callArgs = retryCall?.[0] as { attempt: number, tags: string[], msg: string } | undefined;
                 expect(callArgs).toBeDefined();

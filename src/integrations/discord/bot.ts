@@ -4,6 +4,7 @@ import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { DiscordConfig } from '@/config/schemas';
 import type { DiscordMessageContext, UserId } from './types';
+import { createChannelId, createGuildId } from './types';
 import type { ClaudeAgent } from '@/agent/agent';
 import { setConversationContext, clearConversationContext } from '@/agent';
 import { createDiscordClient } from './client';
@@ -532,6 +533,8 @@ function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoo
                     logger.error({ error: errorMsg, msg: 'Failed to resume catch-up after interruption' });
                     // Reset presence on failure
                     presenceManager?.transitionPresenceDisplayMode('none');
+                    // Reset botStateManager to idle (was stuck in interrupted state)
+                    botStateManager.goIdle();
                 });
             }
 
@@ -542,7 +545,10 @@ function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoo
                 void perchSessionRunner.resumeAfterInterruption().catch((error) => {
                     const errorMsg = _.isError(error) ? error.message : String(error);
                     logger.error({ error: errorMsg, msg: 'Failed to resume perch after interruption' });
+                    // Reset presence on failure
                     presenceManager?.transitionPresenceDisplayMode('none');
+                    // Reset botStateManager to idle (was stuck in interrupted state)
+                    botStateManager.goIdle();
                 });
             }
         },
@@ -586,7 +592,7 @@ function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoo
         }
     };
 
-    // Set the processor to call agent.chatBatch
+    // Set the processor to call agent.handleInput
     coordinator.setProcessor(async (contexts, resumeContext, sessionId, abortSignal) => {
         // Update presence to show processing message if not in catch-up mode
         updatePresenceForMessageStart();
@@ -646,8 +652,8 @@ function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoo
                 return formatted;
             });
 
-            // Call chatBatch with presence updates, images, and channel context
-            const result = await agent.chatBatch(modifiedContexts, {
+            // Call handleInput with presence updates, images, and channel context
+            const result = await agent.handleInput(modifiedContexts, {
                 sessionId,
                 resumeContext: resumeContext ?? undefined,
                 abortController,
@@ -738,8 +744,8 @@ function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): CatchUpSes
                 botStateManager
             );
 
-            // Call agent.chatBatch with specialMode: 'catchup' and the catch-up prompt
-            const result = await agent.chatBatch([], {
+            // Call agent.handleInput with specialMode: 'catchup' and the catch-up prompt
+            const result = await agent.handleInput([], {
                 specialMode:   'catchup',
                 abortController,
                 sessionId:     runOptions.sessionId,
@@ -837,8 +843,8 @@ function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
                 botStateManager
             );
 
-            // Call agent.chatBatch with specialMode: 'perching' and the perch prompt
-            const result = await agent.chatBatch([], {
+            // Call agent.handleInput with specialMode: 'perching' and the perch prompt
+            const result = await agent.handleInput([], {
                 specialMode:   'perching',
                 abortController,
                 perchPrompt:   runOptions.prompt,
@@ -1358,6 +1364,37 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             responseRouter,
         });
 
+        // Register channel cleanup event handlers (if coordinator exists)
+        // channelDelete: Clean up coordinator state when a channel is deleted
+        client.on('channelDelete', (channel) => {
+            if(!('id' in channel)) {
+                return;
+            }
+
+            const channelId = createChannelId(channel.id);
+            if(coordinator) {
+                coordinator.removeChannel(channelId);
+            }
+        });
+
+        // guildDelete: Clean up coordinator state for all channels in a guild when bot leaves
+        // eslint-disable-next-line @typescript-eslint/no-misused-promises -- guildDelete handler needs to be async for channel lookup
+        client.on('guildDelete', async (guild) => {
+            if(!coordinator) {
+                return;
+            }
+
+            const guildId = createGuildId(guild.id);
+            // Get all channel IDs for this guild from the channel registry
+            const allChannels = channelRegistry.getAllChannels();
+            const guildChannelIds = _(allChannels)
+                .filter(['guildId', guildId])
+                .map('channelId')
+                .value();
+
+            coordinator.removeGuildChannels(guildChannelIds);
+        });
+
         // Initialize inbox on startup and then check for catch-up
         if(inboxManager) {
             setupInboxAndCatchUp({
@@ -1392,10 +1429,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             if(unsubscribeActivityPhase) {
                 unsubscribeActivityPhase();
             }
-            // Stop unified state manager BEFORE stopping schedulers
-            // This ensures state manager rejects new sessions even if scheduler callbacks fire
-            botStateManager.stop();
-            // NOW safe to stop schedulers and abort sessions
+            // Abort sessions FIRST, before stopping botStateManager
+            // Session aborts may trigger callbacks that need botStateManager to be alive
             // Abort any running catch-up session
             if(catchUpSessionRunner) {
                 const controller = catchUpSessionRunner.getAbortController();
@@ -1414,6 +1449,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     controller.abort();
                 }
             }
+            // NOW safe to stop botStateManager after all sessions are aborted
+            // This ensures abort callbacks complete before state manager is stopped
+            botStateManager.stop();
             // Stop presence manager if it exists
             if(presenceManager) {
                 presenceManager.stop();

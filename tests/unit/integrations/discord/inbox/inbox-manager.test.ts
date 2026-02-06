@@ -6,6 +6,8 @@ import type { MessageSearchService } from '@/integrations/discord/message-histor
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
 import type { DiscordChannelCheckpoint } from '@/integrations/discord/inbox/types';
 import { createChannelId, createGuildId, createUserId } from '@/integrations/discord/types';
+import { mockLogger } from '../../../../setup';
+import _ from 'lodash';
 
 describe('InboxManager', () => {
     let mockCheckpointManager: CheckpointManager;
@@ -21,6 +23,12 @@ describe('InboxManager', () => {
         // Use fake timers with a fixed system time for deterministic tests
         jest.useFakeTimers();
         jest.setSystemTime(new Date('2025-01-25T12:00:00.000Z'));
+
+        // Clear logger mocks
+        mockLogger.info.mockClear();
+        mockLogger.warn.mockClear();
+        mockLogger.debug.mockClear();
+
         mockCheckpointManager = {
             load:                mock(async () => undefined),
             save:                mock(async () => { /* intentionally empty */ }),
@@ -481,6 +489,90 @@ describe('InboxManager', () => {
 
             expect(total).toBe(1);
             expect(mockMessageSearchService.searchMessages).toHaveBeenCalledTimes(2);
+        });
+
+        test('should log summary with success and fail counts', async () => {
+            const channel1Id = createChannelId('111111111');
+            const channel2Id = createChannelId('222222222');
+
+            // Create mock registry with two unmuted channels
+            const mockRegistryWithChannels = {
+                getUnmutedChannels: mock(async () => [
+                    { channelId: channel1Id, channelName: '#channel-1', guildId, isMuted: false },
+                    { channelId: channel2Id, channelName: '#channel-2', guildId, isMuted: false },
+                ]),
+            } as unknown as ChannelRegistryManager;
+
+            const managerWithChannels = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                channelRegistry:      mockRegistryWithChannels,
+            });
+
+            const checkpoint1: DiscordChannelCheckpoint = {
+                service:    'discord',
+                channelId:  channel1Id,
+                guildId,
+                lastSeenAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+                updatedAt:  nowIso,
+            };
+
+            const checkpoint2: DiscordChannelCheckpoint = {
+                service:    'discord',
+                channelId:  channel2Id,
+                guildId,
+                lastSeenAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+                updatedAt:  nowIso,
+            };
+
+            // Mock load to return checkpoints for each channel
+            mockCheckpointManager.load = mock(async (id) => {
+                if(id === channel1Id) {
+                    return checkpoint1;
+                }
+                if(id === channel2Id) {
+                    return checkpoint2;
+                }
+                return undefined;
+            });
+
+            // First call throws error, second succeeds
+            let searchCallCount = 0;
+            mockMessageSearchService.searchMessages = mock(async () => {
+                searchCallCount++;
+                if(searchCallCount === 1) {
+                    throw new Error('Network error');
+                }
+                return {
+                    messages: [],
+                    metadata: {
+                        totalFound: 0,
+                        timeRange:  {
+                            start: nowIso,
+                            end:   nowIso,
+                        },
+                    },
+                };
+            });
+
+            const total = await managerWithChannels.loadUnread();
+
+            // Verify that loadUnread completes successfully despite one channel failing
+            expect(total).toBe(0); // No messages loaded since both channels had empty results
+            expect(mockMessageSearchService.searchMessages).toHaveBeenCalledTimes(2);
+
+            // Verify the summary log message contains correct counts
+            // Look for the log call with successCount and failCount
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock call array access
+            const infoCalls = mockLogger.info.mock.calls as any[][];
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Mock call argument access
+            const summaryLogCall = _.find(infoCalls, (call: any) => call[0] && _.isObject(call[0]) && call[0] !== null && 'successCount' in call[0] && 'failCount' in call[0]);
+
+            expect(summaryLogCall).toBeDefined();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Mock call argument access
+            expect((summaryLogCall as any)?.[0].successCount).toBe(1);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Mock call argument access
+            expect((summaryLogCall as any)?.[0].failCount).toBe(1);
         });
 
         test('should handle empty message results', async () => {

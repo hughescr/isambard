@@ -73,8 +73,7 @@ describe('Bot Lifecycle Integration', () => {
 
         // Mock Claude Agent
         mockClaudeAgent = {
-            chat:      mock(async () => 'Test response'),
-            chatBatch: mock(async () => ({
+            handleInput: mock(async () => ({
                 response:       'Test response',
                 sessionId:      undefined,
                 wasInterrupted: false,
@@ -100,9 +99,11 @@ describe('Bot Lifecycle Integration', () => {
             deleteChannel: mock(async () => undefined),
         };
         const mockChannelRegistryManager = {
-            shouldProcess: mock(() => true),
-            getChannel:    mock(() => null),
-            warmCache:     mock(async () => undefined),
+            shouldProcess:      mock(() => true),
+            getChannel:         mock(() => null),
+            warmCache:          mock(async () => undefined),
+            getUnmutedChannels: mock(async () => []),
+            getAllChannels:      mock(() => []),
         };
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mocking class constructors
         const backendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend') as any;
@@ -270,7 +271,6 @@ describe('Bot Lifecycle Integration', () => {
                 inboxMcpServer:             expect.any(Object),
                 plugins:                    expect.any(Array),
                 taskPersistenceCoordinator: expect.any(Object),
-                channelRegistry:            expect.any(Object),
             });
         }, { timeout: process.env.CI ? 1000 : 100 });
 
@@ -374,7 +374,7 @@ describe('Bot Lifecycle Integration', () => {
     });
 
     describe('Message Flow Integration', () => {
-        it('should wire onMessage to call agent.chat with message context', async () => {
+        it('should wire onMessage to call agent.handleInput with message context', async () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
@@ -404,14 +404,13 @@ describe('Bot Lifecycle Integration', () => {
 
             const response = await onMessage(mockContext);
 
-            expect(mockClaudeAgent.chat).toHaveBeenCalledWith(mockContext);
+            expect(mockClaudeAgent.handleInput).toHaveBeenCalledWith([mockContext], { channelList: [] });
             expect(response).toBe('Test response');
         });
 
-        it('should handle null response from agent.chat', async () => {
+        it('should handle null response from agent.handleInput', async () => {
             const mockAgentWithNull: ClaudeAgent = {
-                chat:      mock(async () => null),
-                chatBatch: mock(async () => ({
+                handleInput: mock(async () => ({
                     response:       null,
                     sessionId:      undefined,
                     wasInterrupted: false,
@@ -466,7 +465,7 @@ describe('Bot Lifecycle Integration', () => {
             await createApp();
 
             // Agent should not be called with specialMode: 'catchup' when no memoryBackend
-            expect(mockClaudeAgent.chatBatch).not.toHaveBeenCalled();
+            expect(mockClaudeAgent.handleInput).not.toHaveBeenCalled();
         });
 
         it('should pass memoryBackend to bot when DynamoDB is configured', async () => {

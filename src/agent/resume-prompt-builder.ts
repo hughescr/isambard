@@ -7,6 +7,8 @@
 
 import _ from 'lodash';
 import type { StreamProgress } from './stream-tracker';
+// TODO: Decouple - agent should be platform-agnostic. Move Discord types to generic types or use dependency injection. See roadmaps/
+// eslint-disable-next-line boundaries/element-types -- Resume prompt builder imports Discord message context; decouple per roadmap
 import type { DiscordMessageContext } from '../integrations/discord/types';
 
 /**

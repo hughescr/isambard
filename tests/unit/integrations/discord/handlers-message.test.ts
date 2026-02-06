@@ -14,6 +14,8 @@ import type { QuestionRegistry } from '@/agent/question-registry';
 import type { PendingQuestion } from '@/agent/question-registry/types';
 import type { AnswerClassifier } from '@/agent/answer-classifier';
 import type { ClassificationResult } from '@/agent/answer-classifier/types';
+import type { AgentStreamEvent } from '@/agent/types';
+import type { StreamTracker } from '@/agent/stream-tracker';
 import { WellKnownChannelNotFoundError } from '@/integrations/discord/channel-registry';
 // Note: We don't need to mock the rate limiter module because:
 // 1. The rate limiter internally calls message.reply() which we mock in tests
@@ -366,7 +368,7 @@ describe('Discord Event Handlers', () => {
             await handler(mockMessage);
 
             expect(mockLogger.error).toHaveBeenCalled();
-            const lastCall = mockLogger.error.mock.calls[mockLogger.error.mock.calls.length - 1] as unknown[];
+            const lastCall = mockLogger.error.mock.calls[mockLogger.error.mock.calls.length - 1];
             // logger.error({ error, msg }) - check msg property in object
             const loggedObject = lastCall[0] as { error: Error, msg: string };
             expect(loggedObject.msg.includes('Callback error')).toBe(true);
@@ -392,7 +394,7 @@ describe('Discord Event Handlers', () => {
             await handler(mockMessage);
 
             expect(mockLogger.error).toHaveBeenCalled();
-            const lastCall = mockLogger.error.mock.calls[mockLogger.error.mock.calls.length - 1] as unknown[];
+            const lastCall = mockLogger.error.mock.calls[mockLogger.error.mock.calls.length - 1];
             // logger.error({ error, msg }) - check msg property in object
             const loggedObject = lastCall[0] as { error: Error, msg: string };
             expect(loggedObject.msg.includes('Reply failed')).toBe(true);
@@ -522,7 +524,12 @@ describe('Discord Event Handlers', () => {
             };
 
             const mockAgent = {
-                chat: mock(async () => 'agent response'),
+                handleInput: mock(async (_contexts: DiscordMessageContext[], _options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => ({
+                    response:       'agent response',
+                    sessionId:      undefined,
+                    wasInterrupted: false,
+                    streamTracker:  {} as StreamTracker,
+                })),
             };
 
             const mockBotStateManager = {
@@ -547,8 +554,8 @@ describe('Discord Event Handlers', () => {
 
             await handler(mockMessage);
 
-            // When presenceManager and agent are provided, middleware calls agent.chat instead of onMessage
-            expect(mockAgent.chat).toHaveBeenCalled();
+            // When presenceManager and agent are provided, middleware calls agent.handleInput instead of onMessage
+            expect(mockAgent.handleInput).toHaveBeenCalled();
             expect(mockMessage.reply).toHaveBeenCalledWith('agent response');
         });
 
@@ -596,7 +603,12 @@ describe('Discord Event Handlers', () => {
                 };
 
                 const mockAgent = {
-                    chat: mock(async () => 'agent response'),
+                    handleInput: mock(async (_contexts: DiscordMessageContext[], _options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => ({
+                        response:       'agent response',
+                        sessionId:      undefined,
+                        wasInterrupted: false,
+                        streamTracker:  {} as StreamTracker,
+                    })),
                 };
 
                 const mockDynamicStatusGenerator = {
@@ -618,8 +630,8 @@ describe('Discord Event Handlers', () => {
                 await handler(mockMessage);
 
                 // When status middleware is used with dynamicStatusGenerator,
-                // agent.chat should be called (middleware behavior)
-                expect(mockAgent.chat).toHaveBeenCalled();
+                // agent.handleInput should be called (middleware behavior)
+                expect(mockAgent.handleInput).toHaveBeenCalled();
             });
 
             it('should work without dynamicStatusGenerator (backward compatible)', async () => {
@@ -630,7 +642,12 @@ describe('Discord Event Handlers', () => {
                 };
 
                 const mockAgent = {
-                    chat: mock(async () => 'agent response'),
+                    handleInput: mock(async (_contexts: DiscordMessageContext[], _options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => ({
+                        response:       'agent response',
+                        sessionId:      undefined,
+                        wasInterrupted: false,
+                        streamTracker:  {} as StreamTracker,
+                    })),
                 };
 
                 const handler = createMessageHandler({
@@ -647,7 +664,7 @@ describe('Discord Event Handlers', () => {
                 await handler(mockMessage);
 
                 // Middleware should still work without dynamicStatusGenerator
-                expect(mockAgent.chat).toHaveBeenCalled();
+                expect(mockAgent.handleInput).toHaveBeenCalled();
             });
         });
 
@@ -682,7 +699,12 @@ describe('Discord Event Handlers', () => {
 
             it('should NOT use statusMiddleware when only agent is provided (no presenceManager)', async () => {
                 const mockAgent = {
-                    chat: mock(async () => 'agent response'),
+                    handleInput: mock(async (_contexts: DiscordMessageContext[], _options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => ({
+                        response:       'agent response',
+                        sessionId:      undefined,
+                        wasInterrupted: false,
+                        streamTracker:  {} as StreamTracker,
+                    })),
                 };
 
                 // Create onMessage mock that returns a value so we can verify it was called
@@ -701,15 +723,15 @@ describe('Discord Event Handlers', () => {
                 await handler(mockMessage);
 
                 // Since statusMiddleware is null (agent without presenceManager),
-                // onMessage should be called directly, NOT agent.chat
+                // onMessage should be called directly, NOT agent.handleInput
                 expect(onMessageMock).toHaveBeenCalled();
-                expect(mockAgent.chat).not.toHaveBeenCalled();
+                expect(mockAgent.handleInput).not.toHaveBeenCalled();
                 expect(mockMessage.reply).toHaveBeenCalledWith('direct response');
             });
 
             it('should use statusMiddleware ONLY when BOTH presenceManager AND agent are provided', async () => {
                 // This test specifically kills the && vs || mutant by verifying
-                // that agent.chat is ONLY called when BOTH are present
+                // that agent.handleInput is ONLY called when BOTH are present
                 const mockPresenceManager = {
                     start:       mock(() => undefined),
                     stop:        mock(() => undefined),
@@ -717,7 +739,12 @@ describe('Discord Event Handlers', () => {
                 };
 
                 const mockAgent = {
-                    chat: mock(async () => 'middleware response'),
+                    handleInput: mock(async (_contexts: DiscordMessageContext[], _options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => ({
+                        response:       'middleware response',
+                        sessionId:      undefined,
+                        wasInterrupted: false,
+                        streamTracker:  {} as StreamTracker,
+                    })),
                 };
 
                 const onMessageMock = mock(async () => 'should not be called');
@@ -735,8 +762,8 @@ describe('Discord Event Handlers', () => {
                 await handler(mockMessage);
 
                 // With BOTH present, statusMiddleware should be used
-                // which means agent.chat is called, NOT onMessage
-                expect(mockAgent.chat).toHaveBeenCalled();
+                // which means agent.handleInput is called, NOT onMessage
+                expect(mockAgent.handleInput).toHaveBeenCalled();
                 expect(onMessageMock).not.toHaveBeenCalled();
                 expect(mockMessage.reply).toHaveBeenCalledWith('middleware response');
             });
@@ -745,7 +772,12 @@ describe('Discord Event Handlers', () => {
                 // This test ensures that having ONLY agent doesn't trigger middleware
                 // If && was mutated to ||, this test would fail because middleware would be truthy
                 const mockAgent = {
-                    chat: mock(async () => 'agent response that should not appear'),
+                    handleInput: mock(async () => ({
+                        response:       'agent response that should not appear',
+                        sessionId:      undefined,
+                        wasInterrupted: false,
+                        streamTracker:  {} as StreamTracker,
+                    })),
                 };
 
                 const onMessageMock = mock(async () => 'onMessage response');
@@ -762,9 +794,9 @@ describe('Discord Event Handlers', () => {
 
                 await handler(mockMessage);
 
-                // Critical: agent.chat should NOT be called because presenceManager is missing
-                // If && was || mutant, agent.chat would be called
-                expect(mockAgent.chat).not.toHaveBeenCalled();
+                // Critical: agent.handleInput should NOT be called because presenceManager is missing
+                // If && was || mutant, agent.handleInput would be called
+                expect(mockAgent.handleInput).not.toHaveBeenCalled();
                 expect(onMessageMock).toHaveBeenCalled();
             });
 

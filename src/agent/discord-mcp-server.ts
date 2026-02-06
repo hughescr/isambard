@@ -5,14 +5,22 @@ import _ from 'lodash';
 import { randomUUID } from 'node:crypto';
 import type { Client, TextChannel, Message, MessageCreateOptions } from 'discord.js';
 import { logger } from '@hughescr/logger';
+// TODO: Decouple - Discord MCP server in agent module creates platform coupling. Consider moving to integrations/discord or creating abstraction layer. See roadmaps/
+// eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord message history; decouple per roadmap
 import type { MessageSearchService } from '../integrations/discord/message-history/search';
 import type { QuestionRegistry } from './question-registry';
 import { questionOptionSchema } from './question-registry';
+// eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord button builder; decouple per roadmap
 import { buildQuestionButtons } from '../integrations/discord/button-builder';
+// eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord types; decouple per roadmap
 import { createChannelId, createUserId, type UserId, type ChannelId } from '../integrations/discord/types';
+// eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord retry logic; decouple per roadmap
 import { withDiscordRetry } from '../integrations/discord/retry';
+// eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord message utilities; decouple per roadmap
 import { splitMessage } from '../integrations/discord/messages';
+// eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord channel registry; decouple per roadmap
 import type { ChannelRegistryManager } from '../integrations/discord/channel-registry';
+// eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord channel utilities; decouple per roadmap
 import { DMTracker, resolveChannelId } from '../integrations/discord/channel-registry';
 import { validateFilePaths, PathSecurityError } from '../utils/path-validator';
 

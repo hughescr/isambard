@@ -75,7 +75,7 @@ describe('createClaudeAgent context integration', () => {
                 contextBuilder: mockContextBuilder,
             });
 
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -96,7 +96,7 @@ describe('createClaudeAgent context integration', () => {
                 contextBuilder: mockContextBuilder,
             });
 
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -112,7 +112,7 @@ describe('createClaudeAgent context integration', () => {
                 contextBuilder: mockContextBuilder,
             });
 
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // Should still have base system prompt but not "## Who You Are" section
             expect(querySpy).toHaveBeenCalledWith(
@@ -138,13 +138,13 @@ describe('createClaudeAgent context integration', () => {
                 contextBuilder: mockContextBuilder,
             });
 
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // Should not have [About this user] section when no user memories
             const callArgs = querySpy.mock.calls[0][0];
             expect(callArgs.prompt).not.toContain('[About this user]');
-            // But should still have the user message
-            expect(callArgs.prompt).toContain('User @111222333 in #987654321: Hello Claude!');
+            // But should still have the user message (with timestamp in handleInput)
+            expect(callArgs.prompt).toContain('User @111222333 in #987654321 at 2025-01-15T12:00:00Z: Hello Claude!');
         });
 
         test('should format multiple recent memories with newline-separated bullets', async () => {
@@ -160,7 +160,7 @@ describe('createClaudeAgent context integration', () => {
                 contextBuilder: mockContextBuilder,
             });
 
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // Verify the user memories section format (time section will precede it)
             expect(querySpy).toHaveBeenCalledWith(
@@ -186,7 +186,7 @@ describe('createClaudeAgent context integration', () => {
                 contextBuilder: mockContextBuilder,
             });
 
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // Verify the prompt includes the [Your recent activities] section with exact format
             expect(querySpy).toHaveBeenCalledWith(
@@ -209,7 +209,7 @@ describe('createClaudeAgent context integration', () => {
                 contextBuilder: mockContextBuilder,
             });
 
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // Verify the prompt does NOT include [Your recent activities]
             const callArgs = querySpy.mock.calls[0][0];
@@ -232,7 +232,7 @@ describe('createClaudeAgent context integration', () => {
             // Create context without botUserId - omit the property entirely
             const { botUserId: _removed, ...contextWithoutBot } = mockMessageContext;
 
-            await agent.chat(contextWithoutBot as typeof mockMessageContext);
+            await agent.handleInput([contextWithoutBot as typeof mockMessageContext]);
 
             // Verify the prompt does NOT include [Your recent activities] section
             expect(querySpy).toHaveBeenCalledWith(
@@ -253,7 +253,7 @@ describe('createClaudeAgent context integration', () => {
                 contextBuilder: mockContextBuilder,
             });
 
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // Verify the prompt includes [Recent events] section with exact format
             expect(querySpy).toHaveBeenCalledWith(
@@ -271,7 +271,7 @@ describe('createClaudeAgent context integration', () => {
                 contextBuilder: mockContextBuilder,
             });
 
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // Verify the prompt does NOT include [Recent events]
             const callArgs = querySpy.mock.calls[0][0];
@@ -283,11 +283,11 @@ describe('createClaudeAgent context integration', () => {
                 // No contextBuilder provided
             });
 
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
-            // Verify the prompt is just the user message without any context prefix
+            // Verify the prompt is just the user message without any context prefix (with timestamp in handleInput)
             const callArgs = querySpy.mock.calls[0][0];
-            expect(callArgs.prompt).toBe('User @111222333 in #987654321: Hello Claude!');
+            expect(callArgs.prompt).toBe('User @111222333 in #987654321 at 2025-01-15T12:00:00Z: Hello Claude!');
 
             // Verify no memory sections are included
             expect(callArgs.prompt).not.toContain('[About this user]');
@@ -312,7 +312,7 @@ describe('createClaudeAgent context integration', () => {
                 contextBuilder: mockContextBuilder,
             });
 
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // Verify the format with all sections joined by \n\n (time section comes first)
             const callArgs = querySpy.mock.calls[0][0];
@@ -323,7 +323,7 @@ describe('createClaudeAgent context integration', () => {
             expect(prompt).toContain('[About this user]\n- User memory');
             expect(prompt).toContain('[Your recent activities]\n- Bot activity');
             expect(prompt).toContain('[Recent events]\n- Recent event');
-            expect(prompt).toContain('User @111222333 in #987654321: Hello Claude!');
+            expect(prompt).toContain('User @111222333 in #987654321 at 2025-01-15T12:00:00Z: Hello Claude!');
 
             // Verify double newline separation between sections
             expect(prompt).toContain('[About this user]\n- User memory\n\n[Your recent activities]');
@@ -347,7 +347,7 @@ describe('createClaudeAgent context integration', () => {
                 contextBuilder: mockContextBuilder,
             });
 
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             const callArgs = querySpy.mock.calls[0][0];
             // Verify bot activities format
@@ -378,7 +378,7 @@ describe('createClaudeAgent context integration', () => {
                 contextBuilder: mockContextBuilder,
             });
 
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -392,7 +392,7 @@ describe('createClaudeAgent context integration', () => {
                 contextBuilder: mockContextBuilder,
             });
 
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -414,7 +414,7 @@ describe('createClaudeAgent context integration', () => {
                 contextBuilder: mockContextBuilder,
             });
 
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             const callArgs = querySpy.mock.calls[0][0];
             const prompt = callArgs.prompt as string;
@@ -438,7 +438,7 @@ describe('createClaudeAgent context integration', () => {
         ])('should include temporal guidance: %s', async (expectedContent) => {
             const agent = createClaudeAgent({});
 
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -481,9 +481,9 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            const response = await agent.chat(mockMessageContext);
+            const result = await agent.handleInput([mockMessageContext]);
 
-            expect(response).toBe('Assistant response');
+            expect(result.response).toBe('Assistant response');
         });
 
         test('should return null when stream has only non-assistant messages', async () => {
@@ -516,9 +516,9 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            const response = await agent.chat(mockMessageContext);
+            const result = await agent.handleInput([mockMessageContext]);
 
-            expect(response).toBeNull();
+            expect(result.response).toBeNull();
         });
 
         test.each([
@@ -536,9 +536,9 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            const response = await agent.chat(mockMessageContext);
+            const result = await agent.handleInput([mockMessageContext]);
 
-            expect(response).toBeNull();
+            expect(result.response).toBeNull();
         });
 
         test('should filter out non-text blocks and combine multiple text blocks', async () => {
@@ -573,9 +573,9 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            const response = await agent.chat(mockMessageContext);
+            const result = await agent.handleInput([mockMessageContext]);
 
-            expect(response).toBe('First text block\nSecond text block');
+            expect(result.response).toBe('First text block\nSecond text block');
         });
 
         test('should trim whitespace from combined text blocks', async () => {
@@ -597,9 +597,9 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            const response = await agent.chat(mockMessageContext);
+            const result = await agent.handleInput([mockMessageContext]);
 
-            expect(response).toBe('Leading and trailing spaces');
+            expect(result.response).toBe('Leading and trailing spaces');
         });
 
         test('should return null when text is only whitespace', async () => {
@@ -621,9 +621,9 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            const response = await agent.chat(mockMessageContext);
+            const result = await agent.handleInput([mockMessageContext]);
 
-            expect(response).toBeNull();
+            expect(result.response).toBeNull();
         });
 
         test('should update lastAssistantText only when text is non-empty', async () => {
@@ -656,9 +656,9 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            const response = await agent.chat(mockMessageContext);
+            const result = await agent.handleInput([mockMessageContext]);
 
-            expect(response).toBe('First valid response');
+            expect(result.response).toBe('First valid response');
         });
 
         test('should join multiple text blocks with newlines', async () => {
@@ -688,9 +688,9 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            const response = await agent.chat(mockMessageContext);
+            const result = await agent.handleInput([mockMessageContext]);
 
-            expect(response).toBe('Line 1\nLine 2\nLine 3');
+            expect(result.response).toBe('Line 1\nLine 2\nLine 3');
         });
 
         test('should filter out content blocks without type property', async () => {
@@ -710,9 +710,9 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            const response = await agent.chat(mockMessageContext);
+            const result = await agent.handleInput([mockMessageContext]);
 
-            expect(response).toBe('Has type');
+            expect(result.response).toBe('Has type');
         });
     });
 
@@ -745,9 +745,9 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext, (event) => {
+            await agent.handleInput([mockMessageContext], { onStreamEvent: (event) => {
                 events.push(event);
-            });
+            } });
 
             expect(events.length).toBe(3);
             expect(events[0].type).toBe('assistant');
@@ -770,9 +770,9 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext, (event) => {
+            await agent.handleInput([mockMessageContext], { onStreamEvent: (event) => {
                 receivedEvent = event;
-            });
+            } });
 
             expect(receivedEvent).toEqual({
                 type:                 'tool_progress',
@@ -784,20 +784,20 @@ describe('createClaudeAgent context integration', () => {
 
         test('should work without callback (backward compatibility)', async () => {
             const agent = createClaudeAgent({});
-            const response = await agent.chat(mockMessageContext);
+            const result = await agent.handleInput([mockMessageContext]);
 
-            expect(response).toBe('Hello! This is a test response.');
+            expect(result.response).toBe('Hello! This is a test response.');
         });
 
         test('should catch callback errors via outer try/catch and return null', async () => {
             const agent = createClaudeAgent({});
 
-            // Callback throws, but outer try/catch catches it and returns null
-            const result = await agent.chat(mockMessageContext, () => {
+            // Callback throws, but outer try/catch catches it and handleInput returns empty result
+            const result = await agent.handleInput([mockMessageContext], { onStreamEvent: () => {
                 throw new Error('Callback error');
-            });
+            } });
 
-            expect(result).toBeNull();
+            expect(result.response).toBeNull();
         });
 
         test('should invoke callback for all event types', async () => {
@@ -814,9 +814,9 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext, (event) => {
+            await agent.handleInput([mockMessageContext], { onStreamEvent: (event) => {
                 eventTypes.push(event.type);
-            });
+            } });
 
             expect(eventTypes).toEqual(['user', 'assistant', 'tool_progress', 'tool_result', 'result']);
         });
@@ -843,11 +843,11 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            const response = await agent.chat(mockMessageContext);
+            const result = await agent.handleInput([mockMessageContext]);
 
             // Agent returns full response; Discord handlers handle chunking
-            expect(response).toBe(longText);
-            expect(response?.length).toBe(2000);
+            expect(result.response).toBe(longText);
+            expect(result.response?.length).toBe(2000);
         });
 
         test('should log error with message and user details', async () => {
@@ -857,15 +857,14 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             expect(mockLogger.error).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    error:     testError,
-                    userId:    '111222333',
-                    messageId: 'msg_999',
+                    error:        testError,
+                    contextCount: 1,
                 }),
-                expect.stringContaining('Failed to get Claude response for message msg_999 from user 111222333')
+                expect.stringContaining('Failed to process batch')
             );
         });
     });
@@ -873,21 +872,20 @@ describe('createClaudeAgent context integration', () => {
     describe('structured logging', () => {
         test('should log message processing start with context', async () => {
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             expect(mockLogger.info).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    userId:    mockMessageContext.userId,
-                    channelId: mockMessageContext.channelId,
-                    messageId: mockMessageContext.messageId,
-                    msg:       'Agent starting to process message',
+                    contextCount: 1,
+                    messageIds:   [mockMessageContext.messageId],
+                    msg:          'Agent starting batch processing',
                 })
             );
         });
 
         test('should log stream events with descriptive messages', async () => {
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // Should log assistant event with hasText indicator
             expect(mockLogger.debug).toHaveBeenCalledWith(
@@ -901,13 +899,13 @@ describe('createClaudeAgent context integration', () => {
 
         test('should log completion with response length', async () => {
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             expect(mockLogger.info).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    messageId:      mockMessageContext.messageId,
+                    contextCount:   1,
                     responseLength: expect.any(Number),
-                    msg:            expect.stringContaining('Agent completed processing'),
+                    msg:            expect.stringContaining('Batch processing'),
                 })
             );
         });
@@ -937,7 +935,7 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -975,7 +973,7 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -1012,7 +1010,7 @@ describe('createClaudeAgent context integration', () => {
             });
 
             const agent = createClaudeAgent({});
-            await agent.chat(mockMessageContext);
+            await agent.handleInput([mockMessageContext]);
 
             // Should only have stream event log, not tool call log
             const toolCallCalls = _.filter(

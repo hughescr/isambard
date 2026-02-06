@@ -29,6 +29,10 @@ const defaultDeps: RetryDeps = {
  * @param options - Configuration options
  * @returns The result of the operation
  * @throws The last error if all retry attempts are exhausted or a permanent error occurs
+ *
+ * @warning Total wall-clock time grows exponentially with maxAttempts due to exponential backoff.
+ * With default settings (1s base delay), maxAttempts=5 takes ~15s total, maxAttempts=10 takes
+ * ~17 minutes. Consider the total wall-clock time impact when setting maxAttempts.
  */
 export async function retryAsync<T>(
     operation: () => Promise<T>,

@@ -100,8 +100,8 @@ export interface StreamEventHandler {
  *   thinkingSynopsis: 'Thinking about weather...'
  * });
  *
- * // Pass onStreamEvent to agent.chat or chatBatch
- * await agent.chat(context, onStreamEvent);
+ * // Pass onStreamEvent to agent.handleInput
+ * await agent.handleInput([context], { onStreamEvent });
  *
  * // Call complete when done
  * complete();

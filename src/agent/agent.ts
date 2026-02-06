@@ -2,7 +2,10 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { McpServerConfig, SDKUserMessage, SdkPluginConfig, SDKCompactBoundaryMessage } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
+// TODO: Decouple - agent should be platform-agnostic. Move Discord types to generic types or use dependency injection. See roadmaps/
+// eslint-disable-next-line boundaries/element-types -- Agent imports Discord types for message context; decouple per roadmap
 import type { DiscordMessageContext } from '../integrations/discord/types';
+// eslint-disable-next-line boundaries/element-types -- Agent imports Discord types for attachments; decouple per roadmap
 import type { FetchedImage } from '../integrations/discord/attachments/types';
 import { getCurrentTimeContext } from '../utils/time';
 import type { ContextBuilder } from './context-builder';
@@ -299,12 +302,10 @@ export interface ClaudeAgentOptions {
     plugins?:                    SdkPluginConfig[]
     /** Task persistence coordinator for maintaining tasks across sessions */
     taskPersistenceCoordinator?: TaskPersistenceCoordinator
-    /** Optional channel registry for getting channel list */
-    channelRegistry?:            import('../integrations/discord/channel-registry').ChannelRegistryManager
 }
 
-/** Options for chatBatch processing */
-export interface ChatBatchOptions {
+/** Options for handleInput processing */
+export interface HandleInputOptions {
     /** Session ID to resume (for SDK session continuity) */
     sessionId?:       string
     /** Resume context from interrupted processing */
@@ -325,8 +326,8 @@ export interface ChatBatchOptions {
     channelList?:     string[]
 }
 
-/** Result from chatBatch processing */
-export interface ChatBatchResult {
+/** Result from handleInput processing */
+export interface HandleInputResult {
     /** Final response text (null if interrupted or error) */
     response:       string | null
     /** Session ID for resuming */
@@ -339,30 +340,16 @@ export interface ChatBatchResult {
 
 export interface ClaudeAgent {
     /**
-     * Process a Discord message and generate a response.
-     *
-     * @param context Discord message context
-     * @param onStreamEvent Optional callback invoked for each stream event
-     * @param images Optional images to include in the message
-     * @returns Claude's response text, or null if an error occurred
-     */
-    chat: (
-        context: DiscordMessageContext,
-        onStreamEvent?: (event: AgentStreamEvent) => void,
-        images?: FetchedImage[]
-    ) => Promise<string | null>
-
-    /**
      * Process multiple messages in batch with interruption support.
      *
      * @param contexts Array of Discord message contexts to process
      * @param options Optional configuration for batch processing
      * @returns Result with final response, interruption status, and stream tracker
      */
-    chatBatch: (
+    handleInput: (
         contexts: DiscordMessageContext[],
-        options?: ChatBatchOptions
-    ) => Promise<ChatBatchResult>
+        options?: HandleInputOptions
+    ) => Promise<HandleInputResult>
 }
 
 /**
@@ -709,7 +696,7 @@ async function buildUserMessageTextForBatch(
  * @param images Optional images to include
  * @returns Async generator yielding SDKUserMessage
  */
-// Stryker disable all: Private async generator - behavior tested via chat() integration tests
+// Stryker disable all: Private async generator - behavior tested via handleInput() integration tests
 async function* buildPromptForSdk(
     textContent: string,
     images?: FetchedImage[]
@@ -775,7 +762,7 @@ async function handleSessionIdExtraction(
 function processSingleStreamMessage(
     message: unknown,
     tracker: StreamTracker,
-    options?: ChatBatchOptions
+    options?: HandleInputOptions
 ): void {
     // Update tracker with stream progress
     tracker.update(message as AgentStreamEvent);
@@ -801,7 +788,7 @@ function processSingleStreamMessage(
  * @returns true if processing should abort, false otherwise
  */
 function shouldAbortProcessing(
-    options: ChatBatchOptions | undefined,
+    options: HandleInputOptions | undefined,
     capturedSessionId: string | undefined
 ): boolean {
     if(options?.abortController?.signal.aborted) {
@@ -826,7 +813,7 @@ function shouldAbortProcessing(
 async function processStreamEvents(
     response: AsyncIterable<unknown>,
     tracker: StreamTracker,
-    options?: ChatBatchOptions,
+    options?: HandleInputOptions,
     taskPersistenceCoordinator?: TaskPersistenceCoordinator
 ): Promise<{ lastAssistantText: string, wasInterrupted: boolean, capturedSessionId?: string }> {
     let lastAssistantText = '';
@@ -835,6 +822,12 @@ async function processStreamEvents(
     let taskPersistenceCompleted = false;
 
     try {
+        // Session ID extraction race condition prevention:
+        // The session ID is extracted from the first stream event (system init message),
+        // which always arrives before any tool_use events. The sequential for-await loop
+        // combined with the await on handleSessionIdExtraction() ensures the session ID
+        // is always captured and persisted before any tool calls execute. This prevents
+        // tool calls from running with an undefined session ID.
         for await (const message of response) {
             // Handle session ID extraction and task persistence
             const { sessionId, persistenceCompleted } = await handleSessionIdExtraction(
@@ -896,7 +889,7 @@ function buildQueryOptions(
     discordMcpServer: McpServerConfig | undefined,
     inboxMcpServer: McpServerConfig | undefined,
     plugins: SdkPluginConfig[] | undefined,
-    options?: ChatBatchOptions
+    options?: HandleInputOptions
 ) {
     return {
         model:             CLAUDE_MODEL,
@@ -934,19 +927,19 @@ function buildQueryOptions(
 }
 
 /**
- * Build result object for chatBatch.
+ * Build result object for handleInput.
  * @param lastAssistantText Final response text from assistant
  * @param wasInterrupted Whether processing was interrupted
  * @param capturedSessionId Session ID for resuming
  * @param tracker Stream tracker with captured progress
- * @returns ChatBatchResult object
+ * @returns HandleInputResult object
  */
-function buildChatBatchResult(
+function buildHandleInputResult(
     lastAssistantText: string,
     wasInterrupted: boolean,
     capturedSessionId: string | undefined,
     tracker: StreamTracker
-): ChatBatchResult {
+): HandleInputResult {
     return {
         response:      wasInterrupted ? null : (lastAssistantText || null),
         sessionId:     capturedSessionId,
@@ -955,25 +948,8 @@ function buildChatBatchResult(
     };
 }
 
-/**
- * Get channel list from channel registry.
- * Returns array of channel names (without # prefix) for unmuted channels.
- * @param channelRegistry Optional channel registry manager
- * @returns Array of channel names, or undefined if registry not available
- */
-async function getChannelListFromRegistry(
-    channelRegistry: import('../integrations/discord/channel-registry').ChannelRegistryManager | undefined
-): Promise<string[] | undefined> {
-    if(!channelRegistry) {
-        return undefined;
-    }
-
-    const unmutedChannels = await channelRegistry.getUnmutedChannels();
-    return _.map(unmutedChannels, 'channelName');
-}
-
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
-    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, taskPersistenceCoordinator, channelRegistry } = options;
+    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, taskPersistenceCoordinator } = options;
 
     // Load retry configuration
     const retryConfig = loadRetryConfig();
@@ -985,17 +961,16 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     });
 
     return {
-        chatBatch: async (
+        handleInput: async (
             contexts: DiscordMessageContext[],
-            options?: ChatBatchOptions
-        ): Promise<ChatBatchResult> => {
+            options?: HandleInputOptions
+        ): Promise<HandleInputResult> => {
             const tracker = createStreamTracker();
             let capturedSessionId: string | undefined;
 
             try {
                 // 1. Build system prompt with core identity and channel list
-                // Prefer channelList from options (pre-formatted with guild names), otherwise get from registry
-                const channelList = options?.channelList ?? await getChannelListFromRegistry(channelRegistry);
+                const channelList = options?.channelList;
                 const systemPrompt = await buildSystemPrompt({ contextBuilder, channelList });
 
                 // 2. Build user message text
@@ -1049,119 +1024,11 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 });
 
                 // 8. Return result
-                return buildChatBatchResult(lastAssistantText, wasInterrupted, capturedSessionId, tracker);
+                return buildHandleInputResult(lastAssistantText, wasInterrupted, capturedSessionId, tracker);
             } catch (error) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 logger.error({ error, contextCount: contexts.length }, `Failed to process batch: ${errorMessage}`);
-                return buildChatBatchResult('', false, capturedSessionId, tracker);
-            }
-        },
-
-        chat: async (
-            context: DiscordMessageContext,
-            onStreamEvent?: (event: AgentStreamEvent) => void,
-            images?: FetchedImage[]
-        ): Promise<string | null> => {
-            try {
-                // 1. Build system prompt with core identity and channel list
-                const channelList = await getChannelListFromRegistry(channelRegistry);
-                const systemPrompt = await buildSystemPrompt({ contextBuilder, channelList });
-
-                // 2. Build context prefix from memories and events
-                const contextPrefix = contextBuilder
-                    ? await buildContextPrefix(contextBuilder, context)
-                    : '';
-
-                // 3. Format user message text content
-                const textContent = `${contextPrefix}User @${context.userId} in #${context.channelId}: ${context.content}`;
-
-                // 4. Build prompt (string for text-only, async generator for multimodal)
-                const prompt = hasImages(images)
-                    ? buildPromptForSdk(textContent, images)
-                    : textContent;
-
-                // 5. Log start of processing
-                logger.info({
-                    userId:    context.userId,
-                    channelId: context.channelId,
-                    messageId: context.messageId,
-                    hasImages: hasImages(images),
-                    msg:       'Agent starting to process message',
-                });
-
-                // 6. Query with MCP servers, plugins, and sandboxed execution (with retry)
-                const response = retryableQuery({
-                    prompt,
-                    options: {
-                        model:             CLAUDE_MODEL,
-                        systemPrompt,
-                        tools:             EXPLICIT_TOOLS,
-                        agents:            EXPLICIT_AGENTS,
-                        mcpServers:        buildMcpServers(memoryMcpServer, discordMcpServer, inboxMcpServer),
-                        plugins:           plugins && plugins.length > 0 ? plugins : undefined,
-                        permissionMode:    'acceptEdits',
-                        allowedTools:      buildAllowedTools(discordMcpServer, inboxMcpServer),
-                        maxThinkingTokens: 10000,  // Enable extended thinking for richer status context
-                        // Explicitly disable filesystem settings loading - we provide all config programmatically
-                        settingSources:    [],
-                        // Stryker disable all: Observability - stderr logging doesn't affect behavior
-                        stderr:            (data: string) => {
-                            logger.error({ stderr: data }, 'Agent SDK stderr');
-                        },
-                        // Stryker restore all
-                    },
-                });
-
-                // 6. Extract final response (keep latest assistant message)
-                let lastAssistantText = '';
-                let sessionId: string | undefined;
-
-                for await (const message of response) {
-                    // Capture session ID from system init event
-                    const extractedSessionId = extractSessionId(message);
-                    if(extractedSessionId) {
-                        sessionId = extractedSessionId;
-                    }
-
-                    // Log descriptive stream events
-                    logStreamEvent(message as AgentStreamEvent);
-
-                    // Log errors from stream events
-                    logResultErrors(message as { type: string, is_error?: boolean, subtype?: string, errors?: unknown[] });
-                    logAssistantErrors(message as { type: string, error?: unknown });
-                    logToolUsage(message);
-
-                    // Invoke stream event callback if provided
-                    if(onStreamEvent) {
-                        onStreamEvent(message as AgentStreamEvent);
-                    }
-
-                    const text = extractAssistantText(message);
-                    if(text) {
-                        lastAssistantText = text;
-                    }
-                }
-
-                // 7. Clean up session file (fire-and-forget, errors logged internally)
-                // Stryker disable next-line all: Cleanup is fire-and-forget, not observable in tests
-                if(sessionId) {
-                    // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Fire-and-forget cleanup
-                    cleanupSession(sessionId);
-                }
-
-                // 8. Log completion
-                logger.info({
-                    messageId:      context.messageId,
-                    responseLength: lastAssistantText.length,
-                    msg:            `Agent completed processing (${lastAssistantText.length} chars)`,
-                });
-
-                // 9. Return full response (chunking is handled by Discord handlers)
-                return lastAssistantText || null;
-            } catch (error) {
-                const errorMessage = _.isError(error) ? error.message : String(error);
-                logger.error({ error, userId: context.userId, messageId: context.messageId }, `Failed to get Claude response for message ${context.messageId} from user ${context.userId}: ${errorMessage}`);
-                return null;
+                return buildHandleInputResult('', false, capturedSessionId, tracker);
             }
         },
     };

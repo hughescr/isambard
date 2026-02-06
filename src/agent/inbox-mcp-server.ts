@@ -3,12 +3,18 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
+// TODO: Decouple - Inbox MCP server in agent module creates platform coupling. Consider moving to integrations/discord or creating abstraction layer. See roadmaps/
+// eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord inbox manager; decouple per roadmap
 import type { InboxManager } from '../integrations/discord/inbox/inbox-manager';
+// eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord inbox types; decouple per roadmap
 import type { ChannelSummaryResponse, MessageMetadata } from '../integrations/discord/inbox/types';
+// eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord types; decouple per roadmap
 import { createChannelId } from '../integrations/discord/types';
 import { generateTextWithSystemPrompt } from './text-generator';
 import type { BotStateManager } from '@/integrations/discord/state';
+// eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord channel registry; decouple per roadmap
 import type { ChannelRegistryManager } from '../integrations/discord/channel-registry';
+// eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord channel utilities; decouple per roadmap
 import { resolveChannelId } from '../integrations/discord/channel-registry';
 
 /**

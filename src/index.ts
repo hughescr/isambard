@@ -1,5 +1,6 @@
 import { Resource } from 'sst';
 import _ from 'lodash';
+import env from 'env-var';
 import type { Client } from 'discord.js';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { stat, mkdir } from 'node:fs/promises';
@@ -179,9 +180,13 @@ export async function createApp(): Promise<App> {
         throw new Error(`Failed to initialize Discord client and channel registry: ${errorMessage}. The bot cannot start without these.`);
     }
 
-    // Verify channel registry was initialized (required for bot to function)
+    // Verify channel registry was initialized
+    // If initialization failed, continue in fail-open mode (match bot.ts behavior)
     if(!channelRegistry) {
-        throw new Error('Channel registry not initialized. The bot cannot start without it.');
+        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+        logger.error('⚠️  CRITICAL: Channel registry not initialized. Bot will operate in fail-open mode (responding to ALL channels). This should be investigated immediately.');
+        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+        logger.warn('Bot is operating in FAIL-OPEN mode - channel mute settings are unavailable');
     }
 
     // Load plugins from plugins directory
@@ -195,7 +200,6 @@ export async function createApp(): Promise<App> {
         inboxMcpServer,
         plugins,
         taskPersistenceCoordinator,
-        channelRegistry,
     });
 
     // Load identity context for presence idle status generation (if API key available)
@@ -229,7 +233,37 @@ export async function createApp(): Promise<App> {
         config:      config.discord,
         perchConfig: config.perch,
         onMessage:   async (context) => {
-            return await agent.chat(context);
+            // Get unmuted channels and format for system prompt (matching bot.ts pattern)
+            // Build channelList if channelRegistry is available
+            let channelList: string[] | undefined;
+            if(channelRegistry) {
+                const unmutedChannels = await channelRegistry.getUnmutedChannels();
+                channelList = _.map(unmutedChannels, (channel) => {
+                    // Get guild name for disambiguation
+                    let guildName: string | undefined;
+                    if(channel.guildId !== 'DM') {
+                        try {
+                            const guild = discordClient?.guilds.cache.get(channel.guildId);
+                            guildName = guild?.name;
+                        } catch{
+                            // Guild not in cache, skip guild name
+                        }
+                    }
+
+                    // Format: "channelName (guildName) [well-known: type]" or "channelName [well-known: type]"
+                    let formatted = channel.channelName;
+                    if(guildName) {
+                        formatted += ` (${guildName})`;
+                    }
+                    if(channel.isWellKnown) {
+                        formatted += ` [well-known: ${channel.isWellKnown}]`;
+                    }
+                    return formatted;
+                });
+            }
+
+            const result = await agent.handleInput([context], { channelList });
+            return result.response;
         },
         identityContext,
         agent,
@@ -365,8 +399,9 @@ if(import.meta.main) {
     // Change to scratch directory for containment
     // Use absolute path based on project root to prevent nesting on hot reload
     // import.meta.dir is src/, so go up one level to project root
-    const scratchDir = process.env.SCRATCH_DIR
-        ? resolve(process.cwd(), process.env.SCRATCH_DIR)
+    const scratchDirFromEnv = env.get('SCRATCH_DIR').asString();
+    const scratchDir = scratchDirFromEnv
+        ? resolve(process.cwd(), scratchDirFromEnv)
         : resolve(import.meta.dir, '..', 'scratch');
     try {
         await stat(scratchDir);
@@ -381,7 +416,7 @@ if(import.meta.main) {
     }
 
     // Configure logger timezone (env var or system default)
-    const logTimezone = process.env.LOG_TIMEZONE
+    const logTimezone = env.get('LOG_TIMEZONE').asString()
       ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
     setTimezone(logTimezone);
 
