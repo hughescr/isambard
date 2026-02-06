@@ -106,11 +106,11 @@ Custom memory tool implementation with DynamoDB backend and three-layer architec
 - `src/storage/memory-tool/` - Complete memory tool implementation
   - `types.ts` - Zod schemas (MemoryPath, LayerName, MemoryToolItem), branded types
   - `errors.ts` - MemoryToolError hierarchy
-  - `key-generator.ts` - DynamoDB key structure (PK/SK/GSI1/GSI2)
+  - `key-generator.ts` - DynamoDB key structure (PK/SK/GSI1), tag index keys, content preview
   - `layer-config.ts` - Layer configuration (identity/state/events with TTL and versioning)
   - `backend.ts` - Main backend facade
   - `backend-core.ts` - Core CRUD operations
-  - `backend-query.ts` - Query operations (list, searchByTag)
+  - `backend-query.ts` - Query operations (list, searchByTags, listByLayer, searchByTimeRange)
   - `backend-tag-registry.ts` - Tag registry management for searchable tags
   - `backend-tag-index.ts` - Tag index CRUD operations with retry logic
   - `backend-versions.ts` - Version history management

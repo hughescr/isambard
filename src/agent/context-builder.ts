@@ -71,7 +71,7 @@ const CONTENT_PREVIEW_MAX_LENGTH = 100;
  * Formats a memory item as a preview string with path, age, and truncated content.
  * Format: "- path (age): content_preview"
  *
- * Handles GSI2 projection cases where content may be undefined (only contentPreview available).
+ * Handles tag index cases where content may be undefined (only contentPreview available from TagIndexItem).
  */
 function formatMemoryPreview(
     path: MemoryPath,
@@ -90,7 +90,7 @@ function formatMemoryPreview(
         return `- ${path} (${age}): ${preview}`;
     }
 
-    // Only preview available (GSI2 projection) - show hint
+    // Only preview available (tag index item) - show hint
     if(contentPreview) {
         return `- ${path} (${age}): [preview] ${contentPreview}... (memory view ${path} for full)`;
     }

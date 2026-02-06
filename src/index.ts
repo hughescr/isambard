@@ -23,7 +23,7 @@ import { createTaskCleanupProcessor } from './agent/task-cleanup-processor';
 import {
     createReconciliationScheduler,
     runReconciliation,
-    type ReconciliationScheduler,
+    type ReconciliationScheduler
 } from './storage/memory-tool/reconciliation';
 import { createDiscordBot } from './integrations/discord/bot';
 import type { DiscordBot } from './integrations/discord/bot';
@@ -122,13 +122,13 @@ export async function createApp(): Promise<App> {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Optional initialization - equivalent mutant
         if(config.reconciliation?.enabled) {
             reconciliationScheduler = createReconciliationScheduler({
-                config:            config.reconciliation,
+                config:         config.reconciliation,
                 runReconciliation,
                 reconcilerDeps: {
                     docClient,
                     tableName,
                     tagIndex:             memoryBackend.getTagIndexBackend(),
-                    getMemory:            (path) => memoryBackend!.get(path),
+                    getMemory:            path => memoryBackend!.get(path),
                     updateMemoryMetadata: (path, existing, input) =>
                         memoryBackend!.updateMetadataOnly(path, existing, input),
                 },

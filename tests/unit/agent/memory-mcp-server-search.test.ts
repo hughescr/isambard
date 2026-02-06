@@ -23,13 +23,13 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
     beforeEach(() => {
         mockBackend = {
-            create:      mock(async () => createMockItem()),
-            get:         mock(async () => undefined),
-            update:      mock(async () => createMockItem()),
-            'delete':    mock(async () => { /* intentionally empty */ }),
-            list:        mock(async () => ({ items: [], nextCursor: undefined })),
-            listByLayer: mock(async () => ({ items: [], nextCursor: undefined })),
-            searchByTag: mock(async () => ({ items: [], nextCursor: undefined })),
+            create:       mock(async () => createMockItem()),
+            get:          mock(async () => undefined),
+            update:       mock(async () => createMockItem()),
+            'delete':     mock(async () => { /* intentionally empty */ }),
+            list:         mock(async () => ({ items: [], nextCursor: undefined })),
+            listByLayer:  mock(async () => ({ items: [], nextCursor: undefined })),
+            searchByTags: mock(async () => ({ items: [], nextCursor: undefined })),
         } as unknown as MemoryToolBackend;
     });
 

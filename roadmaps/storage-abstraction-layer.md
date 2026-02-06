@@ -6,7 +6,7 @@ All storage operations are tightly coupled to DynamoDB. This creates several pro
 
 - **Testing complexity:** Unit tests require DynamoDB mocks or test containers
 - **Inflexibility:** Cannot swap storage backends (e.g., for local development, different environments)
-- **Vendor lock-in:** DynamoDB-specific concepts (GSI1, GSI2, key structures) leak into business logic
+- **Vendor lock-in:** DynamoDB-specific concepts (GSI1, key structures, tag index items) leak into business logic
 - **Testability:** Integration tests are slow and require infrastructure
 
 A proper storage abstraction would decouple the memory tool from its persistence layer, allowing different implementations while preserving the same interface.
@@ -57,10 +57,10 @@ export interface MemoryStorage {
     list(directory: string, options?: ListOptions): Promise<ListResult>
 
     /**
-     * Search for items by tag.
+     * Search for items by tags.
      * Optionally filter by layer and date range.
      */
-    searchByTag(tag: string, layer?: LayerName, options?: ListOptions): Promise<ListResult>
+    searchByTags(tags: string[], layer?: LayerName, options?: ListOptions): Promise<ListResult>
 
     /**
      * List all items in a layer.
@@ -191,8 +191,8 @@ export class DynamoDBMemoryStorage implements MemoryStorage {
         return this.backend.list(directory, options);
     }
 
-    async searchByTag(tag: string, layer?: LayerName, options?: ListOptions): Promise<ListResult> {
-        return this.backend.searchByTag(tag, layer, options);
+    async searchByTags(tags: string[], layer?: LayerName, options?: ListOptions): Promise<ListResult> {
+        return this.backend.searchByTags(tags, layer, options);
     }
 
     async listByLayer(layer: LayerName, options?: ListOptions): Promise<ListResult> {
@@ -321,9 +321,9 @@ export class InMemoryStorage implements MemoryStorage {
         return { items, nextCursor: undefined };
     }
 
-    async searchByTag(tag: string, layer?: LayerName, options?: ListOptions): Promise<ListResult> {
+    async searchByTags(tags: string[], layer?: LayerName, options?: ListOptions): Promise<ListResult> {
         let allItems = Array.from(this.items.values())
-            .filter(item => item.tags?.includes(tag));
+            .filter(item => tags.some(tag => item.tags?.includes(tag)));
 
         if (layer) {
             allItems = allItems.filter(item => extractLayerFromPath(item.path) === layer);
@@ -587,7 +587,7 @@ runMemoryStorageContractTests(() => createDynamoDBStorage());
 
 ### Separation of Concerns
 - Business logic decoupled from storage implementation
-- DynamoDB-specific concepts (GSI1, GSI2) hidden behind interface
+- DynamoDB-specific concepts (GSI1, tag index) hidden behind interface
 - Easier to understand memory tool handlers
 
 ### Future Extensibility

@@ -837,7 +837,7 @@ describe('createContextBuilder loading methods', () => {
                         layer:          'state',
                         updatedAt:      '2025-01-15T10:00:00.000Z',
                         tags:           ['user:user123'],
-                        contentPreview: 'This is a preview from GSI2...',
+                        contentPreview: 'This is a preview from tag index...',
                     },
                 ],
             }));
@@ -846,7 +846,7 @@ describe('createContextBuilder loading methods', () => {
             const result = await contextBuilder.loadRecentContext('user123', 3, now);
 
             expect(result).toHaveLength(1);
-            expect(result[0]).toBe('- /state/gsi2-item.md (2h ago): [preview] This is a preview from GSI2...... (memory view /state/gsi2-item.md for full)');
+            expect(result[0]).toBe('- /state/gsi2-item.md (2h ago): [preview] This is a preview from tag index...... (memory view /state/gsi2-item.md for full)');
         });
 
         test('should handle contentPreview undefined', async () => {

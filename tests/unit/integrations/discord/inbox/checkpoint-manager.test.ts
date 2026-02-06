@@ -35,9 +35,9 @@ describe.concurrent('CheckpointManager', () => {
                 createdAt:   now,
                 updatedAt:   now,
             })),
-            list:        mock(async () => ({ items: [], nextCursor: undefined })),
-            listByLayer: mock(async () => ({ items: [], nextCursor: undefined })),
-            searchByTag: mock(async () => ({ items: [], nextCursor: undefined })),
+            list:         mock(async () => ({ items: [], nextCursor: undefined })),
+            listByLayer:  mock(async () => ({ items: [], nextCursor: undefined })),
+            searchByTags: mock(async () => ({ items: [], nextCursor: undefined })),
         } as unknown as MemoryToolBackend;
 
         manager = new CheckpointManager({ backend: mockBackend });
