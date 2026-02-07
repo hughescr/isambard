@@ -27,21 +27,21 @@ export const memoryTable = new sst.aws.Dynamo('IsambardMemory', {
         table: {
             billingMode:            'PROVISIONED',
             readCapacity:           2,
-            writeCapacity:          1,
+            writeCapacity:          2,
             globalSecondaryIndexes: [
                 {
                     name:           'GSI1',
                     hashKey:        'GSI1PK',
                     rangeKey:       'GSI1SK',
                     readCapacity:   2,
-                    writeCapacity:  1,
+                    writeCapacity:  2,
                     projectionType: 'ALL',
                 },
                 {
                     name:           'GSI2',
                     hashKey:        'GSI2PK',
                     rangeKey:       'GSI2SK',
-                    readCapacity:   2,
+                    readCapacity:   1,
                     writeCapacity:  1,
                     projectionType: 'ALL',
                 },
