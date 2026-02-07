@@ -11,7 +11,6 @@ const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryTool
     content:     'mock content',
     contentType: 'text/plain' as ContentType,
     metadata:    {},
-    version:     1,
     createdAt:   '2025-01-01T00:00:00.000Z',
     updatedAt:   '2025-01-01T00:00:00.000Z',
     ...overrides,

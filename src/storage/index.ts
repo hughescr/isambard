@@ -2,7 +2,7 @@
 export { createDynamoDBClient, type DynamoDBClients } from './client';
 
 // Errors
-export { StorageError, ItemNotFoundError, ConflictError, ValidationError } from './errors';
+export { StorageError, ItemNotFoundError, ValidationError } from './errors';
 
 // Repositories
 /** @internal */

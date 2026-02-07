@@ -3,12 +3,10 @@ import type { LayerName } from './types';
 
 /**
  * Configuration schema for memory tool layers.
- * - maxVersions: Maximum number of versions to retain
  * - autoLoad: Whether to auto-load on agent startup (true|false|'conditional')
  */
 export const layerConfigSchema = z.object({
-    maxVersions: z.number().int().positive().default(1),
-    autoLoad:    z.union([z.boolean(), z.literal('conditional')]).default(false),
+    autoLoad: z.union([z.boolean(), z.literal('conditional')]).default(false),
 });
 
 export type LayerConfig = z.infer<typeof layerConfigSchema>;
@@ -16,14 +14,14 @@ export type LayerConfig = z.infer<typeof layerConfigSchema>;
 /**
  * Layer-specific configurations for the memory tool.
  *
- * - identity: Core beliefs, values, and self-model (permanent, high retention)
- * - state: Current context and working memory (permanent, moderate retention)
- * - events: Historical timeline and experiences (permanent, minimal retention)
+ * - identity: Core beliefs, values, and self-model (permanent)
+ * - state: Current context and working memory (permanent)
+ * - events: Historical timeline and experiences (permanent)
  */
 export const LAYER_CONFIGS = {
-    identity: { maxVersions: 10, autoLoad: true },
-    state:    { maxVersions: 5, autoLoad: 'conditional' },
-    events:   { maxVersions: 1, autoLoad: false },
+    identity: { autoLoad: true },
+    state:    { autoLoad: 'conditional' },
+    events:   { autoLoad: false },
 } as const satisfies Record<string, LayerConfig>;
 
 /**

@@ -11,7 +11,7 @@ const createMockBackend = (): MemoryToolBackend => ({
     create:   mock(async () => ({})),
     get:      mock(async () => undefined),
     update:   mock(async () => ({})),
-    'delete': mock(async () => { /* intentionally empty */ }),
+    'delete': mock(async () => undefined),
     list:     mock(async () => ({ items: [], nextCursor: undefined })),
 }) as unknown as MemoryToolBackend;
 
@@ -67,9 +67,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         content:     'Event log',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-15T00:00:00.000Z',
-                        updatedAt:   '2025-01-15T00:00:00.000Z',
+
+                        createdAt: '2025-01-15T00:00:00.000Z',
+                        updatedAt: '2025-01-15T00:00:00.000Z',
                     },
                 ]);
 
@@ -94,9 +94,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             content:     'Core identity',
                             contentType: 'text/markdown' as ContentType,
                             metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                            createdAt: '2025-01-01T00:00:00.000Z',
+                            updatedAt: '2025-01-01T00:00:00.000Z',
                         },
                     ],
                     nextCursor: undefined,
@@ -365,18 +365,18 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         content:     'Core identity',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                     {
                         path:        '/state/current.md' as MemoryPath,
                         content:     'Current state',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                 ]);
 
@@ -400,9 +400,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         content:     undefined as unknown as string,
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                 ]);
 
@@ -420,18 +420,18 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         content:     'Core identity',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                     {
                         path:        '/state/current.md' as MemoryPath,
                         content:     'Current state',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                 ]);
 
@@ -451,9 +451,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         content:     'Core identity',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                 ]);
 
@@ -481,9 +481,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         content:     'Unknown layer',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                 ]);
 
@@ -501,9 +501,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         content:     'Unknown layer',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                 ]);
 
@@ -520,18 +520,18 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         content:     'Core identity',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                     {
                         path:        '/state/current.md' as MemoryPath,
                         content:     'Current state',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                 ]);
 
@@ -550,18 +550,18 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         content:     'Core identity',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                     {
                         path:        '/identity/secondary.md' as MemoryPath,
                         content:     'Secondary identity',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                 ]);
 
@@ -578,18 +578,18 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         content:     'Core identity',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                     {
                         path:        '/unknown.md' as MemoryPath,
                         content:     'Unknown',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                 ]);
 
@@ -610,9 +610,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         content:     'Core identity',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                 ]);
 
@@ -647,9 +647,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             content:     'Core identity',
                             contentType: 'text/markdown' as ContentType,
                             metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                            createdAt: '2025-01-01T00:00:00.000Z',
+                            updatedAt: '2025-01-01T00:00:00.000Z',
                         },
                     ],
                     nextCursor: undefined,
@@ -670,9 +670,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             content:     'Note',
                             contentType: 'text/markdown' as ContentType,
                             metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                            createdAt: '2025-01-01T00:00:00.000Z',
+                            updatedAt: '2025-01-01T00:00:00.000Z',
                         },
                     ],
                     nextCursor: undefined,
@@ -695,9 +695,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             content:     'Line 1\nLine 2\nLine 3',
                             contentType: 'text/markdown' as ContentType,
                             metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                            createdAt: '2025-01-01T00:00:00.000Z',
+                            updatedAt: '2025-01-01T00:00:00.000Z',
                         },
                     ],
                     nextCursor: undefined,
@@ -734,9 +734,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             content:     undefined as unknown as string,
                             contentType: 'text/markdown' as ContentType,
                             metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                            createdAt: '2025-01-01T00:00:00.000Z',
+                            updatedAt: '2025-01-01T00:00:00.000Z',
                         },
                     ],
                     nextCursor: undefined,
@@ -757,18 +757,18 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             content:     'Core identity',
                             contentType: 'text/markdown' as ContentType,
                             metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                            createdAt: '2025-01-01T00:00:00.000Z',
+                            updatedAt: '2025-01-01T00:00:00.000Z',
                         },
                         {
                             path:        '/identity/secondary.md' as MemoryPath,
                             content:     'Secondary',
                             contentType: 'text/markdown' as ContentType,
                             metadata:    {},
-                            version:     1,
-                            createdAt:   '2025-01-01T00:00:00.000Z',
-                            updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                            createdAt: '2025-01-01T00:00:00.000Z',
+                            updatedAt: '2025-01-01T00:00:00.000Z',
                         },
                     ],
                     nextCursor: undefined,
@@ -796,9 +796,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             content:     'Core identity',
                             contentType: 'text/markdown' as ContentType,
                             metadata:    {},
-                            version:     1,
-                            createdAt:   updatedAt,
-                            updatedAt:   updatedAt,
+
+                            createdAt: updatedAt,
+                            updatedAt: updatedAt,
                         },
                     ],
                     nextCursor: undefined,
@@ -824,9 +824,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             content:     'Line 1\nLine 2',
                             contentType: 'text/markdown' as ContentType,
                             metadata:    {},
-                            version:     1,
-                            createdAt:   updatedAt,
-                            updatedAt:   updatedAt,
+
+                            createdAt: updatedAt,
+                            updatedAt: updatedAt,
                         },
                     ],
                     nextCursor: undefined,
@@ -887,9 +887,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         content:     'Core identity',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                 ],
                 nextCursor: undefined,
@@ -914,9 +914,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                     content:     'Event log',
                     contentType: 'text/markdown' as ContentType,
                     metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-15T00:00:00.000Z',
-                    updatedAt:   '2025-01-15T00:00:00.000Z',
+
+                    createdAt: '2025-01-15T00:00:00.000Z',
+                    updatedAt: '2025-01-15T00:00:00.000Z',
                 },
             ]);
 
@@ -955,9 +955,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                     content:     longContent,
                     contentType: 'text/markdown' as ContentType,
                     metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-15T00:00:00.000Z',
-                    updatedAt:   '2025-01-15T00:00:00.000Z',
+
+                    createdAt: '2025-01-15T00:00:00.000Z',
+                    updatedAt: '2025-01-15T00:00:00.000Z',
                 },
             ]);
 
@@ -978,9 +978,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                     content:     shortContent,
                     contentType: 'text/markdown' as ContentType,
                     metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-15T00:00:00.000Z',
-                    updatedAt:   '2025-01-15T00:00:00.000Z',
+
+                    createdAt: '2025-01-15T00:00:00.000Z',
+                    updatedAt: '2025-01-15T00:00:00.000Z',
                 },
             ]);
 
@@ -999,9 +999,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                     content:     undefined as unknown as string,
                     contentType: 'text/markdown' as ContentType,
                     metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-15T00:00:00.000Z',
-                    updatedAt:   '2025-01-15T00:00:00.000Z',
+
+                    createdAt: '2025-01-15T00:00:00.000Z',
+                    updatedAt: '2025-01-15T00:00:00.000Z',
                 },
             ]);
 
@@ -1020,9 +1020,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                     contentPreview: 'Preview text from field',
                     contentType:    'text/markdown' as ContentType,
                     metadata:       {},
-                    version:        1,
-                    createdAt:      '2025-01-15T00:00:00.000Z',
-                    updatedAt:      '2025-01-15T00:00:00.000Z',
+
+                    createdAt: '2025-01-15T00:00:00.000Z',
+                    updatedAt: '2025-01-15T00:00:00.000Z',
                 },
             ]);
 
@@ -1041,18 +1041,18 @@ describe('Memory Tool Handlers - Search Operations', () => {
                     content:     'Log 1',
                     contentType: 'text/markdown' as ContentType,
                     metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-15T00:00:00.000Z',
-                    updatedAt:   '2025-01-15T00:00:00.000Z',
+
+                    createdAt: '2025-01-15T00:00:00.000Z',
+                    updatedAt: '2025-01-15T00:00:00.000Z',
                 },
                 {
                     path:        '/events/log2.md' as MemoryPath,
                     content:     'Log 2',
                     contentType: 'text/markdown' as ContentType,
                     metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-16T00:00:00.000Z',
-                    updatedAt:   '2025-01-16T00:00:00.000Z',
+
+                    createdAt: '2025-01-16T00:00:00.000Z',
+                    updatedAt: '2025-01-16T00:00:00.000Z',
                 },
             ]);
 

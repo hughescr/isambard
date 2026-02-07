@@ -1,5 +1,5 @@
 import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { map as _map, sortBy as _sortBy, takeRight as _takeRight } from 'lodash';
+import { map as _map, sortBy as _sortBy, takeRight as _takeRight, take as _take, chain as _chain } from 'lodash';
 import {
     type MemoryToolItemData,
     type MemoryToolItem,
@@ -80,10 +80,8 @@ export class MemoryToolBackendQuery {
         const queryParams: Record<string, unknown> = {
             KeyConditionExpression:    'PK = :pk',
             ExpressionAttributeValues: {
-                ':pk':            `DIR#${directoryPath}`,
-                ':versionPrefix': 'VERSION#',
+                ':pk': `DIR#${directoryPath}`,
             },
-            FilterExpression: 'NOT begins_with(SK, :versionPrefix)',
             ScanIndexForward: true, // Alphabetical order
         };
 
@@ -136,10 +134,8 @@ export class MemoryToolBackendQuery {
         const queryParams: Record<string, unknown> = {
             IndexName:                 'GSI1',
             ExpressionAttributeValues: {
-                ':pk':            `LAYER#${layer}`,
-                ':versionPrefix': 'VERSION#',
+                ':pk': `LAYER#${layer}`,
             },
-            FilterExpression: 'NOT begins_with(SK, :versionPrefix)',
             // Stryker disable next-line BooleanLiteral: Sort order is observational - both ascending/descending orderings are valid for layer listing
             ScanIndexForward: false, // Newest first (descending by GSI1SK)
         };
@@ -205,5 +201,43 @@ export class MemoryToolBackendQuery {
 
         return items;
         /* Stryker restore all */
+    }
+
+    async getAutoLoadItems(
+        options?: { maxIdentityItems?: number, maxStateItems?: number }
+    ): Promise<MemoryToolItemData[]> {
+        const maxIdentityItems = options?.maxIdentityItems ?? 100;
+        const maxStateItems = options?.maxStateItems ?? 50;
+
+        // Get identity items (all items from /identity layer)
+        const identityResult = await this.listByLayer('identity' as LayerName, { limit: maxIdentityItems });
+        const identityItems = _take(identityResult.items, maxIdentityItems);
+
+        // Get state items (all items from /state layer)
+        const stateResult = await this.listByLayer('state' as LayerName, { limit: maxStateItems });
+        let stateItems = stateResult.items;
+
+        // Filter for "hot" state items if metadata exists
+        // Sort by accessCount (descending), then by lastAccessed (most recent first)
+        const enrichedItems = _map(stateItems, item => ({
+            item,
+            // Stryker disable next-line LogicalOperator: ?? operator is correct, && would give wrong result
+            accessCount:  (item.metadata?.accessCount as number | undefined) ?? 0,
+            // Stryker disable next-line LogicalOperator: ?? operator is correct, && would give wrong result
+            lastAccessed: (item.metadata?.lastAccessed as string | undefined) ?? item.updatedAt,
+        }));
+
+        stateItems = _chain(enrichedItems)
+            .orderBy(
+                // Stryker disable next-line all: These string literals define sort fields and order
+                ['accessCount', 'lastAccessed'],
+                // Stryker disable next-line all: These string literals define sort order (descending)
+                ['desc', 'desc']
+            )
+            .take(maxStateItems)
+            .map(({ item }) => item)
+            .value();
+
+        return [...identityItems, ...stateItems];
     }
 }

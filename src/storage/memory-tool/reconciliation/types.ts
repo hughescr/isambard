@@ -72,7 +72,7 @@ export type ReconciliationConfig = z.infer<typeof reconciliationConfigSchema>;
  * Phase identifier for reconciliation job
  */
 /* Stryker disable StringLiteral: Enum values are configuration */
-export const reconciliationPhaseSchema = z.enum(['phaseA', 'phaseB']);
+export const reconciliationPhaseSchema = z.enum(['phaseA', 'phaseB', 'phaseC']);
 /* Stryker restore StringLiteral */
 
 export type ReconciliationPhase = z.infer<typeof reconciliationPhaseSchema>;
@@ -113,6 +113,12 @@ export const reconciliationProgressSchema = z.object({
     indexItemsDeleted:   z.number().int().nonnegative(),
     /** Number of memory items with previouslyKnownAs metadata cleaned */
     metadataCleaned:     z.number().int().nonnegative(),
+    /** Number of META_COUNT items verified (Phase C only) */
+    countsVerified:      z.number().int().nonnegative().optional(),
+    /** Number of META_COUNT items corrected (Phase C only) */
+    countsCorrected:     z.number().int().nonnegative().optional(),
+    /** Number of META_COUNT items deleted (Phase C only) */
+    countsDeleted:       z.number().int().nonnegative().optional(),
     /** Number of errors encountered */
     errors:              z.number().int().nonnegative(),
     /** When this phase started */
@@ -133,7 +139,9 @@ export const reconciliationResultSchema = z.object({
     phaseA:          reconciliationProgressSchema,
     /** Progress for Phase B (scan tag index) */
     phaseB:          reconciliationProgressSchema,
-    /** Total duration of both phases in milliseconds */
+    /** Progress for Phase C (verify META_COUNT items) */
+    phaseC:          reconciliationProgressSchema,
+    /** Total duration of all phases in milliseconds */
     totalDurationMs: z.number().int().nonnegative(),
 });
 

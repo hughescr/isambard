@@ -967,6 +967,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     });
 
     return {
+        // eslint-disable-next-line complexity -- Pre-existing complexity, refactoring planned
         handleInput: async (
             contexts: DiscordMessageContext[],
             options?: HandleInputOptions

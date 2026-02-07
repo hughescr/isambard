@@ -107,15 +107,13 @@ Custom memory tool implementation with DynamoDB backend and three-layer architec
   - `types.ts` - Zod schemas (MemoryPath, LayerName, MemoryToolItem), branded types
   - `errors.ts` - MemoryToolError hierarchy
   - `key-generator.ts` - DynamoDB key structure (PK/SK/GSI1), tag index keys, content preview
-  - `layer-config.ts` - Layer configuration (identity/state/events with TTL and versioning)
+  - `layer-config.ts` - Layer configuration (identity/state/events with TTL and autoLoad)
   - `backend.ts` - Main backend facade
-  - `backend-core.ts` - Core CRUD operations
-  - `backend-query.ts` - Query operations (list, searchByTags, listByLayer, searchByTimeRange)
-  - `backend-tag-registry.ts` - Tag registry management for searchable tags
-  - `backend-tag-index.ts` - Tag index CRUD operations with retry logic
-  - `backend-versions.ts` - Version history management
-  - `handlers.ts` - All memory tool handlers (view, create, delete_memory, insert, str_replace, rename, search, recall, list_by_layer, consolidate)
-  - `reconciliation/` - Tag index reconciliation (reconciler, scheduler, types, errors)
+  - `backend-core.ts` - Core CRUD operations (single update method, no versioning)
+  - `backend-query.ts` - Query operations (list, searchByTags, listByLayer, searchByTimeRange, getAutoLoadItems)
+  - `backend-tag-index.ts` - Tag index CRUD with BatchWriteItem, META_COUNT atomic counters, and listTagCounts
+  - `handlers.ts` - All memory tool handlers (view, create, insert, str_replace, rename, search, recall, list_by_layer, consolidate)
+  - `reconciliation/` - Tag index reconciliation with three phases: completeness (A), orphan cleanup (B), count verification (C)
   - `index.ts` - Public exports
 
 ### Storage Subsystem
@@ -162,6 +160,7 @@ Zod-validated configuration loading with env-var for type-safe environment varia
 - **Error Classification** for intelligent retry decisions
 - **Module Boundary Enforcement** with eslint-plugin-boundaries for architectural import rules
 - **@internal JSDoc Tags** for marking implementation-only exports
+- **Per-Tag Atomic Counters** replacing centralized tag registry for race-condition-free tag counting
 
 ## Roadmaps
 - [Short-term (Weeks 1-2)](../roadmaps/short-term.md)

@@ -52,7 +52,6 @@ export { MemoryToolBackendTagIndex } from './backend-tag-index';
 export {
     create,
     view,
-    delete_memory,
     insert,
     str_replace,
     rename,
@@ -69,17 +68,6 @@ export {
     getLayerConfig,
     type LayerConfig
 } from './layer-config';
-
-// Tag Registry
-export {
-    TAG_REGISTRY_PATH,
-    parseTagRegistry,
-    computeTagChanges,
-    updateTagRegistry,
-    decrementTagRegistry,
-    type TagRegistry,
-    type TagRegistryCallbacks
-} from './backend-tag-registry';
 
 // Reconciliation
 export {

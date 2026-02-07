@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
-import { DynamoDBDocumentClient, PutCommand, DeleteCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, DeleteCommand, QueryCommand, UpdateCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { find as _find, map as _map } from 'lodash';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import type { MemoryPath, TagIndexItem } from '@/storage/memory-tool/types';
 
@@ -30,19 +31,22 @@ describe('MemoryToolBackendTagIndex', () => {
     });
 
     describe('createTagIndexItems', () => {
-        test('should create PutCommand for each tag', async () => {
+        test('should use BatchWriteCommand instead of individual PutCommands', async () => {
             const path = '/identity/values.md' as MemoryPath;
             const tags = ['important', 'core'];
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
             const layer = 'identity';
 
-            ddbMock.on(PutCommand).resolves({});
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({});
 
             await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
 
-            const calls = ddbMock.commandCalls(PutCommand);
-            expect(calls).toHaveLength(2);
+            const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
+            expect(batchCalls).toHaveLength(1);
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls).toHaveLength(0);
         });
 
         test('should create items with correct structure', async () => {
@@ -52,14 +56,16 @@ describe('MemoryToolBackendTagIndex', () => {
             const contentPreview = 'My core values';
             const layer = 'identity';
 
-            ddbMock.on(PutCommand).resolves({});
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({});
 
             await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
 
-            const calls = ddbMock.commandCalls(PutCommand);
+            const calls = ddbMock.commandCalls(BatchWriteCommand);
             expect(calls).toHaveLength(1);
-            const putInput = calls[0].args[0].input;
-            expect(putInput.Item).toEqual({
+            const requestItems = calls[0].args[0].input.RequestItems?.TestTable;
+            expect(requestItems).toHaveLength(1);
+            expect(requestItems?.[0].PutRequest?.Item).toEqual({
                 PK:             'TAG#important',
                 SK:             'PATH#/identity/values.md',
                 memoryPath:     path,
@@ -70,6 +76,128 @@ describe('MemoryToolBackendTagIndex', () => {
             });
         });
 
+        test('should split into batches of 25', async () => {
+            const path = '/identity/values.md' as MemoryPath;
+            const tags = Array.from({ length: 30 }, (_, i) => `tag${i}`);
+            const updatedAt = '2024-01-01T00:00:00.000Z';
+            const contentPreview = 'My core values';
+            const layer = 'identity';
+
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({});
+
+            await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+
+            const calls = ddbMock.commandCalls(BatchWriteCommand);
+            // 30 tags = 2 batches (25 + 5)
+            expect(calls).toHaveLength(2);
+            expect(calls[0].args[0].input.RequestItems?.TestTable).toHaveLength(25);
+            expect(calls[1].args[0].input.RequestItems?.TestTable).toHaveLength(5);
+        });
+
+        test('should handle UnprocessedItems retry', async () => {
+            const path = '/identity/values.md' as MemoryPath;
+            const tags = ['important', 'core'];
+            const updatedAt = '2024-01-01T00:00:00.000Z';
+            const contentPreview = 'My core values';
+            const layer = 'identity';
+
+            const unprocessedItem = {
+                PutRequest: {
+                    Item: {
+                        PK:             'TAG#core',
+                        SK:             'PATH#/identity/values.md',
+                        memoryPath:     path,
+                        layer:          layer,
+                        updatedAt:      updatedAt,
+                        tags:           tags,
+                        contentPreview: contentPreview,
+                    },
+                },
+            };
+
+            ddbMock.on(BatchWriteCommand)
+                .resolvesOnce({
+                    UnprocessedItems: {
+                        TestTable: [unprocessedItem],
+                    },
+                })
+                .resolvesOnce({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({});
+
+            await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+
+            const calls = ddbMock.commandCalls(BatchWriteCommand);
+            expect(calls.length).toBeGreaterThan(1);
+        });
+
+        test('should call incrementTagCounts after batch write', async () => {
+            const path = '/identity/values.md' as MemoryPath;
+            const tags = ['important', 'core'];
+            const updatedAt = '2024-01-01T00:00:00.000Z';
+            const contentPreview = 'My core values';
+            const layer = 'identity';
+
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({});
+
+            await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+
+            const updateCalls = ddbMock.commandCalls(UpdateCommand);
+            expect(updateCalls).toHaveLength(2); // One per tag for incrementTagCounts
+        });
+
+        test('should only increment counts for tags that succeeded when some batch writes fail', async () => {
+            const path = '/identity/values.md' as MemoryPath;
+            const tags = ['important', 'core', 'failed'];
+            const updatedAt = '2024-01-01T00:00:00.000Z';
+            const contentPreview = 'My core values';
+            const layer = 'identity';
+
+            // Simulate partial failure - 'failed' tag item remains unprocessed after retries
+            const unprocessedItem = {
+                PutRequest: {
+                    Item: {
+                        PK:             'TAG#failed',
+                        SK:             'PATH#/identity/values.md',
+                        memoryPath:     path,
+                        layer:          layer,
+                        updatedAt:      updatedAt,
+                        tags:           tags,
+                        contentPreview: contentPreview,
+                    },
+                },
+            };
+
+            ddbMock.on(BatchWriteCommand)
+                .resolvesOnce({
+                    UnprocessedItems: {
+                        TestTable: [unprocessedItem],
+                    },
+                })
+                .resolvesOnce({
+                    UnprocessedItems: {
+                        TestTable: [unprocessedItem],
+                    },
+                })
+                .resolvesOnce({
+                    UnprocessedItems: {
+                        TestTable: [unprocessedItem],
+                    },
+                });
+            ddbMock.on(UpdateCommand).resolves({});
+
+            await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+
+            const updateCalls = ddbMock.commandCalls(UpdateCommand);
+            // Should only increment for 'important' and 'core', NOT 'failed'
+            expect(updateCalls).toHaveLength(2);
+            const incrementedTags = _map(updateCalls, call => call.args[0].input.Key?.PK as string);
+            expect(incrementedTags).toContain('TAG#important');
+            expect(incrementedTags).toContain('TAG#core');
+            expect(incrementedTags).not.toContain('TAG#failed');
+        });
+
         test('should return immediately for empty tags', async () => {
             const path = '/identity/values.md' as MemoryPath;
             const tags: string[] = [];
@@ -79,72 +207,110 @@ describe('MemoryToolBackendTagIndex', () => {
 
             await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
 
-            const calls = ddbMock.commandCalls(PutCommand);
-            expect(calls).toHaveLength(0);
-        });
-
-        test('should retry on failure and eventually succeed', async () => {
-            const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important'];
-            const updatedAt = '2024-01-01T00:00:00.000Z';
-            const contentPreview = 'My core values';
-            const layer = 'identity';
-
-            ddbMock.on(PutCommand)
-                .rejectsOnce(new Error('Network error'))
-                .resolvesOnce({});
-
-            await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
-
-            const calls = ddbMock.commandCalls(PutCommand);
-            expect(calls.length).toBeGreaterThan(1);
-        });
-
-        test('should log warning after all retries exhausted', async () => {
-            const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important'];
-            const updatedAt = '2024-01-01T00:00:00.000Z';
-            const contentPreview = 'My core values';
-            const layer = 'identity';
-
-            ddbMock.on(PutCommand).rejects(new Error('Persistent error'));
-
-            // Should not throw despite persistent failure
-            await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
-
-            const calls = ddbMock.commandCalls(PutCommand);
-            expect(calls).toHaveLength(3); // MAX_RETRIES
+            const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
+            expect(batchCalls).toHaveLength(0);
+            const updateCalls = ddbMock.commandCalls(UpdateCommand);
+            expect(updateCalls).toHaveLength(0);
         });
     });
 
     describe('deleteTagIndexItems', () => {
-        test('should create DeleteCommand for each tag', async () => {
+        test('should use BatchWriteCommand instead of individual DeleteCommands', async () => {
             const path = '/identity/values.md' as MemoryPath;
             const tags = ['important', 'core'];
 
-            ddbMock.on(DeleteCommand).resolves({});
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({
+                Attributes: { count: 5 },
+            });
 
             await backend.deleteTagIndexItems(path, tags);
 
-            const calls = ddbMock.commandCalls(DeleteCommand);
-            expect(calls).toHaveLength(2);
+            const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
+            expect(batchCalls).toHaveLength(1);
+            const deleteCalls = ddbMock.commandCalls(DeleteCommand);
+            expect(deleteCalls).toHaveLength(0);
         });
 
         test('should delete with correct PK and SK', async () => {
             const path = '/identity/values.md' as MemoryPath;
             const tags = ['important'];
 
-            ddbMock.on(DeleteCommand).resolves({});
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({
+                Attributes: { count: 5 },
+            });
 
             await backend.deleteTagIndexItems(path, tags);
 
-            const calls = ddbMock.commandCalls(DeleteCommand);
+            const calls = ddbMock.commandCalls(BatchWriteCommand);
             expect(calls).toHaveLength(1);
-            const deleteInput = calls[0].args[0].input;
-            expect(deleteInput.Key).toEqual({
+            const requestItems = calls[0].args[0].input.RequestItems?.TestTable;
+            expect(requestItems).toHaveLength(1);
+            expect(requestItems?.[0].DeleteRequest?.Key).toEqual({
                 PK: 'TAG#important',
                 SK: 'PATH#/identity/values.md',
             });
+        });
+
+        test('should call decrementTagCounts after batch write', async () => {
+            const path = '/identity/values.md' as MemoryPath;
+            const tags = ['important', 'core'];
+
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({
+                Attributes: { count: 5 },
+            });
+
+            await backend.deleteTagIndexItems(path, tags);
+
+            const updateCalls = ddbMock.commandCalls(UpdateCommand);
+            expect(updateCalls).toHaveLength(2); // One per tag for decrementTagCounts
+        });
+
+        test('should only decrement counts for tags that succeeded when some batch writes fail', async () => {
+            const path = '/identity/values.md' as MemoryPath;
+            const tags = ['important', 'core', 'failed'];
+
+            // Simulate partial failure - 'failed' tag delete remains unprocessed after retries
+            const unprocessedItem = {
+                DeleteRequest: {
+                    Key: {
+                        PK: 'TAG#failed',
+                        SK: 'PATH#/identity/values.md',
+                    },
+                },
+            };
+
+            ddbMock.on(BatchWriteCommand)
+                .resolvesOnce({
+                    UnprocessedItems: {
+                        TestTable: [unprocessedItem],
+                    },
+                })
+                .resolvesOnce({
+                    UnprocessedItems: {
+                        TestTable: [unprocessedItem],
+                    },
+                })
+                .resolvesOnce({
+                    UnprocessedItems: {
+                        TestTable: [unprocessedItem],
+                    },
+                });
+            ddbMock.on(UpdateCommand).resolves({
+                Attributes: { count: 5 },
+            });
+
+            await backend.deleteTagIndexItems(path, tags);
+
+            const updateCalls = ddbMock.commandCalls(UpdateCommand);
+            // Should only decrement for 'important' and 'core', NOT 'failed'
+            expect(updateCalls).toHaveLength(2);
+            const decrementedTags = _map(updateCalls, call => call.args[0].input.Key?.PK as string);
+            expect(decrementedTags).toContain('TAG#important');
+            expect(decrementedTags).toContain('TAG#core');
+            expect(decrementedTags).not.toContain('TAG#failed');
         });
 
         test('should return immediately for empty tags', async () => {
@@ -153,22 +319,10 @@ describe('MemoryToolBackendTagIndex', () => {
 
             await backend.deleteTagIndexItems(path, tags);
 
-            const calls = ddbMock.commandCalls(DeleteCommand);
-            expect(calls).toHaveLength(0);
-        });
-
-        test('should retry on failure', async () => {
-            const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important'];
-
-            ddbMock.on(DeleteCommand)
-                .rejectsOnce(new Error('Network error'))
-                .resolvesOnce({});
-
-            await backend.deleteTagIndexItems(path, tags);
-
-            const calls = ddbMock.commandCalls(DeleteCommand);
-            expect(calls.length).toBeGreaterThan(1);
+            const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
+            expect(batchCalls).toHaveLength(0);
+            const updateCalls = ddbMock.commandCalls(UpdateCommand);
+            expect(updateCalls).toHaveLength(0);
         });
     });
 
@@ -181,13 +335,14 @@ describe('MemoryToolBackendTagIndex', () => {
             const contentPreview = 'My core values';
             const layer = 'identity';
 
-            ddbMock.on(PutCommand).resolves({});
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({});
 
             await backend.updateTagIndexItems(path, oldTags, newTags, updatedAt, contentPreview, layer);
 
-            const putCalls = ddbMock.commandCalls(PutCommand);
-            // Should create 1 for 'core' (new) and refresh 1 for 'important' (unchanged)
-            expect(putCalls).toHaveLength(2);
+            const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
+            // Should have 2 batch writes: 1 for added tags, 1 for refreshing unchanged tags
+            expect(batchCalls).toHaveLength(2);
         });
 
         test('should delete items for removed tags', async () => {
@@ -198,14 +353,24 @@ describe('MemoryToolBackendTagIndex', () => {
             const contentPreview = 'My core values';
             const layer = 'identity';
 
-            ddbMock.on(PutCommand).resolves({});
-            ddbMock.on(DeleteCommand).resolves({});
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({
+                Attributes: { count: 5 },
+            });
 
             await backend.updateTagIndexItems(path, oldTags, newTags, updatedAt, contentPreview, layer);
 
-            const deleteCalls = ddbMock.commandCalls(DeleteCommand);
-            expect(deleteCalls).toHaveLength(1);
-            expect(deleteCalls[0].args[0].input.Key?.PK).toBe('TAG#old');
+            const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
+            // Should have 2 batch writes: 1 for deletes, 1 for refreshing unchanged tags
+            expect(batchCalls).toHaveLength(2);
+            // Find the batch call containing DeleteRequest
+
+            const deleteRequests = _find(batchCalls, call =>
+                call.args[0].input.RequestItems?.TestTable?.[0]?.DeleteRequest
+            );
+            expect(deleteRequests).toBeDefined();
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access,@typescript-eslint/no-explicit-any -- Mock command call structure
+            expect((deleteRequests as any).args[0].input.RequestItems?.TestTable?.[0]?.DeleteRequest?.Key?.PK).toBe('TAG#old');
         });
 
         test('should refresh unchanged tags with current data', async () => {
@@ -216,14 +381,15 @@ describe('MemoryToolBackendTagIndex', () => {
             const contentPreview = 'Updated values';
             const layer = 'identity';
 
-            ddbMock.on(PutCommand).resolves({});
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
 
             await backend.updateTagIndexItems(path, oldTags, newTags, updatedAt, contentPreview, layer);
 
-            const putCalls = ddbMock.commandCalls(PutCommand);
-            expect(putCalls).toHaveLength(1);
-            expect(putCalls[0].args[0].input.Item?.updatedAt).toBe(updatedAt);
-            expect(putCalls[0].args[0].input.Item?.contentPreview).toBe(contentPreview);
+            const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
+            expect(batchCalls).toHaveLength(1);
+            const item = batchCalls[0].args[0].input.RequestItems?.TestTable?.[0]?.PutRequest?.Item;
+            expect(item?.updatedAt).toBe(updatedAt);
+            expect(item?.contentPreview).toBe(contentPreview);
         });
 
         test('should be no-op when tags unchanged', async () => {
@@ -234,15 +400,15 @@ describe('MemoryToolBackendTagIndex', () => {
             const contentPreview = 'My core values';
             const layer = 'identity';
 
-            ddbMock.on(PutCommand).resolves({});
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
 
             await backend.updateTagIndexItems(path, oldTags, newTags, updatedAt, contentPreview, layer);
 
             // Should refresh both tags
-            const putCalls = ddbMock.commandCalls(PutCommand);
-            expect(putCalls).toHaveLength(2);
-            const deleteCalls = ddbMock.commandCalls(DeleteCommand);
-            expect(deleteCalls).toHaveLength(0);
+            const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
+            expect(batchCalls).toHaveLength(1); // Only refresh batch, no create or delete
+            const requestItems = batchCalls[0].args[0].input.RequestItems?.TestTable;
+            expect(requestItems).toHaveLength(2); // Both tags refreshed
         });
 
         test('should handle all-new tags', async () => {
@@ -253,14 +419,15 @@ describe('MemoryToolBackendTagIndex', () => {
             const contentPreview = 'My core values';
             const layer = 'identity';
 
-            ddbMock.on(PutCommand).resolves({});
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({});
 
             await backend.updateTagIndexItems(path, oldTags, newTags, updatedAt, contentPreview, layer);
 
-            const putCalls = ddbMock.commandCalls(PutCommand);
-            expect(putCalls).toHaveLength(2);
-            const deleteCalls = ddbMock.commandCalls(DeleteCommand);
-            expect(deleteCalls).toHaveLength(0);
+            const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
+            expect(batchCalls).toHaveLength(1); // Only create batch
+            const requestItems = batchCalls[0].args[0].input.RequestItems?.TestTable;
+            expect(requestItems).toHaveLength(2);
         });
 
         test('should handle all-removed tags', async () => {
@@ -271,26 +438,50 @@ describe('MemoryToolBackendTagIndex', () => {
             const contentPreview = 'My core values';
             const layer = 'identity';
 
-            ddbMock.on(DeleteCommand).resolves({});
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({
+                Attributes: { count: 5 },
+            });
 
             await backend.updateTagIndexItems(path, oldTags, newTags, updatedAt, contentPreview, layer);
 
-            const deleteCalls = ddbMock.commandCalls(DeleteCommand);
-            expect(deleteCalls).toHaveLength(2);
-            const putCalls = ddbMock.commandCalls(PutCommand);
-            expect(putCalls).toHaveLength(0);
+            const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
+            expect(batchCalls).toHaveLength(1); // Only delete batch
+            const requestItems = batchCalls[0].args[0].input.RequestItems?.TestTable;
+            expect(requestItems).toHaveLength(2);
+        });
+
+        test('should NOT increment counts for unchanged tags', async () => {
+            const path = '/identity/values.md' as MemoryPath;
+            const oldTags = ['important', 'core'];
+            const newTags = ['important', 'core', 'new'];
+            const updatedAt = '2024-01-01T00:00:00.000Z';
+            const contentPreview = 'My core values';
+            const layer = 'identity';
+
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({});
+
+            await backend.updateTagIndexItems(path, oldTags, newTags, updatedAt, contentPreview, layer);
+
+            const updateCalls = ddbMock.commandCalls(UpdateCommand);
+            // Should only increment for 'new' tag (1 call), not for unchanged tags
+            expect(updateCalls).toHaveLength(1);
+            expect(updateCalls[0].args[0].input.Key?.PK).toBe('TAG#new');
         });
     });
 
     describe('queryByTag', () => {
-        test('should query correct PK', async () => {
+        test('should query correct PK and SK prefix to exclude META_COUNT', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.queryByTag('important');
 
             const calls = ddbMock.commandCalls(QueryCommand);
             expect(calls).toHaveLength(1);
+            expect(calls[0].args[0].input.KeyConditionExpression).toBe('PK = :pk AND begins_with(SK, :skPrefix)');
             expect(calls[0].args[0].input.ExpressionAttributeValues?.[':pk']).toBe('TAG#important');
+            expect(calls[0].args[0].input.ExpressionAttributeValues?.[':skPrefix']).toBe('PATH#');
         });
 
         test('should return items from query', async () => {
@@ -409,6 +600,7 @@ describe('MemoryToolBackendTagIndex', () => {
             expect(calls[0].args[0].input.ExpressionAttributeValues?.[':startDate']).toBe('2024-01-01T00:00:00.000Z');
             expect(calls[0].args[0].input.ExpressionAttributeValues?.[':endDate']).toBe('2024-01-31T23:59:59.999Z');
             expect(calls[0].args[0].input.ExpressionAttributeValues?.[':pk']).toBe('TAG#important');
+            expect(calls[0].args[0].input.ExpressionAttributeValues?.[':skPrefix']).toBe('PATH#');
         });
 
         test('should return nextCursor when more results available', async () => {
@@ -635,6 +827,326 @@ describe('MemoryToolBackendTagIndex', () => {
             // Should treat as single-tag query and return the item
             expect(result.items).toHaveLength(1);
             expect(result.items[0].memoryPath).toBe('/identity/file1.md');
+        });
+    });
+
+    describe('incrementTagCounts', () => {
+        test('should send UpdateCommand for each tag', async () => {
+            const tags = ['important', 'core'];
+
+            ddbMock.on(UpdateCommand).resolves({});
+
+            await backend.incrementTagCounts(tags);
+
+            const calls = ddbMock.commandCalls(UpdateCommand);
+            expect(calls).toHaveLength(2);
+        });
+
+        test('should set correct PK/SK/GSI2PK/GSI2SK', async () => {
+            const tags = ['important'];
+
+            ddbMock.on(UpdateCommand).resolves({});
+
+            await backend.incrementTagCounts(tags);
+
+            const calls = ddbMock.commandCalls(UpdateCommand);
+            expect(calls).toHaveLength(1);
+            const updateInput = calls[0].args[0].input;
+            expect(updateInput.Key).toEqual({
+                PK: 'TAG#important',
+                SK: 'META_COUNT',
+            });
+            expect(updateInput.UpdateExpression).toContain('GSI2PK');
+            expect(updateInput.UpdateExpression).toContain('GSI2SK');
+            expect(updateInput.ExpressionAttributeValues?.[':gsi2pk']).toBe('TAG_COUNTS');
+            expect(updateInput.ExpressionAttributeValues?.[':gsi2sk']).toBe('TAG#important');
+        });
+
+        test('should use atomic increment expression with if_not_exists', async () => {
+            const tags = ['important'];
+
+            ddbMock.on(UpdateCommand).resolves({});
+
+            await backend.incrementTagCounts(tags);
+
+            const calls = ddbMock.commandCalls(UpdateCommand);
+            expect(calls).toHaveLength(1);
+            const updateInput = calls[0].args[0].input;
+            expect(updateInput.UpdateExpression).toContain('if_not_exists');
+            expect(updateInput.ExpressionAttributeValues?.[':zero']).toBe(0);
+            expect(updateInput.ExpressionAttributeValues?.[':one']).toBe(1);
+        });
+
+        test('should return immediately for empty tags', async () => {
+            const tags: string[] = [];
+
+            await backend.incrementTagCounts(tags);
+
+            const calls = ddbMock.commandCalls(UpdateCommand);
+            expect(calls).toHaveLength(0);
+        });
+
+        test('should retry on failure', async () => {
+            const tags = ['important'];
+
+            ddbMock.on(UpdateCommand)
+                .rejectsOnce(new Error('Network error'))
+                .resolvesOnce({});
+
+            await backend.incrementTagCounts(tags);
+
+            const calls = ddbMock.commandCalls(UpdateCommand);
+            expect(calls.length).toBeGreaterThan(1);
+        });
+    });
+
+    describe('decrementTagCounts', () => {
+        test('should send UpdateCommand for each tag', async () => {
+            const tags = ['important', 'core'];
+
+            ddbMock.on(UpdateCommand).resolves({
+                Attributes: { count: 5 },
+            });
+
+            await backend.decrementTagCounts(tags);
+
+            const calls = ddbMock.commandCalls(UpdateCommand);
+            expect(calls).toHaveLength(2);
+        });
+
+        test('should delete META_COUNT item when count reaches 0', async () => {
+            const tags = ['important'];
+
+            ddbMock.on(UpdateCommand).resolves({
+                Attributes: { count: 0 },
+            });
+            ddbMock.on(DeleteCommand).resolves({});
+
+            await backend.decrementTagCounts(tags);
+
+            const updateCalls = ddbMock.commandCalls(UpdateCommand);
+            expect(updateCalls).toHaveLength(1);
+
+            const deleteCalls = ddbMock.commandCalls(DeleteCommand);
+            expect(deleteCalls).toHaveLength(1);
+            expect(deleteCalls[0].args[0].input.Key).toEqual({
+                PK: 'TAG#important',
+                SK: 'META_COUNT',
+            });
+        });
+
+        test('should delete META_COUNT item when count goes negative', async () => {
+            const tags = ['important'];
+
+            ddbMock.on(UpdateCommand).resolves({
+                Attributes: { count: -1 },
+            });
+            ddbMock.on(DeleteCommand).resolves({});
+
+            await backend.decrementTagCounts(tags);
+
+            const deleteCalls = ddbMock.commandCalls(DeleteCommand);
+            expect(deleteCalls).toHaveLength(1);
+        });
+
+        test('should not delete when count is still positive', async () => {
+            const tags = ['important'];
+
+            ddbMock.on(UpdateCommand).resolves({
+                Attributes: { count: 3 },
+            });
+
+            await backend.decrementTagCounts(tags);
+
+            const deleteCalls = ddbMock.commandCalls(DeleteCommand);
+            expect(deleteCalls).toHaveLength(0);
+        });
+
+        test('should return immediately for empty tags', async () => {
+            const tags: string[] = [];
+
+            await backend.decrementTagCounts(tags);
+
+            const calls = ddbMock.commandCalls(UpdateCommand);
+            expect(calls).toHaveLength(0);
+        });
+
+        test('should retry on failure', async () => {
+            const tags = ['important'];
+
+            ddbMock.on(UpdateCommand)
+                .rejectsOnce(new Error('Network error'))
+                .resolvesOnce({
+                    Attributes: { count: 5 },
+                });
+
+            await backend.decrementTagCounts(tags);
+
+            const calls = ddbMock.commandCalls(UpdateCommand);
+            expect(calls.length).toBeGreaterThan(1);
+        });
+
+        test('should use ConditionExpression on DeleteCommand when count reaches 0', async () => {
+            const tags = ['important'];
+
+            ddbMock.on(UpdateCommand).resolves({
+                Attributes: { count: 0 },
+            });
+            ddbMock.on(DeleteCommand).resolves({});
+
+            await backend.decrementTagCounts(tags);
+
+            const deleteCalls = ddbMock.commandCalls(DeleteCommand);
+            expect(deleteCalls).toHaveLength(1);
+            const deleteInput = deleteCalls[0].args[0].input;
+            expect(deleteInput.ConditionExpression).toBeDefined();
+            expect(deleteInput.ConditionExpression).toContain('count');
+            expect(deleteInput.ConditionExpression).toContain('<=');
+            expect(deleteInput.ExpressionAttributeNames).toBeDefined();
+            expect(deleteInput.ExpressionAttributeValues).toBeDefined();
+        });
+
+        test('should silently ignore ConditionalCheckFailedException on delete', async () => {
+            const tags = ['important'];
+
+            ddbMock.on(UpdateCommand).resolves({
+                Attributes: { count: 0 },
+            });
+
+            // Simulate concurrent increment - condition fails on delete
+            const conditionalCheckError = new Error('ConditionalCheckFailedException');
+            conditionalCheckError.name = 'ConditionalCheckFailedException';
+            ddbMock.on(DeleteCommand).rejects(conditionalCheckError);
+
+            // Should not throw
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun test expect().resolves requires await
+            await expect(backend.decrementTagCounts(tags)).resolves.toBeUndefined();
+        });
+    });
+
+    describe('refreshTagIndexItems', () => {
+        test('should be publicly accessible', async () => {
+            const path = '/identity/values.md' as MemoryPath;
+            const tags = ['important'];
+            const updatedAt = '2024-01-01T00:00:00.000Z';
+            const contentPreview = 'My values';
+            const layer = 'identity';
+
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+
+            await backend.refreshTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+
+            const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
+            expect(batchCalls).toHaveLength(1);
+        });
+
+        test('should NOT call incrementTagCounts or decrementTagCounts', async () => {
+            const path = '/identity/values.md' as MemoryPath;
+            const tags = ['important', 'core'];
+            const updatedAt = '2024-01-01T00:00:00.000Z';
+            const contentPreview = 'My values';
+            const layer = 'identity';
+
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+
+            await backend.refreshTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+
+            // Should only have BatchWriteCommand, NO UpdateCommand for counters
+            const updateCalls = ddbMock.commandCalls(UpdateCommand);
+            expect(updateCalls).toHaveLength(0);
+        });
+
+        test('should write tag index items with correct structure', async () => {
+            const path = '/identity/values.md' as MemoryPath;
+            const tags = ['important'];
+            const updatedAt = '2024-01-01T00:00:00.000Z';
+            const contentPreview = 'My values';
+            const layer = 'identity';
+
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+
+            await backend.refreshTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+
+            const calls = ddbMock.commandCalls(BatchWriteCommand);
+            const item = calls[0].args[0].input.RequestItems?.TestTable?.[0]?.PutRequest?.Item;
+            expect(item).toEqual({
+                PK:         'TAG#important',
+                SK:         'PATH#/identity/values.md',
+                memoryPath: path,
+                layer,
+                updatedAt,
+                tags,
+                contentPreview,
+            });
+        });
+    });
+
+    describe('listTagCounts', () => {
+        test('should query GSI2 with correct key', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await backend.listTagCounts();
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls).toHaveLength(1);
+            expect(calls[0].args[0].input.IndexName).toBe('GSI2');
+            expect(calls[0].args[0].input.ExpressionAttributeValues?.[':gsi2pk']).toBe('TAG_COUNTS');
+        });
+
+        test('should parse tag from GSI2SK and read count', async () => {
+            const items = [
+                { GSI2SK: 'TAG#important', count: 5 },
+                { GSI2SK: 'TAG#core', count: 3 },
+            ];
+            ddbMock.on(QueryCommand).resolves({ Items: items });
+
+            const result = await backend.listTagCounts();
+
+            expect(result).toHaveLength(2);
+            expect(result).toEqual([
+                { tag: 'core', count: 3 },
+                { tag: 'important', count: 5 },
+            ]);
+        });
+
+        test('should handle pagination', async () => {
+            const page1 = [
+                { GSI2SK: 'TAG#tag1', count: 10 },
+            ];
+            const page2 = [
+                { GSI2SK: 'TAG#tag2', count: 20 },
+            ];
+
+            ddbMock.on(QueryCommand)
+                .resolvesOnce({
+                    Items:            page1,
+                    LastEvaluatedKey: { GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#tag1' },
+                })
+                .resolvesOnce({ Items: page2 });
+
+            const result = await backend.listTagCounts();
+
+            expect(result).toHaveLength(2);
+            expect(result).toEqual([
+                { tag: 'tag1', count: 10 },
+                { tag: 'tag2', count: 20 },
+            ]);
+        });
+
+        test('should return empty array when no tags', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            const result = await backend.listTagCounts();
+
+            expect(result).toEqual([]);
+        });
+
+        test('should handle missing Items in response', async () => {
+            ddbMock.on(QueryCommand).resolves({});
+
+            const result = await backend.listTagCounts();
+
+            expect(result).toEqual([]);
         });
     });
 });

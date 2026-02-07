@@ -199,7 +199,7 @@ describe.concurrent('reconciliationStateSchema', () => {
     test('should reject invalid phase name', () => {
         const result = reconciliationStateSchema.safeParse({
             isRunning:    true,
-            currentPhase: 'phaseC',
+            currentPhase: 'phaseD',
         });
         expect(result.success).toBe(false);
     });
@@ -305,7 +305,7 @@ describe.concurrent('reconciliationProgressSchema', () => {
 
     test('should reject invalid phase', () => {
         const result = reconciliationProgressSchema.safeParse({
-            phase:               'phaseC',
+            phase:               'phaseD',
             itemsScanned:        10,
             indexItemsCreated:   1,
             indexItemsRefreshed: 0,
@@ -358,7 +358,21 @@ describe.concurrent('reconciliationResultSchema', () => {
                 startTime:           new Date('2024-01-01T00:30:00Z'),
                 endTime:             new Date('2024-01-01T01:00:00Z'),
             },
-            totalDurationMs: 3600000,
+            phaseC: {
+                phase:               'phaseC',
+                itemsScanned:        0,
+                indexItemsCreated:   0,
+                indexItemsRefreshed: 0,
+                indexItemsDeleted:   0,
+                metadataCleaned:     0,
+                countsVerified:      10,
+                countsCorrected:     2,
+                countsDeleted:       1,
+                errors:              0,
+                startTime:           new Date('2024-01-01T01:00:00Z'),
+                endTime:             new Date('2024-01-01T01:15:00Z'),
+            },
+            totalDurationMs: 4500000,
         };
         const parseResult = reconciliationResultSchema.safeParse(result);
         expect(parseResult.success).toBe(true);

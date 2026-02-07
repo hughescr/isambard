@@ -130,8 +130,8 @@ export async function createApp(): Promise<App> {
                     tableName,
                     tagIndex:             memoryBackend.getTagIndexBackend(),
                     getMemory:            path => memoryBackend!.get(path),
-                    updateMemoryMetadata: (path, existing, input) =>
-                        memoryBackend!.updateMetadataOnly(path, existing, input),
+                    updateMemoryMetadata: (path, input) =>
+                        memoryBackend!.updateMetadataOnly(path, input),
                 },
             });
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting

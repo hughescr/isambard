@@ -5,7 +5,6 @@ import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { MemoryToolBackend } from '../storage/memory-tool';
 import { ContentType, createMemoryPath, LayerName } from '../storage/memory-tool/types';
-import { TAG_REGISTRY_PATH } from '../storage/memory-tool/backend-tag-registry';
 
 /**
  * Creates an MCP server for memory operations.
@@ -300,21 +299,15 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                 {},
                 async (): Promise<CallToolResult> => {
                     try {
-                        const result = await backend.get(TAG_REGISTRY_PATH);
-                        if(!result) {
+                        const tagCounts = await backend.listTagCounts();
+                        if(tagCounts.length === 0) {
                             return {
                                 content: [{ type: 'text' as const, text: 'No tags found' }],
                             };
                         }
-                        const registry = JSON.parse(result.content) as Record<string, number>;
-                        const entries = Object.entries(registry);
-                        if(entries.length === 0) {
-                            return {
-                                content: [{ type: 'text' as const, text: 'No tags found' }],
-                            };
-                        }
-                        const sortedEntries = _.orderBy(entries, ([, count]) => count, 'desc');
-                        const formatted = _.map(sortedEntries, ([tag, count]) => `${tag}: ${count}`).join('\n');
+                        // Sort by count descending
+                        const sortedCounts = _.orderBy(tagCounts, ['count'], ['desc']);
+                        const formatted = _.map(sortedCounts, ({ tag, count }) => `${tag}: ${count}`).join('\n');
                         return {
                             content: [{ type: 'text' as const, text: formatted }],
                         };
@@ -322,6 +315,38 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                         const message = _.isError(error) ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error listing tags: ${message}` }],
+                            isError: true,
+                        };
+                    }
+                }
+            ),
+
+            // Stryker disable StringLiteral: Tool name and description are MCP server configuration
+            tool(
+                'deleteMemory',
+                'Delete a memory at the specified path. Returns the deleted content as confirmation.',
+                // Stryker restore StringLiteral
+                {
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    path: z.string().describe('Memory path to delete (e.g., /identity/old-values, /state/outdated)'),
+                },
+                async (args): Promise<CallToolResult> => {
+                    try {
+                        const result = await backend.delete(createMemoryPath(args.path));
+                        if(!result) {
+                            return {
+                                content: [{ type: 'text' as const, text: `Memory not found at path: ${args.path}` }],
+                                isError: true,
+                            };
+                        }
+                        const tags = result.tags && result.tags.length > 0 ? result.tags.join(', ') : 'none';
+                        return {
+                            content: [{ type: 'text' as const, text: `Deleted memory at ${result.path}\nTags: ${tags}\nLast updated: ${result.updatedAt}\n\n${result.content}` }],
+                        };
+                    } catch (error) {
+                        const message = _.isError(error) ? error.message : String(error);
+                        return {
+                            content: [{ type: 'text' as const, text: `Error deleting memory: ${message}` }],
                             isError: true,
                         };
                     }

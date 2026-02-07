@@ -40,7 +40,6 @@ export const memoryToolItemSchema = z.object({
     content:        z.string().min(1).max(300000), // 300KB limit for DynamoDB
     contentType:    contentTypeSchema,
     metadata:       z.record(z.string(), z.unknown()).default({}),
-    version:        z.number().int().positive(),
     createdAt:      z.string().datetime(),
     updatedAt:      z.string().datetime(),
     tags:           z.array(z.string()).optional(),
@@ -51,13 +50,12 @@ export type MemoryToolItemData = z.infer<typeof memoryToolItemSchema>;
 
 /**
  * DynamoDB item structure with keys.
- * Note: GSI1PK/GSI1SK are optional because version snapshots should not appear in layer queries.
  */
 export interface MemoryToolItem extends MemoryToolItemData {
-    PK:      string   // DIR#{parentPath} - groups files by directory
-    SK:      string   // FILE#{filename} or VERSION#{version}#{timestamp} for snapshots
-    GSI1PK?: string   // LAYER#{layer} - allows lookup by layer (optional, not set on version snapshots)
-    GSI1SK?: string   // UPDATED#{timestamp} - time-based sorting within layer (optional, not set on version snapshots)
+    PK:     string   // DIR#{parentPath} - groups files by directory
+    SK:     string   // FILE#{filename}
+    GSI1PK: string   // LAYER#{layer} - allows lookup by layer
+    GSI1SK: string   // UPDATED#{timestamp} - time-based sorting within layer
 }
 
 /**

@@ -1,5 +1,4 @@
-import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
-import { isObject as _isObject } from 'lodash';
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { type DynamoDBKey } from '../repositories/base';
 import {
     memoryToolItemSchema,
@@ -9,7 +8,7 @@ import {
     type MemoryToolItem
 } from './types';
 import { MemoryToolKeyGenerator, generateContentPreview } from './key-generator';
-import { ItemNotFoundError, ValidationError, ConflictError } from '../errors';
+import { ItemNotFoundError, ValidationError } from '../errors';
 
 export interface CreateMemoryToolItemInput {
     path:        MemoryPath
@@ -39,16 +38,6 @@ export class MemoryToolBackendCore {
         private readonly stripKeys: (item: MemoryToolItem) => MemoryToolItemData
     ) {}
 
-    private createVersionSnapshot(existing: MemoryToolItemData): MemoryToolItem {
-        const versionKeys = MemoryToolKeyGenerator.createVersionKeys(existing.path, existing.version, existing.updatedAt);
-
-        return {
-            ...existing,
-            ...versionKeys,
-            // GSI1 removed - version snapshots should not appear in layer queries
-        };
-    }
-
     private buildUpdatedItem(updated: MemoryToolItemData): MemoryToolItem {
         const keys = MemoryToolKeyGenerator.createKeys(updated.path, updated.updatedAt);
 
@@ -56,10 +45,6 @@ export class MemoryToolBackendCore {
             ...updated,
             ...keys,
         };
-    }
-
-    private isConditionalCheckFailed(error: unknown): boolean {
-        return Boolean(error && _isObject(error) && 'name' in error && error.name === 'ConditionalCheckFailedException');
     }
 
     async create(input: CreateMemoryToolItemInput): Promise<MemoryToolItemData> {
@@ -72,7 +57,6 @@ export class MemoryToolBackendCore {
             // Stryker disable next-line LogicalOperator: ?? operator provides default empty object
             metadata:       input.metadata ?? {},
             tags:           input.tags,
-            version:        1,
             createdAt:      now,
             updatedAt:      now,
             contentPreview: generateContentPreview(input.content),
@@ -117,10 +101,6 @@ export class MemoryToolBackendCore {
             throw new ItemNotFoundError(path);
         }
 
-        // Save version snapshot before updating
-        const versionSnapshot = this.createVersionSnapshot(existing);
-        await this.putItem(versionSnapshot as unknown as Record<string, unknown>);
-
         // Build updated data with new content preview if content changed
         // Stryker disable next-line ConditionalExpression: Conditional prevents regenerating preview when content unchanged
         const newContentPreview = input.content !== undefined
@@ -134,7 +114,6 @@ export class MemoryToolBackendCore {
             ...(input.tags !== undefined && { tags: input.tags }),
             // Stryker disable next-line ConditionalExpression: Spread operator conditional - undefined values should not override existing contentPreview
             ...(newContentPreview !== undefined && { contentPreview: newContentPreview }),
-            version:   existing.version + 1,
             updatedAt: new Date().toISOString(),
         };
 
@@ -146,78 +125,7 @@ export class MemoryToolBackendCore {
         const updated = result.data;
         const item = this.buildUpdatedItem(updated);
 
-        try {
-            await this.docClient.send(new PutCommand({
-                TableName:                this.tableName,
-                Item:                     item,
-                ConditionExpression:      '#version = :expectedVersion',
-                ExpressionAttributeNames: {
-                    '#version': 'version',
-                },
-                ExpressionAttributeValues: {
-                    ':expectedVersion': existing.version,
-                },
-            }));
-        } catch (error: unknown) {
-            if(this.isConditionalCheckFailed(error)) {
-                const current = await this.get(path);
-                throw new ConflictError(path, existing.version, current?.version ?? -1);
-            }
-            throw error;
-        }
-
-        return updated;
-    }
-
-    async updateWithoutVersioning(
-        path: MemoryPath,
-        existingData: MemoryToolItemData,
-        input: UpdateMemoryToolItemInput
-    ): Promise<MemoryToolItemData> {
-        // Build updated data with new content preview if content changed
-        // Stryker disable next-line ConditionalExpression: Conditional prevents regenerating preview when content unchanged
-        const newContentPreview = input.content !== undefined
-            ? generateContentPreview(input.content)
-            : existingData.contentPreview;
-
-        const updatedData = {
-            ...existingData,
-            ...(input.content !== undefined && { content: input.content }),
-            ...(input.metadata !== undefined && { metadata: input.metadata }),
-            ...(input.tags !== undefined && { tags: input.tags }),
-            // Stryker disable next-line ConditionalExpression: Spread operator conditional - undefined values should not override existing contentPreview
-            ...(newContentPreview !== undefined && { contentPreview: newContentPreview }),
-            version:   existingData.version + 1,
-            updatedAt: new Date().toISOString(),
-        };
-
-        const result = memoryToolItemSchema.safeParse(updatedData);
-        if(!result.success) {
-            throw new ValidationError(result.error.issues);
-        }
-
-        const updated = result.data;
-        const item = this.buildUpdatedItem(updated);
-
-        try {
-            await this.docClient.send(new PutCommand({
-                TableName:                this.tableName,
-                Item:                     item,
-                ConditionExpression:      '#version = :expectedVersion',
-                ExpressionAttributeNames: {
-                    '#version': 'version',
-                },
-                ExpressionAttributeValues: {
-                    ':expectedVersion': existingData.version,
-                },
-            }));
-        } catch (error: unknown) {
-            if(this.isConditionalCheckFailed(error)) {
-                const current = await this.get(path);
-                throw new ConflictError(path, existingData.version, current?.version ?? -1);
-            }
-            throw error;
-        }
+        await this.putItem(item as unknown as Record<string, unknown>);
 
         return updated;
     }

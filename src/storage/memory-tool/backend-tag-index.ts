@@ -1,10 +1,22 @@
-import { DynamoDBDocumentClient, PutCommand, DeleteCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { map as _map, filter as _filter, difference as _difference, intersection as _intersection, every as _every, includes as _includes } from 'lodash';
+import { DynamoDBDocumentClient, DeleteCommand, QueryCommand, UpdateCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { map as _map, filter as _filter, difference as _difference, intersection as _intersection, every as _every, includes as _includes, chunk as _chunk, sortBy as _sortBy, keys as _keys, flatMap as _flatMap, values as _values, flatten as _flatten } from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { TagIndexItem } from './types';
 import type { MemoryPath } from './types';
 import { normalizeTags } from './key-generator';
 import type { ListOptions, ListResult } from './backend-query';
+
+/**
+ * Type for BatchWrite request items (matching lib-dynamodb's BatchWriteCommand input)
+ */
+interface BatchWriteRequest {
+    PutRequest?: {
+        Item: Record<string, unknown>
+    }
+    DeleteRequest?: {
+        Key: Record<string, unknown>
+    }
+}
 
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 100;
@@ -43,6 +55,210 @@ export class MemoryToolBackendTagIndex {
     ) {}
 
     /**
+     * Executes BatchWriteCommand and retries unprocessed items with exponential backoff.
+     * Returns the list of failed WriteRequests after all retries.
+     */
+    private async batchWriteWithRetry(requestItems: Record<string, BatchWriteRequest[]>): Promise<BatchWriteRequest[]> {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- UnprocessedItems type is complex and not worth matching exactly
+        let unprocessedItems: any = requestItems;
+        let attempt = 0;
+
+        // Stryker disable all: Retry loop with exponential backoff - testing timing behavior is unreliable
+        while(_keys(unprocessedItems).length > 0 && attempt < MAX_RETRIES) {
+            try {
+                const result = await this.docClient.send(new BatchWriteCommand({
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- UnprocessedItems has complex type
+                    RequestItems: unprocessedItems,
+                }));
+
+                // Check if there are unprocessed items
+                const hasUnprocessed = result?.UnprocessedItems && _keys(result.UnprocessedItems).length > 0;
+
+                if(!hasUnprocessed) {
+                    return [];
+                }
+
+                unprocessedItems = result.UnprocessedItems!;
+                attempt++;
+
+                if(attempt < MAX_RETRIES) {
+                    const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    logger.debug({ attempt, msg: `Batch write retry ${attempt}/${MAX_RETRIES}` });
+                }
+            } catch (error) {
+                logger.warn({ error, msg: 'Batch write threw exception - treating current batch as failed' });
+                // Return current unprocessed items as failed (items that succeeded in prior iterations are excluded)
+                // eslint-disable-next-line lodash/chaining,@typescript-eslint/no-unsafe-return -- Inside Stryker-disabled retry block; unprocessedItems has complex UnprocessedItems type
+                return _flatten(_values(unprocessedItems));
+            }
+        }
+
+        if(_keys(unprocessedItems).length > 0) {
+            logger.warn({ unprocessedItems, msg: `Batch write failed after ${MAX_RETRIES} attempts` });
+        }
+
+        // Flatten UnprocessedItems to array of WriteRequests
+        const failedRequests: BatchWriteRequest[] = [];
+
+        for(const tableName of _keys(unprocessedItems)) {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access,@typescript-eslint/no-unsafe-argument -- UnprocessedItems type is complex
+            failedRequests.push(...unprocessedItems[tableName]);
+        }
+
+        return failedRequests;
+        // Stryker restore all
+    }
+
+    /**
+     * Increments atomic counters for the given tags.
+     * Creates META_COUNT items if they don't exist.
+     */
+    async incrementTagCounts(tags: string[]): Promise<void> {
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - empty tags array is a no-op
+        if(tags.length === 0) {
+            return;
+        }
+
+        const normalizedTags = normalizeTags(tags);
+        const operations = _map(normalizedTags, tag =>
+            retryWithBackoff(
+                async () => this.docClient.send(new UpdateCommand({
+                    TableName: this.tableName,
+                    Key:       {
+                        PK: `TAG#${tag}`,
+                        SK: 'META_COUNT',
+                    },
+                    UpdateExpression:          'SET #count = if_not_exists(#count, :zero) + :one, GSI2PK = :gsi2pk, GSI2SK = :gsi2sk',
+                    ExpressionAttributeNames:  { '#count': 'count' },
+                    ExpressionAttributeValues: {
+                        ':zero':   0,
+                        ':one':    1,
+                        ':gsi2pk': 'TAG_COUNTS',
+                        ':gsi2sk': `TAG#${tag}`,
+                    },
+                })),
+                // Stryker disable next-line StringLiteral: Context string for retry logging is observational
+                `incrementTagCount:${tag}`
+            )
+        );
+
+        await Promise.all(operations);
+    }
+
+    /**
+     * Decrements atomic counters for the given tags.
+     * Deletes META_COUNT items when count reaches 0 or below.
+     */
+    async decrementTagCounts(tags: string[]): Promise<void> {
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - empty tags array is a no-op
+        if(tags.length === 0) {
+            return;
+        }
+
+        const normalizedTags = normalizeTags(tags);
+
+        const operations = _map(normalizedTags, async (tag) => {
+            const result = await retryWithBackoff(
+                async () => this.docClient.send(new UpdateCommand({
+                    TableName: this.tableName,
+                    Key:       {
+                        PK: `TAG#${tag}`,
+                        SK: 'META_COUNT',
+                    },
+                    UpdateExpression:          'SET #count = #count - :one',
+                    ExpressionAttributeNames:  { '#count': 'count' },
+                    ExpressionAttributeValues: { ':one': 1 },
+                    ReturnValues:              'UPDATED_NEW',
+                })),
+                // Stryker disable next-line StringLiteral: Context string for retry logging is observational
+                `decrementTagCount:${tag}`
+            );
+
+            // Delete META_COUNT item if count is 0 or negative
+            // Stryker disable next-line ConditionalExpression,EqualityOperator: Defensive check for count <= 0
+            if(result?.Attributes?.count != null && (result.Attributes.count as number) <= 0) {
+                // Stryker disable BlockStatement: try-catch block for ConditionalCheckFailedException
+                try {
+                    await retryWithBackoff(
+                        async () => this.docClient.send(new DeleteCommand({
+                            TableName: this.tableName,
+                            Key:       {
+                                PK: `TAG#${tag}`,
+                                SK: 'META_COUNT',
+                            },
+                            ConditionExpression:       '#count <= :zero',
+                            ExpressionAttributeNames:  { '#count': 'count' },
+                            ExpressionAttributeValues: { ':zero': 0 },
+                        })),
+                        // Stryker disable next-line StringLiteral: Context string for retry logging is observational
+                        `deleteMetaCount:${tag}`
+                    );
+                    // Stryker disable next-line BlockStatement: Catching ConditionalCheckFailedException for concurrent increment scenario
+                } catch (error) {
+                    // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: Ignore expected ConditionalCheckFailedException
+                    if((error as Error).name === 'ConditionalCheckFailedException') {
+                        // Concurrent increment happened - item should survive
+                        return;
+                    }
+                    throw error;
+                }
+                // Stryker restore BlockStatement
+            }
+        });
+
+        await Promise.all(operations);
+    }
+
+    /**
+     * Lists all tag counts by querying GSI2.
+     * Returns tags sorted by name.
+     */
+    async listTagCounts(): Promise<{ tag: string, count: number }[]> {
+        const results: { tag: string, count: number }[] = [];
+        let exclusiveStartKey: Record<string, unknown> | undefined;
+
+        // Stryker disable ConditionalExpression,BlockStatement: Intentional infinite loop with internal break
+        do {
+            const queryParams: Record<string, unknown> = {
+                IndexName:                 'GSI2',
+                KeyConditionExpression:    'GSI2PK = :gsi2pk',
+                ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
+            };
+
+            if(exclusiveStartKey) {
+                queryParams.ExclusiveStartKey = exclusiveStartKey;
+            }
+
+            const result = await this.docClient.send(new QueryCommand({
+                TableName: this.tableName,
+                ...queryParams,
+            }));
+
+            const items = result.Items ?? [];
+            for(const item of items) {
+                // Extract tag from GSI2SK: 'TAG#tagname' -> 'tagname'
+                const gsi2sk = item.GSI2SK as string;
+                const tag = gsi2sk.substring(4); // Remove 'TAG#' prefix
+                const count = item.count as number;
+                results.push({ tag, count });
+            }
+
+            exclusiveStartKey = result.LastEvaluatedKey;
+
+            // Stryker disable next-line ConditionalExpression,BooleanLiteral,BlockStatement: Loop termination condition
+            if(!result.LastEvaluatedKey) {
+                break;
+            }
+            // eslint-disable-next-line no-constant-condition -- Intentional infinite loop with break
+        } while(true);
+        // Stryker restore ConditionalExpression,BlockStatement
+
+        // Sort by tag name
+        return _sortBy(results, 'tag');
+    }
+
+    /**
      * Creates tag index items for a memory path.
      * Each tag gets its own index entry with full preview data.
      */
@@ -59,26 +275,41 @@ export class MemoryToolBackendTagIndex {
         }
 
         const normalizedTags = normalizeTags(tags);
-        const operations = _map(normalizedTags, tag =>
-            retryWithBackoff(
-                async () => this.docClient.send(new PutCommand({
-                    TableName: this.tableName,
-                    Item:      {
-                        PK:         `TAG#${tag}`,
-                        SK:         `PATH#${path}`,
-                        memoryPath: path,
-                        layer,
-                        updatedAt,
-                        tags:       normalizedTags,
-                        contentPreview,
-                    },
-                })),
-                // Stryker disable next-line StringLiteral: Context string for retry logging is observational
-                `createTagIndexItem:${tag}:${path}`
-            )
-        );
 
-        await Promise.all(operations);
+        // Build write requests for tag index items
+        const writeRequests: BatchWriteRequest[] = _map(normalizedTags, tag => ({
+            PutRequest: {
+                Item: {
+                    PK:         `TAG#${tag}`,
+                    SK:         `PATH#${path}`,
+                    memoryPath: path,
+                    layer,
+                    updatedAt,
+                    tags:       normalizedTags,
+                    contentPreview,
+                },
+            },
+        }));
+
+        // Split into batches of 25 (DynamoDB BatchWriteItem limit)
+        const batches = _chunk(writeRequests, 25);
+
+        // Execute all batches and collect failed requests
+        const allFailedRequests: BatchWriteRequest[] = [];
+        for(const batch of batches) {
+            const failedRequests = await this.batchWriteWithRetry({ [this.tableName]: batch });
+            allFailedRequests.push(...failedRequests);
+        }
+
+        // Extract tags that failed from unprocessed PutRequests
+        const failedTags = _map(allFailedRequests, (req) => {
+            const pk = req.PutRequest?.Item?.PK as string;
+            return pk.substring(4); // Remove 'TAG#' prefix
+        });
+
+        // Only increment counts for tags that succeeded
+        const succeededTags = _difference(normalizedTags, failedTags);
+        await this.incrementTagCounts(succeededTags);
     }
 
     /**
@@ -91,21 +322,78 @@ export class MemoryToolBackendTagIndex {
         }
 
         const normalizedTags = normalizeTags(tags);
-        const operations = _map(normalizedTags, tag =>
-            retryWithBackoff(
-                async () => this.docClient.send(new DeleteCommand({
-                    TableName: this.tableName,
-                    Key:       {
-                        PK: `TAG#${tag}`,
-                        SK: `PATH#${path}`,
-                    },
-                })),
-                // Stryker disable next-line StringLiteral: Context string for retry logging is observational
-                `deleteTagIndexItem:${tag}:${path}`
-            )
-        );
 
-        await Promise.all(operations);
+        // Build delete requests for tag index items
+        const writeRequests: BatchWriteRequest[] = _map(normalizedTags, tag => ({
+            DeleteRequest: {
+                Key: {
+                    PK: `TAG#${tag}`,
+                    SK: `PATH#${path}`,
+                },
+            },
+        }));
+
+        // Split into batches of 25 (DynamoDB BatchWriteItem limit)
+        const batches = _chunk(writeRequests, 25);
+
+        // Execute all batches and collect failed requests
+        const allFailedRequests: BatchWriteRequest[] = [];
+        for(const batch of batches) {
+            const failedRequests = await this.batchWriteWithRetry({ [this.tableName]: batch });
+            allFailedRequests.push(...failedRequests);
+        }
+
+        // Extract tags that failed from unprocessed DeleteRequests
+        const failedTags = _map(allFailedRequests, (req) => {
+            const pk = req.DeleteRequest?.Key?.PK as string;
+            return pk.substring(4); // Remove 'TAG#' prefix
+        });
+
+        // Only decrement counts for tags that succeeded
+        const succeededTags = _difference(normalizedTags, failedTags);
+        await this.decrementTagCounts(succeededTags);
+    }
+
+    /**
+     * Refreshes tag index items without changing counts.
+     * Used to update preview data for unchanged tags.
+     */
+    async refreshTagIndexItems(
+        path: MemoryPath,
+        tags: string[],
+        updatedAt: string,
+        contentPreview: string,
+        layer: string
+    ): Promise<void> {
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - empty tags array is a no-op
+        if(tags.length === 0) {
+            return;
+        }
+
+        const normalizedTags = normalizeTags(tags);
+
+        // Build write requests for tag index items
+        const writeRequests: BatchWriteRequest[] = _map(normalizedTags, tag => ({
+            PutRequest: {
+                Item: {
+                    PK:         `TAG#${tag}`,
+                    SK:         `PATH#${path}`,
+                    memoryPath: path,
+                    layer,
+                    updatedAt,
+                    tags:       normalizedTags,
+                    contentPreview,
+                },
+            },
+        }));
+
+        // Split into batches of 25 (DynamoDB BatchWriteItem limit)
+        const batches = _chunk(writeRequests, 25);
+
+        // Execute all batches (no count increment)
+        for(const batch of batches) {
+            await this.batchWriteWithRetry({ [this.tableName]: batch });
+        }
     }
 
     /**
@@ -129,12 +417,12 @@ export class MemoryToolBackendTagIndex {
 
         // Execute all operations in parallel
         await Promise.all([
-            // Create items for added tags
+            // Create items for added tags (increments counts)
             this.createTagIndexItems(path, added, updatedAt, contentPreview, layer),
-            // Delete items for removed tags
+            // Delete items for removed tags (decrements counts)
             this.deleteTagIndexItems(path, removed),
-            // Refresh unchanged tags with current data
-            this.createTagIndexItems(path, unchanged, updatedAt, contentPreview, layer),
+            // Refresh unchanged tags with current data (no count change)
+            this.refreshTagIndexItems(path, unchanged, updatedAt, contentPreview, layer),
         ]);
     }
 
@@ -152,8 +440,8 @@ export class MemoryToolBackendTagIndex {
 
         // Stryker disable StringLiteral: DynamoDB expression variable names must match KeyConditionExpression
         const queryParams: Record<string, unknown> = {
-            KeyConditionExpression:    'PK = :pk',
-            ExpressionAttributeValues: { ':pk': pk },
+            KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
+            ExpressionAttributeValues: { ':pk': pk, ':skPrefix': 'PATH#' },
         };
         // Stryker restore StringLiteral
 
@@ -161,7 +449,7 @@ export class MemoryToolBackendTagIndex {
         // Stryker disable next-line ArrayDeclaration: Initial value for filter building
         const filterExpressions: string[] = [];
         // Stryker disable next-line ObjectLiteral: Initial value for expression values
-        const expressionValues: Record<string, string> = { ':pk': pk };
+        const expressionValues: Record<string, string> = { ':pk': pk, ':skPrefix': 'PATH#' };
 
         if(layer) {
             filterExpressions.push('layer = :layer');

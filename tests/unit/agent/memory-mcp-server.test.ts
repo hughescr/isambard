@@ -11,9 +11,9 @@ const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryTool
     content:     'mock content',
     contentType: 'text/plain' as ContentType,
     metadata:    {},
-    version:     1,
-    createdAt:   '2025-01-01T00:00:00.000Z',
-    updatedAt:   '2025-01-01T00:00:00.000Z',
+
+    createdAt: '2025-01-01T00:00:00.000Z',
+    updatedAt: '2025-01-01T00:00:00.000Z',
     ...overrides,
 });
 
@@ -22,13 +22,14 @@ describe.concurrent('createMemoryMCPServer', () => {
 
     beforeEach(() => {
         mockBackend = {
-            create:       mock(async () => createMockItem()),
-            get:          mock(async () => undefined),
-            update:       mock(async () => createMockItem()),
-            'delete':     mock(async () => { /* intentionally empty */ }),
-            list:         mock(async () => ({ items: [], nextCursor: undefined })),
-            listByLayer:  mock(async () => ({ items: [], nextCursor: undefined })),
-            searchByTags: mock(async () => ({ items: [], nextCursor: undefined })),
+            create:        mock(async () => createMockItem()),
+            get:           mock(async () => undefined),
+            update:        mock(async () => createMockItem()),
+            'delete':      mock(async () => { /* intentionally empty */ }),
+            list:          mock(async () => ({ items: [], nextCursor: undefined })),
+            listByLayer:   mock(async () => ({ items: [], nextCursor: undefined })),
+            searchByTags:  mock(async () => ({ items: [], nextCursor: undefined })),
+            listTagCounts: mock(async () => []),
         } as unknown as MemoryToolBackend;
     });
 
@@ -57,6 +58,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             ['storeUserMemory', 'Store user-specific memory. Saving with the same userId and name will replace existing content.'],
             ['logEvent', 'Log an event to the events layer'],
             ['search', 'Search memories by tag with optional filters'],
+            ['deleteMemory', 'Delete a memory at the specified path. Returns the deleted content as confirmation.'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
@@ -72,6 +74,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             ['storeUserMemory', ['userId', 'name', 'content', 'tags']],
             ['logEvent', ['eventType', 'summary', 'details', 'tags']],
             ['search', ['tags', 'layer', 'limit']],
+            ['deleteMemory', ['path']],
         ])('should have %s tool with required input schema fields', (toolName, requiredFields) => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
@@ -107,9 +110,9 @@ describe.concurrent('createMemoryMCPServer', () => {
                 content:     'Test content',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             const server = createMemoryMCPServer(mockBackend);
@@ -203,9 +206,9 @@ describe.concurrent('createMemoryMCPServer', () => {
                 content,
                 contentType: 'text/plain' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             const server = createMemoryMCPServer(mockBackend);
@@ -291,9 +294,9 @@ describe.concurrent('createMemoryMCPServer', () => {
                     content:     'Old values',
                     contentType: 'text/plain' as ContentType,
                     metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-01T00:00:00.000Z',
-                    updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                    createdAt: '2025-01-01T00:00:00.000Z',
+                    updatedAt: '2025-01-01T00:00:00.000Z',
                 }));
                 mockBackend.update = mock(async () => createMockItem({
                     path:    '/identity/core-values' as MemoryPath,
@@ -375,9 +378,9 @@ describe.concurrent('createMemoryMCPServer', () => {
                 content:     'User preferences',
                 contentType: 'text/plain' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             const server = createMemoryMCPServer(mockBackend);
@@ -473,9 +476,9 @@ describe.concurrent('createMemoryMCPServer', () => {
                     content:     'Old preferences',
                     contentType: 'text/plain' as ContentType,
                     metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-01T00:00:00.000Z',
-                    updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                    createdAt: '2025-01-01T00:00:00.000Z',
+                    updatedAt: '2025-01-01T00:00:00.000Z',
                 }));
                 mockBackend.update = mock(async () => createMockItem({
                     path:    '/users/alice/preferences' as MemoryPath,
@@ -673,23 +676,8 @@ describe.concurrent('createMemoryMCPServer', () => {
     });
 
     describe('listTags tool', () => {
-        test('should return "No tags found" when registry does not exist', async () => {
-            mockBackend.get = mock(async () => undefined);
-
-            const server = createMemoryMCPServer(mockBackend);
-            const handler = getToolHandler(server, 'listTags');
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
-            const result = await handler({});
-
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
-            expect(result.content[0].text).toBe('No tags found');
-        });
-
-        test('should return "No tags found" when registry is empty', async () => {
-            mockBackend.get = mock(async () => createMockItem({
-                content: JSON.stringify({}),
-            }));
+        test('should return "No tags found" when no tags exist', async () => {
+            mockBackend.listTagCounts = mock(async () => []);
 
             const server = createMemoryMCPServer(mockBackend);
             const handler = getToolHandler(server, 'listTags');
@@ -702,9 +690,11 @@ describe.concurrent('createMemoryMCPServer', () => {
         });
 
         test('should return formatted tag list sorted by count descending', async () => {
-            mockBackend.get = mock(async () => createMockItem({
-                content: JSON.stringify({ important: 5, work: 3, personal: 8 }),
-            }));
+            mockBackend.listTagCounts = mock(async () => [
+                { tag: 'important', count: 5 },
+                { tag: 'personal', count: 8 },
+                { tag: 'work', count: 3 },
+            ]);
 
             const server = createMemoryMCPServer(mockBackend);
             const handler = getToolHandler(server, 'listTags');
@@ -717,7 +707,7 @@ describe.concurrent('createMemoryMCPServer', () => {
         });
 
         test('should handle errors gracefully', async () => {
-            mockBackend.get = mock(async () => {
+            mockBackend.listTagCounts = mock(async () => {
                 throw new Error('Database error');
             });
 
@@ -736,7 +726,7 @@ describe.concurrent('createMemoryMCPServer', () => {
         });
 
         test('should handle non-Error throws gracefully', async () => {
-            mockBackend.get = mock(async () => {
+            mockBackend.listTagCounts = mock(async () => {
                 // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw { statusCode: 500 };
             });
@@ -749,6 +739,123 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toContain('Error listing tags:');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBe(true);
+        });
+    });
+
+    describe('deleteMemory tool', () => {
+        test('should return deleted memory details on success', async () => {
+            mockBackend.delete = mock(async () => createMockItem({
+                path:      '/state/old-goals' as MemoryPath,
+                content:   'Old goals content',
+                tags:      ['goals', 'outdated'],
+                updatedAt: '2025-06-01T12:00:00.000Z',
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'deleteMemory');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/state/old-goals' });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('Deleted memory at /state/old-goals');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('Tags: goals, outdated');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('Last updated: 2025-06-01T12:00:00.000Z');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('Old goals content');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBeUndefined();
+
+            expect(mockBackend.delete).toHaveBeenCalledWith('/state/old-goals');
+        });
+
+        test('should show "none" when deleted memory has no tags', async () => {
+            mockBackend.delete = mock(async () => createMockItem({
+                path:    '/identity/test' as MemoryPath,
+                content: 'Test content',
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'deleteMemory');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/identity/test' });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('Tags: none');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBeUndefined();
+        });
+
+        test('should show "none" when deleted memory has empty tags array', async () => {
+            mockBackend.delete = mock(async () => createMockItem({
+                path:    '/identity/test' as MemoryPath,
+                content: 'Test content',
+                tags:    [],
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'deleteMemory');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/identity/test' });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('Tags: none');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBeUndefined();
+        });
+
+        test('should return error when memory not found', async () => {
+            mockBackend.delete = mock(async () => undefined);
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'deleteMemory');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/nonexistent/path' });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Memory not found at path: /nonexistent/path');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBe(true);
+        });
+
+        test('should return error when backend.delete throws Error', async () => {
+            mockBackend.delete = mock(async () => {
+                throw new Error('DynamoDB delete failed');
+            });
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'deleteMemory');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/state/test' });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Error deleting memory: DynamoDB delete failed');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBe(true);
+        });
+
+        test('should return error when backend.delete throws non-Error', async () => {
+            mockBackend.delete = mock(async () => {
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
+                throw 'Network timeout';
+            });
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'deleteMemory');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/state/test' });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Error deleting memory: Network timeout');
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBe(true);
         });

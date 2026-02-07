@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import { filter as _filter } from 'lodash';
-import { DynamoDBDocumentClient, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, QueryCommand, ScanCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { runReconciliation, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import type { MemoryPath, MemoryToolItemData, TagIndexItem } from '@/storage/memory-tool/types';
@@ -77,79 +77,17 @@ describe('runReconciliation', () => {
             expect(gsi1Calls).toHaveLength(3);
         });
 
-        test('should filter out VERSION# items from scan results', async () => {
-            const memoryItem = {
-                PK:             'DIR#/identity',
-                SK:             'FILE#core.md',
-                GSI1PK:         'LAYER#identity',
-                GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
-                path:           '/identity/core.md',
-                content:        'test content',
-                contentType:    'text/markdown',
-                metadata:       {},
-                version:        1,
-                createdAt:      '2024-01-01T00:00:00.000Z',
-                updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test'],
-                contentPreview: 'test content',
-            };
-
-            const versionItem = {
-                PK:             'DIR#/identity',
-                SK:             'VERSION#1#2024-01-01T00:00:00.000Z',
-                path:           '/identity/core.md',
-                content:        'old content',
-                contentType:    'text/markdown',
-                metadata:       {},
-                version:        1,
-                createdAt:      '2024-01-01T00:00:00.000Z',
-                updatedAt:      '2024-01-01T00:00:00.000Z',
-                contentPreview: 'old content',
-            };
-
-            // GSI1 queries for identity layer return both items
-            ddbMock.on(QueryCommand, {
-                IndexName:                 'GSI1',
-                ExpressionAttributeValues: { ':gsi1pk': 'LAYER#identity' },
-            }).resolves({
-                Items: [memoryItem, versionItem],
-            });
-
-            // Other layers return empty
-            ddbMock.on(QueryCommand, {
-                IndexName:                 'GSI1',
-                ExpressionAttributeValues: { ':gsi1pk': 'LAYER#state' },
-            }).resolves({ Items: [] });
-
-            ddbMock.on(QueryCommand, {
-                IndexName:                 'GSI1',
-                ExpressionAttributeValues: { ':gsi1pk': 'LAYER#events' },
-            }).resolves({ Items: [] });
-
-            // Check if tag index item exists
-            ddbMock.on(QueryCommand, {
-                KeyConditionExpression: 'PK = :pk AND SK = :sk',
-            }).resolves({ Items: [] });
-
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
-
-            const result = await runReconciliation(deps, options);
-
-            // Should only process the memory item, not the version
-            expect(result.phaseA.itemsScanned).toBe(1);
-        });
-
         test('should create missing tag index items for memory with tags', async () => {
             const memoryItem = {
-                PK:             'DIR#/identity',
-                SK:             'FILE#core.md',
-                GSI1PK:         'LAYER#identity',
-                GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
-                path:           '/identity/core.md',
-                content:        'test content',
-                contentType:    'text/markdown',
-                metadata:       {},
-                version:        1,
+                PK:          'DIR#/identity',
+                SK:          'FILE#core.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/core.md',
+                content:     'test content',
+                contentType: 'text/markdown',
+                metadata:    {},
+
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
                 tags:           ['important', 'core'],
@@ -189,15 +127,15 @@ describe('runReconciliation', () => {
 
         test('should refresh stale tag index items (contentPreview differs)', async () => {
             const memoryItem = {
-                PK:             'DIR#/identity',
-                SK:             'FILE#core.md',
-                GSI1PK:         'LAYER#identity',
-                GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
-                path:           '/identity/core.md',
-                content:        'new content',
-                contentType:    'text/markdown',
-                metadata:       {},
-                version:        1,
+                PK:          'DIR#/identity',
+                SK:          'FILE#core.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/core.md',
+                content:     'new content',
+                contentType: 'text/markdown',
+                metadata:    {},
+
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
                 tags:           ['test'],
@@ -227,22 +165,37 @@ describe('runReconciliation', () => {
 
             ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
 
+            // Spy on refreshTagIndexItems to verify it's called (not createTagIndexItems)
+            const refreshSpy = mock(() => Promise.resolve());
+            const createSpy = mock(() => Promise.resolve());
+            tagIndex.refreshTagIndexItems = refreshSpy;
+            tagIndex.createTagIndexItems = createSpy;
+
             const result = await runReconciliation(deps, options);
 
             expect(result.phaseA.indexItemsRefreshed).toBe(1);
+            // Should call refreshTagIndexItems, not createTagIndexItems
+            expect(refreshSpy).toHaveBeenCalledWith(
+                '/identity/core.md',
+                ['test'],
+                '2024-01-01T00:00:00.000Z',
+                'new content',
+                'identity'
+            );
+            expect(createSpy).not.toHaveBeenCalled();
         });
 
         test('should refresh stale tag index items (updatedAt differs)', async () => {
             const memoryItem = {
-                PK:             'DIR#/identity',
-                SK:             'FILE#core.md',
-                GSI1PK:         'LAYER#identity',
-                GSI1SK:         'UPDATED#2024-01-02T00:00:00.000Z',
-                path:           '/identity/core.md',
-                content:        'test content',
-                contentType:    'text/markdown',
-                metadata:       {},
-                version:        1,
+                PK:          'DIR#/identity',
+                SK:          'FILE#core.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-02T00:00:00.000Z',
+                path:        '/identity/core.md',
+                content:     'test content',
+                contentType: 'text/markdown',
+                metadata:    {},
+
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-02T00:00:00.000Z', // Updated
                 tags:           ['test'],
@@ -278,15 +231,15 @@ describe('runReconciliation', () => {
 
         test('should refresh stale tag index items (tags array differs)', async () => {
             const memoryItem = {
-                PK:             'DIR#/identity',
-                SK:             'FILE#core.md',
-                GSI1PK:         'LAYER#identity',
-                GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
-                path:           '/identity/core.md',
-                content:        'test content',
-                contentType:    'text/markdown',
-                metadata:       {},
-                version:        1,
+                PK:          'DIR#/identity',
+                SK:          'FILE#core.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/core.md',
+                content:     'test content',
+                contentType: 'text/markdown',
+                metadata:    {},
+
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
                 tags:           ['test', 'important'], // Updated tags
@@ -322,15 +275,15 @@ describe('runReconciliation', () => {
 
         test('should NOT refresh fresh tag index items (all fields match)', async () => {
             const memoryItem = {
-                PK:             'DIR#/identity',
-                SK:             'FILE#core.md',
-                GSI1PK:         'LAYER#identity',
-                GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
-                path:           '/identity/core.md',
-                content:        'test content',
-                contentType:    'text/markdown',
-                metadata:       {},
-                version:        1,
+                PK:          'DIR#/identity',
+                SK:          'FILE#core.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/core.md',
+                content:     'test content',
+                contentType: 'text/markdown',
+                metadata:    {},
+
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
                 tags:           ['important', 'test'], // Both tags
@@ -382,15 +335,15 @@ describe('runReconciliation', () => {
 
         test('should skip memories without tags', async () => {
             const memoryItem = {
-                PK:             'DIR#/identity',
-                SK:             'FILE#core.md',
-                GSI1PK:         'LAYER#identity',
-                GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
-                path:           '/identity/core.md',
-                content:        'test content',
-                contentType:    'text/markdown',
-                metadata:       {},
-                version:        1,
+                PK:          'DIR#/identity',
+                SK:          'FILE#core.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/core.md',
+                content:     'test content',
+                contentType: 'text/markdown',
+                metadata:    {},
+
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
                 tags:           undefined, // No tags
@@ -422,7 +375,7 @@ describe('runReconciliation', () => {
                 metadata:    {
                     previouslyKnownAs: '/identity/old-name.md',
                 },
-                version:        1,
+
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
                 tags:           ['test'],
@@ -473,7 +426,7 @@ describe('runReconciliation', () => {
                 metadata:    {
                     previouslyKnownAs: '/identity/old-name.md',
                 },
-                version:        1,
+
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
                 tags:           ['test'],
@@ -513,15 +466,15 @@ describe('runReconciliation', () => {
         test('should handle pagination (multiple pages per layer)', async () => {
             const page1Items = [
                 {
-                    PK:             'DIR#/identity',
-                    SK:             'FILE#core1.md',
-                    GSI1PK:         'LAYER#identity',
-                    GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
-                    path:           '/identity/core1.md',
-                    content:        'test',
-                    contentType:    'text/markdown',
-                    metadata:       {},
-                    version:        1,
+                    PK:          'DIR#/identity',
+                    SK:          'FILE#core1.md',
+                    GSI1PK:      'LAYER#identity',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/identity/core1.md',
+                    content:     'test',
+                    contentType: 'text/markdown',
+                    metadata:    {},
+
                     createdAt:      '2024-01-01T00:00:00.000Z',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
                     contentPreview: 'test',
@@ -530,15 +483,15 @@ describe('runReconciliation', () => {
 
             const page2Items = [
                 {
-                    PK:             'DIR#/identity',
-                    SK:             'FILE#core2.md',
-                    GSI1PK:         'LAYER#identity',
-                    GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
-                    path:           '/identity/core2.md',
-                    content:        'test',
-                    contentType:    'text/markdown',
-                    metadata:       {},
-                    version:        1,
+                    PK:          'DIR#/identity',
+                    SK:          'FILE#core2.md',
+                    GSI1PK:      'LAYER#identity',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/identity/core2.md',
+                    content:     'test',
+                    contentType: 'text/markdown',
+                    metadata:    {},
+
                     createdAt:      '2024-01-01T00:00:00.000Z',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
                     contentPreview: 'test',
@@ -580,15 +533,15 @@ describe('runReconciliation', () => {
 
         test('should count progress correctly (itemsScanned, indexItemsCreated, indexItemsRefreshed, metadataCleaned)', async () => {
             const memoryWithNewTags = {
-                PK:             'DIR#/identity',
-                SK:             'FILE#new.md',
-                GSI1PK:         'LAYER#identity',
-                GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
-                path:           '/identity/new.md',
-                content:        'new',
-                contentType:    'text/markdown',
-                metadata:       {},
-                version:        1,
+                PK:          'DIR#/identity',
+                SK:          'FILE#new.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/new.md',
+                content:     'new',
+                contentType: 'text/markdown',
+                metadata:    {},
+
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
                 tags:           ['new'],
@@ -596,15 +549,15 @@ describe('runReconciliation', () => {
             };
 
             const memoryWithStaleIndex = {
-                PK:             'DIR#/identity',
-                SK:             'FILE#stale.md',
-                GSI1PK:         'LAYER#identity',
-                GSI1SK:         'UPDATED#2024-01-02T00:00:00.000Z',
-                path:           '/identity/stale.md',
-                content:        'updated',
-                contentType:    'text/markdown',
-                metadata:       {},
-                version:        2,
+                PK:          'DIR#/identity',
+                SK:          'FILE#stale.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-02T00:00:00.000Z',
+                path:        '/identity/stale.md',
+                content:     'updated',
+                contentType: 'text/markdown',
+                metadata:    {},
+
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-02T00:00:00.000Z',
                 tags:           ['test'],
@@ -648,15 +601,15 @@ describe('runReconciliation', () => {
 
         test('should handle errors gracefully and increment error counter', async () => {
             const memoryItem = {
-                PK:             'DIR#/identity',
-                SK:             'FILE#error.md',
-                GSI1PK:         'LAYER#identity',
-                GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
-                path:           '/identity/error.md',
-                content:        'test',
-                contentType:    'text/markdown',
-                metadata:       {},
-                version:        1,
+                PK:          'DIR#/identity',
+                SK:          'FILE#error.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/error.md',
+                content:     'test',
+                contentType: 'text/markdown',
+                metadata:    {},
+
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
                 tags:           ['test'],
@@ -690,15 +643,15 @@ describe('runReconciliation', () => {
 
         test('should catch errors from createTagIndexItems and increment error counter', async () => {
             const memoryItem = {
-                PK:             'DIR#/identity',
-                SK:             'FILE#new.md',
-                GSI1PK:         'LAYER#identity',
-                GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
-                path:           '/identity/new.md',
-                content:        'test',
-                contentType:    'text/markdown',
-                metadata:       {},
-                version:        1,
+                PK:          'DIR#/identity',
+                SK:          'FILE#new.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/new.md',
+                content:     'test',
+                contentType: 'text/markdown',
+                metadata:    {},
+
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
                 tags:           ['test'],
@@ -740,7 +693,7 @@ describe('runReconciliation', () => {
                 metadata:    {
                     previouslyKnownAs: '/identity/old-name.md',
                 },
-                version:        1,
+
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
                 tags:           ['test'],
@@ -827,11 +780,11 @@ describe('runReconciliation', () => {
             };
 
             const updatedMemory: MemoryToolItemData = {
-                path:           '/identity/updated.md' as MemoryPath,
-                content:        'updated content',
-                contentType:    'text/markdown',
-                metadata:       {},
-                version:        2,
+                path:        '/identity/updated.md' as MemoryPath,
+                content:     'updated content',
+                contentType: 'text/markdown',
+                metadata:    {},
+
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-02T00:00:00.000Z',
                 tags:           ['different'], // No longer has 'removed' tag
@@ -863,11 +816,11 @@ describe('runReconciliation', () => {
             };
 
             const memory: MemoryToolItemData = {
-                path:           '/identity/file.md' as MemoryPath,
-                content:        'content',
-                contentType:    'text/markdown',
-                metadata:       {},
-                version:        1,
+                path:        '/identity/file.md' as MemoryPath,
+                content:     'content',
+                contentType: 'text/markdown',
+                metadata:    {},
+
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
                 tags:           ['valid'], // Still has the tag
@@ -920,11 +873,11 @@ describe('runReconciliation', () => {
                 });
 
             getMemory.mockResolvedValue({
-                path:           '/identity/file1.md' as MemoryPath,
-                content:        'content',
-                contentType:    'text/markdown',
-                metadata:       {},
-                version:        1,
+                path:        '/identity/file1.md' as MemoryPath,
+                content:     'content',
+                contentType: 'text/markdown',
+                metadata:    {},
+
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
                 tags:           ['test1'],
@@ -981,11 +934,11 @@ describe('runReconciliation', () => {
             getMemory
                 .mockResolvedValueOnce(undefined) // First call - orphaned
                 .mockResolvedValueOnce({ // Second call - valid
-                    path:           '/identity/file.md' as MemoryPath,
-                    content:        'content',
-                    contentType:    'text/markdown',
-                    metadata:       {},
-                    version:        1,
+                    path:        '/identity/file.md' as MemoryPath,
+                    content:     'content',
+                    contentType: 'text/markdown',
+                    metadata:    {},
+
                     createdAt:      '2024-01-01T00:00:00.000Z',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
                     tags:           ['valid'],
@@ -1020,6 +973,226 @@ describe('runReconciliation', () => {
             const result = await runReconciliation(deps, options);
 
             expect(result.phaseB.errors).toBeGreaterThan(0);
+        });
+
+        test('should exclude META_COUNT items from Phase B scan', async () => {
+            const tagIndexItem: TagIndexItem = {
+                PK:             'TAG#test',
+                SK:             'PATH#/identity/file.md',
+                memoryPath:     '/identity/file.md',
+                layer:          'identity',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           ['test'],
+                contentPreview: 'content',
+            };
+
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
+
+            // Phase B scan should filter out META_COUNT items at DynamoDB level
+            // So the returned Items should only contain PATH# items
+            ddbMock.on(ScanCommand).resolves({
+                Items: [tagIndexItem], // Only PATH# items returned (META_COUNT filtered by FilterExpression)
+            });
+
+            getMemory.mockResolvedValue({
+                path:           '/identity/file.md' as MemoryPath,
+                content:        'content',
+                contentType:    'text/markdown',
+                metadata:       {},
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           ['test'],
+                contentPreview: 'content',
+            });
+
+            const result = await runReconciliation(deps, options);
+
+            // Should only process the PATH# item
+            expect(result.phaseB.itemsScanned).toBe(1);
+            expect(result.phaseB.errors).toBe(0);
+
+            // Verify the FilterExpression excludes META_COUNT
+            const scanCalls = ddbMock.commandCalls(ScanCommand);
+            expect(scanCalls.length).toBeGreaterThanOrEqual(1);
+            expect(scanCalls[0].args[0].input.FilterExpression).toContain('SK <> :metaCount');
+            expect(scanCalls[0].args[0].input.ExpressionAttributeValues?.[':metaCount']).toBe('META_COUNT');
+        });
+    });
+
+    describe('Phase C - Verify tag counts', () => {
+        test('should verify tag counts when counts match', async () => {
+            const tagIndexItems: TagIndexItem[] = [
+                {
+                    PK:             'TAG#important',
+                    SK:             'PATH#/identity/file1.md',
+                    memoryPath:     '/identity/file1.md',
+                    layer:          'identity',
+                    updatedAt:      '2024-01-01T00:00:00.000Z',
+                    tags:           ['important'],
+                    contentPreview: 'content',
+                },
+                {
+                    PK:             'TAG#important',
+                    SK:             'PATH#/identity/file2.md',
+                    memoryPath:     '/identity/file2.md',
+                    layer:          'identity',
+                    updatedAt:      '2024-01-01T00:00:00.000Z',
+                    tags:           ['important'],
+                    contentPreview: 'content',
+                },
+            ];
+
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
+            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+
+            // Mock listTagCounts to return stored count = 2
+            const listTagCountsMock = mock(() => Promise.resolve([{ tag: 'important', count: 2 }]));
+            deps.tagIndex.listTagCounts = listTagCountsMock;
+
+            // Mock Query for actual count = 2
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)',
+            }).resolves({
+                Count: 2,
+                Items: tagIndexItems,
+            });
+
+            const result = await runReconciliation(deps, options);
+
+            expect(result.phaseC.countsVerified).toBe(1);
+            expect(result.phaseC.countsCorrected).toBe(0);
+            expect(result.phaseC.countsDeleted).toBe(0);
+            expect(listTagCountsMock).toHaveBeenCalled();
+        });
+
+        test('should update tag count when stored count differs from actual', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
+            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+
+            // Mock listTagCounts to return stored count = 5
+            const listTagCountsMock = mock(() => Promise.resolve([{ tag: 'important', count: 5 }]));
+            deps.tagIndex.listTagCounts = listTagCountsMock;
+
+            // Mock Query for actual count = 3
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)',
+            }).resolves({
+                Count: 3,
+            });
+
+            // Mock UpdateCommand
+            ddbMock.on(UpdateCommand).resolves({});
+
+            const result = await runReconciliation(deps, options);
+
+            expect(result.phaseC.countsVerified).toBe(1);
+            expect(result.phaseC.countsCorrected).toBe(1);
+
+            // Verify UpdateCommand was called with correct parameters
+            const updateCalls = ddbMock.commandCalls(UpdateCommand);
+            expect(updateCalls).toHaveLength(1);
+            const updateInput = updateCalls[0].args[0].input;
+            expect(updateInput.TableName).toBe('TestTable');
+            expect(updateInput.Key).toEqual({
+                PK: 'TAG#important',
+                SK: 'META_COUNT',
+            });
+            expect(updateInput.UpdateExpression).toBe('SET #count = :count, GSI2PK = :gsi2pk, GSI2SK = :gsi2sk');
+            expect(updateInput.ExpressionAttributeNames).toEqual({ '#count': 'count' });
+            expect(updateInput.ExpressionAttributeValues).toEqual({
+                ':count':  3,
+                ':gsi2pk': 'TAG_COUNTS',
+                ':gsi2sk': 'TAG#important',
+            });
+        });
+
+        test('should delete tag count when actual count is zero', async () => {
+            // Mock Phase A query (GSI1)
+            ddbMock.on(QueryCommand, {
+                IndexName: 'GSI1',
+            }).resolves({ Items: [] });
+
+            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+
+            // Mock listTagCounts to return stored count = 1
+            const listTagCountsMock = mock(() => Promise.resolve([{ tag: 'orphan', count: 1 }]));
+            deps.tagIndex.listTagCounts = listTagCountsMock;
+
+            // Mock Query for actual count = 0 (Phase C)
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)',
+            }).resolves({
+                Count: 0,
+                Items: [],
+            });
+
+            // Mock DeleteCommand (direct delete)
+            ddbMock.on(DeleteCommand).resolves({});
+
+            const result = await runReconciliation(deps, options);
+
+            expect(result.phaseC.countsVerified).toBe(1);
+            expect(result.phaseC.countsDeleted).toBe(1);
+
+            // Verify DeleteCommand was called with correct key
+            const deleteCalls = ddbMock.commandCalls(DeleteCommand);
+            expect(deleteCalls.length).toBe(1);
+            expect(deleteCalls[0].args[0].input.Key).toEqual({
+                PK: 'TAG#orphan',
+                SK: 'META_COUNT',
+            });
+        });
+
+        test('should verify count query uses correct DynamoDB parameters', async () => {
+            // Mock Phase A query (GSI1)
+            ddbMock.on(QueryCommand, {
+                IndexName: 'GSI1',
+            }).resolves({ Items: [] });
+
+            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+
+            const listTagCountsMock = mock(() => Promise.resolve([{ tag: 'test', count: 1 }]));
+            deps.tagIndex.listTagCounts = listTagCountsMock;
+
+            // Mock Query for actual count (Phase C)
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)',
+            }).resolves({
+                Count: 1,
+            });
+
+            await runReconciliation(deps, options);
+
+            // Verify Query was called with correct parameters
+            const queryCalls = ddbMock.commandCalls(QueryCommand);
+            const countQueryCalls = _filter(queryCalls, ['args.0.input.KeyConditionExpression', 'PK = :pk AND begins_with(SK, :skPrefix)']);
+
+            expect(countQueryCalls).toHaveLength(1);
+            const queryInput = countQueryCalls[0].args[0].input;
+            expect(queryInput.TableName).toBe('TestTable');
+            expect(queryInput.ExpressionAttributeValues).toEqual({
+                ':pk':       'TAG#test',
+                ':skPrefix': 'PATH#',
+            });
+            expect(queryInput.Select).toBe('COUNT');
+        });
+
+        test('should handle errors when processing meta count', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
+            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+
+            const listTagCountsMock = mock(() => Promise.resolve([{ tag: 'error-tag', count: 1 }]));
+            deps.tagIndex.listTagCounts = listTagCountsMock;
+
+            // Mock Query to throw error
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)',
+            }).rejects(new Error('DynamoDB error'));
+
+            const result = await runReconciliation(deps, options);
+
+            expect(result.phaseC.countsVerified).toBe(1);
+            expect(result.phaseC.errors).toBe(1);
         });
     });
 

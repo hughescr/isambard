@@ -18,7 +18,6 @@ import {
 import {
     create,
     view,
-    delete_memory as deleteMemory,
     insert,
     str_replace as strReplace,
     rename
@@ -37,7 +36,7 @@ describe('Memory Tool Handlers', () => {
             create:            mock(async () => ({})),
             get:               mock(async () => undefined),
             update:            mock(async () => ({})),
-            'delete':          mock(async () => { /* intentionally empty */ }),
+            'delete':          mock(async () => undefined),
             list:              mock(async () => ({ items: [], nextCursor: undefined })),
             searchByTags:      mock(async () => ({ items: [], nextCursor: undefined })),
             listByLayer:       mock(async () => ({ items: [], nextCursor: undefined })),
@@ -52,9 +51,9 @@ describe('Memory Tool Handlers', () => {
                 content:     'Hello World',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             const result = await create(mockBackend, {
@@ -80,9 +79,9 @@ describe('Memory Tool Handlers', () => {
                 content:     content,
                 contentType: expectedType as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             await create(mockBackend, {
@@ -169,9 +168,9 @@ describe('Memory Tool Handlers', () => {
                 content:     'Line 1\nLine 2\nLine 3',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             const result = await view(mockBackend, { path: '/test/file.md' });
@@ -190,9 +189,9 @@ describe('Memory Tool Handlers', () => {
                 content:     'Line 1\nLine 2\nLine 3\nLine 4',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             const result = await view(mockBackend, {
@@ -212,9 +211,9 @@ describe('Memory Tool Handlers', () => {
                 content:     'Line 1\nLine 2\nLine 3\nLine 4',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             const result = await view(mockBackend, {
@@ -237,18 +236,18 @@ describe('Memory Tool Handlers', () => {
                         content:     'content1',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                     {
                         path:        '/test/dir/file2.txt' as MemoryPath,
                         content:     'content2',
                         contentType: 'text/plain' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                 ],
                 nextCursor: undefined,
@@ -280,9 +279,9 @@ describe('Memory Tool Handlers', () => {
                         content:     'content1',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                 ],
                 nextCursor: undefined,
@@ -303,9 +302,9 @@ describe('Memory Tool Handlers', () => {
                         content:     'content1',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     },
                 ],
                 nextCursor: undefined,
@@ -337,9 +336,9 @@ describe('Memory Tool Handlers', () => {
                 content:     'Line 1\nLine 2',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-13T10:00:00.000Z',
-                updatedAt:   '2025-01-13T10:00:00.000Z',
+
+                createdAt: '2025-01-13T10:00:00.000Z',
+                updatedAt: '2025-01-13T10:00:00.000Z',
             }));
 
             const result = await view(mockBackend, { path: '/test/file.md' });
@@ -363,9 +362,9 @@ describe('Memory Tool Handlers', () => {
                 content:     'Recent content',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   updatedAt,
-                updatedAt:   updatedAt,
+
+                createdAt: updatedAt,
+                updatedAt: updatedAt,
             }));
 
             const result = await view(mockBackend, { path: '/test/recent.md' });
@@ -381,9 +380,9 @@ describe('Memory Tool Handlers', () => {
                 content:     'Test content',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-15T12:00:00.000Z',
-                updatedAt:   '2025-01-15T14:30:00.000Z',
+
+                createdAt: '2025-01-15T12:00:00.000Z',
+                updatedAt: '2025-01-15T14:30:00.000Z',
             }));
 
             const result = await view(mockBackend, { path: '/test/file.md' });
@@ -395,270 +394,6 @@ describe('Memory Tool Handlers', () => {
         });
     });
 
-    describe('deleteMemory', () => {
-        it('should delete a single file', async () => {
-            mockBackend.get = mock(async () => ({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'content',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
-            }));
-            mockBackend.list = mock(async () => ({ items: [], nextCursor: undefined }));
-            mockBackend.delete = mock(async () => { /* intentionally empty */ });
-
-            const result = await deleteMemory(mockBackend, { path: '/test/file.md' });
-
-            expect(result).toContain('deleted');
-            expect(result).toContain('/test/file.md');
-            expect(mockBackend.delete).toHaveBeenCalledWith('/test/file.md');
-        });
-
-        it('should recursively delete directory contents', async () => {
-            mockBackend.get = mock(async () => undefined);
-            mockBackend.list = mock(async () => ({
-                items: [
-                    {
-                        path:        '/test/dir/file1.md' as MemoryPath,
-                        content:     'content1',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                    },
-                    {
-                        path:        '/test/dir/file2.txt' as MemoryPath,
-                        content:     'content2',
-                        contentType: 'text/plain' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                    },
-                ],
-                nextCursor: undefined,
-            }));
-            mockBackend.delete = mock(async () => { /* intentionally empty */ });
-
-            const result = await deleteMemory(mockBackend, { path: '/test/dir' });
-
-            expect(result).toContain('2 memories');
-            expect(mockBackend.delete).toHaveBeenCalledTimes(2);
-        });
-
-        it('should handle root path "/" by listing with empty parent path for delete', async () => {
-            mockBackend.get = mock(async () => undefined);
-            mockBackend.list = mock(async () => ({
-                items: [
-                    {
-                        path:        '/file1.md' as MemoryPath,
-                        content:     'content1',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                    },
-                ],
-                nextCursor: undefined,
-            }));
-            mockBackend.delete = mock(async () => { /* intentionally empty */ });
-
-            const result = await deleteMemory(mockBackend, { path: '/' });
-
-            expect(result).toContain('1 memories');
-            expect(mockBackend.list).toHaveBeenCalledWith('');
-            expect(mockBackend.delete).toHaveBeenCalledTimes(1);
-        });
-
-        it('should use non-root path as parentPath when deleting directory', async () => {
-            mockBackend.get = mock(async () => undefined);
-            mockBackend.list = mock(async () => ({
-                items: [
-                    {
-                        path:        '/memories/old/file1.md' as MemoryPath,
-                        content:     'content1',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                    },
-                ],
-                nextCursor: undefined,
-            }));
-            mockBackend.delete = mock(async () => { /* intentionally empty */ });
-
-            const result = await deleteMemory(mockBackend, { path: '/memories/old' });
-
-            expect(result).toContain('1 memories');
-            // Critical: verify the path itself is used, not empty string
-            expect(mockBackend.list).toHaveBeenCalledWith('/memories/old');
-            expect(mockBackend.delete).toHaveBeenCalledTimes(1);
-        });
-
-        it('should report exact delete count for multiple files', async () => {
-            mockBackend.get = mock(async () => undefined);
-            mockBackend.list = mock(async () => ({
-                items: [
-                    {
-                        path:        '/test/dir/file1.md' as MemoryPath,
-                        content:     'content1',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                    },
-                    {
-                        path:        '/test/dir/file2.txt' as MemoryPath,
-                        content:     'content2',
-                        contentType: 'text/plain' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                    },
-                    {
-                        path:        '/test/dir/file3.md' as MemoryPath,
-                        content:     'content3',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                    },
-                ],
-                nextCursor: undefined,
-            }));
-            mockBackend.delete = mock(async () => { /* intentionally empty */ });
-
-            const result = await deleteMemory(mockBackend, { path: '/test/dir' });
-
-            expect(result).toBe('Recursively deleted 3 memories under /test/dir');
-            expect(mockBackend.delete).toHaveBeenCalledTimes(3);
-        });
-
-        it('should log warning when individual file delete fails in directory', async () => {
-            mockBackend.get = mock(async () => undefined);
-            mockBackend.list = mock(async () => ({
-                items: [
-                    {
-                        path:        '/test/dir/file1.md' as MemoryPath,
-                        content:     'content1',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                    },
-                    {
-                        path:        '/test/dir/file2.txt' as MemoryPath,
-                        content:     'content2',
-                        contentType: 'text/plain' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                    },
-                ],
-                nextCursor: undefined,
-            }));
-
-            let callCount = 0;
-            mockBackend.delete = mock(async (_path: MemoryPath) => {
-                callCount++;
-                if(callCount === 2) {
-                    throw new Error('Delete failed');
-                }
-            });
-
-            const result = await deleteMemory(mockBackend, { path: '/test/dir' });
-
-            expect(result).toContain('1 memories');
-            expect(mockLogger.warn).toHaveBeenCalledTimes(1);
-            expect(mockLogger.warn).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    path:  '/test/dir/file2.txt',
-                    error: 'Delete failed',
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
-                    msg:   expect.stringContaining('Failed to delete'),
-                })
-            );
-        });
-
-        it('should report both success and failures in return message when some deletes fail', async () => {
-            mockBackend.get = mock(async () => undefined);
-            mockBackend.list = mock(async () => ({
-                items: [
-                    {
-                        path:        '/test/dir/file1.md' as MemoryPath,
-                        content:     'content1',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                    },
-                    {
-                        path:        '/test/dir/file2.txt' as MemoryPath,
-                        content:     'content2',
-                        contentType: 'text/plain' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                    },
-                    {
-                        path:        '/test/dir/file3.json' as MemoryPath,
-                        content:     'content3',
-                        contentType: 'application/json' as ContentType,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                    },
-                ],
-                nextCursor: undefined,
-            }));
-
-            mockBackend.delete = mock(async (path: MemoryPath) => {
-                // Fail for file2.txt and file3.json
-                if(path === '/test/dir/file2.txt' || path === '/test/dir/file3.json') {
-                    throw new Error('Delete failed');
-                }
-            });
-
-            const result = await deleteMemory(mockBackend, { path: '/test/dir' });
-
-            // Should report both success count and failed paths
-            expect(result).toContain('1 memories'); // Success count
-            expect(result).toContain('Failed to delete 2 items'); // Failure count
-            expect(result).toContain('/test/dir/file2.txt'); // Failed path 1
-            expect(result).toContain('/test/dir/file3.json'); // Failed path 2
-
-            // CRITICAL: Verify the exact separator is ', ' (comma-space), not just comma or empty string
-            // This kills the mutant that changes failedPaths.join(', ') to failedPaths.join('')
-            expect(result).toContain('/test/dir/file2.txt, /test/dir/file3.json');
-        });
-
-        it('should throw PathNotFoundError when path does not exist', async () => {
-            mockBackend.get = mock(async () => undefined);
-            mockBackend.list = mock(async () => ({ items: [], nextCursor: undefined }));
-
-            expect(deleteMemory(mockBackend, { path: '/nonexistent' }))
-                .rejects.toThrow(PathNotFoundError);
-        });
-
-        it('should throw InvalidPathError for invalid paths', async () => {
-            expect(deleteMemory(mockBackend, { path: '' }))
-                .rejects.toThrow(InvalidPathError);
-        });
-    });
-
     describe('insert', () => {
         it('should insert text at the specified line', async () => {
             mockBackend.get = mock(async () => ({
@@ -666,18 +401,18 @@ describe('Memory Tool Handlers', () => {
                 content:     'Line 1\nLine 2\nLine 3',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
             mockBackend.update = mock(async () => ({
                 path:        '/test/file.md' as MemoryPath,
                 content:     'Line 1\nLine 2\nInserted\nLine 3',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     2,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:01.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:01.000Z',
             }));
 
             const result = await insert(mockBackend, {
@@ -701,18 +436,18 @@ describe('Memory Tool Handlers', () => {
                 content:     'Line 1\nLine 2',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
             mockBackend.update = mock(async () => ({
                 path:        '/test/file.md' as MemoryPath,
                 content:     expectedContent,
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     2,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:01.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:01.000Z',
             }));
 
             const result = await insert(mockBackend, {
@@ -738,9 +473,9 @@ describe('Memory Tool Handlers', () => {
                 content:     content,
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             expect(insert(mockBackend, {
@@ -776,18 +511,18 @@ describe('Memory Tool Handlers', () => {
                 content:     'Hello World\nGoodbye World',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
             mockBackend.update = mock(async () => ({
                 path:        '/test/file.md' as MemoryPath,
                 content:     'Hello Universe\nGoodbye World',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     2,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:01.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:01.000Z',
             }));
 
             const result = await strReplace(mockBackend, {
@@ -808,9 +543,9 @@ describe('Memory Tool Handlers', () => {
                 content:     'Hello World',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             expect(strReplace(mockBackend, {
@@ -826,9 +561,9 @@ describe('Memory Tool Handlers', () => {
                 content:     'Hello World\nHello World',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             expect(strReplace(mockBackend, {
@@ -866,10 +601,10 @@ describe('Memory Tool Handlers', () => {
                         content:     'Content',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    { key: 'value' },
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
-                        tags:        ['tag1'],
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
+                        tags:      ['tag1'],
                     };
                 }
                 return undefined;
@@ -879,12 +614,12 @@ describe('Memory Tool Handlers', () => {
                 content:     'Content',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    { key: 'value', previouslyKnownAs: '/test/old.md' },
-                version:     1,
-                createdAt:   '2025-01-01T00:00:01.000Z',
-                updatedAt:   '2025-01-01T00:00:01.000Z',
-                tags:        ['tag1'],
+
+                createdAt: '2025-01-01T00:00:01.000Z',
+                updatedAt: '2025-01-01T00:00:01.000Z',
+                tags:      ['tag1'],
             }));
-            mockBackend.delete = mock(async () => { /* intentionally empty */ });
+            mockBackend.delete = mock(async () => undefined);
 
             const result = await rename(mockBackend, {
                 path:     '/test/old.md',
@@ -912,9 +647,9 @@ describe('Memory Tool Handlers', () => {
                         content:     'Content',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    { existingKey: 'existingValue' },
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     };
                 }
                 return undefined;
@@ -924,11 +659,11 @@ describe('Memory Tool Handlers', () => {
                 content:     'Content',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    { existingKey: 'existingValue', previouslyKnownAs: '/test/old.md' },
-                version:     1,
-                createdAt:   '2025-01-01T00:00:01.000Z',
-                updatedAt:   '2025-01-01T00:00:01.000Z',
+
+                createdAt: '2025-01-01T00:00:01.000Z',
+                updatedAt: '2025-01-01T00:00:01.000Z',
             }));
-            mockBackend.delete = mock(async () => { /* intentionally empty */ });
+            mockBackend.delete = mock(async () => undefined);
 
             await rename(mockBackend, {
                 path:     '/test/old.md',
@@ -952,9 +687,9 @@ describe('Memory Tool Handlers', () => {
                         content:     'Content',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     };
                 }
                 return undefined;
@@ -964,9 +699,9 @@ describe('Memory Tool Handlers', () => {
                 content:     'Content',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:01.000Z',
-                updatedAt:   '2025-01-01T00:00:01.000Z',
+
+                createdAt: '2025-01-01T00:00:01.000Z',
+                updatedAt: '2025-01-01T00:00:01.000Z',
             }));
             mockBackend.delete = mock(async () => {
                 throw new Error('Cleanup failed');
@@ -997,9 +732,9 @@ describe('Memory Tool Handlers', () => {
                         content:     'Content',
                         contentType: 'text/markdown' as ContentType,
                         metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-01T00:00:00.000Z',
-                        updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
                     };
                 }
                 return undefined;
@@ -1009,9 +744,9 @@ describe('Memory Tool Handlers', () => {
                 content:     'Content',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:01.000Z',
-                updatedAt:   '2025-01-01T00:00:01.000Z',
+
+                createdAt: '2025-01-01T00:00:01.000Z',
+                updatedAt: '2025-01-01T00:00:01.000Z',
             }));
             mockBackend.delete = mock(async () => {
                 throw new Error('Delete failed');
@@ -1044,9 +779,9 @@ describe('Memory Tool Handlers', () => {
                 content:     'Content',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             expect(rename(mockBackend, {
@@ -1068,9 +803,9 @@ describe('Memory Tool Handlers', () => {
                 content:     'Content',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             expect(rename(mockBackend, {

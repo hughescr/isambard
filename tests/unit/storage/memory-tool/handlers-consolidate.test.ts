@@ -12,7 +12,6 @@ import {
 import {
     create,
     view,
-    delete_memory as deleteMemory,
     insert,
     str_replace as strReplace
 } from '@/storage/memory-tool/handlers';
@@ -54,9 +53,9 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
                     content:     'Source content',
                     contentType: 'text/markdown' as ContentType,
                     metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-01T00:00:00.000Z',
-                    updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                    createdAt: '2025-01-01T00:00:00.000Z',
+                    updatedAt: '2025-01-01T00:00:00.000Z',
                 };
             });
             mockBackend.create = mock(async () => ({
@@ -64,11 +63,11 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
                 content:     'Summary of sources',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
-            mockBackend.delete = mock(async () => { /* intentionally empty */ });
+            mockBackend.delete = mock(async () => undefined);
 
             const result = await consolidateHandler(mockBackend, {
                 source_paths: ['/test/source1.md', '/test/source2.md'],
@@ -94,11 +93,11 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
                 content:     'Summary',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
-            mockBackend.delete = mock(async () => { /* intentionally empty */ });
+            mockBackend.delete = mock(async () => undefined);
 
             const result = await consolidateHandler(mockBackend, {
                 source_paths: ['/test/source1.md'],
@@ -126,9 +125,9 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
                     content:     'Existing content',
                     contentType: 'text/markdown' as ContentType,
                     metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-01T00:00:00.000Z',
-                    updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                    createdAt: '2025-01-01T00:00:00.000Z',
+                    updatedAt: '2025-01-01T00:00:00.000Z',
                 }));
 
                 expect(consolidateHandler(localBackend, {
@@ -166,9 +165,9 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
                 content:     'Summary',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
             mockBackend.delete = mock(async () => {
                 throw new Error('Delete error message');
@@ -197,9 +196,9 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
                 content:     'Summary',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
             mockBackend.delete = mock(async () => {
                 throw 'string error';
@@ -228,9 +227,9 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
                 content:     'Summary',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             let deleteCount = 0;
@@ -240,6 +239,7 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
                 if(deleteCount === 2) {
                     throw new Error('Delete failed');
                 }
+                return undefined;
             });
 
             const result = await consolidateHandler(mockBackend, {
@@ -262,9 +262,9 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
                 content:     'Summary',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             mockBackend.delete = mock(async (path: MemoryPath) => {
@@ -294,9 +294,9 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
                 content:     'content',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             await create(mockBackend, { path: '/test/file.md', file_text: 'content' });
@@ -316,9 +316,9 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
                 content:     'content',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
             await view(mockBackend, { path: '/test/file.md' });
@@ -332,47 +332,24 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
             );
         });
 
-        it('should log memory delete with path', async () => {
-            mockBackend.get = mock(async () => ({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'content',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
-            }));
-            mockBackend.delete = mock(async () => { /* intentionally empty */ });
-
-            await deleteMemory(mockBackend, { path: '/test/file.md' });
-
-            expect(mockLogger.debug).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    path: '/test/file.md',
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
-                    msg:  expect.stringContaining('Memory delete:'),
-                })
-            );
-        });
-
         it('should log memory insert with path', async () => {
             mockBackend.get = mock(async () => ({
                 path:        '/test/file.md' as MemoryPath,
                 content:     'Line 1\nLine 2',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
             mockBackend.update = mock(async () => ({
                 path:        '/test/file.md' as MemoryPath,
                 content:     'Inserted\nLine 1\nLine 2',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     2,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:01.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:01.000Z',
             }));
 
             await insert(mockBackend, { path: '/test/file.md', insert_line: 0, insert_text: 'Inserted' });
@@ -392,18 +369,18 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
                 content:     'Hello World',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     1,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:00.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
             }));
             mockBackend.update = mock(async () => ({
                 path:        '/test/file.md' as MemoryPath,
                 content:     'Hello Universe',
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
-                version:     2,
-                createdAt:   '2025-01-01T00:00:00.000Z',
-                updatedAt:   '2025-01-01T00:00:01.000Z',
+
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:01.000Z',
             }));
 
             await strReplace(mockBackend, { path: '/test/file.md', old_str: 'World', new_str: 'Universe' });

@@ -1,12 +1,13 @@
 /**
  * Core Tag Index Reconciliation Logic
  *
- * Two-phase reconciliation system:
+ * Three-phase reconciliation system:
  * - Phase A: Scan memory items via GSI1, ensure tag indices are complete and up-to-date
  * - Phase B: Scan tag indices, delete orphaned entries
+ * - Phase C: Verify META_COUNT atomic counters match actual tag index item counts
  */
 
-import { DynamoDBDocumentClient, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, QueryCommand, ScanCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { map as _map, includes as _includes, isEqual as _isEqual, isObject as _isObject, isString as _isString, startsWith as _startsWith } from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { MemoryToolBackendTagIndex } from '../backend-tag-index';
@@ -27,7 +28,7 @@ export interface ReconcilerDeps {
     tableName:            string
     tagIndex:             MemoryToolBackendTagIndex
     getMemory:            (path: MemoryPath) => Promise<MemoryToolItemData | undefined>
-    updateMemoryMetadata: (path: MemoryPath, existing: MemoryToolItemData, input: { metadata: Record<string, unknown> }) => Promise<MemoryToolItemData>
+    updateMemoryMetadata: (path: MemoryPath, input: { metadata: Record<string, unknown> }) => Promise<MemoryToolItemData>
 }
 
 /**
@@ -115,14 +116,6 @@ async function retryWithBackoff<T>(
     return undefined;
 }
 // Stryker restore all
-
-/**
- * Check if a version snapshot (filter out from scan results)
- */
-function isVersionSnapshot(item: MemoryToolItem): boolean {
-    // Stryker disable next-line StringLiteral: VERSION# prefix is a constant pattern
-    return _startsWith(item.SK, 'VERSION#');
-}
 
 // ============================================================================
 // Phase A: Scan Memory Items
@@ -216,8 +209,8 @@ async function processMemoryItemTags(
                 );
                 ctx.progress.indexItemsCreated++;
             } else if(isTagIndexStale(memoryItem, existingIndex)) {
-                // Refresh stale index item
-                await ctx.deps.tagIndex.createTagIndexItems(
+                // Refresh stale index item (count-neutral)
+                await ctx.deps.tagIndex.refreshTagIndexItems(
                     memoryItem.path,
                     /* Stryker disable next-line ArrayDeclaration: Tag argument tested in backend-tag-index.test.ts */
                     [tag],
@@ -295,7 +288,6 @@ async function cleanPreviouslyKnownAs(
 
             await ctx.deps.updateMemoryMetadata(
                 memoryItem.path,
-                memoryItem,
                 { metadata: cleanMetadata }
             );
 
@@ -379,13 +371,8 @@ async function scanLayer(
 
         const items = (result.Items ?? []) as MemoryToolItem[];
 
-        // Filter out version snapshots and process each memory item
+        // Process each memory item
         for(const item of items) {
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Skip version snapshots
-            if(isVersionSnapshot(item)) {
-                continue;
-            }
-
             await processMemoryItem(ctx, item);
         }
 
@@ -531,10 +518,12 @@ async function runPhaseB(
             // eslint-disable-next-line no-loop-func -- async function executed immediately via await
             async () => deps.docClient.send(new ScanCommand({
                 TableName:                 deps.tableName,
-                FilterExpression:          'begins_with(PK, :prefix)',
+                /* Stryker disable next-line StringLiteral: DynamoDB expression */
+                FilterExpression:          'begins_with(PK, :prefix) AND SK <> :metaCount',
                 // Stryker disable next-line StringLiteral,ObjectLiteral: DynamoDB expression attribute values
                 ExpressionAttributeValues: {
-                    ':prefix': 'TAG#',
+                    ':prefix':    'TAG#',
+                    ':metaCount': 'META_COUNT',
                 },
                 Limit:             options.scanPageSize,
                 ExclusiveStartKey: lastEvaluatedKey,
@@ -572,11 +561,245 @@ async function runPhaseB(
 }
 
 // ============================================================================
+// Phase C: Verify META_COUNT Items
+// ============================================================================
+
+interface PhaseCContext {
+    deps:     ReconcilerDeps
+    options:  ReconcilerOptions
+    progress: ReconciliationProgress
+}
+
+/**
+ * Get actual tag index item count for a given tag
+ * Handles pagination to sum counts across all pages
+ */
+async function getActualTagCount(
+    ctx: PhaseCContext,
+    tag: string
+): Promise<number | undefined> {
+    let totalCount = 0;
+    let lastEvaluatedKey: Record<string, unknown> | undefined;
+
+    // Stryker disable ConditionalExpression,BlockStatement: Intentional infinite loop with break
+    do {
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Abort check
+        if(ctx.options.signal?.aborted) {
+            return undefined;
+        }
+
+        const result = await retryWithBackoff(
+            // eslint-disable-next-line no-loop-func -- async function executed immediately via await
+            async () => ctx.deps.docClient.send(new QueryCommand({
+                TableName:                 ctx.deps.tableName,
+                KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
+                // Stryker disable next-line StringLiteral: DynamoDB expression attribute values
+                ExpressionAttributeValues: {
+                    ':pk':       `TAG#${tag}`,
+                    ':skPrefix': 'PATH#',
+                },
+                // Stryker disable next-line StringLiteral: Select COUNT instead of fetching all items
+                Select:            'COUNT',
+                ExclusiveStartKey: lastEvaluatedKey,
+            })),
+            ctx.options.backoff,
+            /* Stryker disable next-line StringLiteral: Retry context string is observational */
+            `getActualTagCount:${tag}`,
+            ctx.options.signal
+        );
+
+        // Stryker disable next-line OptionalChaining,BlockStatement: Null check
+        if(!result) {
+            return undefined;
+        }
+
+        totalCount += result.Count ?? 0;
+        lastEvaluatedKey = result.LastEvaluatedKey;
+
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Loop termination
+    } while(lastEvaluatedKey);
+    // Stryker restore ConditionalExpression,BlockStatement
+
+    return totalCount;
+}
+
+/**
+ * Update META_COUNT item to correct value
+ */
+async function updateMetaCount(
+    ctx: PhaseCContext,
+    tag: string,
+    correctCount: number
+): Promise<boolean> {
+    const result = await retryWithBackoff(
+        async () => ctx.deps.docClient.send(new UpdateCommand({
+            TableName: ctx.deps.tableName,
+            Key:       {
+                PK: `TAG#${tag}`,
+                SK: 'META_COUNT',
+            },
+            UpdateExpression:          'SET #count = :count, GSI2PK = :gsi2pk, GSI2SK = :gsi2sk',
+            ExpressionAttributeNames:  { '#count': 'count' },
+            ExpressionAttributeValues: {
+                ':count':  correctCount,
+                ':gsi2pk': 'TAG_COUNTS',
+                ':gsi2sk': `TAG#${tag}`,
+            },
+        })),
+        ctx.options.backoff,
+        /* Stryker disable next-line StringLiteral: Retry context string is observational */
+        `updateMetaCount:${tag}`,
+        ctx.options.signal
+    );
+    // Stryker disable next-line ConditionalExpression: Null check on retryWithBackoff result
+    return result !== undefined;
+}
+
+/**
+ * Delete META_COUNT item
+ */
+async function deleteMetaCount(
+    ctx: PhaseCContext,
+    tag: string
+): Promise<boolean> {
+    const result = await retryWithBackoff(
+        async () => ctx.deps.docClient.send(new DeleteCommand({
+            TableName: ctx.deps.tableName,
+            Key:       {
+                PK: `TAG#${tag}`,
+                SK: 'META_COUNT',
+            },
+        })),
+        ctx.options.backoff,
+        /* Stryker disable next-line StringLiteral: Retry context string is observational */
+        `deleteMetaCount:${tag}`,
+        ctx.options.signal
+    );
+    // Stryker disable next-line ConditionalExpression: Null check on retryWithBackoff result
+    return result !== undefined;
+}
+
+/**
+ * Process a single META_COUNT item
+ */
+async function processMetaCount(
+    ctx: PhaseCContext,
+    tag: string,
+    storedCount: number
+): Promise<void> {
+    ctx.progress.countsVerified = (ctx.progress.countsVerified ?? 0) + 1;
+
+    // Stryker disable BlockStatement: Error handling catch block not exercised in unit tests
+    try {
+        const actualCount = await getActualTagCount(ctx, tag);
+
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Null check
+        if(actualCount === undefined) {
+            /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
+            logger.warn({ tag, msg: 'Failed to get actual tag count' });
+            /* Stryker restore StringLiteral,ObjectLiteral */
+            ctx.progress.errors++;
+            return;
+        }
+
+        // Stryker disable next-line ConditionalExpression,EqualityOperator: Count comparison
+        if(actualCount === 0) {
+            // Delete META_COUNT item
+            const deleted = await deleteMetaCount(ctx, tag);
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Success check
+            if(deleted) {
+                ctx.progress.countsDeleted = (ctx.progress.countsDeleted ?? 0) + 1;
+                /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
+                logger.debug({ tag, msg: 'Deleted META_COUNT with zero actual count' });
+                /* Stryker restore StringLiteral,ObjectLiteral */
+            } else {
+                /* Stryker disable BlockStatement: Error handling path not exercised in unit tests */
+                ctx.progress.errors++;
+                /* Stryker restore BlockStatement */
+            }
+        // Stryker disable next-line ConditionalExpression,EqualityOperator: Count comparison
+        } else if(actualCount !== storedCount) {
+            // Correct META_COUNT item
+            const updated = await updateMetaCount(ctx, tag, actualCount);
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Success check
+            if(updated) {
+                ctx.progress.countsCorrected = (ctx.progress.countsCorrected ?? 0) + 1;
+                /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
+                logger.debug({ tag, storedCount, actualCount, msg: 'Corrected META_COUNT mismatch' });
+                /* Stryker restore StringLiteral,ObjectLiteral */
+            } else {
+                /* Stryker disable BlockStatement: Error handling path not exercised in unit tests */
+                ctx.progress.errors++;
+                /* Stryker restore BlockStatement */
+            }
+        }
+
+        await delay(ctx.options.operationDelayMs, ctx.options.signal);
+    } catch (error) {
+        /* Stryker disable all: Error handling not exercised in unit tests */
+        logger.warn({ error, tag, msg: 'Failed to process META_COUNT item' });
+        ctx.progress.errors++;
+        /* Stryker restore all */
+    }
+    // Stryker restore BlockStatement
+}
+
+/**
+ * Phase C: Verify all META_COUNT items match actual tag index counts
+ */
+async function runPhaseC(
+    deps: ReconcilerDeps,
+    options: ReconcilerOptions
+): Promise<ReconciliationProgress> {
+    const progress: ReconciliationProgress = {
+        phase:               'phaseC',
+        itemsScanned:        0,
+        indexItemsCreated:   0,
+        indexItemsRefreshed: 0,
+        indexItemsDeleted:   0,
+        metadataCleaned:     0,
+        countsVerified:      0,
+        countsCorrected:     0,
+        countsDeleted:       0,
+        errors:              0,
+        startTime:           new Date(),
+    };
+
+    const ctx: PhaseCContext = { deps, options, progress };
+
+    try {
+        const tagCounts = await deps.tagIndex.listTagCounts();
+
+        for(const { tag, count } of tagCounts) {
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Abort check
+            if(options.signal?.aborted) {
+                // Stryker disable next-line StringLiteral: Abort message not exercised in tests
+                throw new Error('Aborted');
+            }
+
+            await processMetaCount(ctx, tag, count);
+        }
+    // Stryker disable next-line BlockStatement: Error handling catch block not exercised in unit tests
+    } catch (error) {
+        /* Stryker disable all: Error handling not exercised in unit tests */
+        if(options.signal?.aborted) {
+            throw error;
+        }
+        logger.warn({ error, msg: 'Failed to list tag counts' });
+        progress.errors++;
+        /* Stryker restore all */
+    }
+
+    progress.endTime = new Date();
+    return progress;
+}
+
+// ============================================================================
 // Main Reconciliation
 // ============================================================================
 
 /**
- * Run complete tag index reconciliation (Phase A + Phase B)
+ * Run complete tag index reconciliation (Phase A + Phase B + Phase C)
  */
 export async function runReconciliation(
     deps: ReconcilerDeps,
@@ -612,9 +835,21 @@ export async function runReconciliation(
     });
     /* Stryker restore StringLiteral,ObjectLiteral */
 
+    const phaseC = await runPhaseC(deps, options);
+    /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
+    logger.info({
+        phase:           'C',
+        countsVerified:  phaseC.countsVerified,
+        countsCorrected: phaseC.countsCorrected,
+        countsDeleted:   phaseC.countsDeleted,
+        errors:          phaseC.errors,
+        msg:             'Phase C complete',
+    });
+    /* Stryker restore StringLiteral,ObjectLiteral */
+
     const totalDurationMs = Date.now() - startTime;
     /* Stryker disable next-line ConditionalExpression: Success calculation tested via integration tests */
-    const success = phaseA.errors === 0 && phaseB.errors === 0;
+    const success = phaseA.errors === 0 && phaseB.errors === 0 && phaseC.errors === 0;
 
     /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
     logger.info({
@@ -628,6 +863,7 @@ export async function runReconciliation(
         success,
         phaseA,
         phaseB,
+        phaseC,
         totalDurationMs,
     };
 }

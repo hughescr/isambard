@@ -5,29 +5,18 @@ import { logger } from '@hughescr/logger';
 import {
     type MemoryPath,
     type MemoryToolItemData,
-    type ContentType,
     type LayerName,
     type TagIndexItem,
     extractLayerFromPath
 } from './types';
 import { MemoryToolBackendCore, type CreateMemoryToolItemInput, type UpdateMemoryToolItemInput } from './backend-core';
 import { MemoryToolBackendQuery, type ListOptions, type ListResult } from './backend-query';
-import { MemoryToolBackendVersions, type VersionInfo } from './backend-versions';
 import { MemoryToolBackendTagIndex } from './backend-tag-index';
-import {
-    TAG_REGISTRY_PATH,
-    updateTagRegistry,
-    decrementTagRegistry,
-    computeTagChanges,
-    type TagRegistryCallbacks
-} from './backend-tag-registry';
-import { getLayerConfig } from './layer-config';
 import { normalizeTags, generateContentPreview } from './key-generator';
 
 // Re-export types for public API
 export type { CreateMemoryToolItemInput, UpdateMemoryToolItemInput } from './backend-core';
 export type { ListOptions, ListResult } from './backend-query';
-export type { VersionInfo } from './backend-versions';
 
 /**
  * Memory tool backend facade that delegates to specialized modules.
@@ -36,7 +25,6 @@ export type { VersionInfo } from './backend-versions';
 export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
     private readonly coreOps:     MemoryToolBackendCore;
     private readonly queryOps:    MemoryToolBackendQuery;
-    private readonly versionOps:  MemoryToolBackendVersions;
     private readonly tagIndexOps: MemoryToolBackendTagIndex;
 
     constructor(docClient: DynamoDBDocumentClient, tableName: string) {
@@ -62,40 +50,16 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
             stripDynamoKeys,
             this.tagIndexOps
         );
-
-        this.versionOps = new MemoryToolBackendVersions(
-            docClient,
-            tableName,
-            stripDynamoKeys,
-            this.listByLayer.bind(this)
-        );
-    }
-
-    /**
-     * Creates tag registry callbacks that use core operations directly.
-     * This avoids infinite recursion when updating the registry itself.
-     */
-    private createTagRegistryCallbacks(): TagRegistryCallbacks {
-        return {
-            get:    (p: MemoryPath) => this.coreOps.get(p),
-            create: (input: { path: MemoryPath, content: string, contentType: ContentType, metadata?: Record<string, unknown> }) =>
-                this.coreOps.create(input),
-            updateDirect: (p: MemoryPath, existing: MemoryToolItemData, input: { content: string }) =>
-                this.coreOps.updateWithoutVersioning(p, existing, input),
-        };
     }
 
     // Core CRUD operations
     async create(input: CreateMemoryToolItemInput): Promise<MemoryToolItemData> {
         const result = await this.coreOps.create(input);
 
-        // Skip tag/registry update for the registry itself to prevent recursion
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: Guards against infinite recursion; optimization - registry functions short-circuit on empty arrays
-        if(input.path !== TAG_REGISTRY_PATH && input.tags && input.tags.length > 0) {
+        // Create tag index items (best-effort) - counts handled internally by createTagIndexItems
+        // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator: Optimization - tag index operations are best-effort and short-circuit on empty arrays
+        if(input.tags && input.tags.length > 0) {
             const normalizedTags = normalizeTags(input.tags);
-            await updateTagRegistry(normalizedTags, this.createTagRegistryCallbacks());
-
-            // Create tag index items (best-effort)
             const layer = extractLayerFromPath(input.path);
             // Stryker disable next-line StringLiteral: 'unknown' vs '' are equivalent fallback values for non-layer paths
             const layerStr = layer ?? 'unknown';
@@ -124,31 +88,19 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
     }
 
     async update(path: MemoryPath, input: UpdateMemoryToolItemInput): Promise<MemoryToolItemData> {
-        // Skip registry update for the registry itself to prevent recursion
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Prevents infinite recursion when updating tag registry itself
-        if(path === TAG_REGISTRY_PATH) {
-            return this.coreOps.update(path, input);
-        }
-
         // Fetch existing item to compare tags
         const existing = await this.coreOps.get(path);
         const oldTags = existing?.tags;
 
         const result = await this.coreOps.update(path, input);
 
-        // Prune old versions based on layer config
         const layer = extractLayerFromPath(path);
-        if(layer) {
-            const config = getLayerConfig(layer);
-            await this.pruneVersions(path, config.maxVersions);
-        }
-
         // Stryker disable next-line StringLiteral: 'unknown' vs '' are equivalent fallback values for non-layer paths
         const layerStr = layer ?? 'unknown';
         const contentPreview = generateContentPreview(result.content);
         const normalizedNewTags = normalizeTags(result.tags);
 
-        // Update tag index items on any memory edit
+        // Update tag index items on any memory edit (counts handled internally)
         // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator: Tag index updates are best-effort; condition is optimization guard
         if(normalizedNewTags.length > 0 || (oldTags && oldTags.length > 0)) {
             const normalizedOldTags = normalizeTags(oldTags);
@@ -169,45 +121,19 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
             }
         }
 
-        // Only update registry if tags were explicitly changed
-        // Stryker disable next-line ConditionalExpression: Optimization - skip tag processing when tags not in input
-        if(input.tags !== undefined) {
-            const { added, removed } = computeTagChanges(
-                normalizeTags(oldTags),
-                normalizedNewTags
-            );
-            const callbacks = this.createTagRegistryCallbacks();
-
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: Optimization - registry functions short-circuit on empty arrays
-            if(added.length > 0) {
-                await updateTagRegistry(added, callbacks);
-            }
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: Optimization - registry functions short-circuit on empty arrays
-            if(removed.length > 0) {
-                await decrementTagRegistry(removed, callbacks);
-            }
-        }
-
         return result;
     }
 
-    async delete(path: MemoryPath): Promise<void> {
-        // Skip registry update for the registry itself to prevent recursion
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - skips unnecessary item fetch; behavior identical either way
-        if(path === TAG_REGISTRY_PATH) {
-            return this.coreOps.delete(path);
-        }
-
-        // Fetch item first to get its tags for decrementing
+    async delete(path: MemoryPath): Promise<MemoryToolItemData | undefined> {
+        // Fetch item first to get its tags
         const existing = await this.coreOps.get(path);
 
         await this.coreOps.delete(path);
 
-        // Decrement tag counts if item had tags
-        // Stryker disable next-line all: Tag length check is optimization - registry functions short-circuit on empty arrays
+        // Delete tag index items if item had tags (counts handled internally)
+        // Stryker disable next-line all: Tag length check is optimization - tag index functions short-circuit on empty arrays
         if(existing?.tags && existing.tags.length > 0) {
             const normalizedTags = normalizeTags(existing.tags);
-            await decrementTagRegistry(normalizedTags, this.createTagRegistryCallbacks());
 
             // Delete tag index items (best-effort)
             // Stryker disable BlockStatement: Tag index catch block has internal error handling
@@ -219,6 +145,8 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
                 /* Stryker restore all */
             }
         }
+
+        return existing;
     }
 
     // Query operations
@@ -250,23 +178,10 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         return this.queryOps.searchByTimeRange(startTime, endTime, layer, options);
     }
 
-    // Version operations
-    async getVersion(path: MemoryPath, version: number): Promise<MemoryToolItemData | undefined> {
-        return this.versionOps.getVersion(path, version);
-    }
-
-    async listVersions(path: MemoryPath, limit?: number): Promise<VersionInfo[]> {
-        return this.versionOps.listVersions(path, limit);
-    }
-
-    async pruneVersions(path: MemoryPath, keepCount: number): Promise<number> {
-        return this.versionOps.pruneVersions(path, keepCount);
-    }
-
     async getAutoLoadItems(
         options?: { maxIdentityItems?: number, maxStateItems?: number }
     ): Promise<MemoryToolItemData[]> {
-        return this.versionOps.getAutoLoadItems(options);
+        return this.queryOps.getAutoLoadItems(options);
     }
 
     /**
@@ -278,15 +193,22 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
     }
 
     /**
-     * Updates memory metadata without creating a version snapshot.
+     * Updates memory metadata directly.
      * Used by reconciliation to clean up previouslyKnownAs metadata.
      * @internal
      */
     async updateMetadataOnly(
         path: MemoryPath,
-        existing: MemoryToolItemData,
         input: { content?: string, metadata?: Record<string, unknown> }
     ): Promise<MemoryToolItemData> {
-        return this.coreOps.updateWithoutVersioning(path, existing, input);
+        return this.coreOps.update(path, input);
+    }
+
+    /**
+     * Lists all tag counts by querying META_COUNT items.
+     * Returns tags sorted by name.
+     */
+    async listTagCounts(): Promise<{ tag: string, count: number }[]> {
+        return this.tagIndexOps.listTagCounts();
     }
 }

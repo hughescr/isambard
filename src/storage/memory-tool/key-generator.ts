@@ -117,37 +117,6 @@ export class MemoryToolKeyGenerator {
     }
 
     /**
-   * Creates DynamoDB keys for version history items
-   *
-   * @param path - Full path to the memory file
-   * @param version - Version number of the snapshot
-   * @param timestamp - ISO 8601 timestamp when version was created
-   * @returns DynamoDB keys for the version history item
-   *
-   * @example
-   * ```ts
-   * const keys = MemoryToolKeyGenerator.createVersionKeys(
-   *   '/test/file.md' as MemoryPath,
-   *   2,
-   *   '2024-01-15T10:30:00.000Z'
-   * );
-   * // {
-   * //   PK: 'DIR#/test',
-   * //   SK: 'VERSION#2#2024-01-15T10:30:00.000Z'
-   * // }
-   * ```
-   */
-    static createVersionKeys(path: MemoryPath, version: number, timestamp: string): { PK: string, SK: string } {
-        const lastSlashIndex = path.lastIndexOf('/');
-        const parentPath = lastSlashIndex === 0 ? '/' : path.slice(0, lastSlashIndex);
-
-        return {
-            PK: `DIR#${parentPath}`,
-            SK: `VERSION#${version}#${timestamp}`,
-        };
-    }
-
-    /**
    * Creates DynamoDB keys for tag index items.
    * Returns one key pair per tag. Empty array if no tags.
    *

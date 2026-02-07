@@ -174,35 +174,6 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
         });
     });
 
-    describe('createVersionKeys', () => {
-        test.each([
-            {
-                name:      'single-level directory',
-                path:      '/test/file.md' as MemoryPath,
-                version:   1,
-                timestamp: '2024-01-15T10:30:00.000Z',
-                expected:  { PK: 'DIR#/test', SK: 'VERSION#1#2024-01-15T10:30:00.000Z' },
-            },
-            {
-                name:      'root-level file',
-                path:      '/file.md' as MemoryPath,
-                version:   2,
-                timestamp: '2024-01-20T15:45:00.000Z',
-                expected:  { PK: 'DIR#/', SK: 'VERSION#2#2024-01-20T15:45:00.000Z' },
-            },
-            {
-                name:      'nested directory',
-                path:      '/memories/events/party.xml' as MemoryPath,
-                version:   5,
-                timestamp: '2024-02-10T08:00:00.000Z',
-                expected:  { PK: 'DIR#/memories/events', SK: 'VERSION#5#2024-02-10T08:00:00.000Z' },
-            },
-        ])('should create version keys for $name', ({ path, version, timestamp, expected }) => {
-            const keys = MemoryToolKeyGenerator.createVersionKeys(path, version, timestamp);
-            expect(keys).toEqual(expected);
-        });
-    });
-
     describe('generateContentPreview', () => {
         test('should return full content when under 100 characters', () => {
             const content = 'Short content';

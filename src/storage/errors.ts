@@ -26,24 +26,6 @@ export class ItemNotFoundError extends StorageError {
 }
 
 /**
- * Error thrown when an optimistic locking conflict occurs.
- * This happens when the item's version has changed since it was read.
- */
-export class ConflictError extends StorageError {
-    public readonly itemId:          string;
-    public readonly expectedVersion: number;
-    public readonly actualVersion:   number;
-
-    constructor(itemId: string, expectedVersion: number, actualVersion: number) {
-        super(`Version conflict for item ${itemId}: expected ${expectedVersion}, got ${actualVersion}`);
-        this.name = 'ConflictError';
-        this.itemId = itemId;
-        this.expectedVersion = expectedVersion;
-        this.actualVersion = actualVersion;
-    }
-}
-
-/**
  * Error thrown when validation fails.
  */
 export class ValidationError extends StorageError {

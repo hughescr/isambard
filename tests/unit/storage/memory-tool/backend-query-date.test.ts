@@ -127,9 +127,9 @@ describe('MemoryToolBackend - Date Filtering', () => {
                     content:     'My values',
                     contentType: 'text/markdown',
                     metadata:    {},
-                    version:     1,
-                    createdAt:   '2024-06-15T00:00:00.000Z',
-                    updatedAt:   '2024-06-15T00:00:00.000Z',
+
+                    createdAt: '2024-06-15T00:00:00.000Z',
+                    updatedAt: '2024-06-15T00:00:00.000Z',
                 },
             ];
             ddbMock.on(QueryCommand).resolves({ Items: items });
@@ -154,9 +154,9 @@ describe('MemoryToolBackend - Date Filtering', () => {
                     content:     'Test',
                     contentType: 'text/plain',
                     metadata:    {},
-                    version:     1,
-                    createdAt:   '2024-01-15T00:00:00.000Z',
-                    updatedAt:   '2024-01-15T00:00:00.000Z',
+
+                    createdAt: '2024-01-15T00:00:00.000Z',
+                    updatedAt: '2024-01-15T00:00:00.000Z',
                 },
             ];
             ddbMock.on(QueryCommand).resolves({ Items: items });

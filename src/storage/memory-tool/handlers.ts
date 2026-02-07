@@ -144,56 +144,6 @@ export async function view(
 }
 
 /**
- * Deletes a memory or recursively deletes directory contents
- */
-export async function delete_memory(
-    backend: MemoryToolBackend,
-    params: { path: string }
-): Promise<string> {
-    const { path } = params;
-    logger.debug({ path, msg: `Memory delete: ${path}` });
-    const memoryPath = validatePath(params.path);
-
-    // Check if it's a file
-    const item = await backend.get(memoryPath);
-
-    if(item) {
-        // It's a file - delete it
-        await backend.delete(memoryPath);
-        return `Memory at ${params.path} deleted successfully`;
-    }
-
-    // Try as a directory
-    const parentPath = memoryPath === '/' ? '' : memoryPath;
-    const listResult = await backend.list(parentPath);
-
-    if(listResult.items.length > 0) {
-        // It's a directory - delete all contents
-        let deleteCount = 0;
-        const failedPaths: string[] = [];
-        for(const item of listResult.items) {
-            try {
-                await backend.delete(item.path);
-                deleteCount++;
-            } catch (error: unknown) {
-                const errorMessage = _isError(error) ? error.message : String(error);
-                logger.warn({ path: item.path, error: errorMessage, msg: `Failed to delete ${item.path}: ${errorMessage}` });
-                failedPaths.push(item.path);
-            }
-        }
-
-        if(failedPaths.length === 0) {
-            return `Recursively deleted ${deleteCount} memories under ${params.path}`;
-        } else {
-            return `Recursively deleted ${deleteCount} memories under ${params.path}. Failed to delete ${failedPaths.length} items: ${failedPaths.join(', ')}`;
-        }
-    }
-
-    // Neither file nor directory
-    throw new PathNotFoundError(params.path);
-}
-
-/**
  * Inserts text at a specific line number
  */
 export async function insert(

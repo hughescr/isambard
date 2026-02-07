@@ -9,30 +9,16 @@ import type { LayerName } from '@/storage/memory-tool/types';
 
 describe.concurrent('layerConfigSchema', () => {
     // First Zod parse has slight cold-start, allow 5ms
-    test('should validate config with all fields', () => {
+    test('should validate config with autoLoad conditional', () => {
         const config = {
-            maxVersions: 5,
-            autoLoad:    'conditional' as const,
+            autoLoad: 'conditional' as const,
         };
         const result = layerConfigSchema.safeParse(config);
         expect(result.success).toBe(true);
     }, { timeout: process.env.CI ? 50 : 5 });
 
-    test('should apply default maxVersions of 1', () => {
-        const config = {
-            autoLoad: false,
-        };
-        const result = layerConfigSchema.safeParse(config);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data.maxVersions).toBe(1);
-        }
-    });
-
     test('should apply default autoLoad of false', () => {
-        const config = {
-            maxVersions: 3,
-        };
+        const config = {};
         const result = layerConfigSchema.safeParse(config);
         expect(result.success).toBe(true);
         if(result.success) {
@@ -42,15 +28,13 @@ describe.concurrent('layerConfigSchema', () => {
 
     test('should accept boolean autoLoad', () => {
         const configTrue = {
-            maxVersions: 3,
-            autoLoad:    true,
+            autoLoad: true,
         };
         const resultTrue = layerConfigSchema.safeParse(configTrue);
         expect(resultTrue.success).toBe(true);
 
         const configFalse = {
-            maxVersions: 3,
-            autoLoad:    false,
+            autoLoad: false,
         };
         const resultFalse = layerConfigSchema.safeParse(configFalse);
         expect(resultFalse.success).toBe(true);
@@ -58,8 +42,7 @@ describe.concurrent('layerConfigSchema', () => {
 
     test('should accept "conditional" for autoLoad', () => {
         const config = {
-            maxVersions: 3,
-            autoLoad:    'conditional' as const,
+            autoLoad: 'conditional' as const,
         };
         const result = layerConfigSchema.safeParse(config);
         expect(result.success).toBe(true);
@@ -67,35 +50,7 @@ describe.concurrent('layerConfigSchema', () => {
 
     test('should reject invalid string for autoLoad', () => {
         const config = {
-            maxVersions: 3,
-            autoLoad:    'always',
-        };
-        const result = layerConfigSchema.safeParse(config);
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject negative maxVersions', () => {
-        const config = {
-            maxVersions: -1,
-            autoLoad:    false,
-        };
-        const result = layerConfigSchema.safeParse(config);
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject zero maxVersions', () => {
-        const config = {
-            maxVersions: 0,
-            autoLoad:    false,
-        };
-        const result = layerConfigSchema.safeParse(config);
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject non-integer maxVersions', () => {
-        const config = {
-            maxVersions: 3.5,
-            autoLoad:    false,
+            autoLoad: 'always',
         };
         const result = layerConfigSchema.safeParse(config);
         expect(result.success).toBe(false);
@@ -112,19 +67,16 @@ describe.concurrent('LAYER_CONFIGS', () => {
 
     test('should have identity config with correct values', () => {
         const config = getLayerConfig('identity' as LayerName);
-        expect(config.maxVersions).toBe(10);
         expect(config.autoLoad).toBe(true);
     });
 
     test('should have state config with correct values', () => {
         const config = getLayerConfig('state' as LayerName);
-        expect(config.maxVersions).toBe(5);
         expect(config.autoLoad).toBe('conditional');
     });
 
     test('should have events config with correct values', () => {
         const config = getLayerConfig('events' as LayerName);
-        expect(config.maxVersions).toBe(1);
         expect(config.autoLoad).toBe(false);
     });
 
@@ -140,19 +92,16 @@ describe.concurrent('LAYER_CONFIGS', () => {
 describe.concurrent('getLayerConfig', () => {
     test('should return identity config with correct values', () => {
         const config = getLayerConfig('identity' as LayerName);
-        expect(config.maxVersions).toBe(10);
         expect(config.autoLoad).toBe(true);
     });
 
     test('should return state config with correct values', () => {
         const config = getLayerConfig('state' as LayerName);
-        expect(config.maxVersions).toBe(5);
         expect(config.autoLoad).toBe('conditional');
     });
 
     test('should return events config with correct values', () => {
         const config = getLayerConfig('events' as LayerName);
-        expect(config.maxVersions).toBe(1);
         expect(config.autoLoad).toBe(false);
     });
 

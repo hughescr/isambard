@@ -1,5 +1,5 @@
 import { describe, test, expect, spyOn } from 'bun:test';
-import { StorageError, ItemNotFoundError, ConflictError, ValidationError } from '@/storage/errors';
+import { StorageError, ItemNotFoundError, ValidationError } from '@/storage/errors';
 
 describe.concurrent('StorageError', () => {
     test('should be an instance of StorageError', () => {
@@ -42,31 +42,6 @@ describe.concurrent('ItemNotFoundError', () => {
     test('should store itemId property', () => {
         const error = new ItemNotFoundError('item-456');
         expect(error.itemId).toBe('item-456');
-    });
-});
-
-describe.concurrent('ConflictError', () => {
-    test('should be an instance of ConflictError', () => {
-        const error = new ConflictError('item-123', 1, 2);
-        expect(error).toBeInstanceOf(ConflictError);
-    });
-
-    test('should have correct name', () => {
-        const error = new ConflictError('item-123', 1, 2);
-        expect(error.name).toBe('ConflictError');
-    });
-
-    test('should include version info in message', () => {
-        const error = new ConflictError('item-123', 1, 2);
-        expect(error.message).toContain('1');
-        expect(error.message).toContain('2');
-    });
-
-    test('should store itemId and version properties', () => {
-        const error = new ConflictError('item-789', 5, 6);
-        expect(error.itemId).toBe('item-789');
-        expect(error.expectedVersion).toBe(5);
-        expect(error.actualVersion).toBe(6);
     });
 });
 
