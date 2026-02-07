@@ -28,6 +28,7 @@ import {
 import { createDiscordBot } from './integrations/discord/bot';
 import type { DiscordBot } from './integrations/discord/bot';
 import type { CatchUpCompletionSignal, CatchUpInProgressSignal } from './integrations/discord/catchup';
+import { resolveTimezone } from './utils/time';
 import { createDiscordClient } from './integrations/discord/client';
 import { createMemoryPath } from './storage/memory-tool/types';
 import { createMessageFetcher } from './integrations/discord/message-history/fetcher';
@@ -160,7 +161,12 @@ export async function createApp(): Promise<App> {
         });
 
         // Create Discord MCP server
-        discordMcpServer = createDiscordMCPServer(messageSearchService, discordClient, questionRegistry, channelRegistry);
+        // Discord MCP server uses server timezone for localTimestamp enrichment.
+        // This is intentional: the MCP server is a shared, session-level resource
+        // created at startup. Per-user timezone would require threading user context
+        // into each tool call. The agent's prompts and message formatting use
+        // per-user timezone where available.
+        discordMcpServer = createDiscordMCPServer(messageSearchService, discordClient, questionRegistry, channelRegistry, resolveTimezone());
 
         // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
         logger.info('Discord message history enabled');

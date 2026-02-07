@@ -555,6 +555,7 @@ const TIMEZONE_OFFSETS: Record<string, number> = {
     'Europe/London':       0,
     'Asia/Tokyo':          9,
     'Pacific/Kwajalein':   12,
+    'Pacific/Auckland':    13,
 };
 
 // @ts-expect-error -- Mocking global
@@ -577,11 +578,41 @@ Intl.DateTimeFormat = class MockDateTimeFormat {
 
     format(date?: Date | number): string {
         const d = this.applyOffset(date);
+
+        // Handle weekday formatting
+        if(this.options.weekday === 'long') {
+            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            return days[d.getUTCDay()];
+        }
+
+        // Handle hour-only formatting
+        if(this.options.hour && !this.options.minute && !this.options.second) {
+            return padStart(String(d.getUTCHours()), 2, '0');
+        }
+
+        // Default to ISO-like format without Z
         return replace(d.toISOString(), 'Z', '');
     }
 
     formatToParts(date?: Date | number): Intl.DateTimeFormatPart[] {
         const d = this.applyOffset(date);
+
+        // Handle weekday formatting
+        if(this.options.weekday === 'long') {
+            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            return [
+                { type: 'weekday', value: days[d.getUTCDay()] },
+            ];
+        }
+
+        // Handle hour-only formatting
+        if(this.options.hour && !this.options.minute && !this.options.second) {
+            return [
+                { type: 'hour', value: padStart(String(d.getUTCHours()), 2, '0') },
+            ];
+        }
+
+        // Default full date-time format
         return [
             { type: 'year', value: String(d.getUTCFullYear()) },
             { type: 'literal', value: '-' },

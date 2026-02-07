@@ -9,6 +9,7 @@ import {
 } from 'date-fns';
 import _ from 'lodash';
 import { z } from 'zod';
+import { logger } from '@hughescr/logger';
 
 /**
  * Time thresholds for relative time formatting.
@@ -48,6 +49,8 @@ export const timeContextSchema = z.object({
     utc:           z.string().datetime(),
     dayOfWeek:     dayOfWeekSchema,
     timeOfDay:     timeOfDaySchema,
+    utcDayOfWeek:  dayOfWeekSchema,
+    utcTimeOfDay:  timeOfDaySchema,
     userTimezone:  z.string().optional(),
     userLocalTime: z.string().optional(),
 });
@@ -97,16 +100,89 @@ export function formatRelativeTime(date: Date, now: Date = new Date()): string {
 }
 
 /**
- * Gets the time of day category based on UTC hour.
+ * Resolves a timezone string to a valid IANA timezone.
+ * @param userTimezone - Optional IANA timezone string
+ * @returns Valid IANA timezone string (never undefined)
+ */
+export function resolveTimezone(userTimezone?: string): string {
+    if(userTimezone) {
+        // Stryker disable BlockStatement: Logging for observability
+        try {
+            // Stryker disable next-line StringLiteral: DateTimeFormat locale must use exact string
+            new Intl.DateTimeFormat('en', { timeZone: userTimezone });
+            return userTimezone;
+        } catch{
+            /* Stryker disable all: Logging for observability */
+            logger.warn({ userTimezone }, 'Invalid timezone provided, falling back to server timezone');
+            /* Stryker restore all */
+        }
+    }
+
+    // Stryker disable BlockStatement: Catch block returns UTC fallback
+    try {
+        return new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch{
+        return 'UTC';
+    }
+}
+
+/**
+ * Formats an ISO string as local datetime in the specified timezone.
+ * @param isoString - ISO 8601 datetime string
+ * @param timezone - IANA timezone string
+ * @returns Local datetime string in format "YYYY-MM-DDTHH:mm:ss"
+ */
+export function formatLocalDateTime(isoString: string, timezone: string): string {
+    const date = new Date(isoString);
+    // Stryker disable next-line StringLiteral: DateTimeFormat locale must use exact string
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: timezone,
+        // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
+        year:     'numeric',
+        // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
+        month:    '2-digit',
+        // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
+        day:      '2-digit',
+        // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
+        hour:     '2-digit',
+        // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
+        minute:   '2-digit',
+        // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
+        second:   '2-digit',
+        // Stryker disable next-line BooleanLiteral: hour12 must be false for 24-hour format
+        hour12:   false,
+    });
+    const parts = formatter.formatToParts(date);
+    // Intl.DateTimeFormat always returns all requested part types, so we can safely
+    // use non-null assertion. The find will always succeed for valid timezones.
+    const get = (type: string): string =>
+        _.find(parts, ['type', type])!.value;
+    return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`;
+}
+
+/**
+ * Gets the time of day category based on local hour in the specified timezone.
  * - morning: 5:00-11:59
  * - afternoon: 12:00-16:59
  * - evening: 17:00-20:59
  * - night: 21:00-4:59
  * @param date - The date to categorize
+ * @param timezone - Optional IANA timezone (defaults to server timezone)
  * @returns Time of day category
  */
-export function getTimeOfDay(date: Date): TimeOfDay {
-    const hour = date.getUTCHours();
+export function getTimeOfDay(date: Date, timezone?: string): TimeOfDay {
+    const tz = timezone ?? resolveTimezone();
+    // Stryker disable next-line StringLiteral: DateTimeFormat locale must use exact string
+    const formatter = new Intl.DateTimeFormat('en', {
+        timeZone: tz,
+        // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
+        hour:     'numeric',
+        // Stryker disable next-line BooleanLiteral: hour12 must be false for 24-hour format
+        hour12:   false,
+    });
+    const parts = formatter.formatToParts(date);
+    const hourPart = _.find(parts, ['type', 'hour']);
+    const hour = hourPart ? parseInt(hourPart.value, 10) : 0;
 
     if(hour >= 5 && hour < 12) {
         return 'morning';
@@ -121,68 +197,40 @@ export function getTimeOfDay(date: Date): TimeOfDay {
 }
 
 /**
- * Gets the full day name for a date.
+ * Gets the full day name for a date in the specified timezone.
  * @param date - The date
+ * @param timezone - Optional IANA timezone (defaults to server timezone)
  * @returns Full day name (e.g., "Monday", "Tuesday")
  */
-export function getDayOfWeek(date: Date): DayOfWeek {
-    const days = [
-        'Sunday',
-        'Monday',
-        'Tuesday',
-        'Wednesday',
-        'Thursday',
-        'Friday',
-        'Saturday',
-    ] as const;
-    return days[date.getUTCDay()];
+export function getDayOfWeek(date: Date, timezone?: string): DayOfWeek {
+    const tz = timezone ?? resolveTimezone();
+    // Stryker disable next-line StringLiteral: DateTimeFormat locale must use exact string
+    const weekdayStr = new Intl.DateTimeFormat('en', {
+        timeZone: tz,
+        // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
+        weekday:  'long',
+    }).format(date);
+    return weekdayStr as DayOfWeek;
 }
 
 /**
  * Builds a complete time context for prompt injection.
  * @param userTimezone - Optional IANA timezone (e.g., "America/Los_Angeles")
- * @returns TimeContext object with UTC time and optional local time
+ * @returns TimeContext object with UTC time and local time (always populated)
  */
 export function getCurrentTimeContext(userTimezone?: string): TimeContext {
     const now = new Date();
+    const resolvedTimezone = resolveTimezone(userTimezone);
 
     const context: TimeContext = {
-        utc:       now.toISOString(),
-        dayOfWeek: getDayOfWeek(now),
-        timeOfDay: getTimeOfDay(now),
+        utc:           now.toISOString(),
+        dayOfWeek:     getDayOfWeek(now, resolvedTimezone),
+        timeOfDay:     getTimeOfDay(now, resolvedTimezone),
+        utcDayOfWeek:  getDayOfWeek(now, 'UTC'),
+        utcTimeOfDay:  getTimeOfDay(now, 'UTC'),
+        userTimezone:  resolvedTimezone,
+        userLocalTime: formatLocalDateTime(now.toISOString(), resolvedTimezone),
     };
-
-    if(userTimezone) {
-        context.userTimezone = userTimezone;
-        try {
-            // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
-            const formatter = new Intl.DateTimeFormat('en-CA', {
-                timeZone: userTimezone,
-                // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
-                year:     'numeric',
-                // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
-                month:    '2-digit',
-                // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
-                day:      '2-digit',
-                // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
-                hour:     '2-digit',
-                // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
-                minute:   '2-digit',
-                // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
-                second:   '2-digit',
-                // Stryker disable next-line BooleanLiteral: hour12 must be false for 24-hour format
-                hour12:   false,
-            });
-            const parts = formatter.formatToParts(now);
-            // Intl.DateTimeFormat always returns all requested part types, so we can safely
-            // use non-null assertion. The find will always succeed for valid timezones.
-            const get = (type: string): string =>
-                _.find(parts, ['type', type])!.value;
-            context.userLocalTime = `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`;
-        } catch{
-            // Invalid timezone - leave userLocalTime undefined
-        }
-    }
 
     return context;
 }
@@ -191,11 +239,18 @@ export function getCurrentTimeContext(userTimezone?: string): TimeContext {
  * Formats a memory timestamp for display.
  * @param updatedAt - ISO string timestamp
  * @param now - Optional reference time (defaults to current time)
- * @returns Compact format like "(2 days ago, 2025-01-13T10:00:00Z)"
+ * @param timezone - Optional IANA timezone for local time display
+ * @returns Compact format like "(2 days ago, 2025-01-13T10:00:00Z)" or with timezone: "(2 days ago, 2025-01-13T02:00:00 America/Los_Angeles | UTC: 2025-01-13T10:00:00.000Z)"
  */
-export function formatMemoryTimestamp(updatedAt: string, now: Date = new Date()): string {
+export function formatMemoryTimestamp(updatedAt: string, now: Date = new Date(), timezone?: string): string {
     const date = new Date(updatedAt);
     const relative = formatRelativeTime(date, now);
+
+    if(timezone) {
+        const localTime = formatLocalDateTime(updatedAt, timezone);
+        return `(${relative}, ${localTime} ${timezone} | UTC: ${updatedAt})`;
+    }
+
     return `(${relative}, ${updatedAt})`;
 }
 

@@ -23,6 +23,7 @@ import type { ChannelRegistryManager } from '../integrations/discord/channel-reg
 // eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord channel utilities; decouple per roadmap
 import { DMTracker, resolveChannelId } from '../integrations/discord/channel-registry';
 import { validateFilePaths, PathSecurityError } from '../utils/path-validator';
+import { formatLocalDateTime } from '../utils/time';
 
 /**
  * Context for the current Discord conversation.
@@ -441,12 +442,18 @@ function formatQuestionResult(
  * - Asking questions and waiting for user responses
  *
  * This server wraps the MessageSearchService and Discord client for use with the Claude Agent SDK.
+ *
+ * @param timezone Server timezone for localTimestamp enrichment. The MCP server is a
+ *                 shared, session-level resource created at startup. Per-user timezone
+ *                 would require threading user context into each tool call. The agent's
+ *                 prompts and message formatting use per-user timezone where available.
  */
 export function createDiscordMCPServer(
     searchService: MessageSearchService,
     client: Client,
     questionRegistry: QuestionRegistry,
-    channelRegistry: ChannelRegistryManager
+    channelRegistry: ChannelRegistryManager,
+    timezone?: string
 ) {
     // Create DMTracker for username resolution (requires channelRegistry)
     const dmTracker = new DMTracker(channelRegistry, client);
@@ -481,6 +488,14 @@ export function createDiscordMCPServer(
                             // Stryker disable next-line LogicalOperator: ?? operator provides default value
                             limit:     args.limit ?? 10,
                         });
+
+                        // Enrich messages with local timestamps if timezone is provided
+                        if(timezone) {
+                            for(const msg of result.messages) {
+                                msg.localTimestamp = formatLocalDateTime(msg.timestamp, timezone);
+                            }
+                        }
+
                         return {
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };
@@ -513,6 +528,14 @@ export function createDiscordMCPServer(
                             // Stryker disable next-line LogicalOperator: ?? operator provides default value, tested via integration
                             args.limit ?? 10
                         );
+
+                        // Enrich messages with local timestamps if timezone is provided
+                        if(timezone) {
+                            for(const msg of result.messages) {
+                                msg.localTimestamp = formatLocalDateTime(msg.timestamp, timezone);
+                            }
+                        }
+
                         return {
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };
@@ -546,6 +569,14 @@ export function createDiscordMCPServer(
                                 channelId,
                                 args.messageId
                             );
+
+                            // Enrich messages with local timestamps if timezone is provided
+                            if(timezone) {
+                                for(const msg of results) {
+                                    msg.localTimestamp = formatLocalDateTime(msg.timestamp, timezone);
+                                }
+                            }
+
                             return {
                                 content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
                             };
@@ -561,6 +592,12 @@ export function createDiscordMCPServer(
                                 content: [{ type: 'text' as const, text: 'Message not found' }],
                             };
                         }
+
+                        // Enrich message with local timestamp if timezone is provided
+                        if(timezone) {
+                            result.localTimestamp = formatLocalDateTime(result.timestamp, timezone);
+                        }
+
                         return {
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };

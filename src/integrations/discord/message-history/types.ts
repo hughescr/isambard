@@ -75,25 +75,27 @@ export type DiscordReaction = z.infer<typeof discordReactionSchema>;
 export const discordSearchResultSchema = z
     .object({
         /** Message ID (snowflake) */
-        id:          z.string().min(1, 'Message ID cannot be empty'),
+        id:             z.string().min(1, 'Message ID cannot be empty'),
         /** Channel ID where the message was sent */
-        channelId:   channelIdSchema,
+        channelId:      channelIdSchema,
         /** Guild ID where the message was sent (null for DMs) */
-        guildId:     guildIdSchema.nullable(),
+        guildId:        guildIdSchema.nullable(),
         /** Author information */
-        author:      discordAuthorSchema,
+        author:         discordAuthorSchema,
         /** Message text content */
-        content:     z.string(),
+        content:        z.string(),
         /** ISO 8601 timestamp when the message was created */
-        timestamp:   z.string().datetime(),
+        timestamp:      z.string().datetime(),
         /** File attachments on the message */
-        attachments: z.array(discordAttachmentSchema),
+        attachments:    z.array(discordAttachmentSchema),
         /** Rich embeds in the message */
-        embeds:      z.array(discordEmbedSchema),
+        embeds:         z.array(discordEmbedSchema),
         /** Reactions on the message */
-        reactions:   z.array(discordReactionSchema),
+        reactions:      z.array(discordReactionSchema),
         /** Parent message ID if this is a reply (optional) */
-        replyTo:     z.string().min(1).optional(),
+        replyTo:        z.string().min(1).optional(),
+        /** Local timezone timestamp (optional, added when timezone is resolved) */
+        localTimestamp: z.string().optional(),
     })
     .describe('Full Discord message data from search results');
 

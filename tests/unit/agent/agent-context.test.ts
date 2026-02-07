@@ -144,7 +144,7 @@ describe('createClaudeAgent context integration', () => {
             const callArgs = querySpy.mock.calls[0][0];
             expect(callArgs.prompt).not.toContain('[About this user]');
             // But should still have the user message (with timestamp in handleInput)
-            expect(callArgs.prompt).toContain('User @111222333 in #987654321 at 2025-01-15T12:00:00Z: Hello Claude!');
+            expect(callArgs.prompt).toContain('User @111222333 in #987654321 at 2025-01-15T12:00:00 UTC (UTC: 2025-01-15T12:00:00Z): Hello Claude!');
         });
 
         test('should format multiple recent memories with newline-separated bullets', async () => {
@@ -287,7 +287,7 @@ describe('createClaudeAgent context integration', () => {
 
             // Verify the prompt is just the user message without any context prefix (with timestamp in handleInput)
             const callArgs = querySpy.mock.calls[0][0];
-            expect(callArgs.prompt).toBe('User @111222333 in #987654321 at 2025-01-15T12:00:00Z: Hello Claude!');
+            expect(callArgs.prompt).toBe('User @111222333 in #987654321 at 2025-01-15T12:00:00 UTC (UTC: 2025-01-15T12:00:00Z): Hello Claude!');
 
             // Verify no memory sections are included
             expect(callArgs.prompt).not.toContain('[About this user]');
@@ -323,7 +323,7 @@ describe('createClaudeAgent context integration', () => {
             expect(prompt).toContain('[About this user]\n- User memory');
             expect(prompt).toContain('[Your recent activities]\n- Bot activity');
             expect(prompt).toContain('[Recent events]\n- Recent event');
-            expect(prompt).toContain('User @111222333 in #987654321 at 2025-01-15T12:00:00Z: Hello Claude!');
+            expect(prompt).toContain('User @111222333 in #987654321 at 2025-01-15T12:00:00 UTC (UTC: 2025-01-15T12:00:00Z): Hello Claude!');
 
             // Verify double newline separation between sections
             expect(prompt).toContain('[About this user]\n- User memory\n\n[Your recent activities]');
@@ -363,9 +363,13 @@ describe('createClaudeAgent context integration', () => {
         beforeEach(() => {
             // Mock getCurrentTimeContext to return predictable values
             timeContextSpy = spyOn(timeUtils, 'getCurrentTimeContext').mockReturnValue({
-                utc:       '2025-01-15T14:30:00.000Z',
-                dayOfWeek: 'Wednesday',
-                timeOfDay: 'afternoon',
+                utc:           '2025-01-15T14:30:00.000Z',
+                dayOfWeek:     'Wednesday',
+                timeOfDay:     'afternoon',
+                utcDayOfWeek:  'Wednesday',
+                utcTimeOfDay:  'afternoon',
+                userTimezone:  'UTC',
+                userLocalTime: '2025-01-15T14:30:00',
             });
         });
 
@@ -396,7 +400,7 @@ describe('createClaudeAgent context integration', () => {
 
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    prompt: expect.stringContaining('- UTC: 2025-01-15T14:30:00.000Z (Wednesday afternoon)'),
+                    prompt: expect.stringContaining('- UTC: 2025-01-15T14:30:00.000Z (Wednesday afternoon)\n- Local: 2025-01-15T14:30:00 UTC (Wednesday afternoon)'),
                 })
             );
         });
@@ -1018,6 +1022,43 @@ describe('createClaudeAgent context integration', () => {
                 call => call[0] && _.isObject(call[0]) && 'toolName' in call[0]
             );
             expect(toolCallCalls.length).toBe(0);
+        });
+    });
+
+    describe('timezone localization in message timestamps', () => {
+        test('should format message timestamps with timezone when loadUserTimezone returns timezone', async () => {
+            // Mock loadUserTimezone to return America/Los_Angeles
+            (mockContextBuilder.loadUserTimezone as ReturnType<typeof mock>).mockResolvedValue('America/Los_Angeles');
+
+            const agent = createClaudeAgent({
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.handleInput([mockMessageContext]);
+
+            const callArgs = querySpy.mock.calls[0][0];
+            const prompt = callArgs.prompt as string;
+
+            // Should contain dual-time format with local + UTC
+            expect(prompt).toContain('2025-01-15T04:00:00 America/Los_Angeles (UTC: 2025-01-15T12:00:00Z)');
+            expect(prompt).toContain('User @111222333 in #987654321 at');
+        });
+
+        test('should format message timestamps without timezone when loadUserTimezone returns undefined', async () => {
+            // Mock loadUserTimezone to return undefined
+            (mockContextBuilder.loadUserTimezone as ReturnType<typeof mock>).mockResolvedValue(undefined);
+
+            const agent = createClaudeAgent({
+                contextBuilder: mockContextBuilder,
+            });
+
+            await agent.handleInput([mockMessageContext]);
+
+            const callArgs = querySpy.mock.calls[0][0];
+            const prompt = callArgs.prompt as string;
+
+            // Should use original UTC timestamp format
+            expect(prompt).toContain('User @111222333 in #987654321 at 2025-01-15T12:00:00 UTC (UTC: 2025-01-15T12:00:00Z): Hello Claude!');
         });
     });
 });

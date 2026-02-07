@@ -83,6 +83,24 @@ describe('formatMemoryTimestamp', () => {
         const result = formatMemoryTimestamp(recentDate);
         expect(result).toMatch(/^\(just now, /);
     });
+
+    test('should format with local + UTC when timezone is provided', () => {
+        const updatedAt = '2025-01-13T10:00:00.000Z';
+        const result = formatMemoryTimestamp(updatedAt, baseDate, 'America/Los_Angeles');
+        expect(result).toBe('(2 days ago, 2025-01-13T02:00:00 America/Los_Angeles | UTC: 2025-01-13T10:00:00.000Z)');
+    });
+
+    test('should show correct local time for different timezones', () => {
+        const updatedAt = '2025-01-13T14:30:45.000Z';
+
+        // UTC+9 (Tokyo)
+        const tokyoResult = formatMemoryTimestamp(updatedAt, baseDate, 'Asia/Tokyo');
+        expect(tokyoResult).toBe('(1 day ago, 2025-01-13T23:30:45 Asia/Tokyo | UTC: 2025-01-13T14:30:45.000Z)');
+
+        // UTC+0 (London)
+        const londonResult = formatMemoryTimestamp(updatedAt, baseDate, 'Europe/London');
+        expect(londonResult).toBe('(1 day ago, 2025-01-13T14:30:45 Europe/London | UTC: 2025-01-13T14:30:45.000Z)');
+    });
 });
 
 describe('formatShortRelativeTime', () => {

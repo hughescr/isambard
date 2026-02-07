@@ -282,6 +282,8 @@ export interface BuildSystemPromptOptions {
     contextBuilder?: ContextBuilder
     /** List of available channel names (without # prefix) */
     channelList?:    string[]
+    /** User's IANA timezone for local time display */
+    userTimezone?:   string
 }
 
 /**
@@ -296,6 +298,7 @@ export async function buildSystemPrompt(
     // vs new signature: buildSystemPrompt({ contextBuilder, channelList })
     let contextBuilder: ContextBuilder | undefined;
     let channelList: string[] | undefined;
+    let userTimezone: string | undefined;
 
     if(options && 'loadCoreIdentity' in options) {
         // Legacy signature: options is a ContextBuilder
@@ -304,12 +307,12 @@ export async function buildSystemPrompt(
         // New signature: options is BuildSystemPromptOptions
         contextBuilder = options.contextBuilder;
         channelList = options.channelList;
+        userTimezone = options.userTimezone;
     }
 
-    const timeContext = getCurrentTimeContext();
-    // Stryker disable StringLiteral: Static time context format string - mutation doesn't affect behavior
-    const timeContextStr = `${timeContext.utc} (${timeContext.dayOfWeek} ${timeContext.timeOfDay})`;
-    // Stryker restore StringLiteral
+    const timeContext = getCurrentTimeContext(userTimezone);
+    const timeContextStr = `- UTC: ${timeContext.utc} (${timeContext.utcDayOfWeek} ${timeContext.utcTimeOfDay})
+- Local: ${timeContext.userLocalTime} ${timeContext.userTimezone} (${timeContext.dayOfWeek} ${timeContext.timeOfDay})`;
     let systemPrompt = `${BASE_SYSTEM_PROMPT}\n\n## Current Time Context\n${timeContextStr}`;
 
     // Add Discord Channel Context if channelList is provided and non-empty

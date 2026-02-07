@@ -39,15 +39,19 @@ describe('timeContextSchema', () => {
             utc:           '2025-01-15T12:00:00.000Z',
             dayOfWeek:     'Wednesday',
             timeOfDay:     'afternoon',
+            utcDayOfWeek:  'Wednesday',
+            utcTimeOfDay:  'afternoon',
             userTimezone:  'America/Los_Angeles',
             userLocalTime: '2025-01-15T04:00:00',
         };
         expect(timeContextSchema.safeParse(completeContext).success).toBe(true);
 
         const minimalContext = {
-            utc:       '2025-01-15T12:00:00.000Z',
-            dayOfWeek: 'Wednesday',
-            timeOfDay: 'afternoon',
+            utc:          '2025-01-15T12:00:00.000Z',
+            dayOfWeek:    'Wednesday',
+            timeOfDay:    'afternoon',
+            utcDayOfWeek: 'Wednesday',
+            utcTimeOfDay: 'afternoon',
         };
         expect(timeContextSchema.safeParse(minimalContext).success).toBe(true);
     });

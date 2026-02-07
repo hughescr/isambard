@@ -7,7 +7,7 @@ import _ from 'lodash';
 import type { DiscordMessageContext } from '../integrations/discord/types';
 // eslint-disable-next-line boundaries/element-types -- Agent imports Discord types for attachments; decouple per roadmap
 import type { FetchedImage } from '../integrations/discord/attachments/types';
-import { getCurrentTimeContext } from '../utils/time';
+import { getCurrentTimeContext, formatLocalDateTime, resolveTimezone } from '../utils/time';
 import type { ContextBuilder } from './context-builder';
 import { buildSystemPrompt, COMPACTION_SUMMARY_PROMPT } from './prompts/index.js';
 import { cleanupSession, extractSessionId } from './session-cleanup';
@@ -85,16 +85,18 @@ const EXPLICIT_AGENTS = {
  * Build context prefix from user memories, bot memories, and recent events.
  * @param contextBuilder Context builder for loading memories
  * @param context Discord message context
+ * @param timezone Optional user timezone (IANA timezone string)
  * @returns Context prefix string (empty if no context available)
  */
-async function buildContextPrefix(contextBuilder: ContextBuilder, context: DiscordMessageContext): Promise<string> {
+async function buildContextPrefix(contextBuilder: ContextBuilder, context: DiscordMessageContext, timezone?: string): Promise<string> {
     // Stryker disable next-line ArrayDeclaration: Equivalent - sections always has time section pushed first
     const sections: string[] = [];
 
     // Time context (always first)
-    const timeContext = getCurrentTimeContext();  // timezone support comes later via context-builder
+    const timeContext = getCurrentTimeContext(timezone);
     const timeSection = `## Current Time
-- UTC: ${timeContext.utc} (${timeContext.dayOfWeek} ${timeContext.timeOfDay})`;
+- UTC: ${timeContext.utc} (${timeContext.utcDayOfWeek} ${timeContext.utcTimeOfDay})
+- Local: ${timeContext.userLocalTime} ${timeContext.userTimezone} (${timeContext.dayOfWeek} ${timeContext.timeOfDay})`;
     sections.push(timeSection);
 
     // User-specific memories
@@ -649,6 +651,7 @@ export function logStreamEvent(message: AgentStreamEvent): void {
  * Handles resume context, catch-up prompts, perch prompts, and normal message formatting.
  * @param contexts Array of Discord message contexts
  * @param contextBuilder Context builder for loading memories
+ * @param timezone Optional user timezone (already loaded)
  * @param resumeContext Optional resume context from interruption
  * @param catchUpPrompt Optional catch-up prompt (used in catch-up mode)
  * @param perchPrompt Optional perch prompt (used in perching mode)
@@ -657,6 +660,7 @@ export function logStreamEvent(message: AgentStreamEvent): void {
 async function buildUserMessageTextForBatch(
     contexts: DiscordMessageContext[],
     contextBuilder: ContextBuilder | undefined,
+    timezone?: string,
     resumeContext?: ResumeContext,
     catchUpPrompt?: string,
     perchPrompt?: string
@@ -678,13 +682,15 @@ async function buildUserMessageTextForBatch(
 
     // Build context prefix from memories and events
     const contextPrefix = contextBuilder
-        ? await buildContextPrefix(contextBuilder, contexts[0])
+        ? await buildContextPrefix(contextBuilder, contexts[0], timezone)
         : '';
 
-    // Format multiple messages
-    const messageBlocks = _.map(contexts, ctx =>
-        `User @${ctx.userId} in #${ctx.channelId} at ${ctx.timestamp}: ${ctx.content}`
-    );
+    // Format multiple messages with timezone fallback
+    const resolvedTz = resolveTimezone(timezone);
+    const messageBlocks = _.map(contexts, (ctx) => {
+        const timeStr = `${formatLocalDateTime(ctx.timestamp, resolvedTz)} ${resolvedTz} (UTC: ${ctx.timestamp})`;
+        return `User @${ctx.userId} in #${ctx.channelId} at ${timeStr}: ${ctx.content}`;
+    });
 
     return contextPrefix + messageBlocks.join('\n\n');
 }
@@ -969,27 +975,43 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
             let capturedSessionId: string | undefined;
 
             try {
-                // 1. Build system prompt with core identity and channel list
-                const channelList = options?.channelList;
-                const systemPrompt = await buildSystemPrompt({ contextBuilder, channelList });
+                // 1. Load user timezone for prompt localization
+                let userTimezone: string | undefined;
+                // Only load user timezone for normal message flows — catch-up/perch/resume use server TZ
+                const isNormalFlow = !options?.catchUpPrompt && !options?.perchPrompt && !options?.resumeContext;
+                if(contextBuilder && isNormalFlow) {
+                    // Stryker disable BlockStatement: Logging for observability
+                    try {
+                        userTimezone = await contextBuilder.loadUserTimezone(contexts[0].userId);
+                    } catch (error) {
+                        /* Stryker disable all: Logging for observability */
+                        logger.warn({ error, userId: contexts[0].userId }, 'Failed to load user timezone, falling back to server timezone');
+                        /* Stryker restore all */
+                    }
+                }
 
-                // 2. Build user message text
+                // 2. Build system prompt with core identity, channel list, and user timezone
+                const channelList = options?.channelList;
+                const systemPrompt = await buildSystemPrompt({ contextBuilder, channelList, userTimezone });
+
+                // 3. Build user message text
                 const userMessageText = await buildUserMessageTextForBatch(
                     contexts,
                     contextBuilder,
+                    userTimezone,
                     options?.resumeContext,
                     options?.catchUpPrompt,
                     options?.perchPrompt
                 );
 
-                // 3. Build prompt (string for text-only, async generator for images or text)
+                // 4. Build prompt (string for text-only, async generator for images or text)
                 // The SDK accepts either a plain string or an AsyncIterable<SDKUserMessage>
                 // For multimodal messages, we always use the generator form
                 const prompt = hasImages(options?.images)
                     ? buildPromptForSdk(userMessageText, options?.images)
                     : userMessageText;
 
-                // 4. Log start of processing
+                // 5. Log start of processing
                 logger.info({
                     contextCount: contexts.length,
                     messageIds:   _.map(contexts, 'messageId'),
@@ -997,25 +1019,25 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                     msg:          'Agent starting batch processing',
                 });
 
-                // 4. Query with MCP servers, plugins, and sandboxed execution (with retry)
+                // 6. Query with MCP servers, plugins, and sandboxed execution (with retry)
                 const response = retryableQuery({
                     prompt,
                     options: buildQueryOptions(systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, options),
                 });
 
-                // 5. Process stream events and track progress
+                // 7. Process stream events and track progress
                 const { lastAssistantText, wasInterrupted, capturedSessionId: sessionId }
                     = await processStreamEvents(response, tracker, options, taskPersistenceCoordinator);
                 capturedSessionId = sessionId;
 
-                // 6. Clean up session only on completion (not on interrupt)
+                // 9. Clean up session only on completion (not on interrupt)
                 // Stryker disable next-line all: Cleanup is fire-and-forget, not observable in tests
                 if(!wasInterrupted && capturedSessionId) {
                     // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Fire-and-forget cleanup
                     cleanupSession(capturedSessionId);
                 }
 
-                // 7. Log completion
+                // 10. Log completion
                 logger.info({
                     contextCount:   contexts.length,
                     wasInterrupted,
@@ -1023,7 +1045,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                     msg:            `Batch processing ${wasInterrupted ? 'interrupted' : 'completed'} (${lastAssistantText.length} chars)`,
                 });
 
-                // 8. Return result
+                // 11. Return result
                 return buildHandleInputResult(lastAssistantText, wasInterrupted, capturedSessionId, tracker);
             } catch (error) {
                 const errorMessage = _.isError(error) ? error.message : String(error);

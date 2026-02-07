@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test mocks require unsafe type operations */
-import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import _ from 'lodash';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
 import { createClaudeAgent, extractToolUses, extractThinkingContent, parseToolName, redactSensitiveArgs } from '../../../src/agent/agent';
@@ -772,6 +772,175 @@ describe('createClaudeAgent', () => {
             expect(result.wasInterrupted).toBe(false);
             expect(result.sessionId).toBeUndefined();
             expect(result.streamTracker).toBeDefined();
+        });
+
+        test('should load user timezone and pass to system prompt', async () => {
+            const mockContextBuilder = {
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                loadCoreIdentity:  mock(async () => 'I am a test identity'),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                loadUserTimezone:  mock(async () => 'America/New_York'),
+                loadRecentContext: mock(async () => []),
+                loadRecentEvents:  mock(async () => []),
+                recordAccess:      mock(async () => undefined),
+            };
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
+            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder as unknown as any });
+            const result = await agent.handleInput([mockMessageContext]);
+
+            // Verify loadUserTimezone was called once and value reused for both system prompt and message timestamps
+            expect(mockContextBuilder.loadUserTimezone).toHaveBeenCalledTimes(1);
+            expect(mockContextBuilder.loadUserTimezone).toHaveBeenCalledWith(mockMessageContext.userId);
+
+            // Agent should complete normally
+            expect(result.response).toBe('Hello! This is a test response.');
+
+            // Verify system prompt includes timezone info (both UTC and Local time)
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const systemPrompt = queryParams.options.systemPrompt;
+            expect(systemPrompt).toContain('America/New_York');
+            expect(systemPrompt).toContain('Local:');
+        });
+
+        test('should pass user timezone to buildContextPrefix for consistent time display', async () => {
+            // This test verifies that the user timezone loaded from loadUserTimezone()
+            // is threaded through to buildContextPrefix() so that the context prefix
+            // "Local:" line shows the SAME timezone as the system prompt and message timestamps
+            const mockContextBuilder = {
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                loadCoreIdentity:  mock(async () => 'I am a test identity'),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                loadUserTimezone:  mock(async () => 'America/Los_Angeles'),
+                loadRecentContext: mock(async () => ['User fact 1']),
+                loadRecentEvents:  mock(async () => []),
+                recordAccess:      mock(async () => undefined),
+            };
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
+            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder as unknown as any });
+            await agent.handleInput([mockMessageContext]);
+
+            // Verify context prefix contains user timezone (not server timezone)
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            const prompt = querySpy.mock.calls[0][0].prompt as string;
+
+            // Extract the context prefix section (before "User @")
+            const contextPrefixRegex = /^(.*?)\nUser @/s;
+            const contextPrefixMatch = contextPrefixRegex.exec(prompt);
+            expect(contextPrefixMatch).toBeTruthy();
+            const contextPrefix = contextPrefixMatch![1];
+
+            // Verify both occurrences of "America/Los_Angeles" in context prefix
+            // Line 1: "- Local: YYYY-MM-DDTHH:mm:ss America/Los_Angeles (DayOfWeek TimeOfDay)"
+            // Should NOT show server timezone
+            const localLineRegex = /- Local: (.+)/;
+            const localLineMatch = localLineRegex.exec(contextPrefix);
+            expect(localLineMatch).toBeTruthy();
+            expect(localLineMatch![1]).toContain('America/Los_Angeles');
+        });
+
+        test('should NOT load user timezone for catch-up flow', async () => {
+            const mockContextBuilder = {
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                loadCoreIdentity:  mock(async () => 'I am a test identity'),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                loadUserTimezone:  mock(async () => 'America/New_York'),
+                loadRecentContext: mock(async () => []),
+                loadRecentEvents:  mock(async () => []),
+                recordAccess:      mock(async () => undefined),
+            };
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
+            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder as unknown as any });
+            await agent.handleInput([mockMessageContext], {
+                catchUpPrompt: 'Catch up on messages',
+            });
+
+            // loadUserTimezone should NOT be called for catch-up flow
+            expect(mockContextBuilder.loadUserTimezone).not.toHaveBeenCalled();
+        });
+
+        test('should NOT load user timezone for perch flow', async () => {
+            const mockContextBuilder = {
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                loadCoreIdentity:  mock(async () => 'I am a test identity'),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                loadUserTimezone:  mock(async () => 'America/New_York'),
+                loadRecentContext: mock(async () => []),
+                loadRecentEvents:  mock(async () => []),
+                recordAccess:      mock(async () => undefined),
+            };
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
+            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder as unknown as any });
+            await agent.handleInput([mockMessageContext], {
+                perchPrompt: 'Perch time',
+            });
+
+            // loadUserTimezone should NOT be called for perch flow
+            expect(mockContextBuilder.loadUserTimezone).not.toHaveBeenCalled();
+        });
+
+        test('should NOT load user timezone for resume flow', async () => {
+            const mockContextBuilder = {
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                loadCoreIdentity:  mock(async () => 'I am a test identity'),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                loadUserTimezone:  mock(async () => 'America/New_York'),
+                loadRecentContext: mock(async () => []),
+                loadRecentEvents:  mock(async () => []),
+                recordAccess:      mock(async () => undefined),
+            };
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
+            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder as unknown as any });
+            await agent.handleInput([mockMessageContext], {
+                resumeContext: {
+                    partialWork: {
+                        thinking:       'resuming...',
+                        text:           '',
+                        pendingToolUse: null,
+                        sessionId:      undefined,
+                    },
+                    newEvents:   [],
+                    newMessages: [],
+                },
+            });
+
+            // loadUserTimezone should NOT be called for resume flow
+            expect(mockContextBuilder.loadUserTimezone).not.toHaveBeenCalled();
+        });
+
+        test('should handle loadUserTimezone failure gracefully and continue with server timezone', async () => {
+            const mockContextBuilder = {
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                loadCoreIdentity: mock(async () => 'I am a test identity'),
+                // Mock loadUserTimezone to throw an error
+                loadUserTimezone: mock(async () => {
+                    throw new Error('DynamoDB connection failed');
+                }),
+                loadRecentContext: mock(async () => []),
+                loadRecentEvents:  mock(async () => []),
+                recordAccess:      mock(async () => undefined),
+            };
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
+            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder as unknown as any });
+            const result = await agent.handleInput([mockMessageContext]);
+
+            // Verify loadUserTimezone was called and threw
+            expect(mockContextBuilder.loadUserTimezone).toHaveBeenCalledTimes(1);
+
+            // Processing should continue successfully with server timezone fallback
+            expect(result.response).toBe('Hello! This is a test response.');
+            expect(result.wasInterrupted).toBe(false);
+
+            // Verify warning was logged (indirectly via no crash)
+            expect(querySpy).toHaveBeenCalledTimes(1);
         });
 
         test('should build user message with empty contextPrefix when no contextBuilder', async () => {

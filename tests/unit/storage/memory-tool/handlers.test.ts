@@ -374,6 +374,25 @@ describe('Memory Tool Handlers', () => {
             expect(result).toContain('2 days ago');
             expect(result).toContain('File: /test/recent.md');
         });
+
+        it('should show UTC timestamp in header', async () => {
+            mockBackend.get = mock(async () => ({
+                path:        '/test/file.md' as MemoryPath,
+                content:     'Test content',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-15T12:00:00.000Z',
+                updatedAt:   '2025-01-15T14:30:00.000Z',
+            }));
+
+            const result = await view(mockBackend, { path: '/test/file.md' });
+
+            // Should only include UTC timestamp without dual format (backward compat format)
+            expect(result).toContain('2025-01-15T14:30:00.000Z)');
+            expect(result).not.toContain('America/Los_Angeles');
+            expect(result).not.toContain('| UTC:');
+        });
     });
 
     describe('deleteMemory', () => {

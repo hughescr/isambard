@@ -26,7 +26,8 @@ export interface CatchUpInterruptedOptions {
 function formatTimeHeader(): string {
     const timeContext = getCurrentTimeContext();
     return `## Current Time
-- UTC: ${timeContext.utc} (${timeContext.dayOfWeek} ${timeContext.timeOfDay})`;
+- UTC: ${timeContext.utc} (${timeContext.utcDayOfWeek} ${timeContext.utcTimeOfDay})
+- Local: ${timeContext.userLocalTime} ${timeContext.userTimezone} (${timeContext.dayOfWeek} ${timeContext.timeOfDay})`;
 }
 
 /**

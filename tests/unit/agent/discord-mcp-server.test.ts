@@ -157,6 +157,19 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 expect(tool.inputSchema.shape[field]).toBeDefined();
             });
         });
+
+        test('should accept timezone parameter for localTimestamp enrichment', () => {
+            const server = createDiscordMCPServer(
+                mockSearchService,
+                mockClient as unknown as Client,
+                mockQuestionRegistry,
+                mockChannelRegistry as unknown as ChannelRegistryManager,
+                'America/New_York'
+            );
+            // Server should be created successfully with timezone parameter
+            expect(server).toBeDefined();
+            expect(server.name).toBe('discord');
+        });
     });
 
     describe('searchMessages tool', () => {
@@ -302,6 +315,56 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             expect(parsed.overflow?.count).toBe(5);
             expect(parsed.overflow?.summaries).toHaveLength(1);
         });
+
+        test('should add localTimestamp when timezone is provided', async () => {
+            const mockMessages = [
+                createMockSearchResult({ id: '111', timestamp: '2025-01-15T14:30:00.000Z' }),
+                createMockSearchResult({ id: '222', timestamp: '2025-01-15T16:45:00.000Z' }),
+            ];
+            mockSearchService.searchMessages = mock(async () => createMockSearchResponse({
+                messages: mockMessages,
+            }));
+
+            const server = createDiscordMCPServer(
+                mockSearchService,
+                mockClient as unknown as Client,
+                mockQuestionRegistry,
+                mockChannelRegistry as unknown as ChannelRegistryManager,
+                'America/Los_Angeles'
+            );
+            const handler = getToolHandler(server, 'searchMessages');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ channelId: '123456789012345678' });
+
+            const parsed = JSON.parse(result.content[0].text as string) as SearchResponse;
+            expect(parsed.messages[0].localTimestamp).toBeDefined();
+            expect(parsed.messages[0].localTimestamp).toBe('2025-01-15T06:30:00');
+            expect(parsed.messages[1].localTimestamp).toBe('2025-01-15T08:45:00');
+        });
+
+        test('should not add localTimestamp when timezone is not provided', async () => {
+            const mockMessages = [
+                createMockSearchResult({ id: '111', timestamp: '2025-01-15T14:30:00.000Z' }),
+            ];
+            mockSearchService.searchMessages = mock(async () => createMockSearchResponse({
+                messages: mockMessages,
+            }));
+
+            const server = createDiscordMCPServer(
+                mockSearchService,
+                mockClient as unknown as Client,
+                mockQuestionRegistry,
+                mockChannelRegistry as unknown as ChannelRegistryManager
+            );
+            const handler = getToolHandler(server, 'searchMessages');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ channelId: '123456789012345678' });
+
+            const parsed = JSON.parse(result.content[0].text as string) as SearchResponse;
+            expect(parsed.messages[0].localTimestamp).toBeUndefined();
+        });
     });
 
     describe('getRecentMessages tool', () => {
@@ -377,6 +440,51 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             expect(result.isError).toBe(true);
         });
+
+        test('should add localTimestamp when timezone is provided', async () => {
+            const mockMessages = [
+                createMockSearchResult({ id: '111', timestamp: '2025-01-15T14:30:00.000Z' }),
+                createMockSearchResult({ id: '222', timestamp: '2025-01-15T16:45:00.000Z' }),
+            ];
+            mockSearchService.getRecentMessages = mock(async () => createMockSearchResponse({
+                messages: mockMessages,
+            }));
+
+            const server = createDiscordMCPServer(
+                mockSearchService,
+                mockClient as unknown as Client,
+                mockQuestionRegistry,
+                mockChannelRegistry as unknown as ChannelRegistryManager,
+                'America/Los_Angeles'
+            );
+            const handler = getToolHandler(server, 'getRecentMessages');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ channelId: '123456789012345678' });
+
+            const parsed = JSON.parse(result.content[0].text as string) as SearchResponse;
+            expect(parsed.messages[0].localTimestamp).toBeDefined();
+            expect(parsed.messages[0].localTimestamp).toBe('2025-01-15T06:30:00');
+            expect(parsed.messages[1].localTimestamp).toBe('2025-01-15T08:45:00');
+        });
+
+        test('should not add localTimestamp when timezone is not provided', async () => {
+            const mockMessages = [
+                createMockSearchResult({ id: '111', timestamp: '2025-01-15T14:30:00.000Z' }),
+            ];
+            mockSearchService.getRecentMessages = mock(async () => createMockSearchResponse({
+                messages: mockMessages,
+            }));
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'getRecentMessages');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ channelId: '123456789012345678' });
+
+            const parsed = JSON.parse(result.content[0].text as string) as SearchResponse;
+            expect(parsed.messages[0].localTimestamp).toBeUndefined();
+        });
     });
 
     describe('getMessageById tool', () => {
@@ -426,6 +534,55 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             expect(result.content[0].text).toBe('Message not found');
 
             expect(result.isError).toBeUndefined();
+        });
+
+        test('should add localTimestamp when timezone is provided', async () => {
+            const mockMessage = createMockSearchResult({
+                id:        '999888777666555444',
+                content:   'Specific message content',
+                timestamp: '2025-01-15T14:30:00.000Z',
+            });
+            mockSearchService.getMessageById = mock(async () => mockMessage);
+
+            const server = createDiscordMCPServer(
+                mockSearchService,
+                mockClient as unknown as Client,
+                mockQuestionRegistry,
+                mockChannelRegistry as unknown as ChannelRegistryManager,
+                'America/Los_Angeles'
+            );
+            const handler = getToolHandler(server, 'getMessageById');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: '999888777666555444',
+            });
+
+            const parsed = JSON.parse(result.content[0].text as string) as DiscordSearchResult;
+            expect(parsed.localTimestamp).toBeDefined();
+            expect(parsed.localTimestamp).toBe('2025-01-15T06:30:00');
+        });
+
+        test('should not add localTimestamp when timezone is not provided', async () => {
+            const mockMessage = createMockSearchResult({
+                id:        '999888777666555444',
+                content:   'Specific message content',
+                timestamp: '2025-01-15T14:30:00.000Z',
+            });
+            mockSearchService.getMessageById = mock(async () => mockMessage);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'getMessageById');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: '999888777666555444',
+            });
+
+            const parsed = JSON.parse(result.content[0].text as string) as DiscordSearchResult;
+            expect(parsed.localTimestamp).toBeUndefined();
         });
 
         test('should return error when searchService throws Error', async () => {
@@ -520,6 +677,44 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             const parsed = JSON.parse(result.content[0].text as string) as DiscordSearchResult[];
             expect(_isArray(parsed)).toBe(true);
             expect(parsed).toHaveLength(1);
+        });
+
+        test('should add localTimestamp to all messages when timezone is provided with array input', async () => {
+            const mockMessages = [
+                createMockSearchResult({
+                    id:        '111111111111111111',
+                    content:   'First message',
+                    timestamp: '2025-01-15T14:30:00.000Z',
+                }),
+                createMockSearchResult({
+                    id:        '222222222222222222',
+                    content:   'Second message',
+                    timestamp: '2025-01-15T16:45:00.000Z',
+                }),
+            ];
+            mockSearchService.getMessagesById = mock(async () => mockMessages);
+
+            const server = createDiscordMCPServer(
+                mockSearchService,
+                mockClient as unknown as Client,
+                mockQuestionRegistry,
+                mockChannelRegistry as unknown as ChannelRegistryManager,
+                'America/Los_Angeles'
+            );
+            const handler = getToolHandler(server, 'getMessageById');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: ['111111111111111111', '222222222222222222'],
+            });
+
+            const parsed = JSON.parse(result.content[0].text as string) as DiscordSearchResult[];
+            expect(parsed).toHaveLength(2);
+            expect(parsed[0].localTimestamp).toBeDefined();
+            expect(parsed[0].localTimestamp).toBe('2025-01-15T06:30:00');
+            expect(parsed[1].localTimestamp).toBeDefined();
+            expect(parsed[1].localTimestamp).toBe('2025-01-15T08:45:00');
         });
 
         test('should handle empty array', async () => {
