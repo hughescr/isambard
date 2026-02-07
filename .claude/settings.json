@@ -2,7 +2,6 @@
   "permissions": {
     "allow": [
       "Bash(bun run mutate:*)",
-      "Bash(stryker run:*)",
       "Bash(ag:*)",
       "Bash(bun -e:*)",
       "Bash(bun -p:*)",
