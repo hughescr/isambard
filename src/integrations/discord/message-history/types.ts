@@ -120,6 +120,28 @@ export const overflowSummarySchema = z
 export type OverflowSummary = z.infer<typeof overflowSummarySchema>;
 
 /**
+ * Batch overflow summary grouping multiple messages.
+ * When search results have overflow, messages are batched into groups
+ * for efficient summarization (one Haiku call per batch instead of per message).
+ */
+export const batchOverflowSummarySchema = z
+    .object({
+        /** ISO 8601 timestamp of the earliest message in the batch */
+        startTimestamp: z.string().datetime(),
+        /** ISO 8601 timestamp of the latest message in the batch */
+        endTimestamp:   z.string().datetime(),
+        /** Number of messages in this batch */
+        messageCount:   z.number().int().positive(),
+        /** Unique authors in this batch */
+        authors:        z.array(z.string().min(1)),
+        /** Brief summary of the batch content */
+        synopsis:       z.string().min(1, 'Synopsis cannot be empty'),
+    })
+    .describe('Batch summary grouping multiple overflow messages');
+
+export type BatchOverflowSummary = z.infer<typeof batchOverflowSummarySchema>;
+
+/**
  * Complete search response with messages and metadata.
  * Includes full messages, optional overflow summaries, and search metadata.
  */
@@ -131,9 +153,15 @@ export const searchResponseSchema = z
         overflow: z
             .object({
                 /** Total count of overflow messages */
-                count:     z.number().int().min(0, 'Count cannot be negative'),
-                /** Summarized versions of overflow messages */
-                summaries: z.array(overflowSummarySchema),
+                count:          z.number().int().min(0, 'Count cannot be negative'),
+                /** Summarized versions of overflow messages (omitted when summarization is disabled) */
+                summaries:      z.array(overflowSummarySchema).optional(),
+                /** Batch summaries grouping multiple messages (used by searchMessages for efficiency) */
+                batchSummaries: z.array(batchOverflowSummarySchema).optional(),
+                /** Whether more overflow messages exist beyond what was counted */
+                hasMore:        z.boolean().optional(),
+                /** Hint for narrowing search to get full summaries */
+                hint:           z.string().optional(),
             })
             .optional(),
         /** Metadata about the search operation */

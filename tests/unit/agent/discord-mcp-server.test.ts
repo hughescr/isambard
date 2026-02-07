@@ -119,7 +119,7 @@ describe('createDiscordMCPServer', () => {
 
         test.each([
             ['searchMessages', 'Search Discord message history by text, time range, or both. Returns messages with overflow summaries if results exceed limit. Accepts channel ID or #channel-name format.'],
-            ['getRecentMessages', 'Get the most recent messages from a Discord channel. Accepts channel ID or #channel-name format.'],
+            ['getRecentMessages', 'Get the most recent messages from a Discord channel. Returns the N most recent messages plus an overflow count. Use searchMessages with time range for AI summaries of older messages. Accepts channel ID or #channel-name format.'],
             ['getMessageById', 'Fetch a specific Discord message by its ID, or multiple messages by an array of IDs. Accepts channel ID or #channel-name format.'],
             ['sendDiscordMessage', `Send a message to a Discord channel or DM to a user. Use this to communicate with users.
 

@@ -299,7 +299,7 @@ export const cleanupAllStaleSessions = async (): Promise<void> => {
  *
  * @param sessionId - The UUID of the session to clean up
  */
-export const cleanupSession = async (sessionId: string): Promise<void> => {
+export const cleanupSession = async (sessionId: string, options?: { skipSubAgentScan?: boolean }): Promise<void> => {
     // Validate session ID
     if(!sessionId) {
         // Stryker disable next-line StringLiteral: Log message for observability only
@@ -311,7 +311,9 @@ export const cleanupSession = async (sessionId: string): Promise<void> => {
     const filePath = getSessionFilePath(sessionId);
 
     // Clean up sub-agent sessions first (before deleting the main session)
-    await cleanupSubAgentSessions(sessionId, projectPath);
+    if(!options?.skipSubAgentScan) {
+        await cleanupSubAgentSessions(sessionId, projectPath);
+    }
 
     try {
         // Check if file exists first

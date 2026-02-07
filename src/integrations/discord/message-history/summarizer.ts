@@ -11,7 +11,7 @@
 import _ from 'lodash';
 import pLimit from 'p-limit';
 import { generateText } from '@/agent/text-generator';
-import type { DiscordSearchResult, OverflowSummary } from './types';
+import type { DiscordSearchResult, OverflowSummary, BatchOverflowSummary } from './types';
 
 /**
  * Options for creating a message summarizer.
@@ -27,12 +27,19 @@ export interface SummarizerOptions {
 export interface MessageSummarizer {
     /**
      * Summarize multiple Discord messages in parallel using Claude Haiku.
-     *
-     * @param messages Array of Discord search results to summarize
-     * @returns Array of overflow summaries in the same order as input
-     * @throws Error if any Haiku API call fails
+     * Each message gets its own Haiku call.
      */
     summarizeMessages(messages: DiscordSearchResult[]): Promise<OverflowSummary[]>
+
+    /**
+     * Summarize messages in batches for efficiency.
+     * Groups messages into chunks of batchSize, with one Haiku call per batch.
+     *
+     * @param messages Array of Discord search results to summarize
+     * @param batchSize Number of messages per batch (default: 10)
+     * @returns Array of batch summaries
+     */
+    summarizeMessageBatch(messages: DiscordSearchResult[], batchSize?: number): Promise<BatchOverflowSummary[]>
 }
 
 // Stryker disable next-line StringLiteral: Configuration prompt template
@@ -41,6 +48,13 @@ Focus on: key topics, questions asked, decisions made, action items.
 
 Message:
 {content}`;
+
+// Stryker disable next-line StringLiteral: Configuration prompt template
+const BATCH_SUMMARIZATION_PROMPT = `Summarize these Discord messages in 2-3 sentences (~75 words max).
+Focus on: key topics discussed, questions asked, decisions made, action items.
+
+Messages:
+{messages}`;
 
 /**
  * Creates a message summarizer that uses Claude Haiku to generate synopses.
@@ -76,6 +90,34 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
         return await generateText(prompt);
     }
 
+    /**
+     * Format messages for batch prompt.
+     */
+    function formatMessagesForBatch(messages: DiscordSearchResult[]): string {
+        return _.map(messages, msg =>
+            `[${msg.author.username}] ${msg.content}`
+        ).join('\n');
+    }
+
+    /**
+     * Summarize a batch of messages in a single Haiku call.
+     */
+    async function summarizeBatch(messages: DiscordSearchResult[]): Promise<BatchOverflowSummary> {
+        const formatted = formatMessagesForBatch(messages);
+        // Stryker disable next-line StringLiteral: Template placeholder for content substitution
+        const prompt = _.replace(BATCH_SUMMARIZATION_PROMPT, '{messages}', formatted);
+        const synopsis = await generateText(prompt);
+
+        const sorted = _.sortBy(messages, 'timestamp');
+        return {
+            startTimestamp: _.head(sorted)!.timestamp,
+            endTimestamp:   _.last(sorted)!.timestamp,
+            messageCount:   messages.length,
+            authors:        _(messages).map('author.username').uniq().value() as string[],
+            synopsis,
+        };
+    }
+
     return {
         async summarizeMessages(messages: DiscordSearchResult[]): Promise<OverflowSummary[]> {
             // Stryker disable next-line all: Early return for empty input prevents unnecessary work
@@ -99,6 +141,22 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
             );
 
             return Promise.all(summaryPromises);
+        },
+
+        async summarizeMessageBatch(messages: DiscordSearchResult[], batchSize = 10): Promise<BatchOverflowSummary[]> {
+            // Stryker disable next-line all: Early return for empty input prevents unnecessary work
+            if(_.isEmpty(messages)) {
+                return [];
+            }
+
+            const batches = _.chunk(messages, batchSize);
+            const limit = pLimit(maxConcurrent);
+
+            const batchPromises = _.map(batches, batch =>
+                limit(() => summarizeBatch(batch))
+            );
+
+            return Promise.all(batchPromises);
         },
     };
 }

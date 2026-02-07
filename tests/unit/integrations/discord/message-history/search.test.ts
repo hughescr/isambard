@@ -69,7 +69,8 @@ describe('createMessageSearchService', () => {
         };
 
         mockSummarizer = {
-            summarizeMessages: mock(() => Promise.resolve([])),
+            summarizeMessages:     mock(() => Promise.resolve([])),
+            summarizeMessageBatch: mock(() => Promise.resolve([])),
         };
 
         service = createMessageSearchService({
@@ -419,7 +420,7 @@ describe('createMessageSearchService', () => {
                 expect(result.messages).toHaveLength(5);
             });
 
-            test('should generate overflow summaries for messages beyond limit', async () => {
+            test('should generate overflow batch summaries for messages beyond limit', async () => {
                 const messages = _.times(15, i =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
@@ -434,15 +435,14 @@ describe('createMessageSearchService', () => {
                     })
                 );
 
-                (mockSummarizer.summarizeMessages as ReturnType<typeof mock>).mockImplementation((msgs: any[]) =>
-                    Promise.resolve(
-                        _.map(msgs, (m: any) => ({
-                            id:        m.id,
-                            timestamp: m.timestamp,
-                            author:    m.author?.username ?? 'unknown',
-                            synopsis:  `Summary of ${m.content}`,
-                        }))
-                    )
+                (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mockImplementation(() =>
+                    Promise.resolve([{
+                        startTimestamp: '2025-01-15T12:00:00.000Z',
+                        endTimestamp:   '2025-01-15T12:05:00.000Z',
+                        messageCount:   5,
+                        authors:        ['testuser'],
+                        synopsis:       'Batch summary',
+                    }])
                 );
 
                 const result = await service.searchMessages({
@@ -452,7 +452,8 @@ describe('createMessageSearchService', () => {
 
                 expect(result.overflow).toBeDefined();
                 expect(result.overflow!.count).toBe(5);
-                expect(result.overflow!.summaries).toHaveLength(5);
+                expect(result.overflow!.batchSummaries).toBeDefined();
+                expect(mockSummarizer.summarizeMessageBatch).toHaveBeenCalled();
             });
 
             test('should include totalFound in metadata', async () => {
@@ -531,15 +532,14 @@ describe('createMessageSearchService', () => {
                 );
 
                 if(expectOverflow) {
-                    (mockSummarizer.summarizeMessages as ReturnType<typeof mock>).mockImplementation((msgs: DiscordSearchResult[]) =>
-                        Promise.resolve(
-                            _.map(msgs, (m: DiscordSearchResult) => ({
-                                id:        m.id,
-                                timestamp: m.timestamp,
-                                author:    m.author?.username ?? 'unknown',
-                                synopsis:  `Summary of ${m.content}`,
-                            }))
-                        )
+                    (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mockImplementation(() =>
+                        Promise.resolve([{
+                            startTimestamp: '2025-01-15T12:00:00.000Z',
+                            endTimestamp:   '2025-01-15T12:05:00.000Z',
+                            messageCount:   1,
+                            authors:        ['testuser'],
+                            synopsis:       'Batch summary',
+                        }])
                     );
                 }
 
@@ -552,11 +552,203 @@ describe('createMessageSearchService', () => {
                 if(expectOverflow) {
                     expect(result.overflow).toBeDefined();
                     expect(result.overflow!.count).toBe(expectedOverflowCount);
-                    expect(mockSummarizer.summarizeMessages).toHaveBeenCalled();
+                    expect(mockSummarizer.summarizeMessageBatch).toHaveBeenCalled();
                 } else {
                     expect(result.overflow).toBeUndefined();
-                    expect(mockSummarizer.summarizeMessages).not.toHaveBeenCalled();
+                    expect(mockSummarizer.summarizeMessageBatch).not.toHaveBeenCalled();
                 }
+            });
+        });
+
+        describe('batch overflow summarization', () => {
+            test('should call summarizeMessageBatch instead of summarizeMessages for overflow', async () => {
+                const messages = _.times(15, i =>
+                    createMockSearchResult({
+                        id:      `10000000000000000${i}`,
+                        content: `Message ${i}`,
+                    })
+                );
+
+                (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
+                    Promise.resolve({
+                        messages,
+                        hasMore: false,
+                    })
+                );
+
+                (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mockImplementation(() =>
+                    Promise.resolve([{
+                        startTimestamp: '2025-01-15T12:00:00.000Z',
+                        endTimestamp:   '2025-01-15T12:05:00.000Z',
+                        messageCount:   5,
+                        authors:        ['testuser'],
+                        synopsis:       'Batch summary',
+                    }])
+                );
+
+                const result = await service.searchMessages({
+                    channelId: createChannelId(testChannelId),
+                    limit:     10,
+                });
+
+                expect(result.overflow).toBeDefined();
+                expect(result.overflow!.batchSummaries).toBeDefined();
+                expect(mockSummarizer.summarizeMessageBatch).toHaveBeenCalled();
+                expect(mockSummarizer.summarizeMessages).not.toHaveBeenCalled();
+            });
+
+            test('should cap overflow at 100 messages for batch summarization', async () => {
+                const messages = _.times(150, i =>
+                    createMockSearchResult({
+                        id:      `10000000000000000${i}`,
+                        content: `Message ${i}`,
+                    })
+                );
+
+                (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
+                    Promise.resolve({
+                        messages,
+                        hasMore: false,
+                    })
+                );
+
+                (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mockImplementation((msgs: any[]) =>
+                    Promise.resolve([{
+                        startTimestamp: '2025-01-15T12:00:00.000Z',
+                        endTimestamp:   '2025-01-15T12:05:00.000Z',
+                        messageCount:   msgs.length,
+                        authors:        ['testuser'],
+                        synopsis:       'Batch summary',
+                    }])
+                );
+
+                const result = await service.searchMessages({
+                    channelId: createChannelId(testChannelId),
+                    limit:     10,
+                });
+
+                expect(result.overflow).toBeDefined();
+                expect(result.overflow!.count).toBe(140); // 150 - 10
+                expect(result.overflow!.hasMore).toBe(true);
+                expect(result.overflow!.hint).toBeDefined();
+
+                // Summarizer should receive at most 100 messages
+                const batchCall = (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mock.calls[0];
+                expect(batchCall[0]).toHaveLength(100);
+            });
+
+            test('should not set hasMore when overflow is within cap', async () => {
+                const messages = _.times(50, i =>
+                    createMockSearchResult({
+                        id:      `10000000000000000${i}`,
+                        content: `Message ${i}`,
+                    })
+                );
+
+                (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
+                    Promise.resolve({
+                        messages,
+                        hasMore: false,
+                    })
+                );
+
+                (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mockImplementation(() =>
+                    Promise.resolve([{
+                        startTimestamp: '2025-01-15T12:00:00.000Z',
+                        endTimestamp:   '2025-01-15T12:05:00.000Z',
+                        messageCount:   40,
+                        authors:        ['testuser'],
+                        synopsis:       'Batch summary',
+                    }])
+                );
+
+                const result = await service.searchMessages({
+                    channelId: createChannelId(testChannelId),
+                    limit:     10,
+                });
+
+                expect(result.overflow).toBeDefined();
+                expect(result.overflow!.hasMore).toBeUndefined();
+                expect(result.overflow!.hint).toBeUndefined();
+            });
+
+            test('should not set hasMore when overflow is exactly MAX_OVERFLOW_FOR_SUMMARY (100)', async () => {
+                // 110 messages with limit 10 = exactly 100 overflow
+                const messages = _.times(110, i =>
+                    createMockSearchResult({
+                        id:      `10000000000000000${i}`,
+                        content: `Message ${i}`,
+                    })
+                );
+
+                (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
+                    Promise.resolve({
+                        messages,
+                        hasMore: false,
+                    })
+                );
+
+                (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mockImplementation(() =>
+                    Promise.resolve([{
+                        startTimestamp: '2025-01-15T12:00:00.000Z',
+                        endTimestamp:   '2025-01-15T12:05:00.000Z',
+                        messageCount:   100,
+                        authors:        ['testuser'],
+                        synopsis:       'Batch summary',
+                    }])
+                );
+
+                const result = await service.searchMessages({
+                    channelId: createChannelId(testChannelId),
+                    limit:     10,
+                });
+
+                expect(result.overflow).toBeDefined();
+                expect(result.overflow!.count).toBe(100);
+                expect(result.overflow!.hasMore).toBeUndefined();
+                expect(result.overflow!.hint).toBeUndefined();
+                expect(result.overflow!.batchSummaries).toBeDefined();
+            });
+
+            test('should set hasMore when overflow is exactly one more than cap (101)', async () => {
+                // 111 messages with limit 10 = 101 overflow (just over cap)
+                const messages = _.times(111, i =>
+                    createMockSearchResult({
+                        id:      `10000000000000000${i}`,
+                        content: `Message ${i}`,
+                    })
+                );
+
+                (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
+                    Promise.resolve({
+                        messages,
+                        hasMore: false,
+                    })
+                );
+
+                (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mockImplementation((msgs: any[]) =>
+                    Promise.resolve([{
+                        startTimestamp: '2025-01-15T12:00:00.000Z',
+                        endTimestamp:   '2025-01-15T12:05:00.000Z',
+                        messageCount:   msgs.length,
+                        authors:        ['testuser'],
+                        synopsis:       'Batch summary',
+                    }])
+                );
+
+                const result = await service.searchMessages({
+                    channelId: createChannelId(testChannelId),
+                    limit:     10,
+                });
+
+                expect(result.overflow).toBeDefined();
+                expect(result.overflow!.count).toBe(101);
+                expect(result.overflow!.hasMore).toBe(true);
+                expect(result.overflow!.hint).toBeDefined();
+
+                // Should cap at 100 messages sent to summarizer
+                const batchCall = (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mock.calls[0];
+                expect(batchCall[0]).toHaveLength(100);
             });
         });
 
@@ -645,7 +837,7 @@ describe('createMessageSearchService', () => {
                     })
                 );
 
-                (mockSummarizer.summarizeMessages as ReturnType<typeof mock>).mockImplementation(() =>
+                (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.reject(new Error('Summarizer error'))
                 );
 
@@ -683,6 +875,47 @@ describe('createMessageSearchService', () => {
                 : await service.getRecentMessages(testChannelId);
 
             expect(result.messages).toHaveLength(expectedLength);
+        });
+
+        test('should not call summarizer for overflow (count-only)', async () => {
+            const messages = _.times(20, i =>
+                createMockSearchResult({
+                    id:      `10000000000000000${i}`,
+                    content: `Message ${i}`,
+                })
+            );
+
+            (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
+                Promise.resolve({
+                    messages,
+                    hasMore: false,
+                })
+            );
+
+            const result = await service.getRecentMessages(testChannelId, 5);
+
+            expect(result.messages).toHaveLength(5);
+            expect(result.overflow).toBeDefined();
+            expect(result.overflow!.count).toBe(15);
+            expect(result.overflow!.summaries).toBeUndefined();
+            expect(result.overflow!.batchSummaries).toBeUndefined();
+            expect(result.overflow!.hint).toBeDefined();
+            expect(mockSummarizer.summarizeMessages).not.toHaveBeenCalled();
+            expect(mockSummarizer.summarizeMessageBatch).not.toHaveBeenCalled();
+        });
+
+        test('should pass fetchLimit to fetcher', async () => {
+            await service.getRecentMessages(testChannelId, 5);
+
+            const fetcherCall = (mockFetcher.fetchMessages as ReturnType<typeof mock>).mock.calls[0][0];
+            expect(fetcherCall.limit).toBe(55); // 5 + 50
+        });
+
+        test('should use default limit for fetchLimit calculation', async () => {
+            await service.getRecentMessages(testChannelId);
+
+            const fetcherCall = (mockFetcher.fetchMessages as ReturnType<typeof mock>).mock.calls[0][0];
+            expect(fetcherCall.limit).toBe(60); // 10 (default) + 50
         });
     });
 

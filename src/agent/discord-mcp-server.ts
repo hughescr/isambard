@@ -498,7 +498,7 @@ export function createDiscordMCPServer(
 
             tool(
                 'getRecentMessages',
-                'Get the most recent messages from a Discord channel. Accepts channel ID or #channel-name format.',
+                'Get the most recent messages from a Discord channel. Returns the N most recent messages plus an overflow count. Use searchMessages with time range for AI summaries of older messages. Accepts channel ID or #channel-name format.',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),

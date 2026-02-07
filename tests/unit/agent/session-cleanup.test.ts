@@ -550,4 +550,44 @@ describe('cleanupSession', () => {
         });
         expect(sdkWarnings.length).toBe(0);
     });
+
+    test('should skip sub-agent scan when skipSubAgentScan option is true', async () => {
+        const sessionId = 'skip-scan-session';
+
+        await cleanupSession(sessionId, { skipSubAgentScan: true });
+
+        // Should NOT scan for sub-agent files
+        expect(mockReaddir).not.toHaveBeenCalled();
+        expect(mockReadFile).not.toHaveBeenCalled();
+
+        // Should still delete the main session file
+        expect(mockUnlink).toHaveBeenCalledTimes(1);
+        expect(mockUnlink.mock.calls[0][0]).toContain(sessionId);
+
+        // Should still clean up session-env directory
+        expect(mockRm).toHaveBeenCalledWith(
+            expect.stringContaining(`.claude/session-env/${sessionId}`),
+            { recursive: true, force: true }
+        );
+    });
+
+    test('should still perform sub-agent scan when skipSubAgentScan is false', async () => {
+        const sessionId = 'no-skip-session';
+        mockReaddir.mockImplementation(() => Promise.resolve([]));
+
+        await cleanupSession(sessionId, { skipSubAgentScan: false });
+
+        // Should still scan for sub-agent files
+        expect(mockReaddir).toHaveBeenCalledWith(expect.stringContaining('.claude/projects/'));
+    });
+
+    test('should still perform sub-agent scan when no options provided', async () => {
+        const sessionId = 'default-session';
+        mockReaddir.mockImplementation(() => Promise.resolve([]));
+
+        await cleanupSession(sessionId);
+
+        // Should scan for sub-agent files (backward compatible default)
+        expect(mockReaddir).toHaveBeenCalledWith(expect.stringContaining('.claude/projects/'));
+    });
 });

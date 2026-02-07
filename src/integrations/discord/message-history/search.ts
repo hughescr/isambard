@@ -31,6 +31,23 @@ const DEFAULT_LIMIT = 10;
 const DEFAULT_TIME_RANGE_DAYS = 7;
 
 /**
+ * Maximum number of overflow messages to summarize in batches.
+ * Beyond this, the response includes a count and hint to narrow the search.
+ */
+const MAX_OVERFLOW_FOR_SUMMARY = 100;
+
+/**
+ * Internal options for controlling search behavior.
+ * @internal
+ */
+interface SearchOptions {
+    /** Whether to summarize overflow messages (default: true) */
+    summarizeOverflow?: boolean
+    /** Maximum number of messages to fetch from Discord API */
+    fetchLimit?:        number
+}
+
+/**
  * Options for creating a message search service.
  */
 export interface MessageSearchServiceOptions {
@@ -130,7 +147,7 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
     /**
      * Main search implementation.
      */
-    async function searchMessages(params: SearchParamsInput): Promise<SearchResponse> {
+    async function searchMessages(params: SearchParamsInput, options?: SearchOptions): Promise<SearchResponse> {
         const { channelId: channelIdInput, query, startTime, endTime, limit = defaultLimit } = params;
 
         // Parse channelId to ensure it's a valid ChannelId
@@ -146,6 +163,7 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
             channelId,
             startTime: effectiveStart,
             endTime:   effectiveEnd,
+            ...(options?.fetchLimit !== undefined && { limit: options.fetchLimit }),
         });
 
         // 3. Start with all fetched messages
@@ -170,11 +188,28 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
         let overflow: SearchResponse['overflow'] = undefined;
         if(allMessages.length > limit) {
             const overflowMessages = _.drop(allMessages, limit);
-            const summaries = await summarizer.summarizeMessages(overflowMessages);
-            overflow = {
-                count: overflowMessages.length,
-                summaries,
-            };
+
+            if(options?.summarizeOverflow === false) {
+                // Count-only overflow (no Haiku calls)
+                overflow = {
+                    count: overflowMessages.length,
+                    // Stryker disable next-line StringLiteral: Hint message is documentation only
+                    hint:  'Use searchMessages with startTime/endTime to get AI summaries of older messages',
+                };
+            } else {
+                // Batch summarization (Fix 3): cap at 100, batch into groups of 10
+                const cappedOverflow = _.take(overflowMessages, MAX_OVERFLOW_FOR_SUMMARY);
+                const batchSummaries = await summarizer.summarizeMessageBatch(cappedOverflow);
+                overflow = {
+                    count: overflowMessages.length,
+                    batchSummaries,
+                    ...(overflowMessages.length > MAX_OVERFLOW_FOR_SUMMARY && {
+                        hasMore: true,
+                        // Stryker disable next-line StringLiteral: Hint message is documentation only
+                        hint:    'Narrow your search with startTime/endTime to see all messages',
+                    }),
+                };
+            }
         }
 
         return {
@@ -195,10 +230,17 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
      * Get recent messages (convenience method).
      */
     async function getRecentMessages(channelId: string, limit?: number): Promise<SearchResponse> {
-        return searchMessages({
-            channelId: createChannelId(channelId),
-            limit:     limit ?? defaultLimit,
-        });
+        const effectiveLimit = limit ?? defaultLimit;
+        return searchMessages(
+            {
+                channelId: createChannelId(channelId),
+                limit:     effectiveLimit,
+            },
+            {
+                summarizeOverflow: false,
+                fetchLimit:        effectiveLimit + 50,
+            }
+        );
     }
 
     /**

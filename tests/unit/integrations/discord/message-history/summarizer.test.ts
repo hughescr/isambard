@@ -340,4 +340,211 @@ describe('createMessageSummarizer', () => {
             expect(result[0].author).not.toBe('Display Name');
         });
     });
+
+    describe('summarizeMessageBatch', () => {
+        test('should return empty array for empty input', async () => {
+            const summarizer = createMessageSummarizer({});
+
+            const result = await summarizer.summarizeMessageBatch([]);
+
+            expect(result).toEqual([]);
+            expect(mockGenerateText).not.toHaveBeenCalled();
+        });
+
+        test('should batch messages into groups and return batch summaries', async () => {
+            const messages = _.times(25, i =>
+                createMockSearchResult({
+                    id:             `10000000000000000${i}`,
+                    content:        `Message ${i}`,
+                    authorUsername: i % 2 === 0 ? 'alice' : 'bob',
+                    timestamp:      `2025-01-15T${_.padStart(String(10 + Math.floor(i / 60)), 2, '0')}:${_.padStart(String(i % 60), 2, '0')}:00.000Z`,
+                })
+            );
+
+            let callCount = 0;
+            mockGenerateText.mockImplementation(async () => {
+                callCount++;
+                return `Batch summary ${callCount}`;
+            });
+
+            const summarizer = createMessageSummarizer({});
+
+            const result = await summarizer.summarizeMessageBatch(messages, 10);
+
+            // 25 messages / 10 per batch = 3 batches
+            expect(result).toHaveLength(3);
+            // Only 3 Haiku calls instead of 25
+            expect(mockGenerateText).toHaveBeenCalledTimes(3);
+        });
+
+        test('should include correct metadata in batch summary', async () => {
+            const messages = [
+                createMockSearchResult({
+                    id:             '100000000000000001',
+                    content:        'First message',
+                    authorUsername: 'alice',
+                    timestamp:      '2025-01-15T10:00:00.000Z',
+                }),
+                createMockSearchResult({
+                    id:             '100000000000000002',
+                    content:        'Second message',
+                    authorUsername: 'bob',
+                    timestamp:      '2025-01-15T10:05:00.000Z',
+                }),
+                createMockSearchResult({
+                    id:             '100000000000000003',
+                    content:        'Third message',
+                    authorUsername: 'alice',
+                    timestamp:      '2025-01-15T10:10:00.000Z',
+                }),
+            ];
+
+            mockGenerateText.mockResolvedValue('Group discussion summary');
+
+            const summarizer = createMessageSummarizer({});
+
+            const result = await summarizer.summarizeMessageBatch(messages, 10);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].startTimestamp).toBe('2025-01-15T10:00:00.000Z');
+            expect(result[0].endTimestamp).toBe('2025-01-15T10:10:00.000Z');
+            expect(result[0].messageCount).toBe(3);
+            const expectedAuthors: string[] = ['alice', 'bob'];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- expect.arrayContaining type inference issue
+            expect(result[0].authors).toEqual(expect.arrayContaining(expectedAuthors));
+            expect(result[0].authors).toHaveLength(2); // Deduplicated
+            expect(result[0].synopsis).toBe('Group discussion summary');
+        });
+
+        test('should use default batch size of 10', async () => {
+            const messages = _.times(25, i =>
+                createMockSearchResult({
+                    id:      `10000000000000000${i}`,
+                    content: `Message ${i}`,
+                })
+            );
+
+            mockGenerateText.mockResolvedValue('Summary');
+
+            const summarizer = createMessageSummarizer({});
+
+            const result = await summarizer.summarizeMessageBatch(messages);
+
+            // 25 / 10 = 3 batches
+            expect(result).toHaveLength(3);
+            expect(mockGenerateText).toHaveBeenCalledTimes(3);
+        });
+
+        test('should propagate errors from generateText', async () => {
+            const messages = [createMockSearchResult()];
+
+            mockGenerateText.mockRejectedValue(new Error('API error'));
+
+            const summarizer = createMessageSummarizer({});
+
+            expect(summarizer.summarizeMessageBatch(messages)).rejects.toThrow('API error');
+        });
+
+        test('should format batch prompt with author names and content', async () => {
+            const messages = [
+                createMockSearchResult({
+                    id:             '100000000000000001',
+                    content:        'Hello everyone',
+                    authorUsername: 'alice',
+                    timestamp:      '2025-01-15T10:00:00.000Z',
+                }),
+                createMockSearchResult({
+                    id:             '100000000000000002',
+                    content:        'How is the project going?',
+                    authorUsername: 'bob',
+                    timestamp:      '2025-01-15T10:05:00.000Z',
+                }),
+            ];
+
+            mockGenerateText.mockResolvedValue('Summary of conversation');
+
+            const summarizer = createMessageSummarizer({});
+            await summarizer.summarizeMessageBatch(messages, 10);
+
+            // Verify the prompt passed to generateText contains formatted messages
+            const promptArg = mockGenerateText.mock.calls[0]?.[0] as string | undefined;
+            expect(promptArg).toContain('[alice] Hello everyone');
+            expect(promptArg).toContain('[bob] How is the project going?');
+            // Messages should be separated by newlines
+            expect(promptArg).toContain('[alice] Hello everyone\n[bob] How is the project going?');
+        });
+
+        test('should sort messages by timestamp for start/end timestamps', async () => {
+            // Messages provided out of order
+            const messages = [
+                createMockSearchResult({
+                    id:        '100000000000000003',
+                    content:   'Third message',
+                    timestamp: '2025-01-15T12:00:00.000Z',
+                }),
+                createMockSearchResult({
+                    id:        '100000000000000001',
+                    content:   'First message',
+                    timestamp: '2025-01-15T10:00:00.000Z',
+                }),
+                createMockSearchResult({
+                    id:        '100000000000000002',
+                    content:   'Second message',
+                    timestamp: '2025-01-15T11:00:00.000Z',
+                }),
+            ];
+
+            mockGenerateText.mockResolvedValue('Summary');
+
+            const summarizer = createMessageSummarizer({});
+            const result = await summarizer.summarizeMessageBatch(messages, 10);
+
+            // startTimestamp should be earliest, endTimestamp should be latest
+            expect(result[0].startTimestamp).toBe('2025-01-15T10:00:00.000Z');
+            expect(result[0].endTimestamp).toBe('2025-01-15T12:00:00.000Z');
+        });
+
+        test('should respect maxConcurrent for batch processing', async () => {
+            const messages = _.times(30, i =>
+                createMockSearchResult({
+                    id:      `10000000000000000${i}`,
+                    content: `Message ${i}`,
+                })
+            );
+
+            const deferreds: ((value: string) => void)[] = [];
+            let maxConcurrent = 0;
+            let currentConcurrent = 0;
+
+            mockGenerateText.mockImplementation(() => {
+                currentConcurrent++;
+                maxConcurrent = Math.max(maxConcurrent, currentConcurrent);
+                return new Promise<string>((resolve) => {
+                    deferreds.push((value: string) => {
+                        currentConcurrent--;
+                        resolve(value);
+                    });
+                });
+            });
+
+            const summarizer = createMessageSummarizer({ maxConcurrent: 2 });
+
+            const resultPromise = summarizer.summarizeMessageBatch(messages, 10);
+
+            // Wait for tasks to be queued
+            await new Promise(resolve => queueMicrotask(resolve));
+            await new Promise(resolve => queueMicrotask(resolve));
+
+            expect(maxConcurrent).toBeLessThanOrEqual(2);
+
+            // Resolve all pending promises
+            while(deferreds.length > 0) {
+                const resolver = deferreds.shift();
+                resolver?.('Summary');
+                await new Promise(resolve => queueMicrotask(resolve));
+            }
+
+            await resultPromise;
+        });
+    });
 });
