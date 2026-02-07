@@ -1909,8 +1909,7 @@ describe('PerchSessionRunner - Mutant Killers', () => {
         expect(secondCall[0].prompt).toContain('TIMEOUT');
     });
 
-    // Kill mutant on line 307: BlockStatement {}
-    test('should prevent duplicate sessions when already perching', async () => {
+    test('should prevent duplicate sessions when already perching via not-idle guard', async () => {
         const mockStatePerching = createMockStateManager({ mode: 'perching' });
         const sessionMock = mock(async (): Promise<AgentSessionResult> => {
             return { completed: true };
@@ -1926,8 +1925,11 @@ describe('PerchSessionRunner - Mutant Killers', () => {
         const runner = createPerchSessionRunner(deps);
         await runner.startPerch('pre-dawn');
 
-        // Verify session was not started and warning was logged
-        expect(mockLogger.warn).toHaveBeenCalledWith('Already in perching mode - ignoring startPerch');
+        // Verify session was not started and warning was logged with mode object
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ mode: 'perching' }),
+            'Cannot start perch - not idle'
+        );
         expect(sessionMock).not.toHaveBeenCalled();
     });
 

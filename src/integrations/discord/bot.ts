@@ -527,14 +527,10 @@ function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoo
             // Resume catch-up if we were interrupted
             if(botStateManager.getMode() === 'catching_up' && botStateManager.isInterrupted() && catchUpSessionRunner) {
                 logger.info({ msg: 'Resuming catch-up after interruption' });
-                // Update presence back to catching_up
-                presenceManager?.transitionPresenceDisplayMode('catching_up');
                 // Resume catch-up (async, don't await)
                 void catchUpSessionRunner.resumeAfterInterruption().catch((error) => {
                     const errorMsg = _.isError(error) ? error.message : String(error);
                     logger.error({ error: errorMsg, msg: 'Failed to resume catch-up after interruption' });
-                    // Reset presence on failure
-                    presenceManager?.transitionPresenceDisplayMode('none');
                     // Reset botStateManager to idle (was stuck in interrupted state)
                     botStateManager.goIdle();
                 });
@@ -543,12 +539,9 @@ function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoo
             // Resume perch if we were interrupted
             if(botStateManager.getMode() === 'perching' && botStateManager.isInterrupted() && perchSessionRunner) {
                 logger.info({ msg: 'Resuming perch after interruption' });
-                presenceManager?.transitionPresenceDisplayMode('perching');
                 void perchSessionRunner.resumeAfterInterruption().catch((error) => {
                     const errorMsg = _.isError(error) ? error.message : String(error);
                     logger.error({ error: errorMsg, msg: 'Failed to resume perch after interruption' });
-                    // Reset presence on failure
-                    presenceManager?.transitionPresenceDisplayMode('none');
                     // Reset botStateManager to idle (was stuck in interrupted state)
                     botStateManager.goIdle();
                 });
@@ -557,9 +550,13 @@ function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoo
     });
 
     // Helper to update presence when starting to process a user message
-    const updatePresenceForMessageStart = (): void => {
+    const updatePresenceForMessageStart = (context?: DiscordMessageContext): void => {
+        if(!context) {
+            logger.warn('Processor called with empty contexts array');
+            return;
+        }
         if(botStateManager.getMode() === 'idle') {
-            presenceManager?.transitionPresenceDisplayMode('processing_message');
+            botStateManager.startProcessingMessage(context.channelId, context.content);
         }
     };
 
@@ -582,11 +579,6 @@ function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoo
             streamEventHandler.complete();
         }
 
-        // Reset presence mode back to none if we were in idle mode
-        if(currentMode === 'idle') {
-            presenceManager?.transitionPresenceDisplayMode('none');
-        }
-
         // Transition state manager to idle when message processing completes
         // (unless we're in catch-up interrupted state)
         if(currentMode === 'processing_message' && !isInterrupted) {
@@ -597,7 +589,7 @@ function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoo
     // Set the processor to call agent.handleInput
     coordinator.setProcessor(async (contexts, resumeContext, sessionId, abortSignal) => {
         // Update presence to show processing message if not in catch-up mode
-        updatePresenceForMessageStart();
+        updatePresenceForMessageStart(contexts[0]);
 
         // Set conversation context for MCP tools
         setConversationContext({
@@ -785,10 +777,6 @@ function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): CatchUpSes
                 completed: !result.wasInterrupted,
                 sessionId: result.sessionId,
             };
-        },
-        onCatchUpComplete: () => {
-            // Reset presence mode when catch-up completes
-            presenceManager?.transitionPresenceDisplayMode('none');
         },
     });
 }

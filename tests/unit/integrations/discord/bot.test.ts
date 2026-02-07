@@ -8,12 +8,13 @@ import type { Client } from 'discord.js';
 import { createDiscordBot } from '@/integrations/discord/bot';
 import type { DiscordConfig } from '@/config/schemas';
 import type { DiscordMessageContext } from '@/integrations/discord/types';
-import { createChannelId, createGuildId } from '@/integrations/discord/types';
+import { createChannelId, createGuildId, createUserId } from '@/integrations/discord/types';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
 import * as clientModule from '@/integrations/discord/client';
 import * as channelRegistryModule from '@/integrations/discord/channel-registry';
 import * as presenceModule from '@/integrations/discord/presence';
 import * as messageCoordinatorModule from '@/integrations/discord/message-coordinator';
+import type { MessageProcessor } from '@/integrations/discord/message-coordinator';
 import { createBotStateManager } from '@/integrations/discord/state';
 import type { Logger } from '@hughescr/logger';
 import * as loggerModule from '@hughescr/logger';
@@ -2042,6 +2043,296 @@ describe('createDiscordBot', () => {
             await new Promise(resolve => setImmediate(resolve));
             // If we get here without throwing, the test passes
             expect(true).toBe(true);
+        });
+    });
+
+    describe('Processor updatePresenceForMessageStart Behavior', () => {
+        test('should call startProcessingMessage when mode is idle (resume flow fix)', async () => {
+            let processorFn: MessageProcessor | undefined;
+
+            const mockClient = {
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            // Mock coordinator factory to capture processor function
+            const mockCoordinator = {
+                handleMessage: mock(() => undefined),
+                setProcessor:  mock((fn: MessageProcessor) => {
+                    processorFn = fn;
+                }),
+                removeChannel:       mock(() => undefined),
+                removeGuildChannels: mock(() => undefined),
+                stop:                mock(() => undefined),
+            };
+            spies.push(spyOn(messageCoordinatorModule, 'createMessageCoordinator').mockReturnValue(mockCoordinator));
+
+            // Mock channel registry functions
+            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                discovered: 0,
+                updated:    0,
+                errors:     [],
+            }));
+            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
+            // Create bot state manager in idle mode
+            const realBotStateManager = createBotStateManager({
+                logger: mockLogger,
+            });
+
+            // Spy on startProcessingMessage
+            const startProcessingMessageSpy = mock(realBotStateManager.startProcessingMessage.bind(realBotStateManager));
+            realBotStateManager.startProcessingMessage = startProcessingMessageSpy;
+
+            // Create a fake agent to enable coordinator creation
+            const mockAgent = {
+                handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
+            } as unknown as import('@/agent/agent').ClaudeAgent;
+
+            createDiscordBot({
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
+                agent:           mockAgent,
+                botStateManager: realBotStateManager,
+            });
+
+            // Trigger clientReady to set up coordinator
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            // Verify processor was set
+            expect(processorFn).toBeDefined();
+
+            // Verify bot is in idle mode
+            expect(realBotStateManager.getMode()).toBe('idle');
+
+            // Call processor with a context
+            const testContext: DiscordMessageContext = {
+                guildId:   createGuildId('test-guild'),
+                channelId: createChannelId('test-channel'),
+                userId:    createUserId('123'),
+                messageId: '456',
+                content:   'test message',
+                timestamp: new Date().toISOString(),
+                botUserId: createUserId('999999999999999999'),
+            };
+
+            // Create AbortController for the processor call
+            const abortController = new AbortController();
+
+            // Processor will throw because agent.handleInput isn't properly set up,
+            // but we only care about the startProcessingMessage call which happens first
+            try {
+                await processorFn!([testContext], null, 'test-session', abortController.signal);
+            } catch{
+                // Expected to fail - we're only testing the updatePresenceForMessageStart part
+            }
+
+            // Verify startProcessingMessage was called with correct args (this is the bug fix)
+            expect(startProcessingMessageSpy).toHaveBeenCalledWith(
+                testContext.channelId,
+                testContext.content
+            );
+        });
+
+        test('should NOT call startProcessingMessage when already processing (no double-transition)', async () => {
+            let processorFn: MessageProcessor | undefined;
+
+            const mockClient = {
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            // Mock coordinator factory to capture processor function
+            const mockCoordinator = {
+                handleMessage: mock(() => undefined),
+                setProcessor:  mock((fn: MessageProcessor) => {
+                    processorFn = fn;
+                }),
+                removeChannel:       mock(() => undefined),
+                removeGuildChannels: mock(() => undefined),
+                stop:                mock(() => undefined),
+            };
+            spies.push(spyOn(messageCoordinatorModule, 'createMessageCoordinator').mockReturnValue(mockCoordinator));
+
+            // Mock channel registry functions
+            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                discovered: 0,
+                updated:    0,
+                errors:     [],
+            }));
+            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
+            // Create bot state manager already in processing_message mode
+            const realBotStateManager = createBotStateManager({
+                logger: mockLogger,
+            });
+
+            // Put it in processing_message mode
+            realBotStateManager.startProcessingMessage(createChannelId('existing-channel'), 'existing message');
+
+            // Spy on startProcessingMessage
+            const startProcessingMessageSpy = mock(realBotStateManager.startProcessingMessage.bind(realBotStateManager));
+            realBotStateManager.startProcessingMessage = startProcessingMessageSpy;
+
+            // Create a fake agent to enable coordinator creation
+            const mockAgent = {
+                handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
+            } as unknown as import('@/agent/agent').ClaudeAgent;
+
+            createDiscordBot({
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
+                agent:           mockAgent,
+                botStateManager: realBotStateManager,
+            });
+
+            // Trigger clientReady to set up coordinator
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            // Verify processor was set
+            expect(processorFn).toBeDefined();
+
+            // Verify bot is in processing_message mode
+            expect(realBotStateManager.getMode()).toBe('processing_message');
+
+            // Call processor with a context
+            const testContext: DiscordMessageContext = {
+                guildId:   createGuildId('test-guild'),
+                channelId: createChannelId('test-channel'),
+                userId:    createUserId('123'),
+                messageId: '456',
+                content:   'test message',
+                timestamp: new Date().toISOString(),
+                botUserId: createUserId('999999999999999999'),
+            };
+
+            // Create AbortController for the processor call
+            const abortController = new AbortController();
+
+            // Processor will throw because agent.handleInput isn't properly set up,
+            // but we only care about the startProcessingMessage call which happens first
+            try {
+                await processorFn!([testContext], null, 'test-session', abortController.signal);
+            } catch{
+                // Expected to fail - we're only testing the updatePresenceForMessageStart part
+            }
+
+            // Verify startProcessingMessage was NOT called (mode was already processing_message)
+            expect(startProcessingMessageSpy).not.toHaveBeenCalled();
+        });
+
+        test('should handle empty contexts array without error', async () => {
+            let processorFn: MessageProcessor | undefined;
+
+            const mockClient = {
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            // Mock coordinator factory to capture processor function
+            const mockCoordinator = {
+                handleMessage: mock(() => undefined),
+                setProcessor:  mock((fn: MessageProcessor) => {
+                    processorFn = fn;
+                }),
+                removeChannel:       mock(() => undefined),
+                removeGuildChannels: mock(() => undefined),
+                stop:                mock(() => undefined),
+            };
+            spies.push(spyOn(messageCoordinatorModule, 'createMessageCoordinator').mockReturnValue(mockCoordinator));
+
+            // Mock channel registry functions
+            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                discovered: 0,
+                updated:    0,
+                errors:     [],
+            }));
+            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
+            // Create bot state manager in idle mode
+            const realBotStateManager = createBotStateManager({
+                logger: mockLogger,
+            });
+
+            // Spy on startProcessingMessage
+            const startProcessingMessageSpy = mock(realBotStateManager.startProcessingMessage.bind(realBotStateManager));
+            realBotStateManager.startProcessingMessage = startProcessingMessageSpy;
+
+            // Create a fake agent to enable coordinator creation
+            const mockAgent = {
+                handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
+            } as unknown as import('@/agent/agent').ClaudeAgent;
+
+            createDiscordBot({
+                config:          mockConfig,
+                onMessage:       mockOnMessage,
+                channelRegistry: mockChannelRegistry,
+                agent:           mockAgent,
+                botStateManager: realBotStateManager,
+            });
+
+            // Trigger clientReady to set up coordinator
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            // Verify processor was set
+            expect(processorFn).toBeDefined();
+
+            // Verify bot is in idle mode
+            expect(realBotStateManager.getMode()).toBe('idle');
+
+            // Create AbortController for the processor call
+            const abortController = new AbortController();
+
+            // Call processor with empty contexts array - should not throw from updatePresenceForMessageStart
+            try {
+                await processorFn!([], null, 'test-session', abortController.signal);
+            } catch{
+                // Expected to fail in later processing, but not from updatePresenceForMessageStart
+            }
+
+            // Verify startProcessingMessage was NOT called (no contexts)
+            expect(startProcessingMessageSpy).not.toHaveBeenCalled();
         });
     });
 });

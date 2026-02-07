@@ -322,12 +322,6 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
 
     return {
         async startPerch(slot: PerchSlot): Promise<void> {
-            // Guard against duplicate sessions
-            if(stateManager.getMode() === 'perching') {
-                logger.warn('Already in perching mode - ignoring startPerch');
-                return;
-            }
-
             // Guard against non-idle state
             if(stateManager.getMode() !== 'idle') {
                 logger.warn({ mode: stateManager.getMode() }, 'Cannot start perch - not idle');
