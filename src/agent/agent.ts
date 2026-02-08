@@ -867,12 +867,15 @@ async function processStreamEvents(
             }
         }
     } catch (error) {
-        // Check if this was an abort error
-        if(_.isError(error) && error.name === 'AbortError') {
+        // Check for AbortError OR any error when abort signal was triggered
+        // The Claude Agent SDK may throw non-standard errors on abort
+        if((_.isError(error) && error.name === 'AbortError') || options?.abortController?.signal.aborted) {
             wasInterrupted = true;
-            logger.info({
+            // Use warn for non-standard abort errors (could mask genuine errors)
+            const logMethod = (_.isError(error) && error.name === 'AbortError') ? logger.info : logger.warn;
+            logMethod({
                 sessionId: capturedSessionId,
-                msg:       'Batch processing interrupted by abort error',
+                msg:       'Batch processing interrupted by abort',
             });
         } else {
             // Re-throw other errors
@@ -1055,7 +1058,9 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
             } catch (error) {
                 const errorMessage = _.isError(error) ? error.message : String(error);
                 logger.error({ error, contextCount: contexts.length }, `Failed to process batch: ${errorMessage}`);
-                return buildHandleInputResult('', false, capturedSessionId, tracker);
+                // Check abort signal — SDK may throw non-AbortError on abort
+                const abortedBySignal = options?.abortController?.signal.aborted ?? false;
+                return buildHandleInputResult('', abortedBySignal, capturedSessionId, tracker);
             }
         },
     };

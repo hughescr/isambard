@@ -697,6 +697,37 @@ describe('PresenceManager', () => {
             );
         });
 
+        it('should NOT generate active status when transitioning to none mode (prevents emoji-less status)', async () => {
+            const manager = createPresenceManager({
+                discordClient:         mockClient,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            // Go to active phase first
+            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+
+            // Clear mock calls to track only the transition
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test mocks
+            mockActiveGenerator.generate.mockClear();
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test mocks
+            mockClient.user.setActivity.mockClear();
+
+            // Transition to 'none' mode (idle)
+            manager.transitionPresenceDisplayMode('none');
+            await Promise.resolve();
+
+            // Should NOT have called activeStatusGenerator.generate with mode 'none'
+            const generatorCalls = mockActiveGenerator.generate.mock.calls;
+            const noneModeCalls = _.filter(generatorCalls, ['1', 'none']);
+            expect(noneModeCalls).toHaveLength(0);
+
+            // Should NOT have called setActivity with emoji-less status from active generator
+            // (The subsequent updatePhase(idle) will handle the transition properly)
+        });
+
         it('should discard stale idle status when mode changes during async generation', async () => {
             // This test verifies the race condition handling in refreshIdleStatus()
             // where the catch-up mode might change while idle status generation is in progress.

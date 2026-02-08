@@ -115,6 +115,7 @@ export function createStreamEventHandler(
     // Track current phase for transition detection
     let currentPhase: 'thinking' | 'using_tool' | 'responding' | null = null;
     let lastToolName: string | undefined;
+    let completed = false;
 
     // Track accumulated state from stream events for rich context
     const pendingToolInputs = new Map<string, unknown>();
@@ -162,11 +163,19 @@ export function createStreamEventHandler(
             void (async () => {
                 try {
                     const synopsis = await dynamicStatusGenerator.generateSynopsis(synopsisContext);
+                    // Stryker disable next-line ConditionalExpression: Staleness guard for async race condition
+                    if(completed) {
+                        return; // Stale — handler already completed
+                    }
                     void safeUpdatePhase({
                         ...basePhase,
                         generatedStatus: synopsis,
                     });
                 } catch{
+                    // Stryker disable next-line ConditionalExpression: Staleness guard for async race condition
+                    if(completed) {
+                        return;
+                    }
                     void safeUpdatePhase(basePhase);
                 }
             })();
@@ -295,6 +304,10 @@ export function createStreamEventHandler(
                                     thinkingContent: capturedThinkingContent,
                                     recentToolCalls: capturedRecentToolCalls,
                                 });
+                                // Stryker disable next-line ConditionalExpression: Staleness guard for async race condition
+                                if(completed) {
+                                    return; // Stale — handler already completed
+                                }
                                 // Stryker disable next-line ObjectLiteral: All properties required for presence update
                                 void safeUpdatePhase({
                                     type:            'thinking',
@@ -303,6 +316,10 @@ export function createStreamEventHandler(
                                     generatedStatus: synopsis,
                                 });
                             } catch{
+                                // Stryker disable next-line ConditionalExpression: Staleness guard for async race condition
+                                if(completed) {
+                                    return;
+                                }
                                 void safeUpdatePhase({
                                     type:            'thinking',
                                     startedAt:       new Date(),
@@ -356,6 +373,7 @@ export function createStreamEventHandler(
      */
     // Stryker disable BlockStatement: Cleanup function tested via integration
     const complete = (): void => {
+        completed = true;
         botStateManager.clearActivityPhase();
     };
     // Stryker restore BlockStatement

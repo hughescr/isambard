@@ -1060,6 +1060,31 @@ describe('createClaudeAgent', () => {
             expect(result.wasInterrupted).toBe(false); // Should NOT be marked as interrupted
         });
 
+        test('should return wasInterrupted=true for outer catch when abort signal is set', async () => {
+            const abortController = new AbortController();
+            querySpy.mockImplementation((_params: any): any => {
+                // Use a regular async iterable that throws, not a generator
+                return {
+                    [Symbol.asyncIterator]: () => ({
+                        next: async () => {
+                            // Abort the signal before throwing
+                            abortController.abort();
+                            const error = new Error('Connection timeout');
+                            error.name = 'TimeoutError';
+                            throw error;
+                        },
+                    }),
+                };
+            });
+
+            const agent = createClaudeAgent({});
+
+            // When abort signal is set, even non-AbortError should mark wasInterrupted=true
+            const result = await agent.handleInput([mockMessageContext], { abortController });
+            expect(result.response).toBeNull();
+            expect(result.wasInterrupted).toBe(true);
+        });
+
         test('should log abort error with correct structure', async () => {
             // Clear mock before test to avoid interference from other tests
             mockLogger.info.mockClear();
@@ -1085,7 +1110,7 @@ describe('createClaudeAgent', () => {
 
             // Kills mutant #7: verify log structure on abort error
             const logCalls = mockLogger.info.mock.calls;
-            const abortLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort error')) as unknown[] | undefined;
+            const abortLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort')) as unknown[] | undefined;
             expect(abortLog).toBeDefined();
             const abortLogData = abortLog![0] as { sessionId?: string, msg?: string };
             // Verify log has sessionId property (even if undefined)
@@ -1093,6 +1118,30 @@ describe('createClaudeAgent', () => {
             expect(abortLogData).toHaveProperty('msg');
             // The actual sessionId should be captured
             expect(abortLogData.sessionId).toBe('test-session-abort');
+        });
+
+        test('should catch AbortError even without an abort controller', async () => {
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:       'system' as const,
+                        subtype:    'init' as const,
+                        session_id: 'test-session-abort-no-controller',
+                    };
+                    const error = new Error('This operation was aborted');
+                    error.name = 'AbortError';
+                    throw error;
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+
+            // AbortError without an abortController should still be caught
+            // Kills mutants 412 & 416: verifies the first branch of the || condition
+            const result = await agent.handleInput([mockMessageContext]);
+            expect(result.wasInterrupted).toBe(true);
+            expect(result.response).toBeNull();
         });
 
         test('should log batch start with messageIds property', async () => {
@@ -1219,6 +1268,45 @@ describe('createClaudeAgent', () => {
 
             expect(result.wasInterrupted).toBe(true);
             expect(result.response).toBeNull();
+        });
+
+        test('should return wasInterrupted=true for non-AbortError when abort signal is set', async () => {
+            // Clear mocks before test to avoid interference from other tests
+            mockLogger.info.mockClear();
+            mockLogger.warn.mockClear();
+
+            const abortController = new AbortController();
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    yield {
+                        type:       'system' as const,
+                        subtype:    'init' as const,
+                        session_id: 'test-session-non-abort',
+                    };
+                    // SDK throws a non-AbortError but abort signal is set
+                    abortController.abort();
+                    const error = new Error('Connection closed');
+                    error.name = 'ConnectionError';
+                    throw error;
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({});
+            const result = await agent.handleInput([mockMessageContext], { abortController });
+
+            expect(result.wasInterrupted).toBe(true);
+            expect(result.response).toBeNull();
+
+            // Verify warn is used for non-AbortError (not info)
+            const warnCalls = mockLogger.warn.mock.calls;
+            const abortLog = _.find(warnCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort')) as unknown[] | undefined;
+            expect(abortLog).toBeDefined();
+
+            // Verify info was NOT used for this case
+            const infoCalls = mockLogger.info.mock.calls;
+            const infoAbortLog = _.find(infoCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort')) as unknown[] | undefined;
+            expect(infoAbortLog).toBeUndefined();
         });
 
         test('should return streamTracker with captured progress', async () => {

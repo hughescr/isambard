@@ -345,10 +345,23 @@ describe('CatchUpSessionRunner', () => {
                 totalUnread: 5,
                 channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 5 }],
             });
-            // Session returns completed=true (agent session catches abort internally)
-            // But state manager shows we were interrupted
-            mockRunAgentSession.mockResolvedValue({ completed: true, sessionId: 'session-123' } as AgentSessionResult);
-            mockInterrupted = true; // Set interrupted flag
+
+            // Track calls to runAgentSession
+            let callCount = 0;
+            mockRunAgentSession.mockImplementation(() => {
+                callCount++;
+                if(callCount === 1) {
+                    // First call: returns completed=true while interrupted
+                    return Promise.resolve({ completed: true, sessionId: 'session-123' } as AgentSessionResult);
+                } else {
+                    // Second call (resume): clear interrupted and complete
+                    mockInterrupted = false;
+                    return Promise.resolve({ completed: true, sessionId: 'session-resumed' } as AgentSessionResult);
+                }
+            });
+
+            // Set interrupted flag BEFORE starting catch-up
+            mockInterrupted = true;
 
             const runner = createCatchUpSessionRunner(deps);
             await runner.startCatchUp();
@@ -361,6 +374,24 @@ describe('CatchUpSessionRunner', () => {
 
             // startCatchUp should have been called
             expect(mockStateManager.startCatchUp).toHaveBeenCalled();
+
+            // Resume should be scheduled via setTimeout(0) - flush timers to execute doResume
+            const flushAsync = async (iterations = 10): Promise<void> => {
+                for(let i = 0; i < iterations; i++) {
+                    jest.runAllTimers();
+                    await Promise.resolve();
+                    await Promise.resolve();
+                }
+            };
+            await flushAsync();
+
+            // Verify runAgentSession was called twice (initial + resume)
+            expect(callCount).toBe(2);
+
+            // After resume completes, completeCatchUp should have been called
+            expect(mockStoreCompletionSignal).toHaveBeenCalled();
+            expect(mockDeleteInProgressSignal).toHaveBeenCalled();
+            expect(mockStateManager.goIdle).toHaveBeenCalled();
         });
 
         it('should return without completing when AbortError is thrown', async () => {
@@ -823,6 +854,38 @@ describe('CatchUpSessionRunner', () => {
             // resume should have been called but NOT goIdle
             expect(mockStateManager.resume).toHaveBeenCalled();
             expect(mockStateManager.goIdle).not.toHaveBeenCalled();
+        });
+
+        it('should prevent concurrent doResume execution (resumeInProgress guard)', async () => {
+            // Set up state as catching_up + interrupted
+            mockMode = 'catching_up';
+            mockInterrupted = true;
+            mockInboxManager.getUnreadOverview = mock().mockReturnValue({
+                totalUnread: 3,
+                channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 3 }],
+            });
+
+            let resolveSession: ((value: AgentSessionResult) => void) | undefined;
+            mockRunAgentSession.mockImplementation(() => new Promise<AgentSessionResult>((resolve) => {
+                resolveSession = resolve;
+            }));
+
+            const runner = createCatchUpSessionRunner(deps);
+
+            // Call resumeAfterInterruption twice concurrently
+            const promise1 = runner.resumeAfterInterruption();
+            const promise2 = runner.resumeAfterInterruption();
+
+            // Only one should actually execute
+            expect(mockRunAgentSession).toHaveBeenCalledTimes(1);
+
+            // Resolve the session
+            resolveSession!({ completed: true, sessionId: 'session-guard-test' } as AgentSessionResult);
+            await promise1;
+            await promise2;
+
+            // Verify cleanup
+            expect(mockStoreCompletionSignal).toHaveBeenCalledTimes(1);
         });
     });
 

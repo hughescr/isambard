@@ -508,4 +508,199 @@ describe('StreamEventHandler', () => {
             expect(thinkingContext?.recentToolCalls).toEqual(['Tool5', 'Tool4', 'Tool3']);
         });
     });
+
+    describe('Stale synopsis after complete()', () => {
+        it('should NOT apply async synopsis after complete() is called', async () => {
+            let synopsisResolve: ((value: string) => void) | undefined;
+
+            const controlledGenerator: DynamicStatusGenerator = {
+                generateSynopsis: mock(() => new Promise<string>((resolve) => {
+                    synopsisResolve = resolve;
+                })),
+                // eslint-disable-next-line lodash/prefer-constant -- Async function
+                generateCatchUpSynopsis: mock(async () => 'Catch-up status'),
+            };
+
+            const { onStreamEvent, complete } = createStreamEventHandler({
+                ...baseDeps,
+                dynamicStatusGenerator: controlledGenerator,
+            });
+
+            // Clear any setup calls
+            mockBotStateManager.updateActivityPhase.mockClear();
+
+            // Trigger responding phase (fires async synopsis)
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
+
+            // Synopsis should have been requested
+            // eslint-disable-next-line @typescript-eslint/unbound-method -- Test mock method
+            expect(controlledGenerator.generateSynopsis).toHaveBeenCalled();
+
+            // Complete the handler BEFORE synopsis resolves
+            complete();
+
+            // Now resolve the synopsis
+            synopsisResolve!('Stale synopsis');
+            await flushPromises();
+
+            // updateActivityPhase should NOT have been called with the stale synopsis
+            const calls = mockBotStateManager.updateActivityPhase.mock.calls;
+            const staleCalls = filter(calls, (call: unknown[]) =>
+                (call[0] as { generatedStatus?: string })?.generatedStatus === 'Stale synopsis'
+            );
+            expect(staleCalls).toHaveLength(0);
+        });
+
+        it('should NOT apply fallback phase after complete() when synopsis throws', async () => {
+            let synopsisReject: ((error: Error) => void) | undefined;
+
+            const controlledGenerator: DynamicStatusGenerator = {
+                generateSynopsis: mock(() => new Promise<string>((_resolve, reject) => {
+                    synopsisReject = reject;
+                })),
+                // eslint-disable-next-line lodash/prefer-constant -- Async function
+                generateCatchUpSynopsis: mock(async () => 'Catch-up status'),
+            };
+
+            const { onStreamEvent, complete } = createStreamEventHandler({
+                ...baseDeps,
+                dynamicStatusGenerator: controlledGenerator,
+            });
+
+            // Clear any setup calls
+            mockBotStateManager.updateActivityPhase.mockClear();
+
+            // Trigger responding phase (fires async synopsis)
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
+
+            // Complete the handler BEFORE synopsis rejects
+            complete();
+
+            // Now reject the synopsis
+            synopsisReject!(new Error('Generation failed'));
+            await flushPromises();
+
+            // updateActivityPhase should NOT have been called after complete()
+            const callsAfterComplete = mockBotStateManager.updateActivityPhase.mock.calls;
+            // Only calls before complete() should exist (the initial non-synopsis update)
+            const postCompleteCalls = filter(callsAfterComplete, (call: unknown[]) => {
+                const phase = call[0] as { type?: string };
+                return phase?.type === 'responding';
+            });
+            expect(postCompleteCalls).toHaveLength(0);
+        });
+
+        it('should NOT apply stale thinking synopsis after complete() is called', async () => {
+            let synopsisResolve: ((value: string) => void) | undefined;
+
+            const controlledGenerator: DynamicStatusGenerator = {
+                generateSynopsis: mock(() => new Promise<string>((resolve) => {
+                    synopsisResolve = resolve;
+                })),
+                // eslint-disable-next-line lodash/prefer-constant -- Async function
+                generateCatchUpSynopsis: mock(async () => 'Catch-up status'),
+            };
+
+            const { onStreamEvent, complete } = createStreamEventHandler({
+                ...baseDeps,
+                dynamicStatusGenerator: controlledGenerator,
+            });
+
+            // Clear any setup calls
+            mockBotStateManager.updateActivityPhase.mockClear();
+
+            // Step 1: Accumulate thinking content
+            onStreamEvent({
+                type:    'assistant',
+                message: {
+                    content: [
+                        { type: 'thinking', thinking: 'Some deep thought' },
+                    ],
+                },
+            } as unknown as AgentStreamEvent);
+
+            // Step 2: Transition to responding (to set currentPhase away from thinking)
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
+            await flushPromises();
+
+            // Step 3: Clear mocks and transition back to thinking — this triggers the
+            // inline thinking synopsis async block (because hasThinkingContent is true)
+            mockBotStateManager.updateActivityPhase.mockClear();
+            (controlledGenerator.generateSynopsis as any).mockClear();
+
+            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+
+            // Synopsis should have been requested for thinking phase
+            // eslint-disable-next-line @typescript-eslint/unbound-method -- Test mock method
+            expect(controlledGenerator.generateSynopsis).toHaveBeenCalled();
+
+            // Complete the handler BEFORE synopsis resolves
+            complete();
+
+            // Now resolve the synopsis
+            synopsisResolve!('Stale thinking synopsis');
+            await flushPromises();
+
+            // updateActivityPhase should NOT have been called with the stale thinking synopsis
+            const calls = mockBotStateManager.updateActivityPhase.mock.calls;
+            const staleCalls = filter(calls, (call: unknown[]) =>
+                (call[0] as { generatedStatus?: string })?.generatedStatus === 'Stale thinking synopsis'
+            );
+            expect(staleCalls).toHaveLength(0);
+        });
+
+        it('should NOT apply stale thinking fallback after complete() when synopsis throws', async () => {
+            let synopsisReject: ((error: Error) => void) | undefined;
+
+            const controlledGenerator: DynamicStatusGenerator = {
+                generateSynopsis: mock(() => new Promise<string>((_resolve, reject) => {
+                    synopsisReject = reject;
+                })),
+                // eslint-disable-next-line lodash/prefer-constant -- Async function
+                generateCatchUpSynopsis: mock(async () => 'Catch-up status'),
+            };
+
+            const { onStreamEvent, complete } = createStreamEventHandler({
+                ...baseDeps,
+                dynamicStatusGenerator: controlledGenerator,
+                thinkingSynopsis:       'Thinking fallback',
+            });
+
+            // Clear any setup calls
+            mockBotStateManager.updateActivityPhase.mockClear();
+
+            // Step 1: Accumulate thinking content
+            onStreamEvent({
+                type:    'assistant',
+                message: {
+                    content: [
+                        { type: 'thinking', thinking: 'Some deep thought' },
+                    ],
+                },
+            } as unknown as AgentStreamEvent);
+
+            // Step 2: Transition to responding
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
+            await flushPromises();
+
+            // Step 3: Clear mocks and transition back to thinking
+            mockBotStateManager.updateActivityPhase.mockClear();
+
+            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+
+            // Complete the handler BEFORE synopsis rejects
+            complete();
+
+            // Now reject the synopsis
+            synopsisReject!(new Error('Generation failed'));
+            await flushPromises();
+
+            // updateActivityPhase should NOT have been called with the fallback after complete()
+            const calls = mockBotStateManager.updateActivityPhase.mock.calls;
+            const fallbackCalls = filter(calls, (call: unknown[]) =>
+                (call[0] as { generatedStatus?: string })?.generatedStatus === 'Thinking fallback'
+            );
+            expect(fallbackCalls).toHaveLength(0);
+        });
+    });
 });

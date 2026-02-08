@@ -256,8 +256,9 @@ export function createPresenceManager(
                     if(exitingCatchUp) {
                         void refreshIdleStatus();
                     }
-                } else {
-                    // For active phases, update immediately (always)
+                } else if(mode !== 'none') {
+                    // For active phases, update immediately with new mode prefix
+                    // Skip when transitioning to 'none' (idle) — the subsequent updatePhase(idle) handles it
                     const activity = activeStatusGenerator.generate(currentPhase, mode);
                     void applyPresenceUpdate(activity);
                 }
