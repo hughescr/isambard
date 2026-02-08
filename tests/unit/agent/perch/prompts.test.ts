@@ -68,6 +68,23 @@ describe.concurrent('buildPerchPrompt', () => {
             });
         });
 
+        describe.concurrent('wikipedia slot', () => {
+            test('should include BASE_PROMPT', () => {
+                const prompt = buildPerchPrompt('wikipedia');
+                expect(prompt).toContain(BASE_PROMPT);
+            });
+
+            test('should include slot name with time range', () => {
+                const prompt = buildPerchPrompt('wikipedia');
+                expect(prompt).toContain('Wikipedia Exploration (12pm-2pm Pacific)');
+            });
+
+            test('should include slot-specific hint', () => {
+                const prompt = buildPerchPrompt('wikipedia');
+                expect(prompt).toContain('Lunchtime breadth exploration');
+            });
+        });
+
         describe.concurrent('afternoon slot', () => {
             test('should include BASE_PROMPT', () => {
                 const prompt = buildPerchPrompt('afternoon');
@@ -76,7 +93,7 @@ describe.concurrent('buildPerchPrompt', () => {
 
             test('should include slot name with time range', () => {
                 const prompt = buildPerchPrompt('afternoon');
-                expect(prompt).toContain('Afternoon (1-3pm Pacific)');
+                expect(prompt).toContain('Afternoon (2-4pm Pacific)');
             });
 
             test('should include slot-specific hint', () => {
@@ -122,7 +139,7 @@ describe.concurrent('buildPerchPrompt', () => {
 
     describe.concurrent('prompt structure', () => {
         test('all scheduled slots should follow same structure', () => {
-            const scheduledSlots: PerchSlot[] = ['pre-dawn', 'mid-morning', 'afternoon', 'evening', 'late-night'];
+            const scheduledSlots: PerchSlot[] = ['pre-dawn', 'mid-morning', 'wikipedia', 'afternoon', 'evening', 'late-night'];
 
             for(const slot of scheduledSlots) {
                 const prompt = buildPerchPrompt(slot);
@@ -158,6 +175,11 @@ describe.concurrent('getSuggestionLevelDescription', () => {
             expect(description).toBe('moderate (helpful suggestions)');
         });
 
+        test('should return correct description for wikipedia (moderate)', () => {
+            const description = getSuggestionLevelDescription('wikipedia');
+            expect(description).toBe('moderate (helpful suggestions)');
+        });
+
         test('should return correct description for afternoon (open)', () => {
             const description = getSuggestionLevelDescription('afternoon');
             expect(description).toBe('open (flexible exploration)');
@@ -176,7 +198,7 @@ describe.concurrent('getSuggestionLevelDescription', () => {
 
     describe.concurrent('suggestion level mapping', () => {
         test('all scheduled slots should return valid descriptions', () => {
-            const scheduledSlots: PerchSlot[] = ['pre-dawn', 'mid-morning', 'afternoon', 'evening', 'late-night'];
+            const scheduledSlots: PerchSlot[] = ['pre-dawn', 'mid-morning', 'wikipedia', 'afternoon', 'evening', 'late-night'];
             const validDescriptions = [
                 'strongly suggestive (high-value timing)',
                 'moderate (helpful suggestions)',
@@ -253,7 +275,7 @@ describe.concurrent('formatSlotName edge cases', () => {
     test('should throw on unknown slot', () => {
         // We can't directly test the error case without casting to invalid type,
         // but we verify all valid slots work correctly
-        const validSlots: PerchSlot[] = ['pre-dawn', 'mid-morning', 'afternoon', 'evening', 'late-night', 'unscheduled'];
+        const validSlots: PerchSlot[] = ['pre-dawn', 'mid-morning', 'wikipedia', 'afternoon', 'evening', 'late-night', 'unscheduled'];
         for(const slot of validSlots) {
             expect(() => buildTestPerchPrompt(slot)).not.toThrow();
         }
@@ -265,6 +287,7 @@ describe.concurrent('getSuggestionLevelDescription edge cases', () => {
         const descriptions = [
             getSuggestionLevelDescription('pre-dawn'),
             getSuggestionLevelDescription('mid-morning'),
+            getSuggestionLevelDescription('wikipedia'),
             getSuggestionLevelDescription('afternoon'),
             getSuggestionLevelDescription('evening'),
             getSuggestionLevelDescription('late-night'),

@@ -21,10 +21,19 @@ describe.concurrent('getSlotForHour', () => {
         });
     });
 
-    describe.concurrent('afternoon slot (1-3pm)', () => {
+    describe.concurrent('wikipedia slot (12pm-2pm)', () => {
         test.each<[number, PerchSlot]>([
-            [13, 'afternoon'],
+            [12, 'wikipedia'],
+            [13, 'wikipedia'],
+        ])('hour %d should return %s', (hour, expected) => {
+            expect(getSlotForHour(hour)).toBe(expected);
+        });
+    });
+
+    describe.concurrent('afternoon slot (2-4pm)', () => {
+        test.each<[number, PerchSlot]>([
             [14, 'afternoon'],
+            [15, 'afternoon'],
         ])('hour %d should return %s', (hour, expected) => {
             expect(getSlotForHour(hour)).toBe(expected);
         });
@@ -57,8 +66,6 @@ describe.concurrent('getSlotForHour', () => {
             [7, 'unscheduled'],
             [8, 'unscheduled'],
             [11, 'unscheduled'],
-            [12, 'unscheduled'],
-            [15, 'unscheduled'],
             [16, 'unscheduled'],
             [17, 'unscheduled'],
             [20, 'unscheduled'],
@@ -111,12 +118,8 @@ describe.concurrent('getSlotForHour', () => {
             expect(getSlotForHour(11)).toBe('unscheduled');
         });
 
-        test('hour 12 should be unscheduled (before afternoon)', () => {
-            expect(getSlotForHour(12)).toBe('unscheduled');
-        });
-
-        test('hour 15 should be unscheduled (after afternoon)', () => {
-            expect(getSlotForHour(15)).toBe('unscheduled');
+        test('hour 16 should be unscheduled (after afternoon)', () => {
+            expect(getSlotForHour(16)).toBe('unscheduled');
         });
 
         test('hour 17 should be unscheduled (before evening)', () => {
@@ -169,12 +172,22 @@ describe.concurrent('getSlotConfig', () => {
             expect(config?.hint).toContain('Morning work hours');
         });
 
+        test('should return config for wikipedia', () => {
+            const config = getSlotConfig('wikipedia');
+            expect(config).toBeDefined();
+            expect(config?.slot).toBe('wikipedia');
+            expect(config?.startHour).toBe(12);
+            expect(config?.endHour).toBe(14);
+            expect(config?.level).toBe('moderate');
+            expect(config?.hint).toContain('Lunchtime breadth exploration');
+        });
+
         test('should return config for afternoon', () => {
             const config = getSlotConfig('afternoon');
             expect(config).toBeDefined();
             expect(config?.slot).toBe('afternoon');
-            expect(config?.startHour).toBe(13);
-            expect(config?.endHour).toBe(15);
+            expect(config?.startHour).toBe(14);
+            expect(config?.endHour).toBe(16);
             expect(config?.level).toBe('open');
             expect(config?.hint).toContain('Afternoon');
         });

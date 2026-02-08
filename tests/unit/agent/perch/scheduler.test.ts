@@ -376,7 +376,7 @@ describe('PerchScheduler', () => {
                 stateManager:          mockStateManager,
                 logger:                mockLogger,
                 config,
-                getCurrentPacificHour: () => 12, // unscheduled
+                getCurrentPacificHour: () => 11, // unscheduled
                 onPerchTrigger:        mockOnPerchTrigger,
             };
 
@@ -667,8 +667,10 @@ describe('PerchScheduler', () => {
             [6, 'pre-dawn'],
             [9, 'mid-morning'],
             [10, 'mid-morning'],
-            [13, 'afternoon'],
+            [12, 'wikipedia'],
+            [13, 'wikipedia'],
             [14, 'afternoon'],
+            [15, 'afternoon'],
             [18, 'evening'],
             [19, 'evening'],
             [23, 'late-night'],
@@ -692,7 +694,7 @@ describe('PerchScheduler', () => {
         test.each([
             [3, 'unscheduled'],
             [8, 'unscheduled'],
-            [12, 'unscheduled'],
+            [11, 'unscheduled'],
             [16, 'unscheduled'],
             [22, 'unscheduled'],
         ])('hour %d should map to unscheduled', (hour, expectedSlot) => {
