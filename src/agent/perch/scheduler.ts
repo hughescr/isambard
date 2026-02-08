@@ -224,7 +224,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
         }, 'Bot now idle - running deferred perch with current slot');
 
         // Use current slot, not the pending one (time may have changed)
-        doTrigger(currentSlot);
+        setTimeout(() => doTrigger(currentSlot), 0);
     }
 
     return {

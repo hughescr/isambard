@@ -465,7 +465,39 @@ describe('PerchScheduler', () => {
             mockStateManager.getMode = () => 'idle';
             mockStateManager._triggerStateChange(createStateChange('mode_transition', 'idle'));
 
+            // Advance timers to allow deferred trigger to fire
+            jest.advanceTimersByTime(0);
+
             // Should trigger and clear pending
+            expect(mockOnPerchTrigger).toHaveBeenCalled();
+
+            scheduler.stop();
+        });
+
+        test('should defer trigger via setTimeout when transitioning to idle with pending perch', () => {
+            const deps: PerchSchedulerDeps = {
+                stateManager:          mockStateManager,
+                logger:                mockLogger,
+                config,
+                getCurrentPacificHour: () => 10,
+                onPerchTrigger:        mockOnPerchTrigger,
+            };
+
+            mockStateManager.getMode = () => 'processing_message';
+
+            const scheduler = createPerchScheduler(deps);
+            scheduler.start();
+            scheduler.triggerNow();
+
+            // Transition to idle
+            mockStateManager.getMode = () => 'idle';
+            mockStateManager._triggerStateChange(createStateChange('mode_transition', 'idle'));
+
+            // Trigger should NOT have fired synchronously
+            expect(mockOnPerchTrigger).not.toHaveBeenCalled();
+
+            // After advancing timers, trigger should fire
+            jest.advanceTimersByTime(0);
             expect(mockOnPerchTrigger).toHaveBeenCalled();
 
             scheduler.stop();
@@ -567,6 +599,8 @@ describe('PerchScheduler', () => {
             // Transition to idle
             mockStateManager.getMode = () => 'idle';
             mockStateManager._triggerStateChange(createStateChange('mode_transition', 'idle'));
+
+            jest.advanceTimersByTime(0);
 
             // Should trigger with current slot (evening), not original (mid-morning)
             expect(mockOnPerchTrigger).toHaveBeenCalledWith('evening');
@@ -1019,6 +1053,8 @@ describe('PerchScheduler', () => {
             mockStateManager.getMode = () => 'idle';
             mockStateManager._triggerStateChange(createStateChange('mode_transition', 'idle'));
 
+            jest.advanceTimersByTime(0);
+
             // Should log about running deferred perch
 
             expect(mockLogger.info).toHaveBeenCalledWith(
@@ -1257,6 +1293,8 @@ describe('PerchScheduler', () => {
             // Transition to idle
             mockStateManager.getMode = () => 'idle';
             mockStateManager._triggerStateChange(createStateChange('mode_transition', 'idle'));
+
+            jest.advanceTimersByTime(0);
 
             // Should have triggered the deferred perch
             expect(mockOnPerchTrigger).toHaveBeenCalled();

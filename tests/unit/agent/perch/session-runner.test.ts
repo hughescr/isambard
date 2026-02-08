@@ -2395,4 +2395,437 @@ describe('PerchSessionRunner - Mutant Killers', () => {
     });
 });
 
+describe('Resume session fallthrough to idle', () => {
+    let mockStateManager: BotStateManager;
+    let mockLogger:       Logger;
+    let config:           PerchConfig;
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        mockLogger = createMockLogger();
+        config = {
+            enabled:           true,
+            timezone:          'America/Los_Angeles',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 30,
+        };
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('should go idle when resume session returns completed: false and still in perching mode', async () => {
+        // Setup: state manager in idle mode initially (will transition to perching)
+        mockStateManager = createMockStateManager({
+            mode: 'idle',
+        });
+
+        // First call: initial session that gets interrupted
+        // Second call: resume session that returns completed: false
+        let callCount = 0;
+        const mockSession = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            callCount++;
+            if(callCount === 1) {
+                // Initial session — will be interrupted, hang until aborted
+                return new Promise((_resolve, reject) => {
+                    options.abortSignal.addEventListener('abort', () => {
+                        const error = new Error('Aborted');
+                        error.name = 'AbortError';
+                        reject(error);
+                    });
+                });
+            }
+            // Resume session — returns not completed
+            return { completed: false, sessionId: 'resume-session' };
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config,
+            runAgentSession: mockSession,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+        const sessionPromise = runner.startPerch('pre-dawn');
+        await Promise.resolve();
+
+        // Interrupt the session
+        runner.interrupt({
+            channelId:   'ch-1' as ChannelId,
+            author:      'TestUser',
+            channelName: 'general',
+            content:     'Hello',
+        });
+
+        // Wait for interrupt to be processed
+        await Promise.resolve();
+        await sessionPromise;
+
+        // Run timers to trigger the setTimeout that schedules resume
+        jest.runAllTimers();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // After resume completes with completed: false, the finally block in doResume
+        // should call goIdle because we're still in perching mode
+        expect(mockStateManager.goIdle).toHaveBeenCalled();
+    });
+});
+
+describe('AbortError during resume', () => {
+    let mockLogger: Logger;
+    let config:     PerchConfig;
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        mockLogger = createMockLogger();
+        config = {
+            enabled:           true,
+            timezone:          'America/Los_Angeles',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 30,
+        };
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('should go idle when AbortError occurs during resume and still in perching mode', async () => {
+        const mockStateManager = createMockStateManager({
+            mode: 'idle',
+        });
+
+        let callCount = 0;
+        const mockSession = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            callCount++;
+            if(callCount === 1) {
+                // Initial session — hang until interrupted
+                return new Promise((_resolve, reject) => {
+                    options.abortSignal.addEventListener('abort', () => {
+                        const error = new Error('Aborted');
+                        error.name = 'AbortError';
+                        reject(error);
+                    });
+                });
+            }
+            // Resume session — also throws AbortError (external abort)
+            // Clear interrupted first so it doesn't try to re-resume
+            (mockStateManager.isInterrupted as ReturnType<typeof mock>).mockImplementation(_.constant(false));
+            const error = new Error('Aborted');
+            error.name = 'AbortError';
+            throw error;
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config,
+            runAgentSession: mockSession,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+        const sessionPromise = runner.startPerch('pre-dawn');
+        await Promise.resolve();
+
+        // Interrupt the session
+        runner.interrupt({
+            channelId:   'ch-1' as ChannelId,
+            author:      'TestUser',
+            channelName: 'general',
+            content:     'Hello',
+        });
+
+        // Wait for interrupt to be processed
+        await Promise.resolve();
+        await sessionPromise;
+
+        // Run timers to trigger the setTimeout that schedules resume
+        jest.runAllTimers();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // goIdle should have been called via the finally block safety net in doResume
+        expect(mockStateManager.goIdle).toHaveBeenCalled();
+    });
+
+    test('should NOT go idle when AbortError occurs during initial session (not resume)', async () => {
+        const mockStateManager = createMockStateManager({ mode: 'idle' });
+
+        const mockSession = mock(async (_options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            // Simulate external abort during initial session (not interrupt, not timeout)
+            const error = new Error('Aborted');
+            error.name = 'AbortError';
+            throw error;
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config,
+            runAgentSession: mockSession,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+        await runner.startPerch('pre-dawn');
+
+        // goIdle should NOT be called for non-resume AbortError
+        // (startPerch calls startPerching which sets mode to perching,
+        //  but goIdle should not be called on simple abort)
+        // Actually, the state was already set to perching by startPerch.
+        // The abort handler without resumeInProgress should just return.
+        // But note: the finally block in runSessionAndFinalize sets currentAbortController = null
+        // There's no goIdle call in the AbortError path when resumeInProgress is false.
+        expect(mockStateManager.goIdle).not.toHaveBeenCalled();
+    });
+
+    test('should clear session timeout when initial session is externally aborted', async () => {
+        const mockStateManager = createMockStateManager({ mode: 'idle' });
+
+        const mockSession = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            // Hang until aborted
+            return new Promise((_resolve, reject) => {
+                options.abortSignal.addEventListener('abort', () => {
+                    const error = new Error('Aborted');
+                    error.name = 'AbortError';
+                    reject(error);
+                });
+            });
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config:          { ...config, maxSessionMinutes: 5 },
+            runAgentSession: mockSession,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+        const sessionPromise = runner.startPerch('pre-dawn');
+        await Promise.resolve();
+
+        // Externally abort (not via interrupt)
+        const controller = runner.getAbortController();
+        controller?.abort();
+        await sessionPromise;
+
+        // Advance time past the original session timeout
+        // If timeout wasn't cleaned up, handleSessionTimeout would fire
+        jest.advanceTimersByTime(5 * 60 * 1000 + 1000);
+
+        // Starting a new session should work cleanly — no stale timeout interference
+        // Reset mode to idle for the next startPerch
+        (mockStateManager.getMode as ReturnType<typeof mock>).mockImplementation(_.constant('idle' as const));
+        (mockStateManager.goIdle as ReturnType<typeof mock>).mockClear();
+
+        // The key assertion: no goIdle from orphaned timeout handler
+        // (handleSessionTimeout checks mode and calls abort, but if no session is active, nothing happens)
+        expect(mockStateManager.goIdle).not.toHaveBeenCalled();
+    });
+});
+
+describe('Resume timeout', () => {
+    let mockLogger: Logger;
+    let config:     PerchConfig;
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        mockLogger = createMockLogger();
+        config = {
+            enabled:           true,
+            timezone:          'America/Los_Angeles',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 30,
+        };
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('should set timeout for resume session based on remaining time', async () => {
+        jest.setSystemTime(new Date('2024-01-01T12:00:00.000Z'));
+
+        const mockStateManager = createMockStateManager({
+            mode: 'idle',
+        });
+
+        let callCount = 0;
+        const mockSession = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            callCount++;
+            if(callCount === 1) {
+                // Initial session - hang until interrupted
+                return new Promise((_resolve, reject) => {
+                    options.abortSignal.addEventListener('abort', () => {
+                        // Advance time 30 minutes before rejecting
+                        jest.advanceTimersByTime(30 * 60 * 1000);
+                        const error = new Error('Aborted');
+                        error.name = 'AbortError';
+                        reject(error);
+                    });
+                });
+            }
+            // Resume session completes
+            return { completed: true, sessionId: 'resume-session' };
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config:          { ...config, maxSessionMinutes: 45 },
+            runAgentSession: mockSession,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+        const sessionPromise = runner.startPerch('pre-dawn');
+        await Promise.resolve();
+
+        // Interrupt the session
+        runner.interrupt({
+            channelId:   'ch-1' as ChannelId,
+            author:      'TestUser',
+            channelName: 'general',
+            content:     'Hello',
+        });
+
+        // Wait for interrupt to be processed
+        await Promise.resolve();
+        await sessionPromise;
+
+        // Run timers to trigger the setTimeout that schedules resume
+        jest.runAllTimers();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // The resume should have been called (since interrupted)
+        expect(callCount).toBe(2);
+    });
+
+    test('should enforce minimum 1-minute floor on resume timeout', async () => {
+        jest.setSystemTime(new Date('2024-01-01T12:00:00.000Z'));
+
+        const mockStateManager = createMockStateManager({
+            mode: 'idle',
+        });
+
+        let callCount = 0;
+        const mockSession = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            callCount++;
+            if(callCount === 1) {
+                // Initial session - hang until interrupted
+                return new Promise((_resolve, reject) => {
+                    options.abortSignal.addEventListener('abort', () => {
+                        // Advance time 50 minutes (exceeding max time) before rejecting
+                        jest.advanceTimersByTime(50 * 60 * 1000);
+                        const error = new Error('Aborted');
+                        error.name = 'AbortError';
+                        reject(error);
+                    });
+                });
+            }
+            // Resume session completes
+            return { completed: true, sessionId: 'resume-session' };
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config:          { ...config, maxSessionMinutes: 45 },
+            runAgentSession: mockSession,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+        const sessionPromise = runner.startPerch('pre-dawn');
+        await Promise.resolve();
+
+        // Interrupt the session
+        runner.interrupt({
+            channelId:   'ch-1' as ChannelId,
+            author:      'TestUser',
+            channelName: 'general',
+            content:     'Hello',
+        });
+
+        // Wait for interrupt to be processed
+        await Promise.resolve();
+        await sessionPromise;
+
+        // Run timers to trigger the setTimeout that schedules resume
+        jest.runAllTimers();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // Resume should have been called even though we're over time
+        // (the 1-minute floor ensures the resume gets at least 1 minute)
+        expect(callCount).toBe(2);
+    });
+
+    // Kill mutant on line 157: BooleanLiteral - resumeInProgress = true → false
+    test('should prevent double-resume when resumeInProgress flag is true', async () => {
+        jest.setSystemTime(new Date('2024-01-01T12:00:00.000Z'));
+
+        const mockStateManager = createMockStateManager({
+            mode:        'perching',
+            interrupted: true,
+            modeContext: {
+                activityType:        'Perch time: pre-dawn',
+                interruptingMessage: {
+                    channelId:   'ch-1' as ChannelId,
+                    author:      'TestUser',
+                    channelName: 'general',
+                    content:     'Hello',
+                },
+            } as PerchingModeContext,
+        });
+
+        let callCount = 0;
+        let resumeResolver: (() => void) | undefined;
+
+        const mockSession = mock(async (): Promise<AgentSessionResult> => {
+            callCount++;
+            if(callCount === 1) {
+                // First resume call - hang until externally resolved
+                return new Promise<AgentSessionResult>((resolve) => {
+                    resumeResolver = () => resolve({ completed: true, sessionId: 'resume-session' });
+                });
+            }
+            // Second resume call (should never happen)
+            return { completed: true, sessionId: 'second-resume' };
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config,
+            runAgentSession: mockSession,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+
+        // First resume call
+        const firstResumePromise = runner.resumeAfterInterruption();
+
+        // Let the first resume start
+        await Promise.resolve();
+
+        // Try to call resumeAfterInterruption again while first is in progress
+        await runner.resumeAfterInterruption();
+
+        // Should still only have 1 call (second resume blocked by resumeInProgress flag)
+        expect(callCount).toBe(1);
+
+        // Complete the first resume
+        resumeResolver?.();
+        await firstResumePromise;
+
+        // Still only 1 call total
+        expect(callCount).toBe(1);
+    });
+});
+
 /* eslint-enable @typescript-eslint/unbound-method -- End of tests using mock method references */

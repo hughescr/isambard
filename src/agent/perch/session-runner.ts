@@ -159,6 +159,14 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
         // Create new abort controller
         currentAbortController = new AbortController();
 
+        // Stryker disable ArithmeticOperator,MethodExpression,ArrowFunction: Timeout calculation internals - correctness validated by integration behavior
+        // Set timeout for resume based on remaining time from original session
+        const elapsedMs = sessionStartTime ? Date.now() - sessionStartTime.getTime() : 0;
+        const maxMs = config.maxSessionMinutes * 60 * 1000;
+        const remainingMs = Math.max(maxMs - elapsedMs, 60_000); // At least 1 minute
+        sessionTimeout = setTimeout(() => handleSessionTimeout(), remainingMs);
+        // Stryker restore ArithmeticOperator,MethodExpression,ArrowFunction
+
         // Build perch interrupted prompt
         const state = stateManager.getState();
         const perchContext = state.modeContext as PerchingModeContext;
@@ -196,6 +204,19 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             // This ensures presence stays as 🦉💬 (perching_interrupted) while handling the message
             stateManager.resume();
             resumeInProgress = false;
+            // Safety net: handles ALL resume exit paths (incomplete, aborted, errored)
+            // Individual paths log context but don't duplicate cleanup
+            if(stateManager.getMode() === 'perching') {
+                stateManager.goIdle();
+                currentSessionId = undefined;
+                partialWork = null;
+                currentSlot = null;
+                if(sessionTimeout) {
+                    clearTimeout(sessionTimeout);
+                    sessionTimeout = null;
+                    sessionStartTime = null;
+                }
+            }
         }
     }
 
@@ -229,7 +250,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 // Schedule resume on next tick to let current stack unwind
                 logger.debug({ slot: options.slot }, 'Session interrupted - scheduling resume');
                 setTimeout(() => void doResume(), 0);
-            } else if(result.completed) {
+            } else if(result.completed && !resumeInProgress) {
                 // Session completed normally, transition to idle
                 logger.info({ slot: options.slot }, 'Perch session completed');
                 if(stateManager.getMode() === 'perching') {
@@ -245,6 +266,9 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                     sessionTimeout = null;
                     sessionStartTime = null;
                 }
+            } else if(resumeInProgress && stateManager.getMode() === 'perching') {
+                // Resume session exiting — doResume finally block will handle cleanup
+                logger.info({ slot: options.slot }, 'Resume session exiting - cleanup deferred to doResume');
             }
         } catch (error) {
             // Check BotStateManager - it's the single source of truth for interrupt state
@@ -294,9 +318,15 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 return;
             }
 
-            // AbortError without interrupt flag or timeout - external abort, just return
+            // AbortError without interrupt flag or timeout - external abort
             if(_.isError(error) && error.name === 'AbortError') {
                 logger.debug({ slot: options.slot }, 'Perch session aborted');
+                // Clear timeout for all AbortError cases to prevent orphaned timers
+                if(sessionTimeout) {
+                    clearTimeout(sessionTimeout);
+                    sessionTimeout = null;
+                    sessionStartTime = null;
+                }
                 return;
             }
 

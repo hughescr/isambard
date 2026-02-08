@@ -337,9 +337,6 @@ describe('StatusMiddleware', () => {
 
             // Verify cleanup: should clear activity phase when using botStateManager
             expect(mockBotStateManager.clearActivityPhase).toHaveBeenCalled();
-
-            // Should check mode to determine if goIdle should be called
-            expect(mockBotStateManager.getMode).toHaveBeenCalled();
         });
 
         test('should handle stream callback errors without crashing', async () => {

@@ -328,17 +328,20 @@ describe('StreamEventHandler', () => {
             expect(mockBotStateManager.clearActivityPhase).not.toHaveBeenCalled();
         });
 
-        it('should verify complete() method also transitions to idle', async () => {
+        it('should verify complete() only clears activity phase without calling goIdle', async () => {
+            mockBotStateManager.getMode = mock(constant('processing_message' as const));
             const { complete } = createStreamEventHandler(baseDeps);
 
             mockBotStateManager.clearActivityPhase.mockClear();
+            mockBotStateManager.goIdle.mockClear();
 
             // Call complete()
             complete();
             await flushPromises();
 
-            // Verify idle transition (clears activity)
+            // Verify only clearActivityPhase is called, NOT goIdle
             expect(mockBotStateManager.clearActivityPhase).toHaveBeenCalled();
+            expect(mockBotStateManager.goIdle).not.toHaveBeenCalled();
         });
     });
 

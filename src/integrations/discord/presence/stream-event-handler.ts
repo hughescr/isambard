@@ -76,7 +76,7 @@ export interface StreamEventHandlerDeps {
 export interface StreamEventHandler {
     /** Handler function to be called for each stream event */
     onStreamEvent: (event: AgentStreamEvent) => void
-    /** Call when processing completes to transition to idle */
+    /** Call when processing completes to clear activity phase */
     complete:      () => void
 }
 
@@ -351,18 +351,14 @@ export function createStreamEventHandler(
     };
 
     /**
-     * Completes the handler and transitions to idle phase.
+     * Completes the handler and clears activity phase.
      * Call this when processing is done.
      */
-    // Stryker disable BlockStatement,EqualityOperator: Cleanup function tested via integration
+    // Stryker disable BlockStatement: Cleanup function tested via integration
     const complete = (): void => {
-        // Clear activity phase and transition to idle if in processing_message mode
         botStateManager.clearActivityPhase();
-        if(botStateManager.getMode() === 'processing_message') {
-            botStateManager.goIdle();
-        }
     };
-    // Stryker restore BlockStatement,EqualityOperator
+    // Stryker restore BlockStatement
 
     return {
         onStreamEvent,
