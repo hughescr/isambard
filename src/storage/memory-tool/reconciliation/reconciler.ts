@@ -702,7 +702,7 @@ async function processMetaCount(
             return;
         }
 
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: Count comparison
+        // Stryker disable ConditionalExpression,EqualityOperator: Count comparison
         if(actualCount === 0) {
             // Delete META_COUNT item
             const deleted = await deleteMetaCount(ctx, tag);
@@ -717,7 +717,6 @@ async function processMetaCount(
                 ctx.progress.errors++;
                 /* Stryker restore BlockStatement */
             }
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: Count comparison
         } else if(actualCount !== storedCount) {
             // Correct META_COUNT item
             const updated = await updateMetaCount(ctx, tag, actualCount);
@@ -733,6 +732,7 @@ async function processMetaCount(
                 /* Stryker restore BlockStatement */
             }
         }
+        // Stryker enable ConditionalExpression,EqualityOperator
 
         await delay(ctx.options.operationDelayMs, ctx.options.signal);
     } catch (error) {

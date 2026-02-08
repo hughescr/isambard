@@ -160,7 +160,7 @@ async function discoverInRepoPlugins(pluginsDir: string): Promise<SdkPluginConfi
         logger.warn({
             name: invalid.name,
             path: invalid.path,
-            msg:  'Directory in plugins/ is not a valid plugin (missing .claude-plugin/)',
+            msg:  `Directory in ${pluginsDir} is not a valid plugin (missing .claude-plugin/)`,
         });
     }
 

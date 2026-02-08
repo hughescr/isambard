@@ -185,7 +185,7 @@ describe('createApp', () => {
     });
 
     describe('Plugin loading path', () => {
-        test('should call loadPlugins with exact string "plugins"', async () => {
+        test('should call loadPlugins with absolute path to agents-skills-plugins/plugins', async () => {
             // Mock storage client to succeed
             const storageClientModule = await import('@/storage/client');
             const mockDocClient = {} as any;
@@ -342,8 +342,8 @@ describe('createApp', () => {
             const { createApp } = await import('@/index');
             await createApp();
 
-            // Kills mutant on line 199: Verify loadPlugins was called with exact string 'plugins'
-            expect(loadPluginsSpy).toHaveBeenCalledWith('plugins');
+            // Kills mutant: Verify loadPlugins was called with absolute path to agents-skills-plugins/plugins
+            expect(loadPluginsSpy).toHaveBeenCalledWith(expect.stringMatching(/\/agents-skills-plugins\/plugins$/));
             expect(loadPluginsSpy).toHaveBeenCalledTimes(1);
         });
     });

@@ -1,5 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { McpServerConfig, SDKUserMessage, SdkPluginConfig, SDKCompactBoundaryMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { McpServerConfig, SDKUserMessage, SdkPluginConfig, SDKCompactBoundaryMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
 // TODO: Decouple - agent should be platform-agnostic. Move Discord types to generic types or use dependency injection. See roadmaps/
@@ -53,6 +53,8 @@ const EXPLICIT_TOOLS = [
     // Plan mode
     'EnterPlanMode',
     'ExitPlanMode',
+    // Skills
+    'Skill',
 ];
 
 /**
@@ -410,6 +412,8 @@ function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: 
         'EnterPlanMode',
         'ExitPlanMode',
         'Task',
+        // Skills
+        'Skill',
         // Bash commands (specific safe commands only)
         'Bash(git:*)',
         'Bash(bun run:*)',
@@ -915,7 +919,7 @@ function buildQueryOptions(
             summaryPrompt:         COMPACTION_SUMMARY_PROMPT,
         },
         // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral
-        settingSources:  [],
+        settingSources:  ['project'] as SettingSource[],
         abortController: options?.abortController,
         ...(options?.sessionId && { resume: options.sessionId }),
         // Stryker disable StringLiteral,ObjectLiteral: Environment config - value doesn't affect test behavior

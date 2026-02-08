@@ -4,7 +4,7 @@ import env from 'env-var';
 import type { Client } from 'discord.js';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { stat, mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
 import { loadConfig, loadDynamoDBConfig } from './config/loader';
 import { createDynamoDBClient } from './storage/client';
 import { MemoryToolBackend } from './storage/memory-tool';
@@ -18,6 +18,7 @@ import { loadPlugins } from './agent/plugin-loader';
 import { createQuestionRegistry } from './agent/question-registry';
 import { cleanupAllStaleSessions } from './agent/session-cleanup';
 import { createTaskDirectoryCopier } from './agent/task-directory-copier';
+import { syncAgentsAndSkills } from './agent/skill-agent-loader';
 import { createTaskPersistenceCoordinator, type TaskPersistenceCoordinator } from './agent/task-persistence-coordinator';
 import { createTaskCleanupProcessor } from './agent/task-cleanup-processor';
 import {
@@ -225,8 +226,8 @@ export async function createApp(): Promise<App> {
         logger.warn('Bot is operating in FAIL-OPEN mode - channel mute settings are unavailable');
     }
 
-    // Load plugins from plugins directory
-    const plugins = await loadPlugins('plugins');
+    // Load plugins using absolute path (CWD-independent)
+    const plugins = await loadPlugins(join(resolve(import.meta.dir, '..'), 'agents-skills-plugins', 'plugins'));
 
     // Create Claude agent with hybrid memory support
     const agent = createClaudeAgent({
@@ -470,6 +471,11 @@ if(import.meta.main) {
     setTimezone(logTimezone);
 
     logger.info('Isambard starting...');
+
+    // Copy agents and skills to scratch/.claude/ for SDK filesystem discovery
+    const aspSourceRoot = resolve(import.meta.dir, '..', 'agents-skills-plugins');
+    const targetClaudeDir = join(process.cwd(), '.claude');
+    await syncAgentsAndSkills(aspSourceRoot, targetClaudeDir);
 
     const app = await createApp();
 

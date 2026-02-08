@@ -389,6 +389,7 @@ describe('createClaudeAgent', () => {
                 'TaskList',
                 'EnterPlanMode',
                 'ExitPlanMode',
+                'Skill',
             ]);
         });
 
@@ -417,6 +418,7 @@ describe('createClaudeAgent', () => {
             expect(tools).toContain('TaskList');
             expect(tools).toContain('EnterPlanMode');
             expect(tools).toContain('ExitPlanMode');
+            expect(tools).toContain('Skill');
 
             // Verify none are empty strings
             expect(_.every(tools, (tool: string) => tool !== '')).toBe(true);
@@ -599,6 +601,9 @@ describe('createClaudeAgent', () => {
                 'EnterPlanMode',
                 'ExitPlanMode',
                 'Task',
+                // Skills
+                'Skill',
+                // Bash commands (specific safe commands only)
                 'Bash(git:*)',
                 'Bash(bun run:*)',
                 'Bash(bun test:*)',
@@ -633,6 +638,9 @@ describe('createClaudeAgent', () => {
                 'EnterPlanMode',
                 'ExitPlanMode',
                 'Task',
+                // Skills
+                'Skill',
+                // Bash commands (specific safe commands only)
                 'Bash(git:*)',
                 'Bash(bun run:*)',
                 'Bash(bun test:*)',

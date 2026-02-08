@@ -51,6 +51,13 @@ Isambard can propose improvements to its own code:
 - `src/config/` - Configuration with Zod validation
 - `src/utils/` - Shared utilities
 
+### Agents, Skills, and Plugins
+- `agents-skills-plugins/` - Agent and skill definitions + plugin config
+  - `agents/` - Agent definitions (.md files, copied to scratch/.claude/agents/ at startup)
+  - `skills/` - Skill definitions (directories with SKILL.md, copied to scratch/.claude/skills/)
+  - `plugins/` - Plugin configuration (plugins.json for external/marketplace plugins)
+- `src/agent/skill-agent-loader.ts` - Copy utility: syncs agents/skills to scratch/.claude/ at startup
+
 ### Claude Agent Subsystem
 The agent subsystem connects Discord to Claude with persistent memory:
 - `src/agent/agent.ts` - Claude agent with `handleInput()` method using `@anthropic-ai/claude-agent-sdk`
