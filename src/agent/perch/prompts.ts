@@ -108,8 +108,10 @@ function formatSlotName(slot: PerchSlot): string {
             return 'Pre-Dawn (5-7am Pacific)';
         case 'mid-morning':
             return 'Mid-Morning (9-11am Pacific)';
+        case 'wikipedia':
+            return 'Wikipedia Exploration (12pm-2pm Pacific)';
         case 'afternoon':
-            return 'Afternoon (1-3pm Pacific)';
+            return 'Afternoon (2-4pm Pacific)';
         case 'evening':
             return 'Evening (6-8pm Pacific)';
         case 'late-night':

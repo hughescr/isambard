@@ -15,7 +15,8 @@ import { z } from 'zod';
  * Perch time slots with graduated suggestion levels.
  * - pre-dawn: 5-7am Pacific - STRONGLY SUGGESTIVE (digest prep)
  * - mid-morning: 9-11am - MODERATE
- * - afternoon: 1-3pm - OPEN
+ * - wikipedia: 12pm-2pm - MODERATE (random Wikipedia exploration)
+ * - afternoon: 2-4pm - OPEN
  * - evening: 6-8pm - LIGHT TOUCH
  * - late-night: 11pm-1am - MODERATE/PREP
  * - unscheduled: Outside defined windows - base prompt only
@@ -23,6 +24,7 @@ import { z } from 'zod';
 export type PerchSlot
     = | 'pre-dawn'
       | 'mid-morning'
+      | 'wikipedia'
       | 'afternoon'
       | 'evening'
       | 'late-night'
@@ -35,6 +37,7 @@ export type PerchSlot
 export const PerchSlotSchema = z.enum([
     'pre-dawn',
     'mid-morning',
+    'wikipedia',
     'afternoon',
     'evening',
     'late-night',

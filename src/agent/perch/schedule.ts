@@ -46,13 +46,31 @@ Or: simply observe - no action required.`,
 };
 
 /**
- * Afternoon slot (1-3pm Pacific) - OPEN
+ * Wikipedia slot (12pm-2pm Pacific) - MODERATE
+ * Lunchtime breadth exploration via random Wikipedia.
+ * Discoveries here can seed the afternoon exploration session.
+ */
+const WIKIPEDIA: PerchSlotConfig = {
+    slot:      'wikipedia',
+    startHour: 12,
+    endHour:   14,
+    level:     'moderate',
+    hint:      `Lunchtime breadth exploration. Start somewhere unexpected:
+- Fetch https://en.wikipedia.org/wiki/Special:Random and read what you land on
+- Follow whatever thread catches your interest — connections, rabbit holes, questions it raises
+- The goal isn't productivity, it's range
+- If something sparks curiosity, note it — the afternoon exploration slot follows this one
+This is an antidote to self-referential loops. Engage with the world, not just your own memories.`,
+};
+
+/**
+ * Afternoon slot (2-4pm Pacific) - OPEN
  * Afternoon exploration time. Research, learn, or do nothing.
  */
 const AFTERNOON: PerchSlotConfig = {
     slot:      'afternoon',
-    startHour: 13,
-    endHour:   15,
+    startHour: 14,
+    endHour:   16,
     level:     'open',
     hint:      `Afternoon. Some options:
 - Deeper research on something that interested you recently
@@ -102,6 +120,7 @@ Or continue something you bookmarked earlier.`,
 export const SLOT_CONFIGS: readonly PerchSlotConfig[] = [
     PRE_DAWN,
     MID_MORNING,
+    WIKIPEDIA,
     AFTERNOON,
     EVENING,
     LATE_NIGHT,
@@ -127,7 +146,7 @@ export const SLOT_CONFIGS: readonly PerchSlotConfig[] = [
  * getSlotForHour(10); // 'mid-morning'
  * getSlotForHour(23); // 'late-night'
  * getSlotForHour(0);  // 'late-night'
- * getSlotForHour(12); // 'unscheduled'
+ * getSlotForHour(12); // 'wikipedia'
  * ```
  */
 export function getSlotForHour(hour: number): PerchSlot {
