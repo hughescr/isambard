@@ -575,7 +575,7 @@ function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoo
         // (the resumed catch-up session will handle presence updates)
         const currentMode = botStateManager.getMode();
         const isInterrupted = botStateManager.isInterrupted();
-        if(streamEventHandler && !(currentMode === 'catching_up' && isInterrupted)) {
+        if(streamEventHandler && !((currentMode === 'catching_up' || currentMode === 'perching') && isInterrupted)) {
             streamEventHandler.complete();
         }
 

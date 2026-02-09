@@ -231,16 +231,23 @@ export function buildPerchInterruptedPrompt(options: PerchInterruptedOptions): s
     sections.push('---');
     // Stryker disable next-line StringLiteral: Empty string for formatting
     sections.push('');
+    // Stryker disable next-line StringLiteral: Prompt section header is product design
     sections.push('## What To Do');
-    sections.push('1. Create a task for this incoming message (so it doesn\'t get lost)');
-    sections.push('2. Check TaskList to see what you were working on before the interruption');
     // Stryker disable next-line StringLiteral: Prompt instruction text is product design
-    sections.push('3. Prioritize: handle the message now, or finish perch work first - your call');
+    sections.push('The message above has already been handled by your normal conversation flow.');
     // Stryker disable next-line StringLiteral: Prompt instruction text is product design
-    sections.push('4. Work through tasks systematically, updating status as you go');
+    sections.push('You do NOT need to respond to it again.');
     // Stryker disable next-line StringLiteral: Empty string for formatting
     sections.push('');
-    sections.push('The sender is online right now, which you can factor into prioritization.');
+    // Stryker disable next-line StringLiteral: Prompt instruction text is product design
+    sections.push('1. Review the message for context (it may affect your perch work)');
+    // Stryker disable next-line StringLiteral: Prompt instruction text is product design
+    sections.push('2. Check TaskList to see what you were working on before the interruption');
+    // Stryker disable next-line StringLiteral: Prompt instruction text is product design
+    sections.push('3. Continue your perch work, adjusting priorities if the message changes things');
+    // Stryker disable next-line StringLiteral: Empty string for formatting
+    sections.push('');
+    // Stryker disable next-line StringLiteral: Prompt instruction text is product design
     sections.push('Trust TaskList as your source of truth - sessions are transient, tasks are durable.');
 
     return sections.join('\n');

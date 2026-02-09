@@ -346,19 +346,8 @@ describe('CatchUpSessionRunner', () => {
                 channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 5 }],
             });
 
-            // Track calls to runAgentSession
-            let callCount = 0;
-            mockRunAgentSession.mockImplementation(() => {
-                callCount++;
-                if(callCount === 1) {
-                    // First call: returns completed=true while interrupted
-                    return Promise.resolve({ completed: true, sessionId: 'session-123' } as AgentSessionResult);
-                } else {
-                    // Second call (resume): clear interrupted and complete
-                    mockInterrupted = false;
-                    return Promise.resolve({ completed: true, sessionId: 'session-resumed' } as AgentSessionResult);
-                }
-            });
+            // Session returns completed=true, but stateManager says interrupted
+            mockRunAgentSession.mockResolvedValue({ completed: true, sessionId: 'session-123' } as AgentSessionResult);
 
             // Set interrupted flag BEFORE starting catch-up
             mockInterrupted = true;
@@ -375,23 +364,9 @@ describe('CatchUpSessionRunner', () => {
             // startCatchUp should have been called
             expect(mockStateManager.startCatchUp).toHaveBeenCalled();
 
-            // Resume should be scheduled via setTimeout(0) - flush timers to execute doResume
-            const flushAsync = async (iterations = 10): Promise<void> => {
-                for(let i = 0; i < iterations; i++) {
-                    jest.runAllTimers();
-                    await Promise.resolve();
-                    await Promise.resolve();
-                }
-            };
-            await flushAsync();
-
-            // Verify runAgentSession was called twice (initial + resume)
-            expect(callCount).toBe(2);
-
-            // After resume completes, completeCatchUp should have been called
-            expect(mockStoreCompletionSignal).toHaveBeenCalled();
-            expect(mockDeleteInProgressSignal).toHaveBeenCalled();
-            expect(mockStateManager.goIdle).toHaveBeenCalled();
+            // runAgentSession should have been called only ONCE (no auto-resume)
+            // Resume is now handled externally via resumeAfterInterruption()
+            expect(mockRunAgentSession).toHaveBeenCalledTimes(1);
         });
 
         it('should return without completing when AbortError is thrown', async () => {
@@ -517,44 +492,28 @@ describe('CatchUpSessionRunner', () => {
             await startPromise;
         });
 
-        it('should automatically schedule resume when abort error is caught after interrupt', async () => {
+        it('should leave state as interrupted when abort error is caught after interrupt (awaiting external resume)', async () => {
             // Set up inbox with unread messages
             mockInboxManager.getUnreadOverview = mock().mockReturnValue({
                 totalUnread: 5,
                 channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 5 }],
             });
 
-            // Track when resume logic runs by checking when state.resume() is called
-            let resumeCalled = false;
-            mockStateManager.resume = mock(() => {
-                resumeCalled = true;
-                mockInterrupted = false;
-            });
-
-            // First call (startCatchUp) waits for abort signal, then throws AbortError
-            // Second call (internal resume) succeeds
-            let callCount = 0;
+            // First call waits for abort signal, then throws AbortError
             mockRunAgentSession.mockImplementation((options: RunAgentSessionOptions) => {
-                callCount++;
-                if(callCount === 1) {
-                    // First call: wait for abort signal, then reject
-                    return new Promise((_resolve, reject) => {
-                        if(options.abortSignal.aborted) {
+                return new Promise((_resolve, reject) => {
+                    if(options.abortSignal.aborted) {
+                        const abortError = new Error('Aborted');
+                        abortError.name = 'AbortError';
+                        reject(abortError);
+                    } else {
+                        options.abortSignal.addEventListener('abort', () => {
                             const abortError = new Error('Aborted');
                             abortError.name = 'AbortError';
                             reject(abortError);
-                        } else {
-                            options.abortSignal.addEventListener('abort', () => {
-                                const abortError = new Error('Aborted');
-                                abortError.name = 'AbortError';
-                                reject(abortError);
-                            });
-                        }
-                    });
-                } else {
-                    // Second call: resume succeeds
-                    return Promise.resolve({ completed: true, sessionId: 'session-resumed' } as AgentSessionResult);
-                }
+                        });
+                    }
+                });
             });
 
             const runner = createCatchUpSessionRunner(deps);
@@ -578,22 +537,12 @@ describe('CatchUpSessionRunner', () => {
             // Wait for the first session to abort
             await startPromise;
 
-            // The resume is scheduled via setTimeout(0) - flush timers to allow doResume() to execute
-            const flushAsync = async (iterations = 10): Promise<void> => {
-                // eslint-disable-next-line no-unmodified-loop-condition -- resumeCalled is modified by mock callback
-                for(let i = 0; i < iterations && !resumeCalled; i++) {
-                    jest.runAllTimers();
-                    await Promise.resolve();
-                    await Promise.resolve();
-                }
-            };
-            await flushAsync();
+            // State should remain interrupted — no auto-resume
+            // The onResponse callback in bot.ts will call resumeAfterInterruption() externally
+            expect(mockStateManager.goIdle).not.toHaveBeenCalled();
 
-            // Verify resume was called (indicating the internal resume ran)
-            expect(resumeCalled).toBe(true);
-
-            // Verify runAgentSession was called twice (initial + resume)
-            expect(callCount).toBe(2);
+            // runAgentSession should have been called only ONCE (no auto-resume)
+            expect(mockRunAgentSession).toHaveBeenCalledTimes(1);
         });
     });
 

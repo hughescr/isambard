@@ -526,7 +526,8 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
 
         const prompt = buildPerchInterruptedPrompt(options);
         expect(prompt).toContain('## What To Do');
-        expect(prompt).toContain('Create a task for this incoming message');
+        expect(prompt).toContain('already been handled by your normal conversation flow');
+        expect(prompt).toContain('do NOT need to respond to it again');
         expect(prompt).toContain('Check TaskList');
         expect(prompt).toContain('Trust TaskList as your source of truth');
     });
@@ -561,7 +562,7 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
 
         // Verify action items section
         expect(prompt).toContain('## What To Do');
-        expect(prompt).toContain('1. Create a task for this incoming message');
+        expect(prompt).toContain('1. Review the message for context');
     });
 
     test('should include tool name when pendingToolUse is present', () => {
@@ -591,7 +592,7 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
         expect(prompt).toContain('[You were about to use "memory_search"]');
     });
 
-    test('should mention sender is online', () => {
+    test('should mention message was already handled', () => {
         const options: PerchInterruptedOptions = {
             partialWork: {
                 thinking:       '',
@@ -607,7 +608,7 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
         };
 
         const prompt = buildPerchInterruptedPrompt(options);
-        expect(prompt).toContain('sender is online right now');
+        expect(prompt).toContain('already been handled by your normal conversation flow');
     });
 });
 

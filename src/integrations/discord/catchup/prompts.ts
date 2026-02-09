@@ -105,13 +105,14 @@ ${newMessage.content}
 ---
 
 ## What To Do
-1. Create a task for this incoming message (so it doesn't get lost)
-2. Check TaskList to see what catch-up work was in progress
-3. Prioritize: handle the message now, or finish catch-up work first - your call
-4. Work through tasks systematically, updating status as you go
+The message above has already been handled by your normal conversation flow.
+You do NOT need to respond to it again.
 
-The sender is online right now, which you can factor into prioritization.
+1. Review the message for context (it may affect your catch-up priorities)
+2. Check TaskList to see what catch-up work was in progress
+3. Continue catching up, adjusting priorities if the message changes things
+
 Trust TaskList as your source of truth - sessions are transient, tasks are durable.
 
-Your inbox tools are still available. Continue catching up after handling this appropriately.`;
+Your inbox tools are still available. Continue catching up on remaining channels.`;
 }

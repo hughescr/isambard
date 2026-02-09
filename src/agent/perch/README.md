@@ -126,12 +126,15 @@ From: User in #channel
 {message content}
 ---
 
-You have options:
-- Acknowledge briefly and continue your exploration
-- Handle the message immediately if it needs attention
-- Address both in whatever order makes sense
+## What To Do
+The message above has already been handled by your normal conversation flow.
+You do NOT need to respond to it again.
 
-The choice is yours based on your judgment of priorities.
+1. Review the message for context (it may affect your perch work)
+2. Check TaskList to see what you were working on before the interruption
+3. Continue your perch work, adjusting priorities if the message changes things
+
+Trust TaskList as your source of truth - sessions are transient, tasks are durable.
 ```
 
 ### Session Continuity

@@ -964,9 +964,8 @@ describe('Discord Event Handlers', () => {
             // Verify handleCatchUpInterruption was called (which calls interrupt)
             expect(mockCatchUpSessionRunner.interrupt).toHaveBeenCalled();
 
-            // CRITICAL: Verify message was NOT processed separately (would cause duplicate)
-            // The session runner will handle the resume internally after abort completes
-            expect(onMessage).not.toHaveBeenCalled();
+            // Message should continue to onMessage after interruption (no coordinator in this test)
+            expect(onMessage).toHaveBeenCalled();
         });
 
         it('should NOT call handleCatchUpInterruption when state is NOT catching_up', async () => {
@@ -1038,10 +1037,11 @@ describe('Discord Event Handlers', () => {
             expect(onMessage).toHaveBeenCalled();
         });
 
-        it('should NOT call coordinator when interrupting catch-up (prevents duplicate processing)', async () => {
+        it('should call coordinator after interrupting catch-up (message reaches coordinator)', async () => {
             const mockBotStateManager = {
-                getMode:       mock(_.constant('catching_up' as const)),
-                isInterrupted: mock(_.constant(false)),
+                getMode:                mock(_.constant('catching_up' as const)),
+                isInterrupted:          mock(_.constant(false)),
+                startProcessingMessage: mock(() => _.noop()),
             };
 
             const mockCatchUpSessionRunner = {
@@ -1070,11 +1070,8 @@ describe('Discord Event Handlers', () => {
             // Verify interrupt was called
             expect(mockCatchUpSessionRunner.interrupt).toHaveBeenCalled();
 
-            // CRITICAL: Verify coordinator was NOT called (would cause duplicate processing)
-            expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
-
-            // CRITICAL: Verify onMessage was NOT called (would cause duplicate processing)
-            expect(onMessage).not.toHaveBeenCalled();
+            // Message should reach the coordinator after interruption
+            expect(mockCoordinator.handleMessage).toHaveBeenCalled();
         });
 
         it('should NOT interrupt when already interrupted, allowing coordinator to handle message', async () => {
@@ -1299,8 +1296,8 @@ describe('Discord Event Handlers', () => {
             // Verify handlePerchInterruption was called (which calls interrupt)
             expect(mockPerchSessionRunner.interrupt).toHaveBeenCalled();
 
-            // CRITICAL: Verify message was NOT processed separately (would cause duplicate)
-            expect(onMessage).not.toHaveBeenCalled();
+            // Message should continue to onMessage after interruption (no coordinator in this test)
+            expect(onMessage).toHaveBeenCalled();
         });
 
         it('should call interrupt with correct message details including channel name', async () => {
@@ -1461,10 +1458,11 @@ describe('Discord Event Handlers', () => {
             expect(onMessage).toHaveBeenCalled();
         });
 
-        it('should NOT call coordinator when interrupting perch (prevents duplicate processing)', async () => {
+        it('should call coordinator after interrupting perch (message reaches coordinator)', async () => {
             const mockBotStateManager = {
-                getMode:       mock(_.constant('perching' as const)),
-                isInterrupted: mock(_.constant(false)),
+                getMode:                mock(_.constant('perching' as const)),
+                isInterrupted:          mock(_.constant(false)),
+                startProcessingMessage: mock(() => _.noop()),
             };
 
             const mockPerchSessionRunner = {
@@ -1495,11 +1493,8 @@ describe('Discord Event Handlers', () => {
             // Verify interrupt was called
             expect(mockPerchSessionRunner.interrupt).toHaveBeenCalled();
 
-            // CRITICAL: Verify coordinator was NOT called (would cause duplicate processing)
-            expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
-
-            // CRITICAL: Verify onMessage was NOT called (would cause duplicate processing)
-            expect(onMessage).not.toHaveBeenCalled();
+            // Message should reach the coordinator after interruption
+            expect(mockCoordinator.handleMessage).toHaveBeenCalled();
         });
 
         it('should NOT interrupt when already interrupted, allowing coordinator to handle message', async () => {

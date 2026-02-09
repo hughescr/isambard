@@ -336,35 +336,32 @@ async function delegateToCoordinatorOrProcess(
 
 /**
  * Helper function to handle mode-based interruptions (catch-up or perch).
- * Returns true if the message triggered an interruption (caller should return early).
+ * Interrupts any active catch-up or perch session as a side-effect, then returns to let the message continue to the coordinator.
  */
 async function handleModeInterruptions(
     message: Message,
     botStateManager: BotStateManager | undefined,
     catchUpSessionRunner: CatchUpSessionRunner | undefined,
     perchSessionRunner: import('@/agent/perch').PerchSessionRunner | undefined
-): Promise<boolean> {
+): Promise<void> {
     // Handle catch-up mode interruption
     if(botStateManager?.getMode() === 'catching_up' && catchUpSessionRunner) {
         // If already interrupted, let message go to coordinator for batching
         if(botStateManager.isInterrupted()) {
-            return false;
+            return;
         }
         await handleCatchUpInterruption(message, catchUpSessionRunner);
-        return true;
+        return;
     }
 
     // Handle perch mode interruption
     if(botStateManager?.getMode() === 'perching' && perchSessionRunner) {
         // If already interrupted, let message go to coordinator for batching
         if(botStateManager.isInterrupted()) {
-            return false;
+            return;
         }
         await handlePerchInterruption(message, perchSessionRunner);
-        return true;
     }
-
-    return false;
 }
 
 /**
@@ -718,15 +715,13 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         }
 
         // Handle mode-based interruptions (catch-up or perch)
-        const wasInterrupted = await handleModeInterruptions(
+        // This interrupts the session as a side-effect; the message continues to the coordinator below
+        await handleModeInterruptions(
             message,
             botStateManager,
             catchUpSessionRunner,
             perchSessionRunner
         );
-        if(wasInterrupted) {
-            return;
-        }
 
         // Handle state transitions and inbox updates
         handleStateAndInbox(message, botStateManager, inboxManager, shouldRespond);

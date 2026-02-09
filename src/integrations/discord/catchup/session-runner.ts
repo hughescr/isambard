@@ -336,7 +336,11 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             // Check interrupt state FIRST — state manager is single source of truth
             // The result.completed flag can be incorrect when abort errors are caught
             if(deps.stateManager.isInterrupted()) {
-                setTimeout(() => void doResume(), 0);
+                // Session was interrupted — don't resume here.
+                // The onResponse callback in bot.ts will call resumeAfterInterruption()
+                // after the interrupting message has been handled.
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
+                logger.debug({ msg: 'Session interrupted - awaiting external resume' });
             } else if(result.completed) {
                 await completeCatchUp(options.channelsProcessed, options.messagesProcessed);
             }
@@ -344,10 +348,10 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             currentAbortController = null;
 
             // Check BotStateManager - it's the single source of truth for interrupt state
-            // If interrupted, schedule resume on next tick to let current stack unwind
-            // Using setTimeout(0) instead of setImmediate for better test compatibility with fake timers
+            // If interrupted, leave state as catching_up+interrupted for onResponse to handle
             if(deps.stateManager.isInterrupted()) {
-                setTimeout(() => void doResume(), 0);
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
+                logger.debug({ msg: 'Session aborted by interrupt - awaiting external resume' });
                 return;
             }
 

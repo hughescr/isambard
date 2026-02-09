@@ -176,7 +176,7 @@ describe('buildCatchUpInterruptedPrompt', () => {
         const prompt = buildCatchUpInterruptedPrompt(options);
         expect(prompt).toContain('NEW MESSAGE');
         expect(prompt).toContain('What To Do');
-        expect(prompt).toContain('Create a task for this incoming message');
+        expect(prompt).toContain('already been handled by your normal conversation flow');
     });
 
     it('should tell agent to continue catching up after handling', () => {
@@ -191,7 +191,7 @@ describe('buildCatchUpInterruptedPrompt', () => {
             },
         };
         const prompt = buildCatchUpInterruptedPrompt(options);
-        expect(prompt).toContain('Continue catching up after handling this appropriately');
+        expect(prompt).toContain('Continue catching up on remaining channels');
         expect(prompt).toContain('inbox tools are still available');
     });
 });
