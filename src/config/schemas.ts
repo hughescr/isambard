@@ -3,6 +3,7 @@ import { PresenceConfigSchema } from '@/integrations/discord/presence/types';
 import { inboxConfigSchema } from '@/integrations/discord/inbox/config';
 import { guildIdSchema } from '@/integrations/discord/types';
 import { reconciliationConfigSchema } from '@/storage/memory-tool/reconciliation/types';
+import { resolveTimezone } from '@/utils/time';
 
 // Log level enum schema
 // Stryker disable next-line all: Log level enum values are configuration
@@ -65,8 +66,8 @@ export const dynamoDBConfigSchema = z.object({
 export const perchConfigSchema = z.object({
     /** Whether perch time is enabled */
     enabled:           z.boolean().default(false),
-    /** Timezone for schedule (default: America/Los_Angeles) */
-    timezone:          z.string().default('America/Los_Angeles'),
+    /** Timezone for schedule (default: system timezone) */
+    timezone:          z.string().default(resolveTimezone()),
     /** Minutes between perch triggers (default: 60) */
     intervalMinutes:   z.number().int().positive().default(60),
     /** Jitter range in minutes (default: 15) */

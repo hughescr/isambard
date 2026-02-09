@@ -12,6 +12,7 @@ import {
     reconciliationConfigSchema
 } from '@/config/schemas';
 import { createGuildId } from '@/integrations/discord/types';
+import { resolveTimezone } from '@/utils/time';
 
 describe.concurrent('appConfigSchema', () => {
     test('should coerce port from string to number', () => {
@@ -371,7 +372,7 @@ describe('perchConfigSchema', () => {
         }
     });
 
-    test('should apply default timezone "America/Los_Angeles" when not provided', () => {
+    test('should apply default timezone from system timezone when not provided', () => {
         const configWithoutTimezone = {
             enabled:           true,
             intervalMinutes:   60,
@@ -382,7 +383,7 @@ describe('perchConfigSchema', () => {
         const result = perchConfigSchema.safeParse(configWithoutTimezone);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data?.timezone).toBe('America/Los_Angeles');
+            expect(result.data?.timezone).toBe(resolveTimezone());
         }
     });
 
@@ -474,13 +475,13 @@ describe('perchConfigSchema', () => {
         }
     });
 
-    test('should ensure timezone defaults to America/Los_Angeles not empty string', () => {
+    test('should ensure timezone defaults to system timezone not empty string', () => {
         const configWithoutTimezone = {};
 
         const result = perchConfigSchema.safeParse(configWithoutTimezone);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data?.timezone).toBe('America/Los_Angeles');
+            expect(result.data?.timezone).toBe(resolveTimezone());
             expect(result.data?.timezone).not.toBe('');
             expect(result.data?.timezone.length).toBeGreaterThan(0);
         }

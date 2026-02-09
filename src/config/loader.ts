@@ -3,6 +3,7 @@ import type { Resource as SstResource } from 'sst';
 import _ from 'lodash';
 import env from 'env-var';
 import { configSchema, dynamoDBConfigSchema, type Config, type DynamoDBConfig } from './schemas';
+import { resolveTimezone } from '@/utils/time';
 
 /**
  * Keys in SST Resource that have a value property (configs and secrets).
@@ -68,7 +69,7 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
         perch: env.get('PERCH_ENABLED').default('true').asBool()
             ? {
                 enabled:           true,
-                timezone:          'America/Los_Angeles',
+                timezone:          resolveTimezone(),
                 intervalMinutes:   60,
                 jitterMinutes:     15,
                 maxSessionMinutes: 45,

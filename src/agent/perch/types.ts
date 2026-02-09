@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { resolveTimezone } from '@/utils/time';
 
 // ============================================================================
 // Time Slot Types
@@ -107,7 +108,7 @@ export interface PerchTestModeConfig {
 export interface PerchConfig {
     /** Whether perch time is enabled */
     enabled:           boolean
-    /** Timezone for schedule (default: America/Los_Angeles) */
+    /** Timezone for schedule (default: system timezone) */
     timezone:          string
     /** Minutes between perch triggers (default: 60) */
     intervalMinutes:   number
@@ -127,7 +128,7 @@ export const PerchConfigSchema = z.object({
     // Stryker disable next-line BooleanLiteral: Default config value
     enabled:           z.boolean().default(true),
     // Stryker disable next-line StringLiteral: Default config value
-    timezone:          z.string().default('America/Los_Angeles'),
+    timezone:          z.string().default(resolveTimezone()),
     intervalMinutes:   z.number().int().positive().default(60),
     jitterMinutes:     z.number().int().nonnegative().default(15),
     maxSessionMinutes: z.number().int().positive().default(45),

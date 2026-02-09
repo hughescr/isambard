@@ -6,6 +6,7 @@
  */
 
 import { CronExpressionParser } from 'cron-parser';
+import _ from 'lodash';
 import type { Logger } from '@hughescr/logger';
 import type { BotStateManager, StateChange } from '@/integrations/discord/state';
 import { type PerchSlot, type PerchConfig, type PerchSchedulerState } from './types';
@@ -16,15 +17,15 @@ import { getSlotForHour } from './schedule';
  */
 export interface PerchSchedulerDeps {
     /** State manager for checking/transitioning modes */
-    stateManager:           BotStateManager
+    stateManager:         BotStateManager
     /** Logger instance */
-    logger:                 Logger
+    logger:               Logger
     /** Perch configuration */
-    config:                 PerchConfig
-    /** Function to get current time in Pacific timezone */
-    getCurrentPacificHour?: () => number
+    config:               PerchConfig
+    /** Function to get current time in local timezone */
+    getCurrentLocalHour?: () => number
     /** Callback when perch should start */
-    onPerchTrigger:         (slot: PerchSlot) => void
+    onPerchTrigger:       (slot: PerchSlot) => void
 }
 
 /**
@@ -44,13 +45,13 @@ export interface PerchScheduler {
 }
 
 /**
- * Get current hour in Pacific timezone.
+ * Get current hour in local timezone.
  * Default implementation using Intl.DateTimeFormat.
  */
 // Stryker disable all: Config values for Intl API - not testable
-function getDefaultPacificHour(): number {
+function getDefaultLocalHour(timezone: string): number {
     const formatter = new Intl.DateTimeFormat('en-US', {
-        timeZone: 'America/Los_Angeles',
+        timeZone: timezone,
         hour:     'numeric',
         hour12:   false,
     });
@@ -89,7 +90,7 @@ function getNextTriggerDelay(timezone: string): number {
  */
 export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
     const { stateManager, logger, config, onPerchTrigger } = deps;
-    const getCurrentPacificHour = deps.getCurrentPacificHour ?? getDefaultPacificHour;
+    const getCurrentLocalHour = deps.getCurrentLocalHour ?? (() => getDefaultLocalHour(config.timezone));
 
     // Internal state
     let state: PerchSchedulerState = {
@@ -142,7 +143,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
             return;
         }
 
-        const hour = getCurrentPacificHour();
+        const hour = getCurrentLocalHour();
         const slot = getSlotForHour(hour);
 
         logger.debug({ hour, slot }, 'Perch trigger fired');
@@ -165,6 +166,42 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
     }
 
     /**
+     * Format a Date as ISO 8601 with UTC offset for the configured timezone.
+     * e.g., "2026-02-08T18:18:00-08:00"
+     *
+     * Uses toLocaleString with iso8601 to get a properly formatted ISO string
+     * with timezone offset that works reliably even with fake timers in tests.
+     */
+    // Stryker disable next-line BlockStatement: Date formatting helper for log output
+    function formatISOWithOffset(date: Date): string {
+        // Stryker disable all: toLocaleString config for ISO 8601 format
+        const isoString = _.replace(date.toLocaleString('sv-SE', {
+            timeZone: config.timezone,
+            year:     'numeric',
+            month:    '2-digit',
+            day:      '2-digit',
+            hour:     '2-digit',
+            minute:   '2-digit',
+            second:   '2-digit',
+            hour12:   false,
+        }), ' ', 'T');
+        // Stryker restore all
+
+        // Calculate offset manually since toLocaleString doesn't include it
+        // Stryker disable all: Offset calculation for log formatting - not behavior-affecting
+        const utcTime = date.getTime();
+        const localDate = new Date(date.toLocaleString('en-US', { timeZone: config.timezone }));
+        const offsetMs = localDate.getTime() - utcTime;
+        const offsetHours = Math.floor(Math.abs(offsetMs) / 3600000);
+        const offsetMinutes = Math.floor((Math.abs(offsetMs) % 3600000) / 60000);
+        const offsetSign = offsetMs >= 0 ? '+' : '-';
+        const offset = `${offsetSign}${_.padStart(String(offsetHours), 2, '0')}:${_.padStart(String(offsetMinutes), 2, '0')}`;
+        // Stryker restore all
+
+        return `${isoString}${offset}`;
+    }
+
+    /**
      * Schedule the next trigger using cron-parser's H option.
      */
     // Stryker disable next-line BlockStatement: Internal scheduling function - tested via behavior
@@ -182,7 +219,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
 
         logger.debug({
             delaySeconds: Math.round(delayMs / 1000),
-            nextTrigger:  new Date(Date.now() + delayMs).toISOString(),
+            nextTrigger:  formatISOWithOffset(new Date(Date.now() + delayMs)),
         }, 'Next perch trigger scheduled');
     }
 
@@ -209,7 +246,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
         }
 
         // Re-check the current slot (time may have passed)
-        const hour = getCurrentPacificHour();
+        const hour = getCurrentLocalHour();
         const currentSlot = getSlotForHour(hour);
 
         // Stryker disable next-line all: Logging for observability - hour calculation for display only
@@ -287,7 +324,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
 
         triggerNow(): void {
             // For testing - trigger immediately with current slot
-            const hour = getCurrentPacificHour();
+            const hour = getCurrentLocalHour();
             const slot = getSlotForHour(hour);
 
             if(stateManager.getMode() === 'idle') {

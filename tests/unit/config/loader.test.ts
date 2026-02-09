@@ -1,6 +1,7 @@
 import { describe, test, expect, afterEach } from 'bun:test';
 import _ from 'lodash';
 import { loadConfig, loadDynamoDBConfig, type ResourceProvider, type DynamoDBResourceProvider } from '@/config/loader';
+import { resolveTimezone } from '@/utils/time';
 
 /**
  * Helper to create mock ResourceProvider with sensible defaults.
@@ -255,7 +256,7 @@ describe('loadConfig - Perch Config', () => {
 
         expect(config.perch).toBeDefined();
         expect(config.perch?.enabled).toBe(true);
-        expect(config.perch?.timezone).toBe('America/Los_Angeles');
+        expect(config.perch?.timezone).toBe(resolveTimezone());
         expect(config.perch?.intervalMinutes).toBe(60);
         expect(config.perch?.jitterMinutes).toBe(15);
         expect(config.perch?.maxSessionMinutes).toBe(45);
