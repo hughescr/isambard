@@ -12,7 +12,7 @@ import {
     UpdateCommand
 } from '@aws-sdk/lib-dynamodb';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
-import { ItemNotFoundError, ValidationError } from '@/storage/errors';
+import { ItemNotFoundError, ValidationError } from '@/errors';
 import type { MemoryToolItem, MemoryToolItemData, MemoryPath, ContentType, LayerName as _LayerName } from '@/storage/memory-tool/types';
 
 describe('MemoryToolBackend', () => {

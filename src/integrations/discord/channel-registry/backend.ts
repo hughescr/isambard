@@ -10,7 +10,7 @@ import {
 import _ from 'lodash';
 import { stripDynamoKeys } from '@/storage/utils/index.js';
 import { withDynamoTimeout } from '@/storage/dynamo-retry';
-import { ItemNotFoundError, ValidationError } from '@/storage/errors';
+import { ItemNotFoundError, ValidationError } from '@/errors';
 import type { ChannelId, GuildId } from '../types';
 import {
     type ChannelStorageRecord,

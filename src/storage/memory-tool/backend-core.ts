@@ -9,7 +9,7 @@ import {
     type MemoryToolItem
 } from './types';
 import { MemoryToolKeyGenerator, generateContentPreview } from './key-generator';
-import { ItemNotFoundError, ValidationError } from '../errors';
+import { ItemNotFoundError, ValidationError } from '@/errors';
 
 export interface CreateMemoryToolItemInput {
     path:        MemoryPath

@@ -8,6 +8,7 @@ import {
 } from '@/integrations/discord/message-history/fetcher';
 import { timestampToSnowflake } from '@/integrations/discord/message-history/snowflake';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
+import { ErrorCode } from '@/errors';
 
 /**
  * Creates an attachments map from an array of attachment objects.
@@ -735,7 +736,7 @@ describe.concurrent('createMessageFetcher', () => {
                     expect(true).toBe(false);
                 } catch (error) {
                     expect(error).toBeInstanceOf(ChannelNotAccessibleError);
-                    expect((error as ChannelNotAccessibleError).channelId).toBe('123456789012345678');
+                    expect((error as ChannelNotAccessibleError).context.channelId).toBe('123456789012345678');
                     expect(error).not.toBeInstanceOf(MessageFetchError);
                 }
             });
@@ -879,8 +880,8 @@ describe('ChannelNotAccessibleError', () => {
     test('should store channel ID and have correct error code', () => {
         const error = new ChannelNotAccessibleError('123456789012345678');
         expect(error).toBeInstanceOf(Error);
-        expect(error.channelId).toBe('123456789012345678');
-        expect(error.code).toBe('CHANNEL_NOT_ACCESSIBLE');
+        expect(error.context.channelId).toBe('123456789012345678');
+        expect(error.code).toBe(ErrorCode.CHANNEL_NOT_ACCESSIBLE);
     });
 });
 
@@ -888,8 +889,8 @@ describe('MessageFetchError', () => {
     test('should store channel ID and reason with correct error code', () => {
         const error = new MessageFetchError('123456789012345678', 'Network timeout');
         expect(error).toBeInstanceOf(Error);
-        expect(error.channelId).toBe('123456789012345678');
+        expect(error.context.channelId).toBe('123456789012345678');
         expect(error.message).toContain('Network timeout');
-        expect(error.code).toBe('MESSAGE_FETCH_ERROR');
+        expect(error.code).toBe(ErrorCode.MESSAGE_FETCH_ERROR);
     });
 });

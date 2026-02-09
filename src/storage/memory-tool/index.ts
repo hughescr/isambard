@@ -27,7 +27,7 @@ export {
     ContentTooLargeError,
     TextNotUniqueError,
     InvalidLineNumberError
-} from './errors';
+} from '@/errors';
 
 // Key Generation
 export {

@@ -8,7 +8,7 @@ import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';
 import {
     PathAlreadyExistsError,
     InvalidPathError
-} from '@/storage/memory-tool/errors';
+} from '@/errors';
 import {
     create,
     view,

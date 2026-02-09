@@ -10,7 +10,7 @@ import {
     ScanCommand
 } from '@aws-sdk/lib-dynamodb';
 import { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/backend';
-import { ItemNotFoundError, ValidationError } from '@/storage/errors';
+import { ItemNotFoundError, ValidationError } from '@/errors';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
 import type { ChannelMetadata, ChannelStorageRecord } from '@/integrations/discord/channel-registry/types';
 import * as dynamoRetry from '@/storage/dynamo-retry';

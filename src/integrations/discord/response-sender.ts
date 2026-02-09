@@ -90,7 +90,7 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
             if(useFallbackOnError) {
                 // handlers.ts: fallback to original channel
                 logger.warn({
-                    channelType: routeError.channelType,
+                    channelType: routeError.context.channelType,
                     msg:         'Well-known channel not found, falling back to original channel',
                 });
                 routing = {
@@ -106,13 +106,13 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
                 logger.error({
                     error:       routeError,
                     sessionType,
-                    channelType: routeError.channelType,
-                    msg:         `Cannot route response: well-known channel #${routeError.channelType} not configured. Response skipped.`,
+                    channelType: routeError.context.channelType,
+                    msg:         `Cannot route response: well-known channel #${routeError.context.channelType} not configured. Response skipped.`,
                 });
                 // Stryker restore all
                 return {
                     sent:       false,
-                    skipReason: `Well-known channel #${routeError.channelType} not configured`,
+                    skipReason: `Well-known channel #${routeError.context.channelType} not configured`,
                 };
             }
         } else {
@@ -259,12 +259,12 @@ export async function sendResponseToWellKnownChannel(config: SendToWellKnownConf
             logger.error({
                 error:       routeError,
                 sessionType,
-                channelType: routeError.channelType,
-                msg:         `Cannot route response: well-known channel #${routeError.channelType} not configured. Response skipped.`,
+                channelType: routeError.context.channelType,
+                msg:         `Cannot route response: well-known channel #${routeError.context.channelType} not configured. Response skipped.`,
             });
             return {
                 sent:       false,
-                skipReason: `Well-known channel #${routeError.channelType} not configured`,
+                skipReason: `Well-known channel #${routeError.context.channelType} not configured`,
             };
         }
         throw routeError;

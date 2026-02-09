@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { DiscordSnowflake } from '@sapphire/snowflake';
-import { DiscordIntegrationError } from '@/integrations/discord/errors';
+import { InvalidSnowflakeError } from '@/errors';
+
+// Re-export error class for backward compatibility
+export { InvalidSnowflakeError };
 
 /**
  * Discord epoch: January 1, 2015 00:00:00 UTC in milliseconds.
@@ -19,19 +22,6 @@ export const snowflakeSchema = z
     .min(1, 'Snowflake cannot be empty')
     .regex(/^\d+$/, 'Snowflake must contain only digits');
 // Stryker restore all
-
-/**
- * Error thrown when a Discord snowflake ID is invalid.
- * Extends DiscordIntegrationError for consistent error handling.
- */
-export class InvalidSnowflakeError extends DiscordIntegrationError {
-    constructor(public readonly snowflake: string) {
-        // Stryker disable next-line StringLiteral: Error message and error code are not behavior
-        super(`Invalid Discord snowflake: ${snowflake}`, 'INVALID_SNOWFLAKE');
-        // Stryker disable next-line StringLiteral: Error class name is not behavior
-        this.name = 'InvalidSnowflakeError';
-    }
-}
 
 /**
  * Converts a Discord snowflake ID to a Date timestamp.

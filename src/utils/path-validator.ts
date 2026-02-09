@@ -2,19 +2,11 @@ import { resolve, relative } from 'node:path';
 import { lstat, access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { startsWith, isArray, map } from 'lodash';
+import { PathSecurityError } from '@/errors';
 
 export type PathSecurityReason = 'outside_cwd' | 'is_symlink' | 'not_found' | 'not_file';
 
-export class PathSecurityError extends Error {
-    constructor(
-        message: string,
-        public readonly path: string,
-        public readonly reason: PathSecurityReason
-    ) {
-        super(message);
-        this.name = 'PathSecurityError';
-    }
-}
+export { PathSecurityError };
 
 export async function validateFilePath(filePath: string): Promise<string> {
     const cwd = process.cwd();

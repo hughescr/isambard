@@ -13,7 +13,7 @@
 
 import _ from 'lodash';
 import { retryAsync } from '@/utils/retry';
-import { RateLimitError } from './errors';
+import { RateLimitError } from '@/errors';
 import type { ErrorClassification, ErrorClassifier, RetryPolicy, RetryDeps } from '@/utils/retry/types';
 
 export interface DiscordRetryOptions {

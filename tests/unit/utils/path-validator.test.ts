@@ -113,8 +113,8 @@ describe('path-validator', () => {
                 throw new Error('Should have thrown PathSecurityError');
             } catch (error) {
                 expect(error).toBeInstanceOf(PathSecurityError);
-                expect((error as PathSecurityError).path).toBe('../etc/passwd');
-                expect((error as PathSecurityError).reason).toBe('outside_cwd');
+                expect((error as PathSecurityError).context.path).toBe('../etc/passwd');
+                expect((error as PathSecurityError).context.reason).toBe('outside_cwd');
             }
         });
 

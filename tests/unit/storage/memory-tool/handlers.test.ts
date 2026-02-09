@@ -14,7 +14,7 @@ import {
     TextNotFoundError,
     TextNotUniqueError,
     InvalidLineNumberError
-} from '@/storage/memory-tool/errors';
+} from '@/errors';
 import {
     create,
     view,

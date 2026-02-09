@@ -31,7 +31,7 @@ import {
     InvalidLineNumberError,
     TextNotFoundError,
     TextNotUniqueError
-} from './errors';
+} from '@/errors';
 import { formatMemoryTimestamp, formatShortRelativeTime } from '@/utils/time';
 
 // === Utility Functions ===

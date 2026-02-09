@@ -14,8 +14,9 @@ export {
 } from './time';
 
 export {
-    PathSecurityError,
     validateFilePath,
     validateFilePaths,
     type PathSecurityReason
 } from './path-validator';
+
+export { PathSecurityError } from '@/errors';

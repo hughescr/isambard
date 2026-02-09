@@ -21,10 +21,11 @@ export type { WellKnownChannel, ChannelMetadata } from './types';
 // Errors
 export {
     ChannelRegistryError,
-    ChannelNotFoundError,
+    ChannelNotFoundByNameError,
+    ChannelNotFoundByNameError as ChannelNotFoundError,
     AmbiguousChannelError,
     WellKnownChannelNotFoundError
-} from './errors';
+} from '@/errors';
 
 // Key generator
 export { ChannelRegistryKeyGenerator } from './key-generator';

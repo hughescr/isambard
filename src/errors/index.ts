@@ -1,0 +1,48 @@
+/**
+ * Centralized Error Hierarchy
+ *
+ * All Isambard error classes are exported from this module.
+ * Import errors from '@/errors' or '@/errors/<module>'.
+ *
+ * @see ./README.md for hierarchy diagram and usage guidelines
+ */
+
+export { ErrorCode } from './codes';
+export { IsambardError } from './base';
+
+export {
+    StorageError,
+    ItemNotFoundError,
+    ValidationError,
+    DynamoTimeoutError,
+    MemoryToolError,
+    PathNotFoundError,
+    PathAlreadyExistsError,
+    InvalidPathError,
+    TextNotFoundError,
+    ContentTooLargeError,
+    TextNotUniqueError,
+    InvalidLineNumberError,
+    ReconciliationError,
+    ReconciliationThrottledError
+} from './storage';
+
+export {
+    DiscordError,
+    InvalidTokenError,
+    PermissionError,
+    ChannelNotFoundByIdError,
+    ChannelNotAccessibleError,
+    RateLimitError,
+    MessageFetchError,
+    InvalidSnowflakeError,
+    ChannelRegistryError,
+    ChannelNotFoundByNameError,
+    AmbiguousChannelError,
+    WellKnownChannelNotFoundError,
+    PresenceError,
+    StatusGenerationError,
+    TransitionError
+} from './discord';
+
+export { PathSecurityError } from './utils';

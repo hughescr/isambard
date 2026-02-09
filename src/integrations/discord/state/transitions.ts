@@ -1,18 +1,7 @@
 import type { OperationalMode } from './types';
+import { TransitionError } from '@/errors';
 
-/**
- * Error thrown when an invalid state transition is attempted.
- */
-export class TransitionError extends Error {
-    constructor(
-        public readonly fromMode: OperationalMode,
-        public readonly toMode: OperationalMode,
-        message?: string
-    ) {
-        super(message ?? `Invalid transition from ${fromMode} to ${toMode}`);
-        this.name = 'TransitionError';
-    }
-}
+export { TransitionError };
 
 /**
  * Valid state transitions for operational modes.

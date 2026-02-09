@@ -27,12 +27,14 @@ export {
 } from './types';
 
 export {
-    DiscordIntegrationError,
+    DiscordError,
+    DiscordError as DiscordIntegrationError,
     InvalidTokenError,
     PermissionError,
-    ChannelNotFoundError,
+    ChannelNotFoundByIdError,
+    ChannelNotFoundByIdError as ChannelNotFoundError,
     RateLimitError
-} from './errors';
+} from '@/errors';
 
 export { createDiscordClient } from './client';
 

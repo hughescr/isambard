@@ -655,7 +655,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             } catch (error) {
                                 if(error instanceof PathSecurityError) {
                                     // Stryker disable next-line all: Logging parameters don't affect behavior
-                                    logger.warn({ tool: 'sendDiscordMessage', error: error.message, path: error.path }, 'Discord tool returned security error');
+                                    logger.warn({ tool: 'sendDiscordMessage', error: error.message, path: error.context.path }, 'Discord tool returned security error');
                                     return {
                                         content: [{ type: 'text' as const, text: `Security Error: ${error.message}` }],
                                         isError: true,

@@ -126,8 +126,8 @@ describe('assertValidTransition', () => {
         } catch (error) {
             expect(error).toBeInstanceOf(TransitionError);
             const transitionError = error as TransitionError;
-            expect(transitionError.fromMode).toBe('catching_up');
-            expect(transitionError.toMode).toBe('processing_message');
+            expect(transitionError.context.fromMode).toBe('catching_up');
+            expect(transitionError.context.toMode).toBe('processing_message');
         }
     });
 
@@ -211,8 +211,8 @@ describe('TransitionError', () => {
 
     test('stores fromMode and toMode', () => {
         const error = new TransitionError('catching_up', 'processing_message');
-        expect(error.fromMode).toBe('catching_up');
-        expect(error.toMode).toBe('processing_message');
+        expect(error.context.fromMode).toBe('catching_up');
+        expect(error.context.toMode).toBe('processing_message');
     });
 
     test('uses default message when not provided', () => {

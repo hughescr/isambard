@@ -1,44 +1,18 @@
 import _ from 'lodash';
 import type { Client, Message, TextBasedChannel } from 'discord.js';
-import { DiscordIntegrationError } from '@/integrations/discord/errors';
+import { ChannelNotAccessibleError, MessageFetchError } from '@/errors';
 import { timestampToSnowflake } from '@/integrations/discord/message-history/snowflake';
 import type { DiscordSearchResult, DiscordAttachment, DiscordEmbed, DiscordReaction } from '@/integrations/discord/message-history/types';
 import { channelIdSchema, guildIdSchema } from '@/integrations/discord/types';
 import { withDiscordRetry } from '@/integrations/discord/retry';
 
+// Re-export error classes for backward compatibility
+export { ChannelNotAccessibleError, MessageFetchError };
+
 /**
  * Maximum number of messages Discord API returns per request.
  */
 const DISCORD_API_MAX_MESSAGES = 100;
-
-/**
- * Error thrown when a Discord channel cannot be accessed.
- * This can happen when the channel doesn't exist or the bot lacks permissions.
- */
-export class ChannelNotAccessibleError extends DiscordIntegrationError {
-    constructor(public readonly channelId: string) {
-        // Stryker disable next-line StringLiteral: Error message and error code are not behavior
-        super(`Discord channel not accessible: ${channelId}`, 'CHANNEL_NOT_ACCESSIBLE');
-        // Stryker disable next-line StringLiteral: Error class name is not behavior
-        this.name = 'ChannelNotAccessibleError';
-    }
-}
-
-/**
- * Error thrown when message fetching fails.
- * Wraps generic errors during Discord API message fetch operations.
- */
-export class MessageFetchError extends DiscordIntegrationError {
-    constructor(
-        public readonly channelId: string,
-        public readonly reason: string
-    ) {
-        // Stryker disable next-line StringLiteral: Error message and error code are not behavior
-        super(`Failed to fetch messages from channel ${channelId}: ${reason}`, 'MESSAGE_FETCH_ERROR');
-        // Stryker disable next-line StringLiteral: Error class name is not behavior
-        this.name = 'MessageFetchError';
-    }
-}
 
 /**
  * Options for fetching messages from a Discord channel.

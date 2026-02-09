@@ -31,7 +31,7 @@ export {
 export {
     ReconciliationError,
     ReconciliationThrottledError
-} from './errors';
+} from '@/errors';
 
 // Reconciler exports
 export {

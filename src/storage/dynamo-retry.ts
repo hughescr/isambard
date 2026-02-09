@@ -13,32 +13,14 @@
  */
 
 import type { RetryLogger } from '@/utils/retry/types';
+import { DynamoTimeoutError } from '@/errors';
+
+export { DynamoTimeoutError };
 
 export interface DynamoTimeoutOptions {
     timeoutMs: number
     operation: string
     logger?:   RetryLogger
-}
-
-/**
- * Error thrown when a DynamoDB operation exceeds its timeout.
- * The AWS SDK may still be retrying internally when this is thrown.
- */
-export class DynamoTimeoutError extends Error {
-    constructor(
-        public readonly operation: string,
-        public readonly timeoutMs: number
-    ) {
-        super(`DynamoDB operation '${operation}' timed out after ${timeoutMs}ms`);
-        this.name = 'DynamoTimeoutError';
-
-        // Stryker disable all: V8-specific stack trace enhancement
-        // Maintains proper stack trace for where error was thrown (V8 engines)
-        if(Error.captureStackTrace) {
-            Error.captureStackTrace(this, this.constructor);
-        }
-        // Stryker restore all
-    }
 }
 
 /**

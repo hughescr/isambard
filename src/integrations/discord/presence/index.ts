@@ -21,7 +21,7 @@ export {
 export {
     PresenceError,
     StatusGenerationError
-} from './errors.js';
+} from '@/errors';
 
 export { createActiveStatusGenerator } from './status-generator-active.js';
 export { createDynamicStatusGenerator, resetDebounceState } from './status-generator-dynamic.js';

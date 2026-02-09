@@ -190,7 +190,7 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
             void onScheduledTrigger();
         }, config.intervalMs);
 
-        /* Stryker disable StringLiteral,ObjectLiteral,ArithmeticOperator: Logging is observational */
+        /* Stryker disable StringLiteral,ObjectLiteral,ArithmeticOperator,BooleanLiteral: Logging is observational */
         logger.debug({
             delayMs:     config.intervalMs,
             nextTrigger: DateTime.now().plus({ milliseconds: config.intervalMs }).toISO({ suppressMilliseconds: true }),

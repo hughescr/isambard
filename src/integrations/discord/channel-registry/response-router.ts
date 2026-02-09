@@ -2,7 +2,7 @@ import type { ChannelRegistryManager } from './manager';
 import type { WellKnownChannel } from './types';
 import type { ChannelId } from '../types';
 import { processResponse } from './sentinel';
-import { WellKnownChannelNotFoundError } from './errors';
+import { WellKnownChannelNotFoundError } from '@/errors';
 
 export type SessionType = 'catching_up' | 'perching' | 'processing_message' | 'dm';
 

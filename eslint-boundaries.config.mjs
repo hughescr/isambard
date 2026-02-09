@@ -8,15 +8,17 @@ import boundariesPlugin from 'eslint-plugin-boundaries';
  *
  * Module Hierarchy (from independent to dependent):
  * 1. utils      - Pure utilities, no domain knowledge
- * 2. config     - Configuration loading, minimal dependencies
- * 3. storage    - Data layer, independent of application/agent
- * 4. agent      - Platform-agnostic AI agent logic
- * 5. discord    - Discord integration, depends on agent
- * 6. app        - Composition root (src/index.ts), wires everything together
+ * 2. errors     - Error types, minimal dependencies
+ * 3. config     - Configuration loading, minimal dependencies
+ * 4. storage    - Data layer, independent of application/agent
+ * 5. agent      - Platform-agnostic AI agent logic
+ * 6. discord    - Discord integration, depends on agent
+ * 7. app        - Composition root (src/index.ts), wires everything together
  */
 
 export const boundaryElements = [
     { type: 'utils',   pattern: 'src/utils/**' },
+    { type: 'errors',  pattern: 'src/errors/**' },
     { type: 'config',  pattern: 'src/config/**' },
     { type: 'storage', pattern: 'src/storage/**' },
     { type: 'agent',   pattern: 'src/agent/**' },
@@ -47,29 +49,34 @@ export const boundariesConfig = {
             rules:     [
                 {
                     from:     'utils',
-                    disallow: ['agent', 'storage', 'discord', 'config', 'app']
+                    disallow: ['agent', 'storage', 'discord', 'errors', 'config', 'app']
+                },
+                {
+                    from:  'errors',
+                    allow: ['utils', 'discord', 'storage']
                 },
                 {
                     from:     'config',
-                    disallow: ['agent', 'storage', 'discord', 'app']
+                    disallow: ['agent', 'storage', 'discord', 'errors', 'app']
                 },
                 {
                     from:     'storage',
+                    allow:    ['errors'],
                     disallow: ['agent', 'discord', 'app']
                 },
                 {
                     from:     'agent',
-                    allow:    ['storage', 'config', 'utils'],
+                    allow:    ['storage', 'errors', 'config', 'utils'],
                     disallow: ['discord', 'app']
                 },
                 {
                     from:     'discord',
-                    allow:    ['agent', 'storage', 'config', 'utils'],
+                    allow:    ['agent', 'storage', 'errors', 'config', 'utils'],
                     disallow: ['app']
                 },
                 {
                     from:  'app',
-                    allow: ['agent', 'storage', 'discord', 'config', 'utils']
+                    allow: ['agent', 'storage', 'discord', 'errors', 'config', 'utils']
                 }
             ]
         }]

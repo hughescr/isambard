@@ -8,8 +8,8 @@ describe('DynamoTimeoutError', () => {
         const error = new DynamoTimeoutError('PutItem', 5000);
 
         expect(error.name).toBe('DynamoTimeoutError');
-        expect(error.operation).toBe('PutItem');
-        expect(error.timeoutMs).toBe(5000);
+        expect(error.context.operation).toBe('PutItem');
+        expect(error.context.timeoutMs).toBe(5000);
         expect(error.message).toBe("DynamoDB operation 'PutItem' timed out after 5000ms");
     });
 
@@ -143,8 +143,8 @@ describe('withDynamoTimeout', () => {
             } catch (error) {
                 expect(error).toBeInstanceOf(DynamoTimeoutError);
                 if(error instanceof DynamoTimeoutError) {
-                    expect(error.operation).toBe('DeleteItem');
-                    expect(error.timeoutMs).toBe(3000);
+                    expect(error.context.operation).toBe('DeleteItem');
+                    expect(error.context.timeoutMs).toBe(3000);
                 }
             }
         });

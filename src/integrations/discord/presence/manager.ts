@@ -290,10 +290,11 @@ export function createPresenceManager(
         // Stryker restore all
 
         async updatePhase(phase: PresencePhase): Promise<void> {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             const logPhase = phase.type === 'idle'
                 ? { ...phase, since: DateTime.fromJSDate(phase.since).toISO() }
                 : phase;
+            // Stryker restore ObjectLiteral,StringLiteral
             logger.debug({ phase: logPhase }, 'Updating presence phase');
 
             const wasIdle = currentPhase?.type === 'idle';

@@ -5,6 +5,7 @@ import {
     snowflakeToTimestamp,
     InvalidSnowflakeError
 } from '@/integrations/discord/message-history/snowflake';
+import { ErrorCode } from '@/errors';
 
 describe.concurrent('DISCORD_EPOCH', () => {
     test('should be January 1, 2015 UTC in milliseconds as bigint', () => {
@@ -126,8 +127,8 @@ describe('InvalidSnowflakeError', () => {
         const error = new InvalidSnowflakeError('test-snowflake');
         expect(error).toBeInstanceOf(Error);
         expect(error.name).toBe('InvalidSnowflakeError');
-        expect(error.code).toBe('INVALID_SNOWFLAKE');
-        expect(error.snowflake).toBe('test-snowflake');
+        expect(error.code).toBe(ErrorCode.INVALID_SNOWFLAKE);
+        expect(error.context.snowflake).toBe('test-snowflake');
         expect(error.message).toContain('test-snowflake');
         expect(error.stack).toBeDefined();
     });
