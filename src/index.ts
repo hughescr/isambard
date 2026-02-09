@@ -1,45 +1,24 @@
 import { Resource } from 'sst';
-import _ from 'lodash';
 import env from 'env-var';
-import type { Client } from 'discord.js';
-import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { stat, mkdir } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { loadConfig, loadDynamoDBConfig } from './config/loader';
-import { createDynamoDBClient } from './storage/client';
-import { MemoryToolBackend } from './storage/memory-tool';
-import { TaskSessionBackend } from './storage/task-session';
-import { createContextBuilder } from './agent/context-builder';
-import { createEventDeltaTracker } from './agent/event-delta-tracker';
-import { createMemoryMCPServer } from './agent/memory-mcp-server';
-import { createDiscordMCPServer } from './agent/discord-mcp-server';
 import { createClaudeAgent } from './agent/agent';
 import { loadPlugins } from './agent/plugin-loader';
 import { createQuestionRegistry } from './agent/question-registry';
 import { cleanupAllStaleSessions } from './agent/session-cleanup';
-import { createTaskDirectoryCopier } from './agent/task-directory-copier';
 import { syncAgentsAndSkills } from './agent/skill-agent-loader';
-import { createTaskPersistenceCoordinator, type TaskPersistenceCoordinator } from './agent/task-persistence-coordinator';
-import { createTaskCleanupProcessor } from './agent/task-cleanup-processor';
-import {
-    createReconciliationScheduler,
-    runReconciliation,
-    type ReconciliationScheduler
-} from './storage/memory-tool/reconciliation';
+import { createStorageLayer } from './app/storage-layer';
+import { createContextLayer } from './app/context-layer';
+import { createDiscordInfrastructure } from './app/discord-infrastructure';
+import { createMCPServers } from './app/mcp-servers';
+import { loadIdentityContext } from './app/identity-loader';
+import { createOnMessageHandler } from './app/on-message-handler';
 import { createDiscordBot } from './integrations/discord/bot';
 import type { DiscordBot } from './integrations/discord/bot';
-import type { CatchUpCompletionSignal, CatchUpInProgressSignal } from './integrations/discord/catchup';
 import { resolveTimezone } from './utils/time';
-import { createDiscordClient } from './integrations/discord/client';
-import { createMemoryPath } from './storage/memory-tool/types';
-import { createMessageFetcher } from './integrations/discord/message-history/fetcher';
-import { createMessageSummarizer } from './integrations/discord/message-history/summarizer';
-import { createMessageSearchService } from './integrations/discord/message-history/search';
-import { CheckpointManager, InboxManager } from './integrations/discord/inbox';
-import { createInboxMCPServer } from './agent/inbox-mcp-server';
-import { createBotStateManager, type BotStateManager } from './integrations/discord/state';
-import { ChannelRegistryBackend, ChannelRegistryManager } from './integrations/discord/channel-registry';
 import { logger, setTimezone } from '@hughescr/logger';
+import { createCatchUpSignalAdapter } from './app/catchup-signal-adapter';
 
 export interface App {
     /**
@@ -60,13 +39,13 @@ export interface App {
  * 1. Clean up stale session files from previous runs
  * 2. Load configuration (Discord, Agent OAuth token)
  * 3. Set CLAUDE_CODE_OAUTH_TOKEN for Agent SDK
- * 4. Optionally create memory system (context builder + MCP server) if DynamoDB is available
+ * 4. Create memory system (context builder + MCP server) if DynamoDB is available
  * 5. Create Claude agent with hybrid memory support
  * 6. Create Discord bot with agent as message handler
  *
  * Error handling:
  * - Missing required config (Discord, OAuth token) throws immediately
- * - Missing optional config (DynamoDB) logs warning and continues without memory
+ * - Factory functions throw with descriptive errors if initialization fails
  *
  * @returns Application instance with start/stop methods
  * @throws {Error} If required configuration is missing or invalid
@@ -88,317 +67,60 @@ export async function createApp(): Promise<App> {
     // Create DynamoDB client (REQUIRED)
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- SST Resource type is complex
     const dynamoDBConfig = loadDynamoDBConfig(Resource as any);
-    const { docClient, tableName } = createDynamoDBClient(dynamoDBConfig);
 
-    // Try to create memory system, Discord client, and channel registry (required for bot startup)
-    let contextBuilder;
-    let memoryMcpServer: McpServerConfig | undefined;
-    let discordClient: Client | undefined;
-    let discordMcpServer: McpServerConfig | undefined;
-    let inboxMcpServer: McpServerConfig | undefined;
-    let inboxManager: InboxManager | undefined;
-    let memoryBackend: MemoryToolBackend | undefined;
-    let botStateManager: BotStateManager | undefined;
-    let taskPersistenceCoordinator: TaskPersistenceCoordinator | undefined;
-    let channelRegistry: ChannelRegistryManager;
-    let eventDeltaTracker: ReturnType<typeof createEventDeltaTracker> | undefined;
-    let reconciliationScheduler: ReconciliationScheduler | undefined;
-
-    try {
-        // Create memory backend
-        memoryBackend = new MemoryToolBackend(docClient, tableName);
-
-        // Create context builder (for core identity + recent context)
-        contextBuilder = createContextBuilder({ backend: memoryBackend });
-
-        // Create event delta tracker for enriching resume contexts with new events
-        eventDeltaTracker = createEventDeltaTracker(contextBuilder);
-
-        // Create MCP server (for deep memory access)
-        memoryMcpServer = createMemoryMCPServer(memoryBackend);
-
-        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-        logger.info(`Memory system initialized with DynamoDB: ${tableName}`);
-
-        // Create reconciliation scheduler if enabled
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Optional initialization - equivalent mutant
-        if(config.reconciliation?.enabled) {
-            reconciliationScheduler = createReconciliationScheduler({
-                config:         config.reconciliation,
-                runReconciliation,
-                reconcilerDeps: {
-                    docClient,
-                    tableName,
-                    tagIndex:             memoryBackend.getTagIndexBackend(),
-                    getMemory:            path => memoryBackend!.get(path),
-                    updateMemoryMetadata: (path, input) =>
-                        memoryBackend!.updateMetadataOnly(path, input),
-                },
-            });
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-            logger.info('Tag index reconciliation scheduler configured');
-        }
-
-        // Create Discord client early (shared with bot and channel registry)
-        discordClient = createDiscordClient(config.discord);
-
-        // Create channel registry (REQUIRED - bot cannot start without it)
-        // Must be created after Discord client since it fetches channel info from Discord API
-        const channelRegistryBackend = new ChannelRegistryBackend(docClient, tableName);
-        channelRegistry = new ChannelRegistryManager({
-            backend:     channelRegistryBackend,
-            homeGuildId: config.discord.homeGuildId,
-            client:      discordClient,
-        });
-
-        // Create message history components
-        const messageFetcher = createMessageFetcher(discordClient);
-        const messageSummarizer = createMessageSummarizer({});
-
-        // Create message search service
-        const messageSearchService = createMessageSearchService({
-            fetcher:    messageFetcher,
-            summarizer: messageSummarizer,
-        });
-
-        // Create Discord MCP server
-        // Discord MCP server uses server timezone for localTimestamp enrichment.
-        // This is intentional: the MCP server is a shared, session-level resource
-        // created at startup. Per-user timezone would require threading user context
-        // into each tool call. The agent's prompts and message formatting use
-        // per-user timezone where available.
-        discordMcpServer = createDiscordMCPServer(messageSearchService, discordClient, questionRegistry, channelRegistry, resolveTimezone());
-
-        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-        logger.info('Discord message history enabled');
-
-        // Create checkpoint manager for inbox
-        const checkpointManager = new CheckpointManager({ backend: memoryBackend });
-
-        // Create inbox manager with channel registry
-        inboxManager = new InboxManager({
-            checkpointManager,
-            messageSearchService,
-            channelRegistry,
-            config: config.discord.inbox,  // Optional inbox config from Discord config
-        });
-
-        // Create bot state manager (shared between inbox MCP server and bot)
-        botStateManager = createBotStateManager({
-            logger,
-            updateThrottleMs: config.discord.presence?.updateThrottleMs,
-        });
-
-        // Create inbox MCP server with bot state manager for tracking viewed channels
-        inboxMcpServer = createInboxMCPServer(inboxManager, channelRegistry, botStateManager);
-
-        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-        logger.info('Inbox system initialized');
-
-        // Create task persistence system (requires DynamoDB)
-        const taskSessionBackend = new TaskSessionBackend(docClient, tableName);
-        const taskCleanupProcessor = createTaskCleanupProcessor({ logger });
-        const taskDirectoryCopier = createTaskDirectoryCopier({
-            logger,
-            cleanupProcessor: taskCleanupProcessor,
-        });
-        taskPersistenceCoordinator = createTaskPersistenceCoordinator({
-            backend: taskSessionBackend,
-            copier:  taskDirectoryCopier,
-            logger,
-        });
-        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-        logger.info('Task persistence system initialized');
-    // Stryker disable next-line BlockStatement: Catch block continues execution regardless - equivalent mutant
-    } catch (error) {
-        const errorMessage = _.isError(error) ? error.message : String(error);
-        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-        logger.error(`Failed to initialize required systems: ${errorMessage}`);
-        throw new Error(`Failed to initialize Discord client and channel registry: ${errorMessage}. The bot cannot start without these.`);
-    }
-
-    // Verify channel registry was initialized
-    // If initialization failed, continue in fail-open mode (match bot.ts behavior)
-    if(!channelRegistry) {
-        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-        logger.error('⚠️  CRITICAL: Channel registry not initialized. Bot will operate in fail-open mode (responding to ALL channels). This should be investigated immediately.');
-        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-        logger.warn('Bot is operating in FAIL-OPEN mode - channel mute settings are unavailable');
-    }
-
-    // Load plugins using absolute path (CWD-independent)
-    const plugins = await loadPlugins(join(resolve(import.meta.dir, '..'), 'agents-skills-plugins', 'plugins'));
-
-    // Create Claude agent with hybrid memory support
-    const agent = createClaudeAgent({
-        contextBuilder,
-        memoryMcpServer,
-        discordMcpServer,
-        inboxMcpServer,
-        plugins,
-        taskPersistenceCoordinator,
+    // Create infrastructure layers
+    const storage = createStorageLayer(dynamoDBConfig, config.reconciliation);
+    const contextLayer = createContextLayer(storage.memoryBackend);
+    const discordInfra = createDiscordInfrastructure({
+        discordConfig: config.discord,
+        docClient:     storage.docClient,
+        tableName:     storage.tableName,
+        memoryBackend: storage.memoryBackend,
+    });
+    const mcpServers = createMCPServers({
+        memoryBackend:        storage.memoryBackend,
+        messageSearchService: discordInfra.messageSearchService,
+        discordClient:        discordInfra.discordClient,
+        questionRegistry,
+        channelRegistry:      discordInfra.channelRegistry,
+        inboxManager:         discordInfra.inboxManager,
+        botStateManager:      discordInfra.botStateManager,
+        timezone:             resolveTimezone(),
     });
 
-    // Load identity context for presence idle status generation (if API key available)
-    let identityContext: string | undefined;
+    // Load plugins and create agent
+    const plugins = await loadPlugins(join(resolve(import.meta.dir, '..'), 'agents-skills-plugins', 'plugins'));
+    const agent = createClaudeAgent({
+        contextBuilder:             contextLayer.contextBuilder,
+        memoryMcpServer:            mcpServers.memoryMcpServer,
+        discordMcpServer:           mcpServers.discordMcpServer,
+        inboxMcpServer:             mcpServers.inboxMcpServer,
+        plugins,
+        taskPersistenceCoordinator: storage.taskPersistenceCoordinator,
+    });
 
-    // Stryker disable next-line ConditionalExpression: Optional initialization - equivalent mutant
-    if(config.agent.oauthToken) {
-        // Try to load identity context from memory system
-        // Stryker disable next-line ConditionalExpression: Optional initialization - equivalent mutant
-        if(contextBuilder) {
-            // Stryker disable next-line BlockStatement: Try block for optional initialization - equivalent mutant
-            try {
-                // Stryker disable next-line LogicalOperator: Fallback default is equivalent behavior
-                identityContext = await contextBuilder.loadCoreIdentity() || 'Isambard - AI Assistant';
-            // Stryker disable next-line BlockStatement: Catch block for optional initialization - equivalent mutant
-            } catch (error) {
-                const errorMessage = _.isError(error) ? error.message : String(error);
-                logger.warn(`Failed to load identity context: ${errorMessage}`);
-                // Stryker disable next-line StringLiteral: Fallback default string is not behavior-affecting
-                identityContext = 'Isambard - AI Assistant';
-            }
-        } else {
-            // Stryker disable next-line StringLiteral: Fallback default string is not behavior-affecting
-            identityContext = 'Isambard - AI Assistant';
-        }
-    }
+    // Load identity and create message handler
+    const identityContext = await loadIdentityContext(config.agent.oauthToken, contextLayer.contextBuilder);
+    const onMessage = createOnMessageHandler({
+        agent,
+        channelRegistry: discordInfra.channelRegistry,
+        discordClient:   discordInfra.discordClient,
+    });
 
-    // Create Discord bot with agent as message handler
-    // Use the pre-created client if available (shared with message fetcher)
+    // Create Discord bot
     const bot: DiscordBot = createDiscordBot({
-        config:      config.discord,
-        perchConfig: config.perch,
-        onMessage:   async (context) => {
-            // Get unmuted channels and format for system prompt (matching bot.ts pattern)
-            // Build channelList if channelRegistry is available
-            let channelList: string[] | undefined;
-            if(channelRegistry) {
-                const unmutedChannels = await channelRegistry.getUnmutedChannels();
-                channelList = _.map(unmutedChannels, (channel) => {
-                    // Get guild name for disambiguation
-                    let guildName: string | undefined;
-                    if(channel.guildId !== 'DM') {
-                        try {
-                            const guild = discordClient?.guilds.cache.get(channel.guildId);
-                            guildName = guild?.name;
-                        } catch{
-                            // Guild not in cache, skip guild name
-                        }
-                    }
-
-                    // Format: "channelName (guildName) [well-known: type]" or "channelName [well-known: type]"
-                    let formatted = channel.channelName;
-                    if(guildName) {
-                        formatted += ` (${guildName})`;
-                    }
-                    if(channel.isWellKnown) {
-                        formatted += ` [well-known: ${channel.isWellKnown}]`;
-                    }
-                    return formatted;
-                });
-            }
-
-            const result = await agent.handleInput([context], { channelList });
-            return result.response;
-        },
+        config:            config.discord,
+        perchConfig:       config.perch,
+        onMessage,
         identityContext,
         agent,
-        client:        discordClient,
+        client:            discordInfra.discordClient,
         questionRegistry,
-        inboxManager,
-        botStateManager,
-        channelRegistry,
-        eventDeltaTracker,
-        memoryBackend: memoryBackend
-            ? {
-                storeCompletionSignal: async (signal: CatchUpCompletionSignal) => {
-                    try {
-                        const path = createMemoryPath('/state/catchup-completion');
-                        const existing = await memoryBackend.get(path);
-                        const content = JSON.stringify(signal);
-                        if(existing) {
-                            await memoryBackend.update(path, { content });
-                        } else {
-                            await memoryBackend.create({ path, content, contentType: 'application/json' });
-                        }
-                    } catch (error) {
-                        const errorMsg = _.isError(error) ? error.message : String(error);
-                        logger.error({
-                            error: errorMsg,
-                            msg:   'Failed to store catch-up completion signal',
-                        });
-                        // Don't re-throw - allow catch-up to continue
-                    }
-                },
-                loadCompletionSignal: async () => {
-                    try {
-                        const path = createMemoryPath('/state/catchup-completion');
-                        const result = await memoryBackend.get(path);
-                        if(!result) {
-                            return null;
-                        }
-                        return JSON.parse(result.content) as CatchUpCompletionSignal;
-                    } catch (error) {
-                        const errorMsg = _.isError(error) ? error.message : String(error);
-                        logger.error({
-                            error: errorMsg,
-                            msg:   'Failed to load catch-up completion signal',
-                        });
-                        return null;
-                    }
-                },
-                storeInProgressSignal: async (signal: CatchUpInProgressSignal) => {
-                    try {
-                        const path = createMemoryPath('/state/catchup-inprogress');
-                        const existing = await memoryBackend.get(path);
-                        const content = JSON.stringify(signal);
-                        if(existing) {
-                            await memoryBackend.update(path, { content });
-                        } else {
-                            await memoryBackend.create({ path, content, contentType: 'application/json' });
-                        }
-                    } catch (error) {
-                        const errorMsg = _.isError(error) ? error.message : String(error);
-                        logger.error({
-                            error: errorMsg,
-                            msg:   'Failed to store catch-up in-progress signal',
-                        });
-                        // Don't re-throw - allow catch-up to continue
-                    }
-                },
-                loadInProgressSignal: async () => {
-                    try {
-                        const path = createMemoryPath('/state/catchup-inprogress');
-                        const result = await memoryBackend.get(path);
-                        if(!result) {
-                            return null;
-                        }
-                        return JSON.parse(result.content) as CatchUpInProgressSignal;
-                    } catch (error) {
-                        const errorMsg = _.isError(error) ? error.message : String(error);
-                        logger.error({
-                            error: errorMsg,
-                            msg:   'Failed to load catch-up in-progress signal',
-                        });
-                        return null;
-                    }
-                },
-                deleteInProgressSignal: async () => {
-                    try {
-                        const path = createMemoryPath('/state/catchup-inprogress');
-                        await memoryBackend.delete(path);
-                    } catch (error) {
-                        const errorMsg = _.isError(error) ? error.message : String(error);
-                        logger.error({
-                            error: errorMsg,
-                            msg:   'Failed to delete catch-up in-progress signal',
-                        });
-                        // Don't re-throw - allow catch-up to continue
-                    }
-                },
-            }
-            : undefined,
+        inboxManager:      discordInfra.inboxManager,
+        botStateManager:   discordInfra.botStateManager,
+        channelRegistry:   discordInfra.channelRegistry,
+        eventDeltaTracker: contextLayer.eventDeltaTracker,
+        memoryBackend:     createCatchUpSignalAdapter(storage.memoryBackend),
     });
 
     let isStopping = false;
@@ -410,8 +132,8 @@ export async function createApp(): Promise<App> {
             logger.info('Starting Isambard application...');
             await bot.start();
             // Stryker disable next-line ConditionalExpression,BlockStatement: Optional startup - equivalent mutant
-            if(reconciliationScheduler) {
-                reconciliationScheduler.start();
+            if(storage.reconciliationScheduler) {
+                storage.reconciliationScheduler.start();
                 // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
                 logger.info('Tag index reconciliation scheduler started');
             }
@@ -430,8 +152,8 @@ export async function createApp(): Promise<App> {
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Stopping Isambard application...');
             // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
-            if(reconciliationScheduler) {
-                reconciliationScheduler.stop();
+            if(storage.reconciliationScheduler) {
+                storage.reconciliationScheduler.stop();
                 // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
                 logger.info('Tag index reconciliation scheduler stopped');
             }

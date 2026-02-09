@@ -93,16 +93,9 @@ describe('createApp', () => {
             });
             spies.push(loadDynamoDBConfigSpy);
 
-            // Import and call createApp - should throw
+            // Import and call createApp - should throw raw error from factory
             const { createApp } = await import('@/index');
-            expect(createApp()).rejects.toThrow('Failed to initialize Discord client and channel registry: Memory backend initialization failed. The bot cannot start without these.');
-
-            // Verify error was logged
-            expect(mockLogger.error).toHaveBeenCalled();
-            const errorCalls = mockLogger.error.mock.calls as any[][];
-            const systemError = _find(errorCalls, (call: any) => call[0].includes('Failed to initialize required systems'));
-            expect(systemError).toBeDefined();
-            expect((systemError as any)[0]).toContain('Memory backend initialization failed');
+            expect(createApp()).rejects.toThrow('Memory backend initialization failed');
         });
 
         test('should handle non-Error exceptions in memory initialization', async () => {
@@ -171,16 +164,9 @@ describe('createApp', () => {
             });
             spies.push(loadDynamoDBConfigSpy);
 
-            // Import and call createApp - should throw
+            // Import and call createApp - should throw raw string error
             const { createApp } = await import('@/index');
-            expect(createApp()).rejects.toThrow('Failed to initialize Discord client and channel registry: String error thrown. The bot cannot start without these.');
-
-            // Verify error was logged with string error converted
-            expect(mockLogger.error).toHaveBeenCalled();
-            const errorCalls = mockLogger.error.mock.calls as any[][];
-            const systemError = _find(errorCalls, (call: any) => call[0].includes('Failed to initialize required systems'));
-            expect(systemError).toBeDefined();
-            expect((systemError as any)[0]).toContain('String error thrown');
+            expect(createApp()).rejects.toThrow('String error thrown');
         });
     });
 
@@ -999,16 +985,9 @@ describe('createApp', () => {
             });
             spies.push(loadDynamoDBConfigSpy);
 
-            // Import and call createApp - should throw because memory is now required
+            // Import and call createApp - should throw raw error from factory
             const { createApp } = await import('@/index');
-            expect(createApp()).rejects.toThrow('Failed to initialize Discord client and channel registry: Memory not available. The bot cannot start without these.');
-
-            // Verify error was logged
-            expect(mockLogger.error).toHaveBeenCalled();
-            const errorCalls = mockLogger.error.mock.calls as any[][];
-            const systemError = _find(errorCalls, (call: any) => call[0].includes('Failed to initialize required systems'));
-            expect(systemError).toBeDefined();
-            expect((systemError as any)[0]).toContain('Memory not available');
+            expect(createApp()).rejects.toThrow('Memory not available');
         });
     });
 
@@ -1078,16 +1057,9 @@ describe('createApp', () => {
             });
             spies.push(loadDynamoDBConfigSpy);
 
-            // Import and call createApp - should throw
+            // Import and call createApp - should throw raw error from factory
             const { createApp } = await import('@/index');
-            expect(createApp()).rejects.toThrow('Failed to initialize Discord client and channel registry: DynamoDB connection failed. The bot cannot start without these.');
-
-            // Verify error was logged
-            expect(mockLogger.error).toHaveBeenCalled();
-            const errorCalls = mockLogger.error.mock.calls as any[][];
-            const channelRegistryError = _find(errorCalls, (call: any) => call[0].includes('Failed to initialize required systems'));
-            expect(channelRegistryError).toBeDefined();
-            expect((channelRegistryError as any)[0]).toContain('DynamoDB connection failed');
+            expect(createApp()).rejects.toThrow('DynamoDB connection failed');
         });
 
         test('should throw fatal error when ChannelRegistryManager construction fails', async () => {
@@ -1160,16 +1132,9 @@ describe('createApp', () => {
             });
             spies.push(loadDynamoDBConfigSpy);
 
-            // Import and call createApp - should throw
+            // Import and call createApp - should throw raw error from factory
             const { createApp } = await import('@/index');
-            expect(createApp()).rejects.toThrow('Failed to initialize Discord client and channel registry: Invalid configuration. The bot cannot start without these.');
-
-            // Verify error was logged
-            expect(mockLogger.error).toHaveBeenCalled();
-            const errorCalls = mockLogger.error.mock.calls as any[][];
-            const channelRegistryError = _find(errorCalls, (call: any) => call[0].includes('Failed to initialize required systems'));
-            expect(channelRegistryError).toBeDefined();
-            expect((channelRegistryError as any)[0]).toContain('Invalid configuration');
+            expect(createApp()).rejects.toThrow('Invalid configuration');
         });
 
         test('should handle non-Error exceptions in ChannelRegistry initialization', async () => {
@@ -1238,16 +1203,9 @@ describe('createApp', () => {
             });
             spies.push(loadDynamoDBConfigSpy);
 
-            // Import and call createApp - should throw
+            // Import and call createApp - should throw raw string error
             const { createApp } = await import('@/index');
-            expect(createApp()).rejects.toThrow('Failed to initialize Discord client and channel registry: String error in channel registry. The bot cannot start without these.');
-
-            // Verify error was logged
-            expect(mockLogger.error).toHaveBeenCalled();
-            const errorCalls = mockLogger.error.mock.calls as any[][];
-            const channelRegistryError = _find(errorCalls, (call: any) => call[0].includes('Failed to initialize required systems'));
-            expect(channelRegistryError).toBeDefined();
-            expect((channelRegistryError as any)[0]).toContain('String error in channel registry');
+            expect(createApp()).rejects.toThrow('String error in channel registry');
         });
     });
 

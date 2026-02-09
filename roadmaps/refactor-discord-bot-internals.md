@@ -12,11 +12,10 @@ The `createDiscordBot()` function in `src/integrations/discord/bot.ts` is 1477 l
 - Hard to understand initialization order
 - Tight coupling between Discord-specific and generic logic
 
-**Important context:** This roadmap depends on completing **Roadmap #1 (Refactor createApp God Object)** first:
-- Roadmap #1 creates `DiscordBuilder` facade in `src/app/discord-builder.ts`
-- That facade delegates to `createDiscordBot()` internally
-- **This roadmap** then breaks up what's inside `createDiscordBot()`
-- Separation prevents context exhaustion for AI agents (two focused refactors vs. one massive refactor)
+**Important context:** This roadmap depended on completing the createApp() god object refactoring, which is now done:
+- `createApp()` has been decomposed into focused factory functions in `src/app/`
+- `createDiscordInfrastructure()` in `src/app/discord-infrastructure.ts` handles Discord client, channel registry, message history, inbox, and bot state
+- **This roadmap** breaks up what's inside `createDiscordBot()` in `src/integrations/discord/bot.ts`
 
 ## Current Structure
 
@@ -50,36 +49,25 @@ The `createDiscordBot()` function currently handles:
 
 ```mermaid
 graph LR
-    A[Roadmap #1: Refactor createApp] --> B[Create DiscordBuilder facade]
-    B --> C[DiscordBuilder delegates to createDiscordBot]
-    C --> D[Roadmap #3: Refactor createDiscordBot internals]
+    A[✅ createApp refactoring complete] --> B[src/app/discord-infrastructure.ts]
+    B --> C[Delegates to createDiscordBot]
+    C --> D[This roadmap: Refactor createDiscordBot internals]
 
     style A fill:#e1ffe1
     style D fill:#ffe1e1
 ```
 
 **Sequencing rationale:**
-1. First: Extract high-level builders in `createApp()` to establish clean boundaries
-2. Then: Break up complex internal logic inside those builders
-3. Prevents: Single massive refactor that exhausts AI agent context
+1. ✅ Done: High-level factory functions extracted from `createApp()` into `src/app/`
+2. Next: Break up complex internal logic inside `createDiscordBot()`
+3. Rationale: Two focused refactors prevent AI agent context exhaustion
 
-**What Roadmap #1 creates:**
+**What was created (now complete):**
 ```typescript
-// src/app/discord-builder.ts (created by Roadmap #1)
-export function createDiscordBot(options: BuilderOptions) {
-    // High-level orchestration
-    const storage = options.storage;
-    const agent = options.agent;
-
-    // Delegate to bot.ts (which Roadmap #3 will refactor)
-    return createDiscordBotInternal({
-        config: options.config,
-        onMessage: /* ... */,
-        agent,
-        channelRegistry: storage.channelRegistry,
-        // ... other options
-    });
-}
+// src/app/discord-infrastructure.ts (created by createApp refactoring)
+export function createDiscordInfrastructure(options: DiscordInfrastructureOptions): DiscordInfrastructure {
+    // Creates Discord client, channel registry, message history, inbox, bot state
+    // Returns all Discord infrastructure components
 ```
 
 ## Proposed Extractions
@@ -528,9 +516,9 @@ src/integrations/discord/
 
 ## Relationship to Other Roadmaps
 
-**After Roadmap #1 (Refactor createApp):**
-- `DiscordBuilder` facade exists in `src/app/discord-builder.ts`
-- That facade calls `createDiscordBot()` internally
+**Current state (createApp refactoring complete):**
+- `createDiscordInfrastructure()` exists in `src/app/discord-infrastructure.ts`
+- That function calls `createDiscordBot()` internally
 - This roadmap refactors what's inside `createDiscordBot()`
 
 **After Roadmap #2 (Unify Message Processing):**

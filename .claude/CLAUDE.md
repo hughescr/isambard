@@ -49,6 +49,7 @@ Isambard can propose improvements to its own code:
 - `src/storage/` - DynamoDB models, repositories, and storage backends
 - `src/integrations/` - External services (Discord, etc.)
 - `src/config/` - Configuration with Zod validation
+- `src/app/` - Application composition root (factory functions for createApp decomposition)
 - `src/utils/` - Shared utilities
 
 ### Agents, Skills, and Plugins

@@ -11,32 +11,6 @@ Read-only access to Apple Calendar for scheduling context.
 - [ ] MCP tools for calendar context (upcoming events, availability)
 - [ ] Integration with session gap tracking (catch up on calendar changes)
 
-### Channel Discovery and Registration
-Replace hardcoded channel IDs with dynamic discovery using Discord APIs.
-
-**Problems with current approach:**
-- Channel IDs hardcoded in SST config
-- Must redeploy to add/remove monitored channels
-- Izzy can't discover or choose channels to send to
-- No way to initiate DMs with users
-
-**Implementation:**
-- [ ] Dynamic channel discovery via Discord API
-  - Use `client.guilds` to get all guilds bot is in
-  - Use `guild.channels` to enumerate accessible channels
-  - Filter by channel type and permissions
-- [ ] Auto-register channels Izzy has access to (or configurable allowlist)
-- [ ] Add `listChannels` tool to Discord MCP server
-  - Returns channels Izzy can see/send to
-  - Include channel type (text, voice, DM, thread)
-  - Include guild name for context
-- [ ] Add `getDMChannel` tool (or extend listChannels)
-  - Given a user ID or username, return/create DM channel
-  - Allows Izzy to initiate DMs with users
-- [ ] Consider: Should monitored channels (for inbox) be separate from sendable channels?
-
-**Priority:** Medium (current hardcoded approach is limiting)
-
 ### State/Status System Overhaul (Technical Debt)
 The current presence/status system is a confused mess with ad-hoc state tracking scattered across multiple components (presence manager, catch-up state manager, stream event handler). Status generation receives inconsistent context depending on code path.
 
@@ -71,6 +45,35 @@ The current presence/status system is a confused mess with ad-hoc state tracking
 ---
 
 ## Previously Completed
+
+### Decompose createApp() God Object (Completed February 2026)
+Refactored the 520-line `createApp()` function into focused factory functions.
+
+**What was implemented:**
+- 7 factory functions extracted into `src/app/`:
+  - `createStorageLayer` - DynamoDB client, memory backend, task persistence, reconciliation
+  - `createContextLayer` - context builder + event delta tracker
+  - `createDiscordInfrastructure` - Discord client, channel registry, message history, inbox, bot state
+  - `createMCPServers` - memory, Discord, and inbox MCP servers
+  - `loadIdentityContext` - identity loading with fallback chain
+  - `createOnMessageHandler` - channel list formatting + agent dispatch
+  - `createCatchUpSignalAdapter` - catch-up signal persistence methods
+- `createApp()` reduced to ~70 lines of clean factory composition
+- Removed try/catch wrapper, dead code, and 9 unused imports
+- 100% mutation score on all new files
+
+### Channel Discovery and Registration (Completed February 2026)
+Dynamic channel discovery and registration system replacing hardcoded channel IDs.
+
+**What was implemented:**
+- Dynamic channel discovery via Discord API (guild enumeration, channel fetching)
+- DynamoDB-backed channel registry with in-memory caching
+- `listChannels` MCP tool for runtime channel discovery
+- DM channel support via DMTracker (`getOrCreateDMByUsername`)
+- Channel name resolution supporting `#channel-name` syntax
+- Real-time sync via `channelCreate`/`channelUpdate`/`channelDelete` event handlers
+- Well-known channel types (general, catch-up, perch-time, fallback)
+- Startup integration with cache warming
 
 ### Perch Time Phase 1 (Completed January 2026)
 Autonomous activity system allowing Isambard to wake up and pursue its own interests.

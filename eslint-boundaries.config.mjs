@@ -23,7 +23,7 @@ export const boundaryElements = [
     { type: 'storage', pattern: 'src/storage/**' },
     { type: 'agent',   pattern: 'src/agent/**' },
     { type: 'discord', pattern: 'src/integrations/discord/**' },
-    { type: 'app',     pattern: 'src/index.ts' },
+    { type: 'app',     pattern: ['src/index.ts', 'src/app/**'] },
 ];
 
 export const boundariesConfig = {
