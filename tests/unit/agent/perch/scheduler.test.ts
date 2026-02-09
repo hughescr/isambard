@@ -78,11 +78,12 @@ describe('PerchScheduler', () => {
         mockStateManager = createMockStateManager() as BotStateManager & { _triggerStateChange: (change: StateChange) => void };
         mockOnPerchTrigger = mock(_.noop);
         config = {
-            enabled:           true,
-            timezone:          'America/Los_Angeles',
-            intervalMinutes:   60,
-            jitterMinutes:     15,
-            maxSessionMinutes: 45,
+            enabled:              true,
+            timezone:             'America/Los_Angeles',
+            intervalMinutes:      60,
+            jitterMinutes:        15,
+            maxSessionMinutes:    45,
+            wrapUpTimeoutMinutes: 5,
         };
     });
 

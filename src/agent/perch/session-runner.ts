@@ -228,6 +228,69 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
         }
     }
 
+    // Helper for running timeout wrap-up session
+    // Extracted to avoid duplication between try-block and catch-block timeout handling
+    async function runTimeoutWrapUp(slot: PerchSlot): Promise<void> {
+        // Reset timeout flag
+        // Stryker disable next-line BooleanLiteral: Flag reset after timeout condition
+        isTimingOut = false;
+
+        // Create new abort controller for wrap-up
+        currentAbortController = new AbortController();
+
+        // Set wrap-up timeout to prevent double-hang
+        // Stryker disable next-line ArithmeticOperator: Timeout calculation internals
+        const wrapUpTimeoutMs = config.wrapUpTimeoutMinutes * 60 * 1000;
+        const wrapUpTimer = setTimeout(() => {
+            logger.warn({ slot, wrapUpTimeoutMinutes: config.wrapUpTimeoutMinutes }, 'Wrap-up session timed out - aborting');
+            currentAbortController?.abort();
+        }, wrapUpTimeoutMs);
+
+        // Calculate session duration
+        const durationMs = sessionStartTime ? Date.now() - sessionStartTime.getTime() : 0;
+        // Stryker disable next-line ArithmeticOperator: Duration calculation for logging only
+        const durationMinutes = Math.round(durationMs / 60000);
+
+        // Build timeout prompt
+        const prompt = buildPerchTimeoutPrompt({
+            // Stryker disable next-line all: Fallback default values for partial work state
+            partialWork:       partialWork ?? { thinking: '', text: '', pendingToolUse: null, sessionId: undefined },
+            sessionDuration:   durationMinutes,
+            maxSessionMinutes: config.maxSessionMinutes,
+        });
+
+        logger.info({
+            slot:        slot,
+            durationMin: durationMinutes,
+            maxDuration: config.maxSessionMinutes,
+            msg:         'Resuming with timeout wrap-up prompt',
+        });
+
+        try {
+            // Resume session with wrap-up prompt
+            await runSessionAndFinalize({
+                prompt,
+                slot,
+            });
+        } finally {
+            clearTimeout(wrapUpTimer);
+            // Ensure we always go idle after wrap-up, regardless of outcome
+            if(stateManager.getMode() === 'perching') {
+                stateManager.goIdle();
+            }
+            // Clear session state
+            currentSessionId = undefined;
+            partialWork = null;
+            currentSlot = null;
+            // Clear session timeout
+            if(sessionTimeout) {
+                clearTimeout(sessionTimeout);
+                sessionTimeout = null;
+                sessionStartTime = null;
+            }
+        }
+    }
+
     // Helper for running sessions with error handling
     // eslint-disable-next-line complexity -- timeout handling adds necessary branching
     async function runSessionAndFinalize(options: {
@@ -277,6 +340,25 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             } else if(resumeInProgress && stateManager.getMode() === 'perching') {
                 // Resume session exiting — doResume finally block will handle cleanup
                 logger.info({ slot: options.slot }, 'Resume session exiting - cleanup deferred to doResume');
+            } else if(isTimingOut && !result.completed) {
+                // Timeout abort caught via return path (agent caught AbortError internally and returned completed:false)
+                // Run wrap-up using shared helper
+                await runTimeoutWrapUp(options.slot);
+                return;
+            } else if(!result.completed && !resumeInProgress) {
+                // Safety net — unknown non-completion, go idle
+                logger.warn({ slot: options.slot }, 'Session returned incomplete for unknown reason - going idle');
+                if(stateManager.getMode() === 'perching') {
+                    stateManager.goIdle();
+                }
+                currentSessionId = undefined;
+                partialWork = null;
+                currentSlot = null;
+                if(sessionTimeout) {
+                    clearTimeout(sessionTimeout);
+                    sessionTimeout = null;
+                    sessionStartTime = null;
+                }
             }
         } catch (error) {
             // Check BotStateManager - it's the single source of truth for interrupt state
@@ -291,39 +373,8 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             // Check if this is a timeout abort (not a message interrupt)
             // Stryker disable next-line all: Timeout handling tested via behavior in timeout tests
             if(_.isError(error) && error.name === 'AbortError' && isTimingOut) {
-                // Reset timeout flag
-                // Stryker disable next-line BooleanLiteral: Flag reset after timeout condition
-                isTimingOut = false;
-
-                // Create new abort controller for wrap-up
-                currentAbortController = new AbortController();
-
-                // Calculate session duration
-                const durationMs = sessionStartTime ? Date.now() - sessionStartTime.getTime() : 0;
-                // Stryker disable next-line ArithmeticOperator: Duration calculation for logging only
-                const durationMinutes = Math.round(durationMs / 60000);
-
-                // Build timeout prompt
-                const prompt = buildPerchTimeoutPrompt({
-                    // Stryker disable next-line all: Fallback default values for partial work state
-                    partialWork:       partialWork ?? { thinking: '', text: '', pendingToolUse: null, sessionId: undefined },
-                    sessionDuration:   durationMinutes,
-                    maxSessionMinutes: config.maxSessionMinutes,
-                });
-
-                logger.info({
-                    slot:        currentSlot,
-                    durationMin: durationMinutes,
-                    maxDuration: config.maxSessionMinutes,
-                    msg:         'Resuming with timeout wrap-up prompt',
-                });
-
-                // Resume session with wrap-up prompt
-                await runSessionAndFinalize({
-                    prompt,
-                    slot: currentSlot ?? 'unscheduled',
-                });
-
+                // Run wrap-up using shared helper
+                await runTimeoutWrapUp(currentSlot ?? 'unscheduled');
                 return;
             }
 

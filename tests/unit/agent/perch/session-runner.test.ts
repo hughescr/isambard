@@ -87,11 +87,12 @@ describe('PerchSessionRunner - Basic Lifecycle', () => {
         });
 
         config = {
-            enabled:           true,
-            timezone:          'America/Los_Angeles',
-            intervalMinutes:   60,
-            jitterMinutes:     15,
-            maxSessionMinutes: 45,
+            enabled:              true,
+            timezone:             'America/Los_Angeles',
+            intervalMinutes:      60,
+            jitterMinutes:        15,
+            maxSessionMinutes:    45,
+            wrapUpTimeoutMinutes: 5,
         };
     });
 
@@ -301,11 +302,12 @@ describe('PerchSessionRunner - Interruption', () => {
         mockLogger = createMockLogger();
         mockStateManager = createMockStateManager();
         config = {
-            enabled:           true,
-            timezone:          'America/Los_Angeles',
-            intervalMinutes:   60,
-            jitterMinutes:     15,
-            maxSessionMinutes: 45,
+            enabled:              true,
+            timezone:             'America/Los_Angeles',
+            intervalMinutes:      60,
+            jitterMinutes:        15,
+            maxSessionMinutes:    45,
+            wrapUpTimeoutMinutes: 5,
         };
     });
 
@@ -632,11 +634,12 @@ describe('PerchSessionRunner - Error Handling', () => {
         mockLogger = createMockLogger();
         mockStateManager = createMockStateManager();
         config = {
-            enabled:           true,
-            timezone:          'America/Los_Angeles',
-            intervalMinutes:   60,
-            jitterMinutes:     15,
-            maxSessionMinutes: 45,
+            enabled:              true,
+            timezone:             'America/Los_Angeles',
+            intervalMinutes:      60,
+            jitterMinutes:        15,
+            maxSessionMinutes:    45,
+            wrapUpTimeoutMinutes: 5,
         };
     });
 
@@ -750,11 +753,12 @@ describe('PerchSessionRunner - Timeout', () => {
         });
 
         config = {
-            enabled:           true,
-            timezone:          'America/Los_Angeles',
-            intervalMinutes:   60,
-            jitterMinutes:     15,
-            maxSessionMinutes: 45,
+            enabled:              true,
+            timezone:             'America/Los_Angeles',
+            intervalMinutes:      60,
+            jitterMinutes:        15,
+            maxSessionMinutes:    45,
+            wrapUpTimeoutMinutes: 5,
         };
     });
 
@@ -1203,11 +1207,12 @@ describe('PerchSessionRunner - Session State', () => {
         mockLogger = createMockLogger();
         mockStateManager = createMockStateManager();
         config = {
-            enabled:           true,
-            timezone:          'America/Los_Angeles',
-            intervalMinutes:   60,
-            jitterMinutes:     15,
-            maxSessionMinutes: 45,
+            enabled:              true,
+            timezone:             'America/Los_Angeles',
+            intervalMinutes:      60,
+            jitterMinutes:        15,
+            maxSessionMinutes:    45,
+            wrapUpTimeoutMinutes: 5,
         };
     });
 
@@ -1405,11 +1410,12 @@ describe('PerchSessionRunner - Double-Interrupt Guard', () => {
 
         mockLogger = createMockLogger();
         config = {
-            enabled:           true,
-            timezone:          'America/Los_Angeles',
-            intervalMinutes:   60,
-            jitterMinutes:     15,
-            maxSessionMinutes: 45,
+            enabled:              true,
+            timezone:             'America/Los_Angeles',
+            intervalMinutes:      60,
+            jitterMinutes:        15,
+            maxSessionMinutes:    45,
+            wrapUpTimeoutMinutes: 5,
         };
     });
 
@@ -1613,11 +1619,12 @@ describe('PerchSessionRunner - Mutant Killers', () => {
         mockLogger = createMockLogger();
         mockStateManager = createMockStateManager();
         config = {
-            enabled:           true,
-            timezone:          'America/Los_Angeles',
-            intervalMinutes:   60,
-            jitterMinutes:     15,
-            maxSessionMinutes: 45,
+            enabled:              true,
+            timezone:             'America/Los_Angeles',
+            intervalMinutes:      60,
+            jitterMinutes:        15,
+            maxSessionMinutes:    45,
+            wrapUpTimeoutMinutes: 5,
         };
     });
 
@@ -2411,11 +2418,12 @@ describe('Resume session fallthrough to idle', () => {
         jest.useFakeTimers();
         mockLogger = createMockLogger();
         config = {
-            enabled:           true,
-            timezone:          'America/Los_Angeles',
-            intervalMinutes:   60,
-            jitterMinutes:     15,
-            maxSessionMinutes: 30,
+            enabled:              true,
+            timezone:             'America/Los_Angeles',
+            intervalMinutes:      60,
+            jitterMinutes:        15,
+            maxSessionMinutes:    30,
+            wrapUpTimeoutMinutes: 5,
         };
     });
 
@@ -2491,11 +2499,12 @@ describe('AbortError during resume', () => {
         jest.useFakeTimers();
         mockLogger = createMockLogger();
         config = {
-            enabled:           true,
-            timezone:          'America/Los_Angeles',
-            intervalMinutes:   60,
-            jitterMinutes:     15,
-            maxSessionMinutes: 30,
+            enabled:              true,
+            timezone:             'America/Los_Angeles',
+            intervalMinutes:      60,
+            jitterMinutes:        15,
+            maxSessionMinutes:    30,
+            wrapUpTimeoutMinutes: 5,
         };
     });
 
@@ -2645,11 +2654,12 @@ describe('Resume timeout', () => {
         jest.useFakeTimers();
         mockLogger = createMockLogger();
         config = {
-            enabled:           true,
-            timezone:          'America/Los_Angeles',
-            intervalMinutes:   60,
-            jitterMinutes:     15,
-            maxSessionMinutes: 30,
+            enabled:              true,
+            timezone:             'America/Los_Angeles',
+            intervalMinutes:      60,
+            jitterMinutes:        15,
+            maxSessionMinutes:    30,
+            wrapUpTimeoutMinutes: 5,
         };
     });
 
@@ -2920,6 +2930,315 @@ describe('Resume timeout', () => {
             const logData = logCall[0] as { remainingMs: number };
             expect(logData.remainingMs).toBeGreaterThanOrEqual(60_000);
         }
+    });
+});
+
+describe('PerchSessionRunner - Timeout Return Path', () => {
+    let mockLogger: Logger;
+    let mockStateManager: BotStateManager;
+    let config: PerchConfig;
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2024-01-01T12:00:00.000Z'));
+
+        mockLogger = createMockLogger();
+        mockStateManager = createMockStateManager();
+
+        config = {
+            enabled:              true,
+            timezone:             'America/Los_Angeles',
+            intervalMinutes:      60,
+            jitterMinutes:        15,
+            maxSessionMinutes:    45,
+            wrapUpTimeoutMinutes: 5,
+        };
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('should trigger wrap-up when timeout abort returns completed:false (not throw)', async () => {
+        // Mock runAgentSession to resolve with completed:false when timeout fires (return path not throw path)
+        const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            if(sessionMock.mock.calls.length <= 1) {
+                // First call: wait for abort signal, then RETURN completed:false (not throw)
+                return new Promise((resolve) => {
+                    options.abortSignal.addEventListener('abort', () => {
+                        // Agent catches AbortError internally and returns completed:false
+                        resolve({ completed: false, sessionId: 'test-session' });
+                    });
+                });
+            }
+            // Second call (wrap-up): complete normally
+            return { completed: true, sessionId: 'wrap-up-session' };
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config,
+            runAgentSession: sessionMock,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+        const sessionPromise = runner.startPerch('afternoon');
+
+        // Advance to timeout
+        jest.advanceTimersByTime(45 * 60 * 1000);
+
+        await sessionPromise;
+
+        // Assert: runAgentSession called twice (initial + wrap-up)
+        expect(sessionMock).toHaveBeenCalledTimes(2);
+
+        // Assert: second call's prompt contains 'PERCH SESSION TIMEOUT'
+        const secondCall = sessionMock.mock.calls[1] as [RunAgentSessionOptions];
+        expect(secondCall[0].prompt).toContain('PERCH SESSION TIMEOUT');
+
+        // Assert: goIdle was called
+        expect(mockStateManager.goIdle).toHaveBeenCalled();
+    });
+
+    test('should go idle as safety net when session returns incomplete for unknown reason', async () => {
+        // Mock runAgentSession to immediately resolve with completed:false (no timeout, no interrupt, no resume)
+        const sessionMock = mock(async (): Promise<AgentSessionResult> => {
+            return { completed: false, sessionId: 'test-session' };
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config,
+            runAgentSession: sessionMock,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+        await runner.startPerch('mid-morning');
+
+        // Assert: goIdle was called as safety net
+        expect(mockStateManager.goIdle).toHaveBeenCalled();
+
+        // Assert: no wrap-up session (only 1 call to runAgentSession)
+        expect(sessionMock).toHaveBeenCalledTimes(1);
+
+        // Assert: warning logged
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ slot: 'mid-morning' }),
+            'Session returned incomplete for unknown reason - going idle'
+        );
+    });
+
+    test('should trigger wrap-up via return path with correct duration', async () => {
+        const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            if(sessionMock.mock.calls.length <= 1) {
+                return new Promise((resolve) => {
+                    options.abortSignal.addEventListener('abort', () => {
+                        resolve({ completed: false, sessionId: 'test-session' });
+                    });
+                });
+            }
+            return { completed: true, sessionId: 'wrap-up-session' };
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config,
+            runAgentSession: sessionMock,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+        const sessionPromise = runner.startPerch('evening');
+
+        // Advance exactly to timeout
+        jest.advanceTimersByTime(45 * 60 * 1000);
+
+        await sessionPromise;
+
+        // Assert: timeout log includes correct duration
+        expect(mockLogger.info).toHaveBeenCalledWith(
+            expect.objectContaining({
+                slot:        'evening',
+                durationMin: expect.any(Number) as number,
+                maxDuration: 45,
+                msg:         'Resuming with timeout wrap-up prompt',
+            })
+        );
+
+        // Assert: prompt includes duration
+        const secondCall = sessionMock.mock.calls[1] as [RunAgentSessionOptions];
+        expect(secondCall[0].prompt).toMatch(/45 minutes/);
+    });
+});
+
+describe('PerchSessionRunner - Wrap-Up Timeout', () => {
+    let mockLogger: Logger;
+    let mockStateManager: BotStateManager;
+    let config: PerchConfig;
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2024-01-01T12:00:00.000Z'));
+
+        mockLogger = createMockLogger();
+        mockStateManager = createMockStateManager();
+
+        config = {
+            enabled:              true,
+            timezone:             'America/Los_Angeles',
+            intervalMinutes:      60,
+            jitterMinutes:        15,
+            maxSessionMinutes:    45,
+            wrapUpTimeoutMinutes: 2,
+        };
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('should abort wrap-up session after wrapUpTimeoutMinutes', async () => {
+        // Mock runAgentSession:
+        // - First call: throw AbortError when timeout fires (main session timeout)
+        // - Second call (wrap-up): also throw AbortError when wrap-up timeout fires
+        const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            // Both calls: wait for abort signal, then throw AbortError
+            return new Promise((_resolve, reject) => {
+                options.abortSignal.addEventListener('abort', () => {
+                    const error = new Error('Aborted');
+                    error.name = 'AbortError';
+                    reject(error);
+                });
+            });
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config,
+            runAgentSession: sessionMock,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+        const sessionPromise = runner.startPerch('pre-dawn');
+
+        // Advance to main session timeout (45 minutes)
+        jest.advanceTimersByTime(45 * 60 * 1000);
+
+        // Advance to wrap-up timeout (2 minutes)
+        jest.advanceTimersByTime(2 * 60 * 1000);
+
+        await sessionPromise;
+
+        // Assert: goIdle was called (bot recovered from hang)
+        expect(mockStateManager.goIdle).toHaveBeenCalled();
+
+        // Assert: session was called exactly 2 times (main + wrap-up, no retry)
+        expect(sessionMock).toHaveBeenCalledTimes(2);
+
+        // Assert: warning logged about wrap-up timeout
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ slot: 'pre-dawn', wrapUpTimeoutMinutes: 2 }),
+            'Wrap-up session timed out - aborting'
+        );
+    });
+
+    test('should abort wrap-up session after wrapUpTimeoutMinutes via return path', async () => {
+        // First call resolves completed:false (return path), second call throws AbortError
+        const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            if(sessionMock.mock.calls.length <= 1) {
+                // First call: wait for abort, then resolve completed:false
+                return new Promise((resolve) => {
+                    options.abortSignal.addEventListener('abort', () => {
+                        resolve({ completed: false, sessionId: 'test-session' });
+                    });
+                });
+            }
+            // Second call (wrap-up): throw AbortError when timeout fires
+            return new Promise((_resolve, reject) => {
+                options.abortSignal.addEventListener('abort', () => {
+                    const error = new Error('Aborted');
+                    error.name = 'AbortError';
+                    reject(error);
+                });
+            });
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config,
+            runAgentSession: sessionMock,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+        const sessionPromise = runner.startPerch('mid-morning');
+
+        // Advance to main session timeout (45 minutes)
+        jest.advanceTimersByTime(45 * 60 * 1000);
+
+        // Advance to wrap-up timeout (2 minutes)
+        jest.advanceTimersByTime(2 * 60 * 1000);
+
+        await sessionPromise;
+
+        // Assert: goIdle was called
+        expect(mockStateManager.goIdle).toHaveBeenCalled();
+
+        // Assert: session was called exactly 2 times
+        expect(sessionMock).toHaveBeenCalledTimes(2);
+    });
+
+    test('should use default 5 minute wrap-up timeout when not configured', async () => {
+        // Test with default wrapUpTimeoutMinutes (5)
+        const defaultConfig: PerchConfig = {
+            enabled:              true,
+            timezone:             'America/Los_Angeles',
+            intervalMinutes:      60,
+            jitterMinutes:        15,
+            maxSessionMinutes:    45,
+            wrapUpTimeoutMinutes: 5,
+        };
+
+        const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            // Both calls: throw AbortError when timeout fires
+            return new Promise((_resolve, reject) => {
+                options.abortSignal.addEventListener('abort', () => {
+                    const error = new Error('Aborted');
+                    error.name = 'AbortError';
+                    reject(error);
+                });
+            });
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config:          defaultConfig,
+            runAgentSession: sessionMock,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+        const sessionPromise = runner.startPerch('afternoon');
+
+        // Advance to main session timeout (45 minutes)
+        jest.advanceTimersByTime(45 * 60 * 1000);
+
+        // Advance to wrap-up timeout (5 minutes - default)
+        jest.advanceTimersByTime(5 * 60 * 1000);
+
+        await sessionPromise;
+
+        // Assert: goIdle was called
+        expect(mockStateManager.goIdle).toHaveBeenCalled();
+
+        // Assert: warning logged with default timeout value
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ slot: 'afternoon', wrapUpTimeoutMinutes: 5 }),
+            'Wrap-up session timed out - aborting'
+        );
     });
 });
 

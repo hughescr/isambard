@@ -107,17 +107,19 @@ export interface PerchTestModeConfig {
  */
 export interface PerchConfig {
     /** Whether perch time is enabled */
-    enabled:           boolean
+    enabled:              boolean
     /** Timezone for schedule (default: system timezone) */
-    timezone:          string
+    timezone:             string
     /** Minutes between perch triggers (default: 60) */
-    intervalMinutes:   number
+    intervalMinutes:      number
     /** @deprecated No longer used - cron-parser's H option provides full 0-59 minute range for jitter */
-    jitterMinutes:     number
+    jitterMinutes:        number
     /** Maximum session duration in minutes (default: 45) */
-    maxSessionMinutes: number
+    maxSessionMinutes:    number
+    /** Maximum duration for wrap-up session in minutes (default: 5) */
+    wrapUpTimeoutMinutes: number
     /** Test mode configuration for manual testing */
-    testMode?:         PerchTestModeConfig
+    testMode?:            PerchTestModeConfig
 }
 
 /**
@@ -126,12 +128,13 @@ export interface PerchConfig {
 // Stryker disable next-line all: Static Zod schema configuration with default values
 export const PerchConfigSchema = z.object({
     // Stryker disable next-line BooleanLiteral: Default config value
-    enabled:           z.boolean().default(true),
+    enabled:              z.boolean().default(true),
     // Stryker disable next-line StringLiteral: Default config value
-    timezone:          z.string().default(resolveTimezone()),
-    intervalMinutes:   z.number().int().positive().default(60),
-    jitterMinutes:     z.number().int().nonnegative().default(15),
-    maxSessionMinutes: z.number().int().positive().default(45),
+    timezone:             z.string().default(resolveTimezone()),
+    intervalMinutes:      z.number().int().positive().default(60),
+    jitterMinutes:        z.number().int().nonnegative().default(15),
+    maxSessionMinutes:    z.number().int().positive().default(45),
+    wrapUpTimeoutMinutes: z.number().int().positive().default(5),
 });
 
 /**

@@ -65,17 +65,19 @@ export const dynamoDBConfigSchema = z.object({
 /* Stryker disable BooleanLiteral,StringLiteral: Default values are configuration - validated by schema tests */
 export const perchConfigSchema = z.object({
     /** Whether perch time is enabled */
-    enabled:           z.boolean().default(false),
+    enabled:              z.boolean().default(false),
     /** Timezone for schedule (default: system timezone) */
-    timezone:          z.string().default(resolveTimezone()),
+    timezone:             z.string().default(resolveTimezone()),
     /** Minutes between perch triggers (default: 60) */
-    intervalMinutes:   z.number().int().positive().default(60),
+    intervalMinutes:      z.number().int().positive().default(60),
     /** Jitter range in minutes (default: 15) */
-    jitterMinutes:     z.number().int().nonnegative().default(15),
+    jitterMinutes:        z.number().int().nonnegative().default(15),
     /** Maximum session duration in minutes (default: 45) */
-    maxSessionMinutes: z.number().int().positive().default(45),
+    maxSessionMinutes:    z.number().int().positive().default(45),
+    /** Maximum duration for wrap-up session in minutes (default: 5) */
+    wrapUpTimeoutMinutes: z.number().int().positive().default(5),
     /** Test mode configuration for manual testing */
-    testMode:          z.object({
+    testMode:             z.object({
         /** Whether to trigger perch immediately on startup (enables test mode) */
         triggerOnStartup: z.boolean().default(false),
         /** Force a specific slot instead of calculating from time */
