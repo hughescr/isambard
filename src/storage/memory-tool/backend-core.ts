@@ -1,3 +1,4 @@
+import { DateTime } from 'luxon';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { type DynamoDBKey } from '../repositories/base';
 import {
@@ -48,7 +49,7 @@ export class MemoryToolBackendCore {
     }
 
     async create(input: CreateMemoryToolItemInput): Promise<MemoryToolItemData> {
-        const now = new Date().toISOString();
+        const now = DateTime.utc().toISO();
 
         const itemData = {
             path:           input.path,
@@ -114,7 +115,7 @@ export class MemoryToolBackendCore {
             ...(input.tags !== undefined && { tags: input.tags }),
             // Stryker disable next-line ConditionalExpression: Spread operator conditional - undefined values should not override existing contentPreview
             ...(newContentPreview !== undefined && { contentPreview: newContentPreview }),
-            updatedAt: new Date().toISOString(),
+            updatedAt: DateTime.utc().toISO(),
         };
 
         const result = memoryToolItemSchema.safeParse(updatedData);

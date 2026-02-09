@@ -1,3 +1,4 @@
+import { DateTime } from 'luxon';
 import { startsWith as _startsWith, split as _split, map as _map, toLower as _toLower } from 'lodash';
 import type { MemoryPath } from './types';
 import { extractLayerFromPath } from './types';
@@ -68,7 +69,7 @@ export class MemoryToolKeyGenerator {
         const parentPath = lastSlashIndex === 0 ? '/' : path.slice(0, lastSlashIndex);
         const filename = path.slice(lastSlashIndex + 1);
 
-        const ts = timestamp ?? new Date().toISOString();
+        const ts = timestamp ?? DateTime.utc().toISO();
 
         // Extract layer from path (identity, state, events) or use first path segment as fallback
         const layer = extractLayerFromPath(path);

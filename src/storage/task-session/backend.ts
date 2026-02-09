@@ -1,3 +1,4 @@
+import { DateTime } from 'luxon';
 import { BaseRepository } from '../repositories/base';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { SessionId, TaskSessionItem } from './types';
@@ -37,7 +38,7 @@ export class TaskSessionBackend extends BaseRepository<TaskSessionItem> {
         const item: TaskSessionItem = {
             ...SINGLETON_KEY,
             sessionId,
-            updatedAt: new Date().toISOString(),
+            updatedAt: DateTime.utc().toISO(),
         };
         await this.putItem(item);
     }

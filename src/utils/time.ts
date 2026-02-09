@@ -1,13 +1,4 @@
-import {
-    differenceInDays,
-    differenceInHours,
-    differenceInMinutes,
-    differenceInMonths,
-    differenceInSeconds,
-    differenceInWeeks,
-    differenceInYears
-} from 'date-fns';
-import _ from 'lodash';
+import { DateTime, IANAZone } from 'luxon';
 import { z } from 'zod';
 import { logger } from '@hughescr/logger';
 
@@ -57,35 +48,38 @@ export const timeContextSchema = z.object({
 export type TimeContext = z.infer<typeof timeContextSchema>;
 
 /**
- * Formats a date as human-readable relative time using date-fns.
+ * Formats a date as human-readable relative time using Luxon.
  * @param date - The date to format
  * @param now - Optional reference time (defaults to current time)
  * @returns Human-readable string like "just now", "2 hours ago", "3 days ago"
  */
 export function formatRelativeTime(date: Date, now: Date = new Date()): string {
-    const seconds = differenceInSeconds(now, date);
+    const dtDate = DateTime.fromJSDate(date);
+    const dtNow = DateTime.fromJSDate(now);
+
+    const seconds = Math.floor(dtNow.diff(dtDate, 'seconds').seconds);
 
     if(seconds < SECONDS_THRESHOLD) {
         return 'just now';
     }
 
-    const minutes = differenceInMinutes(now, date);
+    const minutes = Math.floor(dtNow.diff(dtDate, 'minutes').minutes);
     if(minutes < MINUTES_THRESHOLD) {
         return minutes === 1 ? '1 minute ago' : `${minutes} minutes ago`;
     }
 
-    const hours = differenceInHours(now, date);
+    const hours = Math.floor(dtNow.diff(dtDate, 'hours').hours);
     if(hours < HOURS_THRESHOLD) {
         return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
     }
 
-    const days = differenceInDays(now, date);
+    const days = Math.floor(dtNow.diff(dtDate, 'days').days);
     if(days < DAYS_THRESHOLD) {
         return days === 1 ? '1 day ago' : `${days} days ago`;
     }
 
-    const weeks = differenceInWeeks(now, date);
-    const months = differenceInMonths(now, date);
+    const weeks = Math.floor(dtNow.diff(dtDate, 'weeks').weeks);
+    const months = Math.floor(dtNow.diff(dtDate, 'months').months);
     // Stryker disable next-line ConditionalExpression,EqualityOperator: Complex time boundary check, both conditions needed for correct bucketing, <= boundary is equivalent
     if(weeks < WEEKS_THRESHOLD && months < 1) {
         return weeks === 1 ? '1 week ago' : `${weeks} weeks ago`;
@@ -95,7 +89,7 @@ export function formatRelativeTime(date: Date, now: Date = new Date()): string {
         return months === 1 ? '1 month ago' : `${months} months ago`;
     }
 
-    const years = differenceInYears(now, date);
+    const years = Math.floor(dtNow.diff(dtDate, 'years').years);
     return years === 1 ? '1 year ago' : `${years} years ago`;
 }
 
@@ -107,11 +101,9 @@ export function formatRelativeTime(date: Date, now: Date = new Date()): string {
 export function resolveTimezone(userTimezone?: string): string {
     if(userTimezone) {
         // Stryker disable BlockStatement: Logging for observability
-        try {
-            // Stryker disable next-line StringLiteral: DateTimeFormat locale must use exact string
-            new Intl.DateTimeFormat('en', { timeZone: userTimezone });
+        if(IANAZone.isValidZone(userTimezone)) {
             return userTimezone;
-        } catch{
+        } else {
             /* Stryker disable all: Logging for observability */
             logger.warn({ userTimezone }, 'Invalid timezone provided, falling back to server timezone');
             /* Stryker restore all */
@@ -120,7 +112,7 @@ export function resolveTimezone(userTimezone?: string): string {
 
     // Stryker disable BlockStatement: Catch block returns UTC fallback
     try {
-        return new Intl.DateTimeFormat().resolvedOptions().timeZone;
+        return DateTime.local().zoneName;
     } catch{
         return 'UTC';
     }
@@ -133,31 +125,8 @@ export function resolveTimezone(userTimezone?: string): string {
  * @returns Local datetime string in format "YYYY-MM-DDTHH:mm:ss"
  */
 export function formatLocalDateTime(isoString: string, timezone: string): string {
-    const date = new Date(isoString);
-    // Stryker disable next-line StringLiteral: DateTimeFormat locale must use exact string
-    const formatter = new Intl.DateTimeFormat('en-CA', {
-        timeZone: timezone,
-        // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
-        year:     'numeric',
-        // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
-        month:    '2-digit',
-        // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
-        day:      '2-digit',
-        // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
-        hour:     '2-digit',
-        // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
-        minute:   '2-digit',
-        // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
-        second:   '2-digit',
-        // Stryker disable next-line BooleanLiteral: hour12 must be false for 24-hour format
-        hour12:   false,
-    });
-    const parts = formatter.formatToParts(date);
-    // Intl.DateTimeFormat always returns all requested part types, so we can safely
-    // use non-null assertion. The find will always succeed for valid timezones.
-    const get = (type: string): string =>
-        _.find(parts, ['type', type])!.value;
-    return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`;
+    // Stryker disable next-line StringLiteral: Format string is a config value
+    return DateTime.fromISO(isoString).setZone(timezone).toFormat("yyyy-MM-dd'T'HH:mm:ss");
 }
 
 /**
@@ -172,17 +141,7 @@ export function formatLocalDateTime(isoString: string, timezone: string): string
  */
 export function getTimeOfDay(date: Date, timezone?: string): TimeOfDay {
     const tz = timezone ?? resolveTimezone();
-    // Stryker disable next-line StringLiteral: DateTimeFormat locale must use exact string
-    const formatter = new Intl.DateTimeFormat('en', {
-        timeZone: tz,
-        // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
-        hour:     'numeric',
-        // Stryker disable next-line BooleanLiteral: hour12 must be false for 24-hour format
-        hour12:   false,
-    });
-    const parts = formatter.formatToParts(date);
-    const hourPart = _.find(parts, ['type', 'hour']);
-    const hour = hourPart ? parseInt(hourPart.value, 10) : 0;
+    const hour = DateTime.fromJSDate(date).setZone(tz).hour;
 
     if(hour >= 5 && hour < 12) {
         return 'morning';
@@ -204,13 +163,7 @@ export function getTimeOfDay(date: Date, timezone?: string): TimeOfDay {
  */
 export function getDayOfWeek(date: Date, timezone?: string): DayOfWeek {
     const tz = timezone ?? resolveTimezone();
-    // Stryker disable next-line StringLiteral: DateTimeFormat locale must use exact string
-    const weekdayStr = new Intl.DateTimeFormat('en', {
-        timeZone: tz,
-        // Stryker disable next-line StringLiteral: DateTimeFormat options must use exact strings
-        weekday:  'long',
-    }).format(date);
-    return weekdayStr as DayOfWeek;
+    return DateTime.fromJSDate(date).setZone(tz).weekdayLong as DayOfWeek;
 }
 
 /**
@@ -255,35 +208,38 @@ export function formatMemoryTimestamp(updatedAt: string, now: Date = new Date(),
 }
 
 /**
- * Formats a date as short relative time for search results using date-fns.
+ * Formats a date as short relative time for search results using Luxon.
  * @param date - The date to format
  * @param now - Optional reference time (defaults to current time)
  * @returns Compact form like "2h ago", "3d ago", "2w ago"
  */
 export function formatShortRelativeTime(date: Date, now: Date = new Date()): string {
-    const seconds = differenceInSeconds(now, date);
+    const dtDate = DateTime.fromJSDate(date);
+    const dtNow = DateTime.fromJSDate(now);
+
+    const seconds = Math.floor(dtNow.diff(dtDate, 'seconds').seconds);
 
     if(seconds < SECONDS_THRESHOLD) {
         return 'now';
     }
 
-    const minutes = differenceInMinutes(now, date);
+    const minutes = Math.floor(dtNow.diff(dtDate, 'minutes').minutes);
     if(minutes < MINUTES_THRESHOLD) {
         return `${minutes}m ago`;
     }
 
-    const hours = differenceInHours(now, date);
+    const hours = Math.floor(dtNow.diff(dtDate, 'hours').hours);
     if(hours < HOURS_THRESHOLD) {
         return `${hours}h ago`;
     }
 
-    const days = differenceInDays(now, date);
+    const days = Math.floor(dtNow.diff(dtDate, 'days').days);
     if(days < DAYS_THRESHOLD) {
         return `${days}d ago`;
     }
 
-    const weeks = differenceInWeeks(now, date);
-    const months = differenceInMonths(now, date);
+    const weeks = Math.floor(dtNow.diff(dtDate, 'weeks').weeks);
+    const months = Math.floor(dtNow.diff(dtDate, 'months').months);
     // Stryker disable next-line ConditionalExpression,EqualityOperator: Complex time boundary check, both conditions needed for correct bucketing, <= boundary is equivalent
     if(weeks < WEEKS_THRESHOLD && months < 1) {
         return `${weeks}w ago`;
@@ -293,7 +249,7 @@ export function formatShortRelativeTime(date: Date, now: Date = new Date()): str
         return `${months}mo ago`;
     }
 
-    const years = differenceInYears(now, date);
+    const years = Math.floor(dtNow.diff(dtDate, 'years').years);
     return `${years}y ago`;
 }
 
