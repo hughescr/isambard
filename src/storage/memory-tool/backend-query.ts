@@ -1,5 +1,5 @@
 import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { map as _map, sortBy as _sortBy, takeRight as _takeRight, take as _take, chain as _chain } from 'lodash';
+import { map as _map, sortBy as _sortBy, take as _take, chain as _chain, orderBy as _orderBy } from 'lodash';
 import {
     type MemoryToolItemData,
     type MemoryToolItem,
@@ -171,15 +171,16 @@ export class MemoryToolBackendQuery {
         layer?: LayerName,
         options?: { limit?: number }
     ): Promise<MemoryToolItemData[]> {
-        /* Stryker disable all: searchByTimeRange not yet covered by unit tests — used by reconciliation and MCP server */
         // Query GSI1 by layer with time range
         // GSI1PK = LAYER#{layer} AND GSI1SK BETWEEN UPDATED#{start} AND UPDATED#{end}
         const layers = layer ? [layer] : ['identity', 'state', 'events'] as const;
         const allItems: MemoryToolItemData[] = [];
 
+        // Calculate per-layer limit to distribute evenly
+        const perLayerLimit = options?.limit ? Math.ceil(options.limit / layers.length) : undefined;
+
         for(const l of layers) {
-            const result = await this.docClient.send(new QueryCommand({
-                TableName:                 this.tableName,
+            const queryParams: Record<string, unknown> = {
                 IndexName:                 'GSI1',
                 KeyConditionExpression:    'GSI1PK = :pk AND GSI1SK BETWEEN :start AND :end',
                 ExpressionAttributeValues: {
@@ -187,20 +188,32 @@ export class MemoryToolBackendQuery {
                     ':start': `UPDATED#${startTime}`,
                     ':end':   `UPDATED#${endTime}`,
                 },
+                // Stryker disable next-line BooleanLiteral: Sort order is observational - both ascending/descending orderings are valid for time range queries
+                ScanIndexForward: false, // Newest first
+            };
+
+            // Stryker disable next-line ConditionalExpression: Guard is defensive — setting Limit to undefined is equivalent to not setting it
+            if(perLayerLimit) {
+                queryParams.Limit = perLayerLimit;
+            }
+
+            const result = await this.docClient.send(new QueryCommand({
+                TableName: this.tableName,
+                ...queryParams,
             }));
             allItems.push(..._map((result.Items ?? []) as MemoryToolItem[], item => this.stripKeys(item)));
         }
 
-        // Sort by updatedAt ascending (oldest first, newest last)
-        let items = _sortBy(allItems, ['updatedAt']);
+        // Items arrive newest-first per layer; merge, sort descending, take limit, reverse to ascending
+        let items = _orderBy(allItems, ['updatedAt'], ['desc']);
 
-        // Apply limit after sorting - keep newest N items
-        if(options?.limit && items.length > options.limit) {
-            items = _takeRight(items, options.limit);
+        // Apply limit - keep newest N items
+        if(options?.limit) {
+            items = _take(items, options.limit);
         }
 
-        return items;
-        /* Stryker restore all */
+        // Reverse to ascending order (oldest first, newest last) for the caller
+        return items.reverse();
     }
 
     async getAutoLoadItems(

@@ -156,6 +156,14 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
         // Mark resume as in progress to prevent double-resume
         resumeInProgress = true;
 
+        logger.info({
+            slot:           currentSlot,
+            // Stryker disable next-line ArithmeticOperator,MethodExpression: Timeout calculation internals for logging only
+            remainingMs:    Math.max((config.maxSessionMinutes * 60 * 1000) - (sessionStartTime ? Date.now() - sessionStartTime.getTime() : 0), 60_000),
+            // Stryker disable next-line ConditionalExpression,EqualityOperator: Logging-only field, mutation doesn't affect behavior
+            hasPartialWork: partialWork !== null,
+        }, 'doResume starting');
+
         // Create new abort controller
         currentAbortController = new AbortController();
 
@@ -246,10 +254,10 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             // The result.completed flag can be incorrect when abort errors are caught
             // Don't schedule resume if we're already in a resume (resumeInProgress)
             if(stateManager.isInterrupted() && !resumeInProgress) {
-                // Session was interrupted by a message
-                // Schedule resume on next tick to let current stack unwind
-                logger.debug({ slot: options.slot }, 'Session interrupted - scheduling resume');
-                setTimeout(() => void doResume(), 0);
+                // Session was interrupted — don't resume here.
+                // The onResponse callback in bot.ts will call resumeAfterInterruption()
+                // after the interrupting message has been handled.
+                logger.debug({ slot: options.slot }, 'Session interrupted - awaiting external resume');
             } else if(result.completed && !resumeInProgress) {
                 // Session completed normally, transition to idle
                 logger.info({ slot: options.slot }, 'Perch session completed');
@@ -272,10 +280,11 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             }
         } catch (error) {
             // Check BotStateManager - it's the single source of truth for interrupt state
-            // If interrupted by message, schedule resume on next tick to let current stack unwind
+            // If interrupted by message, leave state as perching+interrupted for onResponse to handle
             // Don't schedule resume if we're already in a resume (resumeInProgress)
             if(stateManager.isInterrupted() && !resumeInProgress) {
-                setTimeout(() => void doResume(), 0);
+                // Interrupted — leave state as perching+interrupted for onResponse to handle
+                logger.debug({ slot: options.slot }, 'Session aborted by interrupt - awaiting external resume');
                 return;
             }
 

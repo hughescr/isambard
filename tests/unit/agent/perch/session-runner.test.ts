@@ -444,10 +444,11 @@ describe('PerchSessionRunner - Interruption', () => {
         // Verify interrupt was called
         expect(mockStateManagerWithMessage.interrupt).toHaveBeenCalledWith(interruptMessage);
 
-        // Now run the setTimeout(0) for resume
-        jest.runAllTimers();
+        // Now resume externally (simulating bot.ts onResponse callback)
+        void runner.resumeAfterInterruption();
 
         // Let the resume execute (doResume is async)
+        await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
 
@@ -605,17 +606,17 @@ describe('PerchSessionRunner - Interruption', () => {
         // sessionPromise completes after first call's catch block
         await sessionPromise;
 
-        // Wait for resume to be scheduled and executed
-        jest.advanceTimersByTime(1);
+        // Resume externally (simulating bot.ts onResponse callback)
+        void runner.resumeAfterInterruption();
+        await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
 
         // Verify resume was scheduled (second call made)
         expect(sessionMock).toHaveBeenCalledTimes(2);
 
-        // Note: The resume happens from the catch block which doesn't log
-        // "Session interrupted - scheduling resume". That log only happens
-        // in the try block when a session completes successfully while interrupted.
+        // Note: The resume no longer happens automatically - it must be triggered
+        // via resumeAfterInterruption() by the bot.ts onResponse callback.
     });
 });
 
@@ -1353,8 +1354,9 @@ describe('PerchSessionRunner - Session State', () => {
         // sessionPromise completes after first call's catch block
         await sessionPromise;
 
-        // Wait for resume to complete
-        jest.advanceTimersByTime(1);
+        // Resume externally (simulating bot.ts onResponse callback)
+        void runner.resumeAfterInterruption();
+        await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
 
@@ -1763,14 +1765,15 @@ describe('PerchSessionRunner - Mutant Killers', () => {
         const sessionPromise = runner.startPerch('pre-dawn');
         await sessionPromise;
 
-        // Verify logger.debug was called for scheduling resume
+        // Verify logger.debug was called for awaiting external resume
         expect(mockLogger.debug).toHaveBeenCalledWith(
             expect.objectContaining({ slot: 'pre-dawn' }),
-            'Session interrupted - scheduling resume'
+            'Session interrupted - awaiting external resume'
         );
 
-        // Run timers to execute resume
-        jest.runAllTimers();
+        // Resume externally (simulating bot.ts onResponse callback)
+        void runner.resumeAfterInterruption();
+        await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
 
@@ -1816,8 +1819,9 @@ describe('PerchSessionRunner - Mutant Killers', () => {
         await Promise.resolve();
         await sessionPromise;
 
-        // Run timers to execute setTimeout
-        jest.runAllTimers();
+        // Resume externally (simulating bot.ts onResponse callback)
+        void runner.resumeAfterInterruption();
+        await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
 
@@ -2306,7 +2310,9 @@ describe('PerchSessionRunner - Mutant Killers', () => {
         await Promise.resolve();
         await sessionPromise;
 
-        jest.runAllTimers();
+        // Resume externally (simulating bot.ts onResponse callback)
+        void runner.resumeAfterInterruption();
+        await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
 
@@ -2384,8 +2390,9 @@ describe('PerchSessionRunner - Mutant Killers', () => {
         // Reset mock call count for goIdle
         const initialCallCount = (mockStateManager.goIdle as ReturnType<typeof mock>).mock.calls.length;
 
-        // Run resume
-        jest.runAllTimers();
+        // Resume externally (simulating bot.ts onResponse callback)
+        void runner.resumeAfterInterruption();
+        await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
 
@@ -2464,8 +2471,9 @@ describe('Resume session fallthrough to idle', () => {
         await Promise.resolve();
         await sessionPromise;
 
-        // Run timers to trigger the setTimeout that schedules resume
-        jest.runAllTimers();
+        // Resume externally (simulating bot.ts onResponse callback)
+        void runner.resumeAfterInterruption();
+        await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
 
@@ -2544,8 +2552,9 @@ describe('AbortError during resume', () => {
         await Promise.resolve();
         await sessionPromise;
 
-        // Run timers to trigger the setTimeout that schedules resume
-        jest.runAllTimers();
+        // Resume externally (simulating bot.ts onResponse callback)
+        void runner.resumeAfterInterruption();
+        await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
 
@@ -2697,8 +2706,9 @@ describe('Resume timeout', () => {
         await Promise.resolve();
         await sessionPromise;
 
-        // Run timers to trigger the setTimeout that schedules resume
-        jest.runAllTimers();
+        // Resume externally (simulating bot.ts onResponse callback)
+        void runner.resumeAfterInterruption();
+        await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
 
@@ -2755,8 +2765,9 @@ describe('Resume timeout', () => {
         await Promise.resolve();
         await sessionPromise;
 
-        // Run timers to trigger the setTimeout that schedules resume
-        jest.runAllTimers();
+        // Resume externally (simulating bot.ts onResponse callback)
+        void runner.resumeAfterInterruption();
+        await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
 
@@ -2825,6 +2836,90 @@ describe('Resume timeout', () => {
 
         // Still only 1 call total
         expect(callCount).toBe(1);
+    });
+
+    test('should log entry with slot, remainingMs, and hasPartialWork when doResume starts', async () => {
+        jest.setSystemTime(new Date('2024-01-01T12:00:00.000Z'));
+
+        const mockStateManager = createMockStateManager({
+            mode:        'idle',
+            interrupted: false,
+        });
+
+        let callCount = 0;
+        const mockSession = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            callCount++;
+            if(callCount === 1) {
+                // First call - abort due to interrupt
+                return new Promise((_resolve, reject) => {
+                    options.abortSignal.addEventListener('abort', () => {
+                        const error = new Error('Aborted');
+                        error.name = 'AbortError';
+                        reject(error);
+                    });
+                });
+            }
+            // Second call (resume) - complete successfully
+            return { completed: true };
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config:          { ...config, maxSessionMinutes: 30 },
+            runAgentSession: mockSession,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+
+        // Start a session and interrupt it during execution
+        const sessionPromise = runner.startPerch('pre-dawn');
+        await Promise.resolve();
+
+        runner.interrupt({
+            channelId:   'ch-1' as ChannelId,
+            author:      'TestUser',
+            channelName: 'general',
+            content:     'Hello',
+        });
+
+        await Promise.resolve();
+        await sessionPromise;
+
+        // Clear previous log calls
+        (mockLogger.info as ReturnType<typeof mock>).mockClear();
+
+        // Advance time by 5 minutes (300000 ms)
+        jest.setSystemTime(new Date('2024-01-01T12:05:00.000Z'));
+
+        // Resume externally (simulating bot.ts onResponse callback)
+        void runner.resumeAfterInterruption();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // Verify logger.info was called with doResume starting message
+        expect(mockLogger.info).toHaveBeenCalledWith(
+            expect.objectContaining({
+                slot:           'pre-dawn',
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() is type-safe at runtime
+                remainingMs:    expect.any(Number),
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() is type-safe at runtime
+                hasPartialWork: expect.any(Boolean),
+            }),
+            'doResume starting'
+        );
+
+        // Verify remainingMs is calculated correctly (should be >= 60000, the 1-minute floor)
+        // eslint-disable-next-line lodash/prefer-lodash-method -- Array.find is clearer for test assertion
+        const logCall = (mockLogger.info as ReturnType<typeof mock>).mock.calls.find(
+            (call: unknown[]) => call[1] === 'doResume starting'
+        );
+        expect(logCall).toBeDefined();
+        if(logCall) {
+            const logData = logCall[0] as { remainingMs: number };
+            expect(logData.remainingMs).toBeGreaterThanOrEqual(60_000);
+        }
     });
 });
 

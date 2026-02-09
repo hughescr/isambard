@@ -252,7 +252,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                 showingOlderEventsNote = result.length > 0;
             }
 
-            // Sort by updatedAt ascending (oldest first, newest last)
+            // Ensure ascending order: searchByTimeRange returns ascending, but listByLayer fallback returns descending
             result = _sortBy(result, ['updatedAt']);
 
             // Format each item with path, age, and content preview

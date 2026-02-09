@@ -868,8 +868,9 @@ function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
             }
 
             return {
-                completed: !result.wasInterrupted,
-                sessionId: result.sessionId,
+                completed:   !result.wasInterrupted,
+                sessionId:   result.sessionId,
+                partialWork: result.streamTracker.getProgress(),
             };
         },
     });
