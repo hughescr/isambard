@@ -18,6 +18,7 @@ import type { ActiveStatusGenerator } from './status-generator-active.js';
 import type { IdleStatusGenerator } from './status-generator-idle.js';
 import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
 import { withDiscordRetry } from '@/integrations/discord/retry';
+import { DateTime } from 'luxon';
 
 /**
  * Interface for managing Discord presence state.
@@ -289,7 +290,11 @@ export function createPresenceManager(
         // Stryker restore all
 
         async updatePhase(phase: PresencePhase): Promise<void> {
-            logger.debug({ phase }, 'Updating presence phase');
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            const logPhase = phase.type === 'idle'
+                ? { ...phase, since: DateTime.fromJSDate(phase.since).toISO() }
+                : phase;
+            logger.debug({ phase: logPhase }, 'Updating presence phase');
 
             const wasIdle = currentPhase?.type === 'idle';
             const nowIdle = phase.type === 'idle';

@@ -8,6 +8,7 @@
 import { logger } from '@hughescr/logger';
 import type { ReconciliationConfig, ReconciliationState, ReconciliationResult } from './types';
 import type { ReconcilerDeps, ReconcilerOptions } from './reconciler';
+import { DateTime } from 'luxon';
 
 // ============================================================================
 // Dependencies & Interface
@@ -192,7 +193,7 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
         /* Stryker disable StringLiteral,ObjectLiteral,ArithmeticOperator: Logging is observational */
         logger.debug({
             delayMs:     config.intervalMs,
-            nextTrigger: new Date(Date.now() + config.intervalMs).toISOString(),
+            nextTrigger: DateTime.now().plus({ milliseconds: config.intervalMs }).toISO({ suppressMilliseconds: true }),
             msg:         'Next reconciliation scheduled',
         });
         /* Stryker restore StringLiteral,ObjectLiteral,ArithmeticOperator */

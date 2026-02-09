@@ -15,6 +15,7 @@ import { buildCatchUpPrompt, buildCatchUpInterruptedPrompt } from './prompts';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
 import { formatTimeSince } from '@/utils/time';
+import { DateTime } from 'luxon';
 
 /**
  * Hot reload signal stored in memory - indicates catch-up completed.
@@ -198,7 +199,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
         // Store completion signal
         await deps.storeCompletionSignal({
-            completedAt: new Date().toISOString(),
+            completedAt: DateTime.now().toISO(),
             channelsProcessed,
             messagesProcessed,
         });
@@ -451,7 +452,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
             // Store inProgress marker
             await deps.storeInProgressSignal({
-                startedAt: new Date().toISOString(),
+                startedAt: DateTime.now().toISO(),
             });
 
             // Create abort controller
