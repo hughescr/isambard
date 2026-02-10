@@ -1,5 +1,4 @@
 import type { Client } from 'discord.js';
-import { ActivityType } from 'discord.js';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { DiscordConfig } from '@/config/schemas';
@@ -10,14 +9,12 @@ import { setConversationContext, clearConversationContext } from '@/agent';
 import { createDiscordClient } from './client';
 import { createReadyHandler, createErrorHandler, createMessageHandler } from './handlers';
 import {
-    createActiveStatusGenerator,
     createDynamicStatusGenerator,
-    createIdleStatusGenerator,
-    createPresenceManager,
-    createStreamEventHandler,
     type PresenceManager,
     type CatchUpSynopsisContext
 } from './presence';
+import { createPresenceStreamHandler } from './setup/presence-stream-handler';
+import { setupPresence, type PresenceSetupResult } from './setup/presence-setup';
 import { createMessageCoordinator, type MessageCoordinator } from './message-coordinator';
 import { createDiscordRateLimiter, type DiscordRateLimiter } from './rate-limiter';
 import { createQuestionRegistry, type QuestionRegistry } from '@/agent/question-registry';
@@ -35,8 +32,7 @@ import {
 } from './catchup';
 import {
     createBotStateManager,
-    type BotStateManager,
-    type StateChange
+    type BotStateManager
 } from './state';
 import {
     createPerchScheduler,
@@ -194,34 +190,6 @@ async function processAttachments(contexts: DiscordMessageContext[]): Promise<Pr
     return { images, contentAdditions };
 }
 // Stryker restore all
-
-/**
- * Creates a stream event handler for presence updates during agent processing.
- * Returns undefined if presence manager is not available.
- *
- * @param presenceManager - Manager for Discord presence updates
- * @param dynamicStatusGenerator - Optional generator for context-aware status messages
- * @param userMessage - User's message content for synopsis generation
- * @returns Stream event handler or undefined
- */
-function createPresenceStreamHandler(
-    presenceManager: PresenceManager | undefined,
-    dynamicStatusGenerator: ReturnType<typeof createDynamicStatusGenerator> | undefined,
-    userMessage: string,
-    botStateManager: BotStateManager
-): ReturnType<typeof createStreamEventHandler> | undefined {
-    if(!presenceManager) {
-        return undefined;
-    }
-
-    return createStreamEventHandler({
-        presenceManager,
-        dynamicStatusGenerator,
-        logger,
-        userMessage,
-        botStateManager,
-    });
-}
 
 /**
  * Options for configuring the Discord bot.
@@ -1140,18 +1108,17 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             ? createDynamicStatusGenerator({ identityContext })
             : undefined;
 
-        // Create presence manager if optional deps provided
+        // Setup presence manager if optional deps provided
         // IMPORTANT: Must create before coordinator.setProcessor so it's available in onStreamEvent
+        let presenceSetup: PresenceSetupResult | undefined;
         if(identityContext && config.presence) {
-            const activeStatusGenerator = createActiveStatusGenerator({
-                activityType: ActivityType.Custom,
-                logger,
-            });
-
-            const idleStatusGenerator = createIdleStatusGenerator({
-                logger,
-                activityType:     ActivityType.Custom,
+            presenceSetup = setupPresence({
                 identityContext,
+                presenceConfig:   config.presence,
+                readyClient,
+                botStateManager,
+                dynamicStatusGenerator,
+                inboxManager,
                 getRecentContext: async () => {
                     if(recentMessages.length === 0) {
                         return undefined;
@@ -1159,107 +1126,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     return recentMessages.join('\n• ');
                 },
             });
-
-            presenceManager = createPresenceManager({
-                discordClient: readyClient,
-                config:        config.presence,
-                activeStatusGenerator,
-                idleStatusGenerator,
-                dynamicStatusGenerator,
-                logger,
-            });
-
-            presenceManager.start();
-
-            // Bridge: Sync BotStateManager → PresenceManager
-            /**
-             * Set up idempotent subscription using `??=` (nullish coalescing assignment).
-             *
-             * The `??=` operator only assigns if the variable is null or undefined, ensuring
-             * this subscription is created exactly once even if this handler runs multiple times
-             * (e.g., on Discord reconnects).
-             *
-             * Problem solved: Without idempotency, each Discord reconnect would create duplicate
-             * subscriptions, causing the same event to fire multiple times and create memory leaks.
-             *
-             * Cleanup: The unsubscribe functions are called in stop() to properly clean up
-             * all subscriptions when the bot shuts down.
-             */
-            unsubscribeModeTransition ??= botStateManager.subscribe((change: StateChange) => {
-                // Sync mode changes to presence manager
-                if(change.changeType === 'mode_transition') {
-                    const mode = change.newState.mode;
-                    const interrupted = change.newState.interrupted;
-
-                    // Map BotState mode to PresenceDisplayMode for presence
-                    if(mode === 'idle') {
-                        presenceManager!.transitionPresenceDisplayMode('none');
-                        // Explicitly transition presence to idle phase
-                        void presenceManager!.updatePhase({ type: 'idle', since: new Date() });
-                    } else if(mode === 'catching_up') {
-                        presenceManager!.transitionPresenceDisplayMode(interrupted ? 'catching_up_interrupted' : 'catching_up');
-                    } else if(mode === 'processing_message') {
-                        presenceManager!.transitionPresenceDisplayMode('processing_message');
-                    } else if(mode === 'perching') {
-                        presenceManager!.transitionPresenceDisplayMode(interrupted ? 'perching_interrupted' : 'perching');
-                    }
-                }
-
-                // Sync interrupted flag changes
-                if(change.changeType === 'interrupted') {
-                    const mode = change.newState.mode;
-                    const interrupted = change.newState.interrupted;
-                    if(mode === 'catching_up') {
-                        presenceManager!.transitionPresenceDisplayMode(interrupted ? 'catching_up_interrupted' : 'catching_up');
-                    } else if(mode === 'perching') {
-                        presenceManager!.transitionPresenceDisplayMode(interrupted ? 'perching_interrupted' : 'perching');
-                    }
-                }
-            });
-
-            // Bridge: Sync activity phases to presence manager
-            /**
-             * Set up idempotent subscription using `??=` (nullish coalescing assignment).
-             *
-             * The `??=` operator only assigns if the variable is null or undefined, ensuring
-             * this subscription is created exactly once even if this handler runs multiple times
-             * (e.g., on Discord reconnects).
-             *
-             * Problem solved: Without idempotency, each Discord reconnect would create duplicate
-             * subscriptions, causing the same event to fire multiple times and create memory leaks.
-             *
-             * Cleanup: The unsubscribe functions are called in stop() to properly clean up
-             * all subscriptions when the bot shuts down.
-             *
-             * Note: Check throttle BEFORE calling presenceManager.updatePhase() to ensure single throttle gate.
-             */
-            unsubscribeActivityPhase ??= botStateManager.subscribe((change: StateChange) => {
-                if(change.changeType === 'activity_phase' && presenceManager) {
-                    const phase = change.newState.activityPhase;
-                    if(phase) {
-                        // Throttle active phase updates to avoid Discord rate limits
-                        if(botStateManager.shouldUpdatePresence()) {
-                            void presenceManager.updatePhase(phase);
-                            botStateManager.recordPresenceUpdate();
-                        }
-                    } else {
-                        // Idle transitions intentionally bypass throttling:
-                        // - End of work should show immediately to users
-                        // - Prevents "stuck" active status after processing completes
-                        // - Idle is a stable state, not a rapid-fire event
-                        if(change.newState.mode === 'idle') {
-                            void presenceManager.updatePhase({ type: 'idle', since: new Date() });
-                            botStateManager.recordPresenceUpdate();
-                        }
-                    }
-                }
-            });
-
-            // If no inbox manager, transition to idle immediately
-            // (otherwise, idle transition happens after catch-up check in inbox init)
-            if(!inboxManager) {
-                void presenceManager.updatePhase({ type: 'idle', since: new Date() });
-            }
+            presenceManager = presenceSetup.presenceManager;
+            unsubscribeModeTransition = presenceSetup.unsubscribeModeTransition;
+            unsubscribeActivityPhase = presenceSetup.unsubscribeActivityPhase;
         }
 
         // Create DMTracker and ResponseRouter (after client is ready, BEFORE session runners)
