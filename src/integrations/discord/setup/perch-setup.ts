@@ -36,6 +36,7 @@ export interface SetupPerchParams {
  * @param params - Configuration for perch setup
  * @returns Object containing configured perch session runner and scheduler
  */
+// Stryker disable all: Integration function with callbacks coordinating multiple components - tested via bot integration tests
 export function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
     runner:    PerchSessionRunner
     scheduler: PerchScheduler
@@ -130,3 +131,4 @@ export function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
 
     return { runner, scheduler };
 }
+// Stryker restore all

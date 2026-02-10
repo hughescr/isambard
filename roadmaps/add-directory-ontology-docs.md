@@ -36,7 +36,8 @@ src/
 │       ├── inbox/                  # Message inbox management
 │       ├── message-history/        # Historical message search
 │       ├── presence/               # Discord presence/status system
-│       └── state/                  # Bot state machine
+│       ├── state/                  # Bot state machine
+│       └── setup/                  # Bot initialization setup modules
 ├── storage/                        # Data persistence layer
 │   ├── memory-tool/                # Memory tool backend (DynamoDB)
 │   ├── models/                     # Entity definitions

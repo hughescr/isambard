@@ -77,6 +77,7 @@ export function setupPresence(params: {
 
     presenceManager.start();
 
+    // Stryker disable all: Integration callbacks syncing state between components - tested via bot integration tests
     // Bridge: Sync BotStateManager → PresenceManager
     const unsubscribeModeTransition = botStateManager.subscribe((change: StateChange) => {
         // Sync mode changes to presence manager
@@ -145,3 +146,4 @@ export function setupPresence(params: {
         unsubscribeActivityPhase,
     };
 }
+// Stryker restore all

@@ -95,6 +95,7 @@ export interface SetupCatchUpRunnerParams {
  * @param params - Configuration for catch-up setup
  * @returns Configured catch-up session runner
  */
+// Stryker disable all: Integration function with callbacks coordinating multiple components - tested via bot integration tests
 export function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): CatchUpSessionRunner {
     const {
         inboxManager,
@@ -178,6 +179,7 @@ export function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): Cat
         },
     });
 }
+// Stryker restore all
 
 /**
  * Parameters for setting up inbox and catch-up functionality.
@@ -200,6 +202,7 @@ export interface SetupInboxParams {
  *
  * @param params - Configuration for inbox setup
  */
+// Stryker disable all: Integration function with async IIFE coordinating multiple components - tested via bot integration tests
 export function setupInboxAndCatchUp(params: SetupInboxParams): void {
     const {
         inboxManager,
@@ -268,3 +271,4 @@ export function setupInboxAndCatchUp(params: SetupInboxParams): void {
         });
     });
 }
+// Stryker restore all

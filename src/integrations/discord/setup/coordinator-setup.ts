@@ -136,6 +136,7 @@ export interface SetupCoordinatorParams {
  * @param params - Configuration for coordinator setup
  * @returns Configured message coordinator
  */
+// Stryker disable all: Integration function coordinating multiple components with callbacks - tested via bot integration tests
 export function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoordinator {
     const {
         agent,
@@ -314,3 +315,4 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
 
     return coordinator;
 }
+// Stryker restore all

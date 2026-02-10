@@ -1,5 +1,4 @@
 import type { Client } from 'discord.js';
-import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { DiscordConfig } from '@/config/schemas';
 import type { ClaudeAgent } from '@/agent/agent';

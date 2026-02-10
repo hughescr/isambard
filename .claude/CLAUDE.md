@@ -82,10 +82,17 @@ The Discord integration provides bot functionality:
 - `src/integrations/discord/errors.ts` - Error hierarchy
 - `src/integrations/discord/client.ts` - Discord.js client factory
 - `src/integrations/discord/handlers.ts` - Event handlers (ready, error, messageCreate)
-- `src/integrations/discord/bot.ts` - Bot factory with start/stop lifecycle and channel/guild cleanup
+- `src/integrations/discord/bot.ts` - Thin bot factory orchestrator delegating to setup/ modules with start/stop lifecycle
 - `src/integrations/discord/messages.ts` - Message splitting utilities (splitMessage for Discord's 2000-char limit)
 - `src/integrations/discord/rate-limiter.ts` - Rate limiting for Discord API calls
 - `src/integrations/discord/retry.ts` - Retry logic for Discord operations
+- `src/integrations/discord/setup/` - Bot initialization setup modules (extracted from bot.ts)
+  - `presence-stream-handler.ts` - Shared utility for creating stream event handlers for presence updates
+  - `presence-setup.ts` - Presence manager creation, status generators, and BotStateManager subscriptions
+  - `perch-setup.ts` - Perch session runner and scheduler configuration
+  - `catchup-setup.ts` - Catch-up session runner, inbox initialization, and catch-up context building
+  - `coordinator-setup.ts` - Message coordinator integration with agent, attachment processing
+  - `event-handler-setup.ts` - Channel registry initialization, message processing setup, channel cleanup handlers
 - `src/integrations/discord/index.ts` - Public exports
 
 ### Discord Presence System

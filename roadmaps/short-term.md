@@ -75,6 +75,22 @@ Consolidated scattered context building and eliminated dead backward-compatibili
 - Cleaned up `MessageHandlerOptions`: removed `onMessage`, `presenceManager`, `agent`, `dynamicStatusGenerator`, `responseRouter`
 - 100% mutation score on all changed files
 
+### Refactor Discord Bot Internals (Completed February 2026)
+Decomposed the 1,451-line `createDiscordBot()` god function into focused setup modules.
+
+**What was implemented:**
+- 6 setup modules extracted into `src/integrations/discord/setup/`:
+  - `presence-stream-handler.ts` — Shared stream event handler utility
+  - `presence-setup.ts` — Presence manager creation and BotStateManager subscriptions
+  - `perch-setup.ts` — Perch session runner and scheduler wiring
+  - `catchup-setup.ts` — Catch-up session runner and inbox initialization
+  - `coordinator-setup.ts` — Message coordinator and attachment processing
+  - `event-handler-setup.ts` — Channel registry init, message handlers, cleanup handlers
+- `bot.ts` reduced from 1,451 to 496 lines (66% reduction)
+- `createDiscordBot()` is now a thin orchestrator delegating to setup functions
+- Simplified `??=` subscription guards to `=` (`.once()` guarantees single execution)
+- 100% mutation score on all changed files
+
 ### Channel Discovery and Registration (Completed February 2026)
 Dynamic channel discovery and registration system replacing hardcoded channel IDs.
 

@@ -175,10 +175,10 @@ sst secret set PerchEnabled true
 
 ## Integration Points
 
-### bot.ts
-- Initializes `PerchScheduler` with dependencies
+### setup/perch-setup.ts (via bot.ts)
+- `setupPerchSessionRunnerAndScheduler()` initializes `PerchScheduler` with dependencies
 - Wires `onPerchTrigger` callback to `PerchSessionRunner.startPerch()`
-- Passes `resumePerch` callback to message coordinator for post-response resumption
+- `bot.ts` calls this setup function and manages lifecycle (start/stop)
 
 ### handlers.ts
 - On `messageCreate`, checks if bot is in perching mode
