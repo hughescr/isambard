@@ -7,7 +7,7 @@
 import { map, replace } from 'lodash';
 
 import type { ContextBuilder } from '../context-builder.js';
-import { getCurrentTimeContext } from '@/utils/time.js';
+import { formatTimeHeader } from '@/utils/time.js';
 
 /**
  * Base system prompt defining Isambard's identity and behavior.
@@ -310,10 +310,8 @@ export async function buildSystemPrompt(
         userTimezone = options.userTimezone;
     }
 
-    const timeContext = getCurrentTimeContext(userTimezone);
-    const timeContextStr = `- UTC: ${timeContext.utc} (${timeContext.utcDayOfWeek} ${timeContext.utcTimeOfDay})
-- Local: ${timeContext.userLocalTime} ${timeContext.userTimezone} (${timeContext.dayOfWeek} ${timeContext.timeOfDay})`;
-    let systemPrompt = `${BASE_SYSTEM_PROMPT}\n\n## Current Time Context\n${timeContextStr}`;
+    const timeHeader = formatTimeHeader(userTimezone);
+    let systemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${timeHeader}`;
 
     // Add Discord Channel Context if channelList is provided and non-empty
     if(channelList && channelList.length > 0) {

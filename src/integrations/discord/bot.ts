@@ -309,23 +309,18 @@ async function initializeChannelRegistry(
  * Parameters for setting up message processing.
  */
 interface SetupMessageProcessingParams {
-    client:                 Client
-    readyClient:            Client
-    channelRegistry:        ChannelRegistryManager
-    onMessage:              (context: DiscordMessageContext) => Promise<string | null>
-    presenceManager:        PresenceManager | undefined
-    agent:                  ClaudeAgent | undefined
-    dynamicStatusGenerator: ReturnType<typeof createDynamicStatusGenerator> | undefined
-    addRecentMessage:       (content: string) => void
-    coordinator:            MessageCoordinator | undefined
-    questionRegistry:       QuestionRegistry
-    answerClassifier:       ReturnType<typeof createAnswerClassifier>
-    inboxManager:           InboxManager | undefined
-    catchUpSessionRunner:   CatchUpSessionRunner | undefined
-    botStateManager:        BotStateManager
-    perchSessionRunner:     PerchSessionRunner | undefined
-    dmTracker:              DMTracker
-    responseRouter:         ResponseRouter
+    client:               Client
+    readyClient:          Client
+    channelRegistry:      ChannelRegistryManager
+    addRecentMessage:     (content: string) => void
+    coordinator:          MessageCoordinator
+    questionRegistry:     QuestionRegistry
+    answerClassifier:     ReturnType<typeof createAnswerClassifier>
+    inboxManager:         InboxManager | undefined
+    catchUpSessionRunner: CatchUpSessionRunner | undefined
+    botStateManager:      BotStateManager
+    perchSessionRunner:   PerchSessionRunner | undefined
+    dmTracker:            DMTracker
 }
 
 /**
@@ -338,10 +333,6 @@ function setupMessageProcessing(params: SetupMessageProcessingParams): void {
         client,
         readyClient,
         channelRegistry,
-        onMessage,
-        presenceManager,
-        agent,
-        dynamicStatusGenerator,
         addRecentMessage,
         coordinator,
         questionRegistry,
@@ -351,7 +342,6 @@ function setupMessageProcessing(params: SetupMessageProcessingParams): void {
         botStateManager,
         perchSessionRunner,
         dmTracker,
-        responseRouter,
     } = params;
 
     // Register message handler AFTER channel registry is initialized
@@ -360,10 +350,6 @@ function setupMessageProcessing(params: SetupMessageProcessingParams): void {
     client.on('messageCreate', createMessageHandler({
         botUserId: readyClient.user!.id as UserId,
         channelRegistry,
-        onMessage,
-        presenceManager,
-        agent,
-        dynamicStatusGenerator,
         addRecentMessage,
         coordinator,
         questionRegistry,
@@ -373,7 +359,6 @@ function setupMessageProcessing(params: SetupMessageProcessingParams): void {
         botStateManager,
         perchSessionRunner,
         dmTracker,
-        responseRouter,
     }));
 }
 
@@ -903,12 +888,6 @@ export interface DiscordBotOptions {
     config: DiscordConfig
 
     /**
-     * Callback function invoked when a relevant message is received.
-     * Should return a string to reply, or null to not reply.
-     */
-    onMessage: (context: DiscordMessageContext) => Promise<string | null>
-
-    /**
      * Optional identity context for personalizing idle status messages.
      * Used for generating creative idle status messages.
      */
@@ -1027,17 +1006,18 @@ export interface DiscordBot {
  *
  * @example
  * ```typescript
+ * const agent = createClaudeAgent({ ... });
+ * const channelRegistry = createChannelRegistryManager({ ... });
+ *
  * const bot = createDiscordBot({
  *   config: {
  *     botToken: process.env.DISCORD_BOT_TOKEN,
  *     applicationId: process.env.DISCORD_APP_ID,
  *     homeGuildId: '...'
  *   },
- *   channelRegistry: myChannelRegistry,
- *   onMessage: async (context) => {
- *     console.log(`Message from ${context.userId}: ${context.content}`);
- *     return `You said: ${context.content}`;
- *   }
+ *   identityContext: 'I am a helpful assistant',
+ *   agent: agent,
+ *   channelRegistry: channelRegistry,
  * });
  *
  * await bot.start();
@@ -1046,7 +1026,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, onMessage, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker } = options;
+    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker } = options;
 
     // Hot reload protection: Reuse existing client if available in global state
     // During Bun hot reload, the module is re-executed but global state persists.
@@ -1338,28 +1318,24 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 channelRegistry,
                 eventDeltaTracker,
             });
-        }
 
-        // Register message handler AFTER channel registry is initialized
-        setupMessageProcessing({
-            client,
-            readyClient,
-            channelRegistry,
-            onMessage,
-            presenceManager,
-            agent,
-            dynamicStatusGenerator,
-            addRecentMessage,
-            coordinator,
-            questionRegistry,
-            answerClassifier,
-            inboxManager,
-            catchUpSessionRunner,
-            botStateManager,
-            perchSessionRunner,
-            dmTracker,
-            responseRouter,
-        });
+            // Register message handler AFTER channel registry is initialized and coordinator is created
+            // Message processing requires coordinator, which requires agent
+            setupMessageProcessing({
+                client,
+                readyClient,
+                channelRegistry,
+                addRecentMessage,
+                coordinator,
+                questionRegistry,
+                answerClassifier,
+                inboxManager,
+                catchUpSessionRunner,
+                botStateManager,
+                perchSessionRunner,
+                dmTracker,
+            });
+        }
 
         // Register channel cleanup event handlers (if coordinator exists)
         // channelDelete: Clean up coordinator state when a channel is deleted

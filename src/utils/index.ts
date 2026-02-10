@@ -5,6 +5,7 @@ export {
     getCurrentTimeContext,
     formatMemoryTimestamp,
     formatShortRelativeTime,
+    formatTimeHeader,
     timeOfDaySchema,
     dayOfWeekSchema,
     timeContextSchema,

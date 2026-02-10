@@ -12,7 +12,7 @@
 import { type PerchSlot } from './types';
 import { getSlotConfig } from './schedule';
 import type { StreamProgress } from '@/agent/stream-tracker';
-import { getCurrentTimeContext } from '@/utils/time';
+import { formatTimeHeader } from '@/utils/time';
 
 /**
  * Base prompt for all perch time sessions.
@@ -167,18 +167,6 @@ export interface PerchInterruptedOptions {
         channelName: string
         content:     string
     }
-}
-
-/**
- * Formats the current time context as a header for prompts.
- *
- * @returns The formatted time header
- */
-function formatTimeHeader(): string {
-    const timeContext = getCurrentTimeContext();
-    return `## Current Time
-- UTC: ${timeContext.utc} (${timeContext.utcDayOfWeek} ${timeContext.utcTimeOfDay})
-- Local: ${timeContext.userLocalTime} ${timeContext.userTimezone} (${timeContext.dayOfWeek} ${timeContext.timeOfDay})`;
 }
 
 /**

@@ -965,4 +965,301 @@ describe('createContextBuilder loading methods', () => {
             expect(mockLogger.debug).toHaveBeenCalledWith({ userId: 'user-no-tz' }, 'User timezone not found');
         });
     });
+
+    describe('buildUserMessagePrefix', () => {
+        test('should include user memories section when user has memories', async () => {
+            backend.searchByTags = mock(async (tags: string[]) => {
+                if(tags[0] === 'user:user123') {
+                    return {
+                        items: [
+                            {
+                                PK:             'TAG#user:user123',
+                                SK:             'PATH#/state/item1.md',
+                                memoryPath:     '/state/item1.md',
+                                layer:          'state',
+                                updatedAt:      new Date().toISOString(),
+                                tags:           ['user:user123'],
+                                contentPreview: 'User memory 1',
+                            },
+                        ],
+                    };
+                }
+                return { items: [] };
+            });
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            expect(result).toContain('[About this user]');
+        });
+
+        test('should return empty string when no context available', async () => {
+            backend.searchByTags = mock(async () => ({ items: [] }));
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildUserMessagePrefix('user-empty');
+
+            expect(result).toBe('');
+        });
+
+        test('should include bot activities when botUserId provided and has memories', async () => {
+            backend.searchByTags = mock(async (tags: string[]) => {
+                if(tags[0] === 'user:bot123') {
+                    return {
+                        items: [
+                            {
+                                PK:             'TAG#user:bot123',
+                                SK:             'PATH#/state/bot-activity.md',
+                                memoryPath:     '/state/bot-activity.md',
+                                layer:          'state',
+                                updatedAt:      new Date().toISOString(),
+                                tags:           ['user:bot123'],
+                                contentPreview: 'Bot activity',
+                            },
+                        ],
+                    };
+                }
+                return { items: [] };
+            });
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildUserMessagePrefix('user123', 'bot123');
+
+            expect(result).toContain('[Your recent activities]');
+        });
+
+        test('should not include bot activities when botUserId is undefined', async () => {
+            backend.searchByTags = mock(async () => ({ items: [] }));
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            expect(result).not.toContain('[Your recent activities]');
+        });
+
+        test('should include recent events section', async () => {
+            backend.searchByTags = mock(async () => ({ items: [] }));
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/event1.md'),
+                    content:     'Recent event',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   new Date().toISOString(),
+                    updatedAt:   new Date().toISOString(),
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            expect(result).toContain('[Recent events]');
+        });
+
+        test('should join sections with double newlines and add trailing newlines', async () => {
+            // Return memories for user AND events
+            backend.searchByTags = mock(async (tags: string[]) => {
+                if(tags[0] === 'user:user123') {
+                    return {
+                        items: [{
+                            PK:             'TAG#user:user123',
+                            SK:             'PATH#/state/item1.md',
+                            memoryPath:     '/state/item1.md',
+                            layer:          'state',
+                            updatedAt:      new Date().toISOString(),
+                            tags:           ['user:user123'],
+                            contentPreview: 'Memory',
+                        }],
+                    };
+                }
+                return { items: [] };
+            });
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/e1.md'),
+                    content:     'Event',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   new Date().toISOString(),
+                    updatedAt:   new Date().toISOString(),
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            // Should have double newline between sections
+            expect(result).toContain('[About this user]');
+            expect(result).toContain('\n\n[Recent events]');
+            // Should end with double newline
+            expect(result).toMatch(/\n\n$/);
+        });
+
+        test('should format user memories with "- " prefix and full content', async () => {
+            backend.searchByTags = mock(async (tags: string[]) => {
+                if(tags[0] === 'user:user123') {
+                    return {
+                        items: [
+                            {
+                                PK:             'TAG#user:user123',
+                                SK:             'PATH#/state/item1.md',
+                                memoryPath:     '/state/item1.md',
+                                layer:          'state',
+                                updatedAt:      new Date().toISOString(),
+                                tags:           ['user:user123'],
+                                contentPreview: 'User preference: dark mode',
+                            },
+                            {
+                                PK:             'TAG#user:user123',
+                                SK:             'PATH#/state/item2.md',
+                                memoryPath:     '/state/item2.md',
+                                layer:          'state',
+                                updatedAt:      new Date().toISOString(),
+                                tags:           ['user:user123'],
+                                contentPreview: 'Favorite color: blue',
+                            },
+                        ],
+                    };
+                }
+                return { items: [] };
+            });
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            // Should contain section header
+            expect(result).toContain('[About this user]');
+            // Extract just the items under the section (between header and next section or end)
+            const sectionMatch = /\[About this user\]\n([\s\S]*?)(?:\n\n|$)/.exec(result);
+            expect(sectionMatch).toBeTruthy();
+            const items = _.split(sectionMatch?.[1] ?? '', '\n');
+            // Should have 2 items separated by newlines
+            expect(items).toHaveLength(2);
+            // Every item should start with "- - " (first dash is from _map, second is from loadRecentContext)
+            expect(_.every(items, item => _.startsWith(item, '- - '))).toBe(true);
+            // Should contain both paths
+            expect(result).toContain('/state/item1.md');
+            expect(result).toContain('/state/item2.md');
+            // Should NOT contain "undefined"
+            expect(result).not.toContain('undefined');
+        });
+
+        test('should format bot activities with "- " prefix and full content', async () => {
+            backend.searchByTags = mock(async (tags: string[]) => {
+                if(tags[0] === 'user:bot123') {
+                    return {
+                        items: [
+                            {
+                                PK:             'TAG#user:bot123',
+                                SK:             'PATH#/state/task1.md',
+                                memoryPath:     '/state/task1.md',
+                                layer:          'state',
+                                updatedAt:      new Date().toISOString(),
+                                tags:           ['user:bot123'],
+                                contentPreview: 'Completed database migration',
+                            },
+                            {
+                                PK:             'TAG#user:bot123',
+                                SK:             'PATH#/state/task2.md',
+                                memoryPath:     '/state/task2.md',
+                                layer:          'state',
+                                updatedAt:      new Date().toISOString(),
+                                tags:           ['user:bot123'],
+                                contentPreview: 'Updated API documentation',
+                            },
+                        ],
+                    };
+                }
+                return { items: [] };
+            });
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildUserMessagePrefix('user123', 'bot123');
+
+            // Should contain section header
+            expect(result).toContain('[Your recent activities]');
+            // Extract just the items under the section
+            const sectionMatch = /\[Your recent activities\]\n([\s\S]*?)(?:\n\n|$)/.exec(result);
+            expect(sectionMatch).toBeTruthy();
+            const items = _.split(sectionMatch?.[1] ?? '', '\n');
+            // Should have 2 items separated by newlines
+            expect(items).toHaveLength(2);
+            // Every item should start with "- - " (first dash is from _map, second is from loadRecentContext)
+            expect(_.every(items, item => _.startsWith(item, '- - '))).toBe(true);
+            // Should contain both paths
+            expect(result).toContain('/state/task1.md');
+            expect(result).toContain('/state/task2.md');
+            // Should NOT contain "undefined"
+            expect(result).not.toContain('undefined');
+        });
+
+        test('should format recent events with "- " prefix and full content', async () => {
+            backend.searchByTags = mock(async () => ({ items: [] }));
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/event1.md'),
+                    content:     'User logged in from new device',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   new Date().toISOString(),
+                    updatedAt:   new Date().toISOString(),
+                },
+                {
+                    path:        createMemoryPath('/events/event2.md'),
+                    content:     'Password changed successfully',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   new Date().toISOString(),
+                    updatedAt:   new Date().toISOString(),
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            // Should contain section header
+            expect(result).toContain('[Recent events]');
+            // Extract just the items under the section
+            const sectionMatch = /\[Recent events\]\n([\s\S]*?)(?:\n\n|$)/.exec(result);
+            expect(sectionMatch).toBeTruthy();
+            const items = _.split(sectionMatch?.[1] ?? '', '\n');
+            // Should have 2 items separated by newlines
+            expect(items).toHaveLength(2);
+            // Every item should start with "- - " (first dash is from _map, second is from loadRecentEvents)
+            expect(_.every(items, item => _.startsWith(item, '- - '))).toBe(true);
+            // Should contain both events
+            expect(result).toContain('/events/event1.md');
+            expect(result).toContain('/events/event2.md');
+            // Should NOT contain "undefined"
+            expect(result).not.toContain('undefined');
+        });
+
+        test('should not include bot activities section when bot has no memories', async () => {
+            backend.searchByTags = mock(async () => ({ items: [] }));
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildUserMessagePrefix('user123', 'bot-no-memories');
+
+            // Should NOT contain the bot activities section header when bot has no memories
+            expect(result).not.toContain('[Your recent activities]');
+        });
+    });
 });

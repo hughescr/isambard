@@ -48,7 +48,7 @@ describe.concurrent('system-prompt', () => {
             test('should work with no arguments', async () => {
                 const prompt = await buildSystemPrompt();
                 expect(prompt).toContain(BASE_SYSTEM_PROMPT);
-                expect(prompt).toContain('Current Time Context');
+                expect(prompt).toContain('Current Time');
                 expect(prompt).not.toContain('Who You Are');
                 expect(prompt).not.toContain('Discord Channel Context');
             });
@@ -56,7 +56,7 @@ describe.concurrent('system-prompt', () => {
             test('should work with undefined', async () => {
                 const prompt = await buildSystemPrompt(undefined);
                 expect(prompt).toContain(BASE_SYSTEM_PROMPT);
-                expect(prompt).toContain('Current Time Context');
+                expect(prompt).toContain('Current Time');
                 expect(prompt).not.toContain('Who You Are');
                 expect(prompt).not.toContain('Discord Channel Context');
             });
@@ -91,7 +91,7 @@ describe.concurrent('system-prompt', () => {
             test('should work with empty options object', async () => {
                 const prompt = await buildSystemPrompt({});
                 expect(prompt).toContain(BASE_SYSTEM_PROMPT);
-                expect(prompt).toContain('Current Time Context');
+                expect(prompt).toContain('Current Time');
                 expect(prompt).not.toContain('Who You Are');
                 expect(prompt).not.toContain('Discord Channel Context');
             });
@@ -184,7 +184,7 @@ describe.concurrent('system-prompt', () => {
         describe('time context', () => {
             test('should always include time context', async () => {
                 const prompt = await buildSystemPrompt();
-                expect(prompt).toContain('Current Time Context');
+                expect(prompt).toContain('Current Time');
             });
 
             test('should include time context with all options', async () => {
@@ -198,7 +198,7 @@ describe.concurrent('system-prompt', () => {
                     channelList:    ['general'],
                 });
 
-                expect(prompt).toContain('Current Time Context');
+                expect(prompt).toContain('Current Time');
             });
         });
 
@@ -216,7 +216,7 @@ describe.concurrent('system-prompt', () => {
 
                 // Check order: BASE_SYSTEM_PROMPT, Time Context, Discord Context, Who You Are
                 const basePromptIndex = prompt.indexOf('Isambard');
-                const timeIndex = prompt.indexOf('Current Time Context');
+                const timeIndex = prompt.indexOf('Current Time');
                 const discordIndex = prompt.indexOf('Discord Channel Context');
                 const identityIndex = prompt.indexOf('Who You Are');
 

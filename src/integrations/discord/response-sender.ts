@@ -89,10 +89,12 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
         if(routeError instanceof WellKnownChannelNotFoundError) {
             if(useFallbackOnError) {
                 // handlers.ts: fallback to original channel
+                // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
                 logger.warn({
                     channelType: routeError.context.channelType,
                     msg:         'Well-known channel not found, falling back to original channel',
                 });
+                // Stryker restore ObjectLiteral,StringLiteral
                 routing = {
                     shouldSend:      true,
                     content:         response,
@@ -152,11 +154,13 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
         };
     }
 
+    // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
     logger.info({
         messageId:      message.id,
         responseLength: content.length,
         msg:            `Response generated (${content.length} chars)`,
     });
+    // Stryker restore ObjectLiteral,StringLiteral
 
     // Split long messages into Discord-safe chunks
     const chunks = splitMessage(content);
@@ -171,6 +175,7 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
                 // Stryker disable next-line StringLiteral: Operation name for logging only
                 'replyToMessage'
             );
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
             logger.info({ messageId: message.id, chunkIndex: 0, totalChunks: chunks.length, msg: 'Reply sent successfully' });
 
             // Subsequent chunks reply to our first message to maintain threading
@@ -181,6 +186,7 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
                     // Stryker disable next-line StringLiteral: Operation name for logging
                     'replyToMessage'
                 );
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
                 logger.info({ messageId: message.id, chunkIndex: i, totalChunks: chunks.length, msg: 'Continuation sent successfully' });
             }
         } else {

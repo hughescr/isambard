@@ -62,7 +62,7 @@ Isambard can propose improvements to its own code:
 ### Claude Agent Subsystem
 The agent subsystem connects Discord to Claude with persistent memory:
 - `src/agent/agent.ts` - Claude agent with `handleInput()` method using `@anthropic-ai/claude-agent-sdk`
-- `src/agent/context-builder.ts` - Memory context loading (identity, user, events)
+- `src/agent/context-builder.ts` - Memory context loading (identity, user, events) and user message prefix assembly
 - `src/agent/memory-mcp-server.ts` - MCP server exposing memory tools (view, storeSelf, storeUserMemory, logEvent, search, list)
 - `src/agent/discord-mcp-server.ts` - MCP server for Discord message history (searchMessages, getRecentMessages, getMessageById)
 - `src/agent/text-generator.ts` - Lightweight LLM text generation via Haiku
@@ -147,7 +147,7 @@ Zod-validated configuration loading with env-var for type-safe environment varia
 - `src/config/index.ts` - Public exports
 
 ### Utilities
-- `src/utils/time.ts` - Time utilities (formatRelativeTime, getTimeOfDay, getCurrentTimeContext, formatShortRelativeTime, formatMemoryTimestamp)
+- `src/utils/time.ts` - Time utilities (formatRelativeTime, getTimeOfDay, getCurrentTimeContext, formatShortRelativeTime, formatMemoryTimestamp, formatTimeHeader)
 - `src/utils/retry/` - Retry utilities with exponential backoff
   - `types.ts` - Retry configuration types
   - `classifier.ts` - Error classification for retry decisions

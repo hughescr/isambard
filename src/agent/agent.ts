@@ -7,7 +7,7 @@ import _ from 'lodash';
 import type { DiscordMessageContext } from '../integrations/discord/types';
 // eslint-disable-next-line boundaries/element-types -- Agent imports Discord types for attachments; decouple per roadmap
 import type { FetchedImage } from '../integrations/discord/attachments/types';
-import { getCurrentTimeContext, formatLocalDateTime, resolveTimezone } from '../utils/time';
+import { formatLocalDateTime, resolveTimezone } from '../utils/time';
 import type { ContextBuilder } from './context-builder';
 import { buildSystemPrompt, COMPACTION_SUMMARY_PROMPT } from './prompts/index.js';
 import { cleanupSession, extractSessionId } from './session-cleanup';
@@ -82,50 +82,6 @@ const EXPLICIT_AGENTS = {
     },
 };
 // Stryker restore all
-
-/**
- * Build context prefix from user memories, bot memories, and recent events.
- * @param contextBuilder Context builder for loading memories
- * @param context Discord message context
- * @param timezone Optional user timezone (IANA timezone string)
- * @returns Context prefix string (empty if no context available)
- */
-async function buildContextPrefix(contextBuilder: ContextBuilder, context: DiscordMessageContext, timezone?: string): Promise<string> {
-    // Stryker disable next-line ArrayDeclaration: Equivalent - sections always has time section pushed first
-    const sections: string[] = [];
-
-    // Time context (always first)
-    const timeContext = getCurrentTimeContext(timezone);
-    const timeSection = `## Current Time
-- UTC: ${timeContext.utc} (${timeContext.utcDayOfWeek} ${timeContext.utcTimeOfDay})
-- Local: ${timeContext.userLocalTime} ${timeContext.userTimezone} (${timeContext.dayOfWeek} ${timeContext.timeOfDay})`;
-    sections.push(timeSection);
-
-    // User-specific memories
-    const userMemories = await contextBuilder.loadRecentContext(context.userId, 3);
-    if(userMemories.length > 0) {
-        sections.push(`[About this user]\n${_.map(userMemories, m => `- ${m}`).join('\n')}`);
-    }
-
-    // Isambard's own memories (using botUserId from context)
-    // Stryker disable next-line ConditionalExpression: botUserId null check is defensive, tested via integration
-    if(context.botUserId) {
-        const isambardMemories = await contextBuilder.loadRecentContext(context.botUserId, 2);
-        if(isambardMemories.length > 0) {
-            sections.push(`[Your recent activities]\n${_.map(isambardMemories, m => `- ${m}`).join('\n')}`);
-        }
-    }
-
-    // Recent events
-    const recentEvents = await contextBuilder.loadRecentEvents(50);
-    // Stryker disable next-line ConditionalExpression: Empty array check prevents unnecessary section, tested via integration
-    if(recentEvents.length > 0) {
-        sections.push(`[Recent events]\n${_.map(recentEvents, m => `- ${m}`).join('\n')}`);
-    }
-
-    // Stryker disable next-line StringLiteral: Equivalent - trailing newlines are formatting, tests verify content not whitespace
-    return sections.join('\n\n') + '\n\n';
-}
 
 /**
  * Extract text content from an assistant message.
@@ -686,7 +642,7 @@ async function buildUserMessageTextForBatch(
 
     // Build context prefix from memories and events
     const contextPrefix = contextBuilder
-        ? await buildContextPrefix(contextBuilder, contexts[0], timezone)
+        ? await contextBuilder.buildUserMessagePrefix(contexts[0].userId, contexts[0].botUserId)
         : '';
 
     // Format multiple messages with timezone fallback

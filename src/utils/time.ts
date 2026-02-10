@@ -287,3 +287,41 @@ export function formatTimeSince(since: Date): string {
     }
     return 'a few days';
 }
+
+/**
+ * Formats a time header with UTC, Izzy's timezone, and optionally the user's timezone.
+ * Always includes UTC and Izzy (server) timezone lines.
+ * Includes user timezone line only if provided and different from Izzy's timezone.
+ * @param userTimezone - Optional IANA timezone string for the user
+ * @returns Formatted time header with 2-3 lines depending on timezone configuration
+ * @example
+ * ```
+ * ## Current Time
+ * - UTC: 2026-02-09T22:30:00.000Z (Sunday evening)
+ * - Izzy: 2026-02-09T14:30:00 America/Los_Angeles (Sunday afternoon)
+ * - User: 2026-02-09T17:30:00 America/New_York (Sunday evening)
+ * ```
+ */
+export function formatTimeHeader(userTimezone?: string): string {
+    const timeContext = getCurrentTimeContext();
+    const izzyTimezone = resolveTimezone();
+    const izzyLocal = formatLocalDateTime(timeContext.utc, izzyTimezone);
+    const izzyDow = getDayOfWeek(new Date(timeContext.utc), izzyTimezone);
+    const izzyTod = getTimeOfDay(new Date(timeContext.utc), izzyTimezone);
+
+    const lines = [
+        '## Current Time',
+        `- UTC: ${timeContext.utc} (${timeContext.utcDayOfWeek} ${timeContext.utcTimeOfDay})`,
+        `- Izzy: ${izzyLocal} ${izzyTimezone} (${izzyDow} ${izzyTod})`,
+    ];
+
+    // Stryker disable next-line ConditionalExpression: Timezone comparison controls optional user line
+    if(userTimezone && userTimezone !== izzyTimezone) {
+        const userLocal = formatLocalDateTime(timeContext.utc, userTimezone);
+        const userDow = getDayOfWeek(new Date(timeContext.utc), userTimezone);
+        const userTod = getTimeOfDay(new Date(timeContext.utc), userTimezone);
+        lines.push(`- User: ${userLocal} ${userTimezone} (${userDow} ${userTod})`);
+    }
+
+    return lines.join('\n');
+}

@@ -521,12 +521,12 @@ src/integrations/discord/
 - That function calls `createDiscordBot()` internally
 - This roadmap refactors what's inside `createDiscordBot()`
 
-**After Roadmap #2 (Unify Message Processing):**
-- Coordinator is mandatory (not optional)
-- CoordinatorSetup simplified (no optional checks)
-- Single message processing path verified
+**After Roadmap #2 (Unify Message Processing) — COMPLETED:**
+- ✅ Coordinator is mandatory (not optional)
+- ✅ CoordinatorSetup simplified (no optional checks)
+- ✅ Single message processing path verified
 
 **Sequencing:**
-1. Complete Roadmap #1 first (establish high-level boundaries)
-2. Optional: Complete Roadmap #2 (simplify coordinator logic)
-3. Then: Complete Roadmap #3 (break up bot internals)
+1. ✅ Complete Roadmap #1 first (establish high-level boundaries)
+2. ✅ Complete Roadmap #2 (simplify coordinator logic)
+3. Next: Complete Roadmap #3 (break up bot internals)

@@ -56,11 +56,24 @@ Refactored the 520-line `createApp()` function into focused factory functions.
   - `createDiscordInfrastructure` - Discord client, channel registry, message history, inbox, bot state
   - `createMCPServers` - memory, Discord, and inbox MCP servers
   - `loadIdentityContext` - identity loading with fallback chain
-  - `createOnMessageHandler` - channel list formatting + agent dispatch
+  - `createOnMessageHandler` - channel list formatting + agent dispatch (subsequently deleted in message path unification)
   - `createCatchUpSignalAdapter` - catch-up signal persistence methods
 - `createApp()` reduced to ~70 lines of clean factory composition
 - Removed try/catch wrapper, dead code, and 9 unused imports
 - 100% mutation score on all new files
+
+### Consolidate Context Building + Unify Message Processing Path (Completed February 2026)
+Consolidated scattered context building and eliminated dead backward-compatibility message processing path.
+
+**What was implemented:**
+- Extracted shared `formatTimeHeader()` to `src/utils/time.ts` — always shows UTC + Izzy's timezone, optionally shows user timezone when different
+- Removed duplicate time injection from user message prefix (now only in system prompt)
+- Moved `buildContextPrefix()` from `agent.ts` into `contextBuilder.buildUserMessagePrefix()`
+- Made `MessageCoordinator` mandatory — removed dead direct `processMessage()` path
+- Deleted `src/app/on-message-handler.ts` and backward-compat `onMessage` callback
+- Removed `statusMiddleware`, `delegateToCoordinatorOrProcess`, `processMessage` from handlers.ts
+- Cleaned up `MessageHandlerOptions`: removed `onMessage`, `presenceManager`, `agent`, `dynamicStatusGenerator`, `responseRouter`
+- 100% mutation score on all changed files
 
 ### Channel Discovery and Registration (Completed February 2026)
 Dynamic channel discovery and registration system replacing hardcoded channel IDs.

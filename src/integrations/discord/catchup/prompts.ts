@@ -1,4 +1,4 @@
-import { getCurrentTimeContext } from '@/utils/time';
+import { formatTimeHeader } from '@/utils/time';
 
 /**
  * Options for building the catch-up interrupted prompt.
@@ -16,18 +16,6 @@ export interface CatchUpInterruptedOptions {
         channelName: string
         content:     string
     }
-}
-
-/**
- * Formats the current time context as a header for prompts.
- *
- * @returns The formatted time header
- */
-function formatTimeHeader(): string {
-    const timeContext = getCurrentTimeContext();
-    return `## Current Time
-- UTC: ${timeContext.utc} (${timeContext.utcDayOfWeek} ${timeContext.utcTimeOfDay})
-- Local: ${timeContext.userLocalTime} ${timeContext.userTimezone} (${timeContext.dayOfWeek} ${timeContext.timeOfDay})`;
 }
 
 /**

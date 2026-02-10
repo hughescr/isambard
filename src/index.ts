@@ -13,7 +13,6 @@ import { createContextLayer } from './app/context-layer';
 import { createDiscordInfrastructure } from './app/discord-infrastructure';
 import { createMCPServers } from './app/mcp-servers';
 import { loadIdentityContext } from './app/identity-loader';
-import { createOnMessageHandler } from './app/on-message-handler';
 import { createDiscordBot } from './integrations/discord/bot';
 import type { DiscordBot } from './integrations/discord/bot';
 import { resolveTimezone } from './utils/time';
@@ -99,19 +98,13 @@ export async function createApp(): Promise<App> {
         taskPersistenceCoordinator: storage.taskPersistenceCoordinator,
     });
 
-    // Load identity and create message handler
+    // Load identity
     const identityContext = await loadIdentityContext(config.agent.oauthToken, contextLayer.contextBuilder);
-    const onMessage = createOnMessageHandler({
-        agent,
-        channelRegistry: discordInfra.channelRegistry,
-        discordClient:   discordInfra.discordClient,
-    });
 
     // Create Discord bot
     const bot: DiscordBot = createDiscordBot({
         config:            config.discord,
         perchConfig:       config.perch,
-        onMessage,
         identityContext,
         agent,
         client:            discordInfra.discordClient,

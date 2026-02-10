@@ -6,4 +6,3 @@ export { createContextLayer, type ContextLayer } from './context-layer';
 export { createDiscordInfrastructure, type DiscordInfrastructure, type DiscordInfrastructureOptions } from './discord-infrastructure';
 export { createMCPServers, type MCPServers, type MCPServersOptions } from './mcp-servers';
 export { loadIdentityContext } from './identity-loader';
-export { createOnMessageHandler, type OnMessageHandlerOptions } from './on-message-handler';

@@ -60,6 +60,14 @@ export interface ContextBuilder {
      * @returns Timezone string (e.g., "America/Los_Angeles") or undefined if not found
      */
     loadUserTimezone: (userId: string) => Promise<string | undefined>
+
+    /**
+     * Build user message prefix from user memories, bot memories, and recent events.
+     * @param userId The user who sent the message
+     * @param botUserId Optional bot user ID for loading bot's own memories
+     * @returns Context prefix string (empty if no context available)
+     */
+    buildUserMessagePrefix: (userId: string, botUserId?: string) => Promise<string>
 }
 
 const DEFAULT_MAX_IDENTITY_TOKENS = 500;
@@ -110,7 +118,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
     const maxIdentityChars = maxIdentityTokens * CHARS_PER_TOKEN;
     const maxStateChars = maxStateTokens * CHARS_PER_TOKEN;
 
-    return {
+    const builder: ContextBuilder = {
         loadCoreIdentity: async (): Promise<string> => {
             logger.debug({ msg: 'Loading core identity...' });
 
@@ -280,5 +288,41 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
 
             return item.content;
         },
+
+        buildUserMessagePrefix: async (userId: string, botUserId?: string): Promise<string> => {
+            // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
+            const sections: string[] = [];
+
+            // User-specific memories
+            const userMemories = await builder.loadRecentContext(userId, 3);
+            if(userMemories.length > 0) {
+                sections.push(`[About this user]\n${_map(userMemories, m => `- ${m}`).join('\n')}`);
+            }
+
+            // Bot's own memories
+            // Stryker disable next-line ConditionalExpression: botUserId null check is defensive, tested via integration
+            if(botUserId) {
+                const isambardMemories = await builder.loadRecentContext(botUserId, 2);
+                if(isambardMemories.length > 0) {
+                    sections.push(`[Your recent activities]\n${_map(isambardMemories, m => `- ${m}`).join('\n')}`);
+                }
+            }
+
+            // Recent events
+            const recentEvents = await builder.loadRecentEvents(50);
+            // Stryker disable next-line ConditionalExpression: Empty array check prevents unnecessary section, tested via integration
+            if(recentEvents.length > 0) {
+                sections.push(`[Recent events]\n${_map(recentEvents, m => `- ${m}`).join('\n')}`);
+            }
+
+            if(sections.length === 0) {
+                return '';
+            }
+
+            // Stryker disable next-line StringLiteral: Equivalent - trailing newlines are formatting, tests verify content not whitespace
+            return sections.join('\n\n') + '\n\n';
+        },
     };
+
+    return builder;
 }

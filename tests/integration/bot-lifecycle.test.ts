@@ -21,7 +21,7 @@ import type { StreamTracker } from '@/agent/stream-tracker';
 import type { ContextBuilder } from '@/agent/context-builder';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { createGuildId, createChannelId, createUserId } from '@/integrations/discord/types';
+import { createGuildId } from '@/integrations/discord/types';
 
 /**
  * Integration tests for bot lifecycle and component wiring with Agent SDK.
@@ -213,7 +213,6 @@ describe('Bot Lifecycle Integration', () => {
             expect(createDiscordBotSpy).toHaveBeenCalled();
             expect(createDiscordBotSpy).toHaveBeenCalledWith(expect.objectContaining({
                 config:           mockDiscordConfig,
-                onMessage:        expect.any(Function),
                 identityContext:  expect.any(String),
                 agent:            mockClaudeAgent,
                 questionRegistry: expect.objectContaining({
@@ -370,84 +369,6 @@ describe('Bot Lifecycle Integration', () => {
 
             expect(mockDiscordBot.start).toHaveBeenCalledTimes(2);
             expect(mockDiscordBot.stop).toHaveBeenCalledTimes(2);
-        });
-    });
-
-    describe('Message Flow Integration', () => {
-        it('should wire onMessage to call agent.handleInput with message context', async () => {
-            spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
-                discord: mockDiscordConfig,
-                agent:   mockAgentConfig,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
-            } as any));
-            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
-            spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
-            const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
-            spies.push(createDiscordBotSpy);
-
-            await createApp();
-
-            // Extract the onMessage callback
-            const botOptions = createDiscordBotSpy.mock.calls[0][0];
-            const onMessage = botOptions.onMessage;
-
-            // Simulate a message
-            const mockContext = {
-                guildId:   createGuildId('123456789012345678'),
-                messageId: 'msg_123',
-                userId:    createUserId('user_456'),
-                channelId: createChannelId('987654321098765432'),
-                content:   'Hello bot!',
-                timestamp: new Date().toISOString(),
-                botUserId: createUserId('bot_789'),
-            };
-
-            const response = await onMessage(mockContext);
-
-            expect(mockClaudeAgent.handleInput).toHaveBeenCalledWith([mockContext], { channelList: [] });
-            expect(response).toBe('Test response');
-        });
-
-        it('should handle null response from agent.handleInput', async () => {
-            const mockAgentWithNull: ClaudeAgent = {
-                handleInput: mock(async () => ({
-                    response:       null,
-                    sessionId:      undefined,
-                    wasInterrupted: false,
-                    streamTracker:  {} as StreamTracker,
-                })),
-            };
-
-            spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
-                discord: mockDiscordConfig,
-                agent:   mockAgentConfig,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
-            } as any));
-            spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
-            spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockAgentWithNull));
-            const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
-            spies.push(createDiscordBotSpy);
-
-            await createApp();
-
-            // Extract the onMessage callback
-            const botOptions = createDiscordBotSpy.mock.calls[0][0];
-            const onMessage = botOptions.onMessage;
-
-            // Simulate a message
-            const mockContext = {
-                guildId:   createGuildId('123456789012345678'),
-                messageId: 'msg_123',
-                userId:    createUserId('user_456'),
-                channelId: createChannelId('987654321098765432'),
-                content:   'Hello bot!',
-                timestamp: new Date().toISOString(),
-                botUserId: createUserId('bot_789'),
-            };
-
-            const response = await onMessage(mockContext);
-
-            expect(response).toBeNull();
         });
     });
 

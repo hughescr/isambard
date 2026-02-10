@@ -785,12 +785,16 @@ describe('createClaudeAgent', () => {
         test('should load user timezone and pass to system prompt', async () => {
             const mockContextBuilder = {
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
-                loadCoreIdentity:  mock(async () => 'I am a test identity'),
+                loadCoreIdentity:       mock(async () => 'I am a test identity'),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
-                loadUserTimezone:  mock(async () => 'America/New_York'),
-                loadRecentContext: mock(async () => []),
-                loadRecentEvents:  mock(async () => []),
-                recordAccess:      mock(async () => undefined),
+                loadUserTimezone:       mock(async () => 'America/New_York'),
+                loadRecentContext:      mock(async () => []),
+                loadRecentEvents:       mock(async () => []),
+                recordAccess:           mock(async () => undefined),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildSystemContext:     mock(async () => ''),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildUserMessagePrefix: mock(async () => ''),
             };
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
@@ -804,62 +808,66 @@ describe('createClaudeAgent', () => {
             // Agent should complete normally
             expect(result.response).toBe('Hello! This is a test response.');
 
-            // Verify system prompt includes timezone info (both UTC and Local time)
+            // Verify system prompt includes timezone info (UTC, Izzy, and User lines)
             expect(querySpy).toHaveBeenCalledTimes(1);
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const systemPrompt = queryParams.options.systemPrompt;
             expect(systemPrompt).toContain('America/New_York');
-            expect(systemPrompt).toContain('Local:');
+            expect(systemPrompt).toContain('User:'); // User timezone line when different from server
         });
 
-        test('should pass user timezone to buildContextPrefix for consistent time display', async () => {
+        test('should pass user timezone to system prompt and message timestamps', async () => {
             // This test verifies that the user timezone loaded from loadUserTimezone()
-            // is threaded through to buildContextPrefix() so that the context prefix
-            // "Local:" line shows the SAME timezone as the system prompt and message timestamps
+            // is used in both the system prompt AND message timestamps (but NOT in a separate time section)
             const mockContextBuilder = {
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
-                loadCoreIdentity:  mock(async () => 'I am a test identity'),
+                loadCoreIdentity:       mock(async () => 'I am a test identity'),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
-                loadUserTimezone:  mock(async () => 'America/Los_Angeles'),
-                loadRecentContext: mock(async () => ['User fact 1']),
-                loadRecentEvents:  mock(async () => []),
-                recordAccess:      mock(async () => undefined),
+                loadUserTimezone:       mock(async () => 'America/Los_Angeles'),
+                loadRecentContext:      mock(async () => ['User fact 1']),
+                loadRecentEvents:       mock(async () => []),
+                recordAccess:           mock(async () => undefined),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildSystemContext:     mock(async () => ''),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildUserMessagePrefix: mock(async () => '[About this user]\n- User fact 1\n\n'),
             };
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
             const agent = createClaudeAgent({ contextBuilder: mockContextBuilder as unknown as any });
             await agent.handleInput([mockMessageContext]);
 
-            // Verify context prefix contains user timezone (not server timezone)
+            // Verify user timezone appears in system prompt
             expect(querySpy).toHaveBeenCalledTimes(1);
-            const prompt = querySpy.mock.calls[0][0].prompt as string;
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const systemPrompt = queryParams.options.systemPrompt;
+            expect(systemPrompt).toContain('America/Los_Angeles');
 
-            // Extract the context prefix section (before "User @")
-            const contextPrefixRegex = /^(.*?)\nUser @/s;
-            const contextPrefixMatch = contextPrefixRegex.exec(prompt);
-            expect(contextPrefixMatch).toBeTruthy();
-            const contextPrefix = contextPrefixMatch![1];
-
-            // Verify both occurrences of "America/Los_Angeles" in context prefix
-            // Line 1: "- Local: YYYY-MM-DDTHH:mm:ss America/Los_Angeles (DayOfWeek TimeOfDay)"
-            // Should NOT show server timezone
-            const localLineRegex = /- Local: (.+)/;
-            const localLineMatch = localLineRegex.exec(contextPrefix);
-            expect(localLineMatch).toBeTruthy();
-            expect(localLineMatch![1]).toContain('America/Los_Angeles');
+            // Verify user message does NOT contain time section header, but DOES contain timezone in message timestamp
+            const prompt = queryParams.prompt as string;
+            expect(prompt).not.toContain('## Current Time');
+            // Timezone should appear in the message timestamp
+            expect(prompt).toContain('America/Los_Angeles');
+            expect(prompt).toContain('User @111222333 in #987654321 at 2025-01-15T04:00:00 America/Los_Angeles');
         });
 
         test('should NOT load user timezone for catch-up flow', async () => {
             const mockContextBuilder = {
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
-                loadCoreIdentity:  mock(async () => 'I am a test identity'),
+                loadCoreIdentity:       mock(async () => 'I am a test identity'),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
-                loadUserTimezone:  mock(async () => 'America/New_York'),
-                loadRecentContext: mock(async () => []),
-                loadRecentEvents:  mock(async () => []),
-                recordAccess:      mock(async () => undefined),
+                loadUserTimezone:       mock(async () => 'America/New_York'),
+                loadRecentContext:      mock(async () => []),
+                loadRecentEvents:       mock(async () => []),
+                recordAccess:           mock(async () => undefined),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildSystemContext:     mock(async () => ''),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildUserMessagePrefix: mock(async () => ''),
             };
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
@@ -875,12 +883,16 @@ describe('createClaudeAgent', () => {
         test('should NOT load user timezone for perch flow', async () => {
             const mockContextBuilder = {
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
-                loadCoreIdentity:  mock(async () => 'I am a test identity'),
+                loadCoreIdentity:       mock(async () => 'I am a test identity'),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
-                loadUserTimezone:  mock(async () => 'America/New_York'),
-                loadRecentContext: mock(async () => []),
-                loadRecentEvents:  mock(async () => []),
-                recordAccess:      mock(async () => undefined),
+                loadUserTimezone:       mock(async () => 'America/New_York'),
+                loadRecentContext:      mock(async () => []),
+                loadRecentEvents:       mock(async () => []),
+                recordAccess:           mock(async () => undefined),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildSystemContext:     mock(async () => ''),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildUserMessagePrefix: mock(async () => ''),
             };
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
@@ -896,12 +908,16 @@ describe('createClaudeAgent', () => {
         test('should NOT load user timezone for resume flow', async () => {
             const mockContextBuilder = {
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
-                loadCoreIdentity:  mock(async () => 'I am a test identity'),
+                loadCoreIdentity:       mock(async () => 'I am a test identity'),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
-                loadUserTimezone:  mock(async () => 'America/New_York'),
-                loadRecentContext: mock(async () => []),
-                loadRecentEvents:  mock(async () => []),
-                recordAccess:      mock(async () => undefined),
+                loadUserTimezone:       mock(async () => 'America/New_York'),
+                loadRecentContext:      mock(async () => []),
+                loadRecentEvents:       mock(async () => []),
+                recordAccess:           mock(async () => undefined),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildSystemContext:     mock(async () => ''),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildUserMessagePrefix: mock(async () => ''),
             };
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
@@ -931,9 +947,13 @@ describe('createClaudeAgent', () => {
                 loadUserTimezone: mock(async () => {
                     throw new Error('DynamoDB connection failed');
                 }),
-                loadRecentContext: mock(async () => []),
-                loadRecentEvents:  mock(async () => []),
-                recordAccess:      mock(async () => undefined),
+                loadRecentContext:      mock(async () => []),
+                loadRecentEvents:       mock(async () => []),
+                recordAccess:           mock(async () => undefined),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildSystemContext:     mock(async () => ''),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildUserMessagePrefix: mock(async () => ''),
             };
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing

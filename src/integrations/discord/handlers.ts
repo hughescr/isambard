@@ -2,13 +2,8 @@ import type { Client, Message, TextChannel } from 'discord.js';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { DiscordMessageContext, UserId, ChannelId } from './types';
-import type { PresenceManager } from './presence';
-import type { DynamicStatusGenerator } from './presence/status-generator-dynamic';
-import type { ClaudeAgent } from '@/agent/agent';
 import type { MessageCoordinator } from './message-coordinator';
 import { createGuildId, createChannelId, createUserId } from './types';
-import { createStatusMiddleware } from './presence';
-import { createDiscordRateLimiter } from './rate-limiter';
 import type { QuestionRegistry } from '@/agent/question-registry';
 import type { AnswerClassifier } from '@/agent/answer-classifier';
 import type { AttachmentMetadata } from './attachments/types';
@@ -16,8 +11,7 @@ import { inferImageContentType } from './content-type';
 import type { InboxManager } from './inbox';
 import type { CatchUpSessionRunner } from './catchup';
 import type { BotStateManager } from './state';
-import type { ChannelRegistryManager, DMTracker, ResponseRouter } from './channel-registry';
-import { sendResponse } from './response-sender';
+import type { ChannelRegistryManager, DMTracker } from './channel-registry';
 import { withDiscordRetry } from './retry';
 
 /**
@@ -103,36 +97,15 @@ export interface MessageHandlerOptions {
     channelRegistry: ChannelRegistryManager
 
     /**
-     * Callback function invoked when a relevant message is received.
-     * Should return a string to reply, or null to not reply.
-     */
-    onMessage: (context: DiscordMessageContext) => Promise<string | null>
-
-    /**
-     * Optional presence manager for status updates during message processing.
-     */
-    presenceManager?: PresenceManager
-
-    /**
-     * Optional Claude agent for status middleware integration.
-     */
-    agent?: ClaudeAgent
-
-    /**
-     * Optional dynamic status generator for LLM-generated synopses.
-     */
-    dynamicStatusGenerator?: DynamicStatusGenerator
-
-    /**
      * Optional callback to track recent message content for context-aware idle status.
      */
     addRecentMessage?: (content: string) => void
 
     /**
-     * Optional message coordinator for multi-message handling with interruption support.
-     * When provided, messages are batched and processed through the coordinator.
+     * Message coordinator for multi-message handling with interruption support.
+     * Handles batching and processing messages through the coordinator.
      */
-    coordinator?: MessageCoordinator
+    coordinator: MessageCoordinator
 
     /**
      * Optional question registry for answer correlation.
@@ -168,11 +141,6 @@ export interface MessageHandlerOptions {
      * Optional DM tracker for tracking DM channels.
      */
     dmTracker?: DMTracker
-
-    /**
-     * Response router for routing responses based on session type.
-     */
-    responseRouter: ResponseRouter
 }
 
 /**
@@ -187,10 +155,14 @@ export interface MessageHandlerOptions {
  *
  * When a message matches these criteria:
  * 1. Converts the Discord.js Message to DiscordMessageContext
- * 2. Calls the onMessage callback with the context
- * 3. If callback returns a non-null string, replies to the message
+ * 2. Hands off to the message coordinator for batching and processing
+ * 3. Coordinator handles interruption, batching, and response routing
  *
- * Errors in the callback or reply are logged but do not crash the handler.
+ * Additional features:
+ * - Interrupts catch-up or perch sessions when new messages arrive
+ * - Tracks pending questions and correlates answers
+ * - Updates inbox checkpoints for catch-up tracking
+ * - Manages bot state transitions (idle → processing_message)
  *
  * @param options - Configuration for the message handler
  * @returns Event handler function for the 'messageCreate' event
@@ -198,13 +170,13 @@ export interface MessageHandlerOptions {
  * @example
  * ```typescript
  * const client = new Client({ intents: [...] });
+ * const coordinator = createMessageCoordinator({ agent, onResponse: ... });
+ *
  * client.on('messageCreate', createMessageHandler({
- *   monitoredChannelIds: [channelId1, channelId2],
  *   botUserId: myBotUserId,
- *   onMessage: async (context) => {
- *     // Process message and optionally return a reply
- *     return `You said: ${context.content}`;
- *   }
+ *   channelRegistry: myChannelRegistry,
+ *   coordinator: coordinator,
+ *   botStateManager: myBotStateManager,
  * }));
  * ```
  */
@@ -310,31 +282,6 @@ function handleStateAndInbox(
 }
 
 /**
- * Helper function to delegate message to coordinator or process directly.
- */
-async function delegateToCoordinatorOrProcess(
-    message: Message,
-    coordinator: MessageCoordinator | undefined,
-    createContext: (message: Message) => DiscordMessageContext,
-    processMessage: (message: Message) => Promise<void>
-): Promise<void> {
-    // Stryker disable all: Integration tests cover coordinator path, unit tests cover direct path
-    if(coordinator) {
-        // Convert Discord.js Message to DiscordMessageContext
-        const context = createContext(message);
-
-        // Hand off to coordinator (it will handle batching, interruption, and onResponse)
-        // Only pass channel if it has sendTyping method (some channel types don't)
-        const channel = 'sendTyping' in message.channel ? message.channel : undefined;
-        coordinator.handleMessage(context, message, channel);
-        // Stryker restore all
-    } else {
-        // Direct processing (backward compatibility)
-        await processMessage(message);
-    }
-}
-
-/**
  * Helper function to handle mode-based interruptions (catch-up or perch).
  * Interrupts any active catch-up or perch session as a side-effect, then returns to let the message continue to the coordinator.
  */
@@ -367,12 +314,12 @@ async function handleModeInterruptions(
 /**
  * Helper function to update inbox checkpoint after message processing.
  */
+// Stryker disable all: Optional inbox integration - checkpoint update for catch-up tracking
 async function updateInboxCheckpoint(
     message: Message,
     inboxManager: InboxManager | undefined,
     shouldRespond: boolean
 ): Promise<void> {
-    // Stryker disable all: Optional inbox integration - checkpoint update for catch-up tracking
     if(inboxManager && shouldRespond) {
         await inboxManager.recordActivity(
             createChannelId(message.channel.id),
@@ -381,8 +328,8 @@ async function updateInboxCheckpoint(
             message.createdAt.toISOString()
         );
     }
-    // Stryker restore all
 }
+// Stryker restore all
 
 /**
  * Helper function to check if a message should be ignored.
@@ -417,14 +364,16 @@ async function determineResponseContext(
 
     // Check for reply to bot
     let isReplyToBot = false;
+    // Stryker disable next-line ConditionalExpression: Guard skips fetch when no reference exists; catch swallows the same failure
     if(message.reference?.messageId) {
+        // Stryker disable BlockStatement
         try {
             const referencedMessage = await message.fetchReference();
             isReplyToBot = referencedMessage.author.id === botUserId;
         } catch{
             // If we can't fetch the reference, assume it's not a reply to bot
-            isReplyToBot = false;
         }
+        // Stryker restore BlockStatement
     }
 
     // Muting applies at the channel level only. Threads inherit their parent channel's mute state.
@@ -553,25 +502,7 @@ async function handlePendingQuestion(
 }
 
 export function createMessageHandler(options: MessageHandlerOptions): (message: Message) => Promise<void> {
-    const { botUserId, channelRegistry, onMessage, presenceManager, agent, dynamicStatusGenerator, addRecentMessage, coordinator, questionRegistry, answerClassifier, inboxManager, catchUpSessionRunner, botStateManager, perchSessionRunner, dmTracker, responseRouter } = options;
-
-    // Create status middleware if presenceManager, agent, and botStateManager are provided
-    const statusMiddleware = presenceManager && agent && botStateManager
-        ? createStatusMiddleware({
-            presenceManager,
-            agent,
-            logger,
-            dynamicStatusGenerator,
-            botStateManager,
-        })
-        : null;
-
-    // Create rate limiter for Discord message sending
-    // Stryker disable next-line ObjectLiteral: Logger debug object
-    const rateLimiter = createDiscordRateLimiter({
-        globalConcurrency: 5,
-        logger,
-    });
+    const { botUserId, channelRegistry, addRecentMessage, coordinator, questionRegistry, answerClassifier, inboxManager, catchUpSessionRunner, botStateManager, perchSessionRunner, dmTracker } = options;
 
     // Helper to create DiscordMessageContext from Discord.js Message
     const createContext = (message: Message): DiscordMessageContext => {
@@ -588,70 +519,6 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
             attachments: attachments.length > 0 ? attachments : undefined,
         };
     };
-
-    // Helper function to process a message after filtering checks pass
-
-    async function processMessage(message: Message): Promise<void> {
-        // Convert Discord.js Message to DiscordMessageContext
-        const context = createContext(message);
-
-        try {
-            logger.info({
-                userId:         message.author.id,
-                channelId:      message.channel.id,
-                messageId:      message.id,
-                contentPreview: message.cleanContent.slice(0, 50) + (message.cleanContent.length > 50 ? '...' : ''),
-                msg:            `Processing message from ${message.author.tag}`,
-            });
-
-            // Use status middleware if available, otherwise call onMessage directly
-            // Discord.js channels implement sendTyping() for typing indicator support
-            const channel = message.channel as { sendTyping(): Promise<void> };
-            const reply = statusMiddleware
-                ? await statusMiddleware(context, channel)
-                : await onMessage(context);
-
-            // Track this message for context-aware idle status
-            addRecentMessage?.(context.content);
-
-            // Record channel activity for inbox tracking
-            // Stryker disable all: Optional inbox integration - tested via inbox-manager.test.ts
-            if(inboxManager) {
-                const guildId = createGuildId(message.guild?.id ?? 'DM');
-                inboxManager.recordActivity(
-                    context.channelId,
-                    guildId,
-                    context.messageId,
-                    context.timestamp
-                ).catch((error) => {
-                    const errorMsg = _.isError(error) ? error.message : String(error);
-                    logger.warn({
-                        channelId: context.channelId,
-                        error:     errorMsg,
-                        msg:       'Failed to record inbox activity',
-                    });
-                });
-            }
-            // Stryker restore all
-
-            // Reply if callback returned a string
-            if(reply !== null) {
-                await sendResponse({
-                    responseRouter,
-                    botStateManager,
-                    response:           reply,
-                    message,
-                    rateLimiter,
-                    client:             message.client,
-                    useFallbackOnError: true,
-                });
-            }
-        } catch (error) {
-            const err = _.isError(error) ? error : new Error(String(error));
-            // Use object spread to satisfy logger typing while maintaining structured logging
-            logger.error({ error: err, messageId: message.id, msg: `Error processing message ${message.id}: ${err.message}` });
-        }
-    }
 
     return async (message: Message) => {
         logger.debug({
@@ -726,8 +593,14 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         // Handle state transitions and inbox updates
         handleStateAndInbox(message, botStateManager, inboxManager, shouldRespond);
 
-        // If coordinator is provided, delegate to it; otherwise process directly
-        await delegateToCoordinatorOrProcess(message, coordinator, createContext, processMessage);
+        // Track this message for context-aware idle status
+        addRecentMessage?.(message.cleanContent);
+
+        // Convert Discord.js Message to DiscordMessageContext
+        const context = createContext(message);
+        // Hand off to coordinator (it will handle batching, interruption, and onResponse)
+        const channel = 'sendTyping' in message.channel ? message.channel : undefined;
+        coordinator.handleMessage(context, message, channel);
 
         // Update checkpoint to mark this message as "seen" for catch-up purposes
         await updateInboxCheckpoint(message, inboxManager, shouldRespond);

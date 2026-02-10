@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { isString as _isString } from 'lodash';
+import { isString as _isString, split as _split, some as _some, startsWith as _startsWith } from 'lodash';
 import {
     timeContextSchema,
     timeOfDaySchema,
@@ -8,6 +8,8 @@ import {
     formatShortRelativeTime,
     getCurrentTimeContext,
     formatTimeSince,
+    formatTimeHeader,
+    resolveTimezone,
     type TimeContext
 } from '@/utils/time';
 
@@ -216,5 +218,99 @@ describe('formatTimeSince', () => {
 
         const result = formatTimeSince(since);
         expect(result).toBe(expected);
+    });
+});
+
+describe('formatTimeHeader', () => {
+    let RealDate: DateConstructor;
+    const FIXED_TIME = new Date('2026-02-09T22:30:00.000Z');
+
+    beforeEach(() => {
+        RealDate = global.Date;
+
+        // Mock Date constructor to return fixed time
+        const DateMock = function(this: Date | undefined, ...args: unknown[]): Date | string {
+            if(new.target) {
+                if(args.length === 0) {
+                    return FIXED_TIME;
+                }
+                return Reflect.construct(RealDate, args) as Date;
+            } else {
+                return FIXED_TIME.toString();
+            }
+        };
+        DateMock.prototype = RealDate.prototype;
+        Object.setPrototypeOf(DateMock, RealDate);
+        DateMock.now = () => FIXED_TIME.getTime();
+        DateMock.parse = RealDate.parse;
+        DateMock.UTC = RealDate.UTC;
+
+        global.Date = DateMock as DateConstructor;
+    });
+
+    afterEach(() => {
+        global.Date = RealDate;
+    });
+
+    test('should include header and UTC+Izzy lines when no user timezone', () => {
+        const result = formatTimeHeader();
+        const lines = _split(result, '\n');
+
+        expect(lines[0]).toBe('## Current Time');
+        expect(lines[1]).toStartWith('- UTC: 2026-02-09T22:30:00.000Z (');
+        expect(lines[2]).toStartWith('- Izzy: ');
+        expect(lines[2]).toContain(resolveTimezone());
+        expect(lines).toHaveLength(3);
+    });
+
+    test('should omit User line when userTimezone equals server timezone', () => {
+        const serverTz = resolveTimezone();
+        const result = formatTimeHeader(serverTz);
+        const lines = _split(result, '\n');
+
+        expect(lines).toHaveLength(3);
+        expect(_some(lines, l => _startsWith(l, '- User:'))).toBe(false);
+    });
+
+    test('should include User line when userTimezone differs from server timezone', () => {
+        const serverTz = resolveTimezone();
+        // Pick a timezone that's definitely different from the server
+        const differentTz = serverTz === 'America/New_York' ? 'America/Los_Angeles' : 'America/New_York';
+        const result = formatTimeHeader(differentTz);
+        const lines = _split(result, '\n');
+
+        expect(lines).toHaveLength(4);
+        expect(lines[3]).toStartWith('- User: ');
+        expect(lines[3]).toContain(differentTz);
+    });
+
+    test('should format UTC line with day of week and time of day', () => {
+        const result = formatTimeHeader();
+        // 22:30 UTC is Monday night (not Sunday evening - that would be local time in PST)
+        expect(result).toContain('- UTC: 2026-02-09T22:30:00.000Z (Monday night)');
+    });
+
+    test('should format Izzy line with local time, timezone, day of week, and time of day', () => {
+        const result = formatTimeHeader();
+        const lines = _split(result, '\n');
+        const izzyLine = lines[2];
+
+        expect(izzyLine).toStartWith('- Izzy: ');
+        expect(izzyLine).toContain(resolveTimezone());
+        // Should contain day of week (one of the seven days)
+        expect(izzyLine).toMatch(/\((?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday) (?:morning|afternoon|evening|night)\)/);
+    });
+
+    test('should format User line with local time, timezone, day of week, and time of day when different from server', () => {
+        const serverTz = resolveTimezone();
+        const differentTz = serverTz === 'Europe/London' ? 'America/New_York' : 'Europe/London';
+        const result = formatTimeHeader(differentTz);
+        const lines = _split(result, '\n');
+        const userLine = lines[3];
+
+        expect(userLine).toStartWith('- User: ');
+        expect(userLine).toContain(differentTz);
+        // Should contain day of week and time of day
+        expect(userLine).toMatch(/\((?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday) (?:morning|afternoon|evening|night)\)/);
     });
 });

@@ -240,17 +240,6 @@ export function createMockBotStateManager() {
     };
 }
 
-export function createMockResponseRouter() {
-    return {
-        routeResponse: mock(async (_sessionType: string, reply: string, channelId: string, _userId: string) => ({
-            shouldSend:      !reply.includes('@@NO_RESPONSE@@'),
-            content:         replace(reply, '@@NO_RESPONSE@@', ''),
-            targetChannelId: channelId,
-            isFallback:      false,
-        })),
-    };
-}
-
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
 mock.module('@hughescr/logger', () => ({
     logger: mockLogger,

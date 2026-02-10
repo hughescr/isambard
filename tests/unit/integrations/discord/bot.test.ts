@@ -29,8 +29,6 @@ describe('createDiscordBot', () => {
         homeGuildId:   createGuildId('home-guild-123'),
     };
 
-    const mockOnMessage = mock(async (_context: DiscordMessageContext) => null);
-
     const mockChannelRegistry = {
         shouldProcess:      mock(() => true),
         getChannel:         mock(() => Promise.resolve(null)),
@@ -63,8 +61,8 @@ describe('createDiscordBot', () => {
 
     test('should return an object with start and stop methods', () => {
         const bot = createDiscordBot({
-            config:          mockConfig,
-            onMessage:       mockOnMessage,
+            config: mockConfig,
+
             channelRegistry: mockChannelRegistry,
         });
 
@@ -87,8 +85,8 @@ describe('createDiscordBot', () => {
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
         const bot = createDiscordBot({
-            config:          mockConfig,
-            onMessage:       mockOnMessage,
+            config: mockConfig,
+
             channelRegistry: mockChannelRegistry,
         });
 
@@ -111,8 +109,8 @@ describe('createDiscordBot', () => {
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
         const bot = createDiscordBot({
-            config:          mockConfig,
-            onMessage:       mockOnMessage,
+            config: mockConfig,
+
             channelRegistry: mockChannelRegistry,
         });
 
@@ -136,8 +134,8 @@ describe('createDiscordBot', () => {
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
         const bot = createDiscordBot({
-            config:          mockConfig,
-            onMessage:       mockOnMessage,
+            config: mockConfig,
+
             channelRegistry: mockChannelRegistry,
         });
 
@@ -159,8 +157,8 @@ describe('createDiscordBot', () => {
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
         const bot = createDiscordBot({
-            config:          mockConfig,
-            onMessage:       mockOnMessage,
+            config: mockConfig,
+
             channelRegistry: mockChannelRegistry,
         });
 
@@ -181,8 +179,8 @@ describe('createDiscordBot', () => {
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
         const bot = createDiscordBot({
-            config:          mockConfig,
-            onMessage:       mockOnMessage,
+            config: mockConfig,
+
             channelRegistry: mockChannelRegistry,
         });
 
@@ -246,8 +244,8 @@ describe('createDiscordBot', () => {
             mockBotStateManager.shouldUpdatePresence = mock(() => false);
 
             createDiscordBot({
-                config:          configWithPresence,
-                onMessage:       mockOnMessage,
+                config: configWithPresence,
+
                 channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
                 botStateManager: mockBotStateManager,
@@ -350,8 +348,8 @@ describe('createDiscordBot', () => {
             realBotStateManager.start();
 
             createDiscordBot({
-                config:          configWithPresence,
-                onMessage:       mockOnMessage,
+                config: configWithPresence,
+
                 channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
                 botStateManager: realBotStateManager,
@@ -418,8 +416,8 @@ describe('createDiscordBot', () => {
             mockBotStateManager.start();
 
             createDiscordBot({
-                config:          configWithPresence,
-                onMessage:       mockOnMessage,
+                config: configWithPresence,
+
                 channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
                 botStateManager: mockBotStateManager,
@@ -538,8 +536,8 @@ describe('createDiscordBot', () => {
             mockBotStateManager.start();
 
             createDiscordBot({
-                config:          configWithPresence,
-                onMessage:       mockOnMessage,
+                config: configWithPresence,
+
                 channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
                 botStateManager: mockBotStateManager,
@@ -637,8 +635,8 @@ describe('createDiscordBot', () => {
             mockBotStateManager.start();
 
             createDiscordBot({
-                config:          configWithPresence,
-                onMessage:       mockOnMessage,
+                config: configWithPresence,
+
                 channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
                 botStateManager: mockBotStateManager,
@@ -696,8 +694,8 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
             });
 
@@ -764,10 +762,16 @@ describe('createDiscordBot', () => {
             }));
             spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
 
+            // Create a fake agent to enable coordinator creation (required for messageCreate handler)
+            const mockAgent = {
+                handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
+            } as unknown as import('@/agent/agent').ClaudeAgent;
+
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
+                agent:           mockAgent,
             });
 
             // Verify that clientReady was registered with once()
@@ -828,10 +832,16 @@ describe('createDiscordBot', () => {
             }));
             spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
 
+            // Create a fake agent to enable coordinator creation (required for messageCreate handler)
+            const mockAgent = {
+                handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
+            } as unknown as import('@/agent/agent').ClaudeAgent;
+
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
+                agent:           mockAgent,
             });
 
             // Before clientReady fires, handlers should NOT be registered
@@ -898,8 +908,8 @@ describe('createDiscordBot', () => {
             }));
 
             createDiscordBot({
-                config:          configWithPresence,
-                onMessage:       mockOnMessage,
+                config: configWithPresence,
+
                 channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
             });
@@ -945,8 +955,8 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
             createDiscordBot({
-                config:          configWithPresence,
-                onMessage:       mockOnMessage,
+                config: configWithPresence,
+
                 channelRegistry: mockChannelRegistry,
                 // identityContext missing
             });
@@ -1002,8 +1012,8 @@ describe('createDiscordBot', () => {
             }));
 
             const bot = createDiscordBot({
-                config:          configWithPresence,
-                onMessage:       mockOnMessage,
+                config: configWithPresence,
+
                 channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
             });
@@ -1065,8 +1075,8 @@ describe('createDiscordBot', () => {
             }));
 
             const bot = createDiscordBot({
-                config:          configWithPresence,
-                onMessage:       mockOnMessage,
+                config: configWithPresence,
+
                 channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
             });
@@ -1105,8 +1115,8 @@ describe('createDiscordBot', () => {
             spies.push(createClientSpy);
 
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
             });
 
@@ -1136,8 +1146,8 @@ describe('createDiscordBot', () => {
             spies.push(createClientSpy);
 
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
             });
 
@@ -1167,8 +1177,8 @@ describe('createDiscordBot', () => {
             spies.push(createClientSpy);
 
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
                 client:          providedClient,
             });
@@ -1198,8 +1208,8 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
             const bot = createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
             });
 
@@ -1239,8 +1249,8 @@ describe('createDiscordBot', () => {
             } as unknown as Client;
 
             const bot = createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
                 client:          providedClient,
             });
@@ -1275,8 +1285,8 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
             const bot = createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
             });
 
@@ -1327,8 +1337,8 @@ describe('createDiscordBot', () => {
             spies.push(loggerErrorSpy);
 
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: failingChannelRegistry,
             });
 
@@ -1391,8 +1401,8 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
 
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: failingChannelRegistry,
             });
 
@@ -1454,8 +1464,8 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
 
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: failingChannelRegistry,
             });
 
@@ -1510,8 +1520,8 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
 
             const bot = createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: failingChannelRegistry,
             });
 
@@ -1572,8 +1582,8 @@ describe('createDiscordBot', () => {
             spies.push(loggerErrorSpy);
 
             const bot = createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: failingChannelRegistry,
             });
 
@@ -1633,8 +1643,8 @@ describe('createDiscordBot', () => {
             };
 
             const bot = createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
                 botStateManager: mockBotStateManager,
             });
@@ -1673,8 +1683,8 @@ describe('createDiscordBot', () => {
             };
 
             const bot = createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
                 botStateManager: realBotStateManager,
             });
@@ -1739,8 +1749,8 @@ describe('createDiscordBot', () => {
             } as unknown as import('@/agent/agent').ClaudeAgent;
 
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
                 agent:           mockAgent,
             });
@@ -1795,8 +1805,8 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
 
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
                 // No agent - coordinator won't be created
             });
@@ -1879,8 +1889,8 @@ describe('createDiscordBot', () => {
             } as unknown as import('@/agent/agent').ClaudeAgent;
 
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistryWithGuild,
                 agent:           mockAgent,
             });
@@ -1960,8 +1970,8 @@ describe('createDiscordBot', () => {
             } as unknown as import('@/agent/agent').ClaudeAgent;
 
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistryWithGuild,
                 agent:           mockAgent,
             });
@@ -2018,8 +2028,8 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
 
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
                 // No agent - coordinator won't be created
             });
@@ -2097,8 +2107,8 @@ describe('createDiscordBot', () => {
             } as unknown as import('@/agent/agent').ClaudeAgent;
 
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
                 agent:           mockAgent,
                 botStateManager: realBotStateManager,
@@ -2201,8 +2211,8 @@ describe('createDiscordBot', () => {
             } as unknown as import('@/agent/agent').ClaudeAgent;
 
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
                 agent:           mockAgent,
                 botStateManager: realBotStateManager,
@@ -2299,8 +2309,8 @@ describe('createDiscordBot', () => {
             } as unknown as import('@/agent/agent').ClaudeAgent;
 
             createDiscordBot({
-                config:          mockConfig,
-                onMessage:       mockOnMessage,
+                config: mockConfig,
+
                 channelRegistry: mockChannelRegistry,
                 agent:           mockAgent,
                 botStateManager: realBotStateManager,

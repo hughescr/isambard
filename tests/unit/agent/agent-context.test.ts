@@ -7,7 +7,6 @@ import { createClaudeAgent } from '../../../src/agent/agent';
 import type { DiscordMessageContext } from '../../../src/integrations/discord/types';
 import { createGuildId, createChannelId, createUserId } from '../../../src/integrations/discord/types';
 import type { ContextBuilder } from '../../../src/agent/context-builder';
-import * as timeUtils from '../../../src/utils/time';
 
 describe('createClaudeAgent context integration', () => {
     let mockMessageContext: DiscordMessageContext;
@@ -34,13 +33,38 @@ describe('createClaudeAgent context integration', () => {
 
         // Create mock context builder
         mockContextBuilder = {
-            loadCoreIdentity:   mock(_.constant(Promise.resolve(''))),
-            loadRecentContext:  mock(_.constant(Promise.resolve([]))),
-            buildSystemContext: mock(_.constant(Promise.resolve(''))),
+            loadCoreIdentity:       mock(_.constant(Promise.resolve(''))),
+            loadRecentContext:      mock(_.constant(Promise.resolve([]))),
+            buildSystemContext:     mock(_.constant(Promise.resolve(''))),
             // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function
-            recordAccess:       mock(async () => {}),
-            loadRecentEvents:   mock(_.constant(Promise.resolve([]))),
-            loadUserTimezone:   mock(_.constant(Promise.resolve(undefined))),
+            recordAccess:           mock(async () => {}),
+            loadRecentEvents:       mock(_.constant(Promise.resolve([]))),
+            loadUserTimezone:       mock(_.constant(Promise.resolve(undefined))),
+            buildUserMessagePrefix: mock(async (userId: string, botUserId?: string): Promise<string> => {
+                const sections: string[] = [];
+
+                const userMemories = await mockContextBuilder.loadRecentContext(userId, 3);
+                if(userMemories.length > 0) {
+                    sections.push(`[About this user]\n${_.map(userMemories, m => `- ${m}`).join('\n')}`);
+                }
+
+                if(botUserId) {
+                    const botMemories = await mockContextBuilder.loadRecentContext(botUserId, 2);
+                    if(botMemories.length > 0) {
+                        sections.push(`[Your recent activities]\n${_.map(botMemories, m => `- ${m}`).join('\n')}`);
+                    }
+                }
+
+                const events = await mockContextBuilder.loadRecentEvents(50);
+                if(events.length > 0) {
+                    sections.push(`[Recent events]\n${_.map(events, m => `- ${m}`).join('\n')}`);
+                }
+
+                if(sections.length === 0) {
+                    return '';
+                }
+                return sections.join('\n\n') + '\n\n';
+            }),
         };
 
         // Mock query() to return an async generator with assistant message
@@ -314,12 +338,11 @@ describe('createClaudeAgent context integration', () => {
 
             await agent.handleInput([mockMessageContext]);
 
-            // Verify the format with all sections joined by \n\n (time section comes first)
+            // Verify the format with all sections joined by \n\n
             const callArgs = querySpy.mock.calls[0][0];
             const prompt = callArgs.prompt as string;
 
             // All sections should be present and separated by double newlines
-            expect(prompt).toContain('## Current Time');
             expect(prompt).toContain('[About this user]\n- User memory');
             expect(prompt).toContain('[Your recent activities]\n- Bot activity');
             expect(prompt).toContain('[Recent events]\n- Recent event');
@@ -357,56 +380,23 @@ describe('createClaudeAgent context integration', () => {
         });
     });
 
-    describe('time context injection', () => {
-        let timeContextSpy: ReturnType<typeof spyOn>;
-
-        beforeEach(() => {
-            // Mock getCurrentTimeContext to return predictable values
-            timeContextSpy = spyOn(timeUtils, 'getCurrentTimeContext').mockReturnValue({
-                utc:           '2025-01-15T14:30:00.000Z',
-                dayOfWeek:     'Wednesday',
-                timeOfDay:     'afternoon',
-                utcDayOfWeek:  'Wednesday',
-                utcTimeOfDay:  'afternoon',
-                userTimezone:  'UTC',
-                userLocalTime: '2025-01-15T14:30:00',
-            });
-        });
-
-        afterEach(() => {
-            timeContextSpy.mockRestore();
-        });
-
-        test('should include time section in context prefix when contextBuilder is provided', async () => {
+    describe('time context removed from user prompt', () => {
+        test('should NOT include time section in user message prompt when contextBuilder is provided', async () => {
             const agent = createClaudeAgent({
                 contextBuilder: mockContextBuilder,
             });
 
             await agent.handleInput([mockMessageContext]);
 
-            expect(querySpy).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    prompt: expect.stringContaining('## Current Time'),
-                })
-            );
+            const callArgs = querySpy.mock.calls[0][0];
+            const prompt = callArgs.prompt as string;
+
+            // Time should NOT be in user message prompt (it's in system prompt only)
+            expect(prompt).not.toContain('## Current Time');
         });
 
-        test('should format time section with UTC, day of week, and time of day', async () => {
-            const agent = createClaudeAgent({
-                contextBuilder: mockContextBuilder,
-            });
-
-            await agent.handleInput([mockMessageContext]);
-
-            expect(querySpy).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    prompt: expect.stringContaining('- UTC: 2025-01-15T14:30:00.000Z (Wednesday afternoon)\n- Local: 2025-01-15T14:30:00 UTC (Wednesday afternoon)'),
-                })
-            );
-        });
-
-        test('should include time section as the first section in context prefix', async () => {
-            // Mock user memories to have another section
+        test('should start user prompt with user memories when present', async () => {
+            // Mock user memories to have a section
             (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockImplementation((userId: string) => {
                 if(userId === '111222333') {
                     return Promise.resolve(['User likes TypeScript']);
@@ -423,12 +413,8 @@ describe('createClaudeAgent context integration', () => {
             const callArgs = querySpy.mock.calls[0][0];
             const prompt = callArgs.prompt as string;
 
-            // Time section should come before user section
-            const timeIndex = prompt.indexOf('## Current Time');
-            const userIndex = prompt.indexOf('[About this user]');
-
-            expect(timeIndex).toBeGreaterThanOrEqual(0);
-            expect(userIndex).toBeGreaterThan(timeIndex);
+            // User memories should be the first section now
+            expect(prompt).toMatch(/^\[About this user\]/);
         });
     });
 
