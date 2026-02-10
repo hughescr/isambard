@@ -130,6 +130,43 @@ export interface SetupCoordinatorParams {
 }
 
 /**
+ * Maps a single Discord message context to platform-agnostic message context for the agent.
+ */
+export function toMessageContext(context: DiscordMessageContext): import('@/agent/types').MessageContext {
+    return {
+        channelId:   context.channelId,
+        userId:      context.userId,
+        messageId:   context.messageId,
+        content:     context.content,
+        timestamp:   context.timestamp,
+        botUserId:   context.botUserId,
+        guildId:     context.guildId,
+        attachments: context.attachments,
+    };
+}
+
+/**
+ * Maps Discord message contexts to platform-agnostic message contexts for the agent.
+ */
+export function toMessageContexts(contexts: DiscordMessageContext[]): import('@/agent/types').MessageContext[] {
+    return _.map(contexts, toMessageContext);
+}
+
+/**
+ * Maps Discord fetched images to platform-agnostic image format for the agent.
+ */
+export function toPlatformImages(images: FetchedImage[]): import('@/agent/types').PlatformImage[] {
+    return _.map(images, img => ({
+        filename:     img.filename,
+        mediaType:    img.mediaType,
+        base64Data:   img.base64Data,
+        originalSize: img.originalSize,
+        width:        img.width,
+        height:       img.height,
+    }));
+}
+
+/**
  * Sets up the message coordinator integration with the agent.
  * Configures the processor to handle message contexts and call the agent.
  *
@@ -293,12 +330,12 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
             });
 
             // Call handleInput with presence updates, images, and channel context
-            const result = await agent.handleInput(modifiedContexts, {
+            const result = await agent.handleInput(toMessageContexts(modifiedContexts), {
                 sessionId,
                 resumeContext: resumeContext ?? undefined,
                 abortController,
                 onStreamEvent: streamEventHandler?.onStreamEvent,
-                images:        images.length > 0 ? images : undefined,
+                images:        images.length > 0 ? toPlatformImages(images) : undefined,
                 channelList,
             });
 

@@ -14,8 +14,8 @@ import { createIdleStatusGenerator } from '@/integrations/discord/presence/statu
 import { createPresenceManager } from '@/integrations/discord/presence/manager';
 import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
 import type { ClaudeAgent } from '@/agent/agent';
+import type { MessageContext, AgentStreamEvent } from '@/agent/types';
 import type { DiscordMessageContext, ChannelId, UserId, GuildId } from '@/integrations/discord/types';
-import type { AgentStreamEvent } from '@/agent/types';
 // Import shared mocks from setup.ts (already registered via mock.module in preload)
 import { mockGenerateText, mockGenerateTextWithSystemPrompt } from '../../setup';
 
@@ -90,7 +90,7 @@ describe('Discord Presence Flow (Integration)', () => {
 
         // Create agent that throws an error
         mockAgent = {
-            handleInput: mock(async (_contexts: DiscordMessageContext[], _options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+            handleInput: mock(async (_contexts: MessageContext[], _options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                 throw new Error('Agent processing failed');
             }),
         } as ClaudeAgent;

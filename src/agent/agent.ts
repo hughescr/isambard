@@ -2,11 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { McpServerConfig, SDKUserMessage, SdkPluginConfig, SDKCompactBoundaryMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
-// TODO: Decouple - agent should be platform-agnostic. Move Discord types to generic types or use dependency injection. See roadmaps/
-// eslint-disable-next-line boundaries/element-types -- Agent imports Discord types for message context; decouple per roadmap
-import type { DiscordMessageContext } from '../integrations/discord/types';
-// eslint-disable-next-line boundaries/element-types -- Agent imports Discord types for attachments; decouple per roadmap
-import type { FetchedImage } from '../integrations/discord/attachments/types';
+import type { MessageContext, PlatformImage } from './types';
 import { formatLocalDateTime, resolveTimezone } from '../utils/time';
 import type { ContextBuilder } from './context-builder';
 import { buildSystemPrompt, COMPACTION_SUMMARY_PROMPT } from './prompts/index.js';
@@ -275,7 +271,7 @@ export interface HandleInputOptions {
     /** Callback for stream events */
     onStreamEvent?:   (event: AgentStreamEvent) => void
     /** Optional images to include in the first message */
-    images?:          FetchedImage[]
+    images?:          PlatformImage[]
     /** Special mode for the session (affects tool availability) */
     specialMode?:     'catchup' | 'perching'
     /** Optional catch-up prompt to use instead of building from contexts */
@@ -307,7 +303,7 @@ export interface ClaudeAgent {
      * @returns Result with final response, interruption status, and stream tracker
      */
     handleInput: (
-        contexts: DiscordMessageContext[],
+        contexts: MessageContext[],
         options?: HandleInputOptions
     ) => Promise<HandleInputResult>
 }
@@ -618,7 +614,7 @@ export function logStreamEvent(message: AgentStreamEvent): void {
  * @returns Formatted user message text
  */
 async function buildUserMessageTextForBatch(
-    contexts: DiscordMessageContext[],
+    contexts: MessageContext[],
     contextBuilder: ContextBuilder | undefined,
     timezone?: string,
     resumeContext?: ResumeContext,
@@ -665,7 +661,7 @@ async function buildUserMessageTextForBatch(
 // Stryker disable all: Private async generator - behavior tested via handleInput() integration tests
 async function* buildPromptForSdk(
     textContent: string,
-    images?: FetchedImage[]
+    images?: PlatformImage[]
 ): AsyncGenerator<SDKUserMessage> {
     // eslint-disable-next-line n/no-unsupported-features/node-builtins -- Bun runtime supports crypto.randomUUID
     const sessionId = crypto.randomUUID();
@@ -932,7 +928,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     return {
         // eslint-disable-next-line complexity -- Pre-existing complexity, refactoring planned
         handleInput: async (
-            contexts: DiscordMessageContext[],
+            contexts: MessageContext[],
             options?: HandleInputOptions
         ): Promise<HandleInputResult> => {
             const tracker = createStreamTracker();

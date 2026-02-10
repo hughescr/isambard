@@ -2,18 +2,17 @@ import _ from 'lodash';
 import { describe, test, expect } from 'bun:test';
 import { buildResumePrompt } from '../../../src/agent/resume-prompt-builder';
 import type { ResumeContext } from '../../../src/agent/resume-prompt-builder';
-import type { DiscordMessageContext } from '../../../src/integrations/discord/types';
-import { createChannelId, createUserId, createGuildId } from '../../../src/integrations/discord/types';
+import type { MessageContext } from '../../../src/agent/types';
 
 describe('buildResumePrompt', () => {
-    const createBasicMessage = (overrides?: Partial<DiscordMessageContext>): DiscordMessageContext => ({
-        guildId:   createGuildId('guild_123'),
-        channelId: createChannelId('channel_456'),
-        userId:    createUserId('user_789'),
+    const createBasicMessage = (overrides?: Partial<MessageContext>): MessageContext => ({
+        guildId:   'guild_123',
+        channelId: 'channel_456',
+        userId:    'user_789',
         messageId: 'msg_001',
         content:   'Test message',
         timestamp: '2026-01-16T10:00:00Z',
-        botUserId: createUserId('bot_999'),
+        botUserId: 'bot_999',
         ...overrides,
     });
 
@@ -211,19 +210,19 @@ describe('buildResumePrompt', () => {
                 newEvents:   [],
                 newMessages: [
                     createBasicMessage({
-                        userId:    createUserId('user_001'),
+                        userId:    'user_001',
                         messageId: 'msg_001',
                         content:   'First message',
                         timestamp: '2026-01-16T10:00:00Z',
                     }),
                     createBasicMessage({
-                        userId:    createUserId('user_002'),
+                        userId:    'user_002',
                         messageId: 'msg_002',
                         content:   'Second message',
                         timestamp: '2026-01-16T10:01:00Z',
                     }),
                     createBasicMessage({
-                        userId:    createUserId('user_003'),
+                        userId:    'user_003',
                         messageId: 'msg_003',
                         content:   'Third message',
                         timestamp: '2026-01-16T10:02:00Z',
@@ -265,7 +264,7 @@ describe('buildResumePrompt', () => {
                 ],
                 newMessages: [
                     createBasicMessage({
-                        userId:  createUserId('user_999'),
+                        userId:  'user_999',
                         content: 'Actually, can you do this first?',
                     }),
                 ],

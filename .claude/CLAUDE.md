@@ -66,7 +66,7 @@ The agent subsystem connects Discord to Claude with persistent memory:
 - `src/agent/memory-mcp-server.ts` - MCP server exposing memory tools (view, storeSelf, storeUserMemory, logEvent, search, list)
 - `src/agent/discord-mcp-server.ts` - MCP server for Discord message history (searchMessages, getRecentMessages, getMessageById)
 - `src/agent/text-generator.ts` - Lightweight LLM text generation via Haiku
-- `src/agent/types.ts` - Agent stream event types
+- `src/agent/types.ts` - Agent stream event types, platform-agnostic message types (`MessageContext`, `PlatformImage`)
 - `src/agent/claude-retry.ts` - Retry logic for Claude API calls
 - `src/agent/plugin-loader.ts` - Plugin loading and management for Claude Agent SDK
 - `src/agent/session-cleanup.ts` - Session cleanup and lifecycle management
@@ -91,7 +91,7 @@ The Discord integration provides bot functionality:
   - `presence-setup.ts` - Presence manager creation, status generators, and BotStateManager subscriptions
   - `perch-setup.ts` - Perch session runner and scheduler configuration
   - `catchup-setup.ts` - Catch-up session runner, inbox initialization, and catch-up context building
-  - `coordinator-setup.ts` - Message coordinator integration with agent, attachment processing
+  - `coordinator-setup.ts` - Message coordinator integration with agent, attachment processing, boundary mapping (Discord→agent types)
   - `event-handler-setup.ts` - Channel registry initialization, message processing setup, channel cleanup handlers
 - `src/integrations/discord/index.ts` - Public exports
 
@@ -168,6 +168,7 @@ Zod-validated configuration loading with env-var for type-safe environment varia
 - **Dependency Injection** for testability
 - **Zod Schemas** for runtime validation
 - **Branded Types** (MemoryPath, LayerName, ChannelId, GuildId, UserId, MessageId)
+- **Platform-Agnostic Agent Types** — agent module uses `MessageContext` and `PlatformImage` instead of Discord-specific types; Discord integration maps at the boundary in `coordinator-setup.ts`
 - **Structured Logging** with correlation IDs
 - **Custom MCP Servers** for memory and Discord message history tools
 - **Three-Layer Memory Architecture** with paths: `/identity/`, `/state/`, `/events/`, `/users/{userId}/`

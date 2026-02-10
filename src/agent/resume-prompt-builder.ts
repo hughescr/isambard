@@ -7,9 +7,7 @@
 
 import _ from 'lodash';
 import type { StreamProgress } from './stream-tracker';
-// TODO: Decouple - agent should be platform-agnostic. Move Discord types to generic types or use dependency injection. See roadmaps/
-// eslint-disable-next-line boundaries/element-types -- Resume prompt builder imports Discord message context; decouple per roadmap
-import type { DiscordMessageContext } from '../integrations/discord/types';
+import type { MessageContext } from './types';
 
 /**
  * Context needed to build a resume prompt after an interruption.
@@ -20,7 +18,7 @@ export interface ResumeContext {
     /** Events that occurred during processing (formatted strings from EventDeltaTracker) */
     newEvents:   string[]
     /** New messages that arrived during processing */
-    newMessages: DiscordMessageContext[]
+    newMessages: MessageContext[]
 }
 
 /**

@@ -1,8 +1,7 @@
 import type { Client } from 'discord.js';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
-import type { UserId } from '../types';
-import { createChannelId, createGuildId } from '../types';
+import { createUserId, createChannelId, createGuildId } from '../types';
 import { createMessageHandler } from '../handlers';
 import { createAnswerClassifier } from '@/agent/answer-classifier';
 import type { MessageCoordinator } from '../message-coordinator';
@@ -142,7 +141,7 @@ export function setupMessageProcessing(params: SetupMessageProcessingParams): vo
     // This ensures channelRegistry.shouldProcess() has data to work with
     // eslint-disable-next-line @typescript-eslint/no-misused-promises -- messageCreate handler is async
     client.on('messageCreate', createMessageHandler({
-        botUserId: readyClient.user!.id as UserId,
+        botUserId: createUserId(readyClient.user!.id),
         channelRegistry,
         addRecentMessage,
         coordinator,

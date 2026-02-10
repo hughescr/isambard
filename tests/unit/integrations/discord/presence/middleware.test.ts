@@ -44,7 +44,7 @@ import { constant as _constant, endsWith as _endsWith, filter as _filter, find a
 import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
 import { shouldGenerateSynopsis } from '@/integrations/discord/presence/stream-event-handler';
 import type { PresencePhase, SynopsisContext } from '@/integrations/discord/presence/types';
-import type { AgentStreamEvent } from '@/agent/types';
+import type { AgentStreamEvent, MessageContext } from '@/agent/types';
 import type { StreamTracker } from '@/agent/stream-tracker';
 import type { DiscordMessageContext } from '@/integrations/discord/types';
 import type { DynamicStatusGenerator } from '@/integrations/discord/presence/status-generator-dynamic';
@@ -165,7 +165,7 @@ describe('StatusMiddleware', () => {
             // Create middleware that will receive stream events
             const events: AgentStreamEvent[] = [];
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     const event: AgentStreamEvent = { type: 'assistant' };
                     events.push(event);
                     if(options?.onStreamEvent) { options?.onStreamEvent?.(event); }
@@ -190,7 +190,7 @@ describe('StatusMiddleware', () => {
 
         test('should map tool_progress event to using_tool phase with tool name', async () => {
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         options?.onStreamEvent?.({ type: 'tool_progress', tool_name: 'mcp__memory__search' });
                     }
@@ -217,7 +217,7 @@ describe('StatusMiddleware', () => {
 
         test('should map assistant event with delta text to responding phase', async () => {
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         options?.onStreamEvent?.({ type: 'assistant', delta: { text: 'Hello' } });
                     }
@@ -241,7 +241,7 @@ describe('StatusMiddleware', () => {
 
         test('should map result event to clear activity phase', async () => {
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         options?.onStreamEvent?.({ type: 'result', subtype: 'success' });
                     }
@@ -287,7 +287,7 @@ describe('StatusMiddleware', () => {
             };
 
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         options?.onStreamEvent?.({ type: 'result', subtype: 'success' });
                     }
@@ -315,7 +315,7 @@ describe('StatusMiddleware', () => {
     describe('error handling', () => {
         test('should handle errors gracefully and clear presence', async () => {
             const errorAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], _options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], _options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     throw new Error('Test error');
                 }),
             };
@@ -341,7 +341,7 @@ describe('StatusMiddleware', () => {
 
         test('should handle stream callback errors without crashing', async () => {
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         // This should not crash even if callback throws
                         options?.onStreamEvent?.({ type: 'assistant' });
@@ -390,7 +390,7 @@ describe('StatusMiddleware', () => {
 
         test('should safely ignore unknown event types without crashing or triggering presence updates', async () => {
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         // Send an unknown event type that the middleware doesn't recognize
                         options?.onStreamEvent?.({ type: 'unexpected_event_type' } as any);
@@ -423,7 +423,7 @@ describe('StatusMiddleware', () => {
         test('should handle concurrent messages independently', async () => {
             let callbackCount = 0;
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         callbackCount++;
                         options?.onStreamEvent?.({ type: 'assistant' });
@@ -483,7 +483,7 @@ describe('StatusMiddleware', () => {
         test('should extract tool name from tool_progress events', async () => {
             const toolNames: string[] = [];
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         options?.onStreamEvent?.({ type: 'tool_progress', tool_name: 'mcp__memory__view' });
                         options?.onStreamEvent?.({ type: 'tool_progress', tool_name: 'mcp__memory__storeSelf' });
@@ -528,7 +528,7 @@ describe('StatusMiddleware', () => {
 
         test('should handle missing tool_name gracefully', async () => {
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         // Tool progress without tool_name
                         options?.onStreamEvent?.({ type: 'tool_progress' });
@@ -581,7 +581,7 @@ describe('StatusMiddleware', () => {
         test('should process message normally when channel is undefined', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         options?.onStreamEvent?.({ type: 'assistant', delta: { text: 'Hello' } });
                     }
@@ -682,7 +682,7 @@ describe('StatusMiddleware', () => {
         test('should return response even when safeUpdatePhase throws multiple times', async () => {
             let callCount = 0;
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         options?.onStreamEvent?.({ type: 'assistant' });
                         options?.onStreamEvent?.({ type: 'assistant', delta: { text: 'Hi' } });
@@ -736,7 +736,7 @@ describe('StatusMiddleware', () => {
         test('should still attempt idle transition when agent throws after events', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         options?.onStreamEvent?.({ type: 'assistant', delta: { text: 'Starting...' } });
                     }
@@ -820,7 +820,7 @@ describe('StatusMiddleware', () => {
             };
 
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         // First tool call
                         options?.onStreamEvent?.({ type: 'tool_progress', tool_name: 'Read' });
@@ -884,7 +884,7 @@ describe('StatusMiddleware', () => {
             };
 
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         // No thinking content blocks or tool calls yet
                         options?.onStreamEvent?.({ type: 'assistant' });
@@ -953,7 +953,7 @@ describe('StatusMiddleware', () => {
         test('should correctly discriminate between event types', async () => {
             const phases: PresencePhase[] = [];
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         // Send multiple types to verify correct discrimination
                         options?.onStreamEvent?.({ type: 'assistant' });
@@ -1007,7 +1007,7 @@ describe('StatusMiddleware', () => {
 
         test('should deduplicate consecutive events with the same phase (line 275 mutant killer)', async () => {
             const wrappedAgent = {
-                handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         // Send multiple consecutive responding phase events
                         options?.onStreamEvent?.({ type: 'assistant', delta: { text: 'Hello' } });
@@ -1066,7 +1066,7 @@ describe('StatusMiddleware', () => {
                 },
             ])('should call generateSynopsis for $phase phase', async ({ event, expectedContext }) => {
                 const wrappedAgent = {
-                    handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                    handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                         if(options?.onStreamEvent) {
                             options?.onStreamEvent?.(event as any);
                         }
@@ -1116,7 +1116,7 @@ describe('StatusMiddleware', () => {
                 );
 
                 const wrappedAgent = {
-                    handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                    handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                         if(options?.onStreamEvent) {
                             options?.onStreamEvent?.(event as any);
                         }
@@ -1169,7 +1169,7 @@ describe('StatusMiddleware', () => {
                 );
 
                 const wrappedAgent = {
-                    handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                    handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                         if(options?.onStreamEvent) {
                             options?.onStreamEvent?.({ type: 'assistant' });
                         }
@@ -1224,7 +1224,7 @@ describe('StatusMiddleware', () => {
                 );
 
                 const wrappedAgent = {
-                    handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                    handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                         if(options?.onStreamEvent) {
                             options?.onStreamEvent?.({ type: 'assistant', delta: { text: 'Hello' } });
                         }
@@ -1281,7 +1281,7 @@ describe('StatusMiddleware', () => {
                 );
 
                 const wrappedAgent = {
-                    handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                    handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                         if(options?.onStreamEvent) {
                             options?.onStreamEvent?.({ type: 'tool_progress', tool_name: 'test_tool' });
                         }
@@ -1334,7 +1334,7 @@ describe('StatusMiddleware', () => {
             test('should work without dynamicStatusGenerator (backwards compatibility)', async () => {
                 const phases: PresencePhase[] = [];
                 const wrappedAgent = {
-                    handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                    handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                         if(options?.onStreamEvent) {
                             options?.onStreamEvent?.({ type: 'assistant' });
                         }
@@ -1387,7 +1387,7 @@ describe('StatusMiddleware', () => {
                 );
 
                 const wrappedAgent = {
-                    handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                    handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                         if(options?.onStreamEvent) {
                             options?.onStreamEvent?.({ type: 'assistant', delta: { text: 'Hi' } });
                         }
@@ -1446,7 +1446,7 @@ describe('StatusMiddleware', () => {
                 };
 
                 const wrappedAgent = {
-                    handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                    handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                         if(options?.onStreamEvent) {
                             // First text chunk triggers responding phase
                             options?.onStreamEvent?.({ type: 'assistant', delta: { text: 'Hello ' } });
@@ -1506,7 +1506,7 @@ describe('StatusMiddleware', () => {
                 };
 
                 const wrappedAgent = {
-                    handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                    handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                         if(options?.onStreamEvent) {
                         // Send assistant event with tool_use containing sensitive data
                             options?.onStreamEvent?.({
@@ -1563,7 +1563,7 @@ describe('StatusMiddleware', () => {
                 const longText2 = _repeat('Y', 60);
 
                 const wrappedAgent = {
-                    handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                    handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                         if(options?.onStreamEvent) {
                         // Send multiple text chunks that exceed 200 chars total (210)
                             options?.onStreamEvent?.({ type: 'assistant', delta: { text: longText1 } });
@@ -1607,7 +1607,7 @@ describe('StatusMiddleware', () => {
                 };
 
                 const wrappedAgent = {
-                    handleInput: mock(async (_contexts: DiscordMessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
+                    handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                         if(options?.onStreamEvent) {
                             // Tool with no toolInput (no prior tool_use block)
                             options?.onStreamEvent?.({ type: 'tool_progress', tool_name: 'UnknownTool' });

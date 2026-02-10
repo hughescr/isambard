@@ -360,7 +360,7 @@ async function determineResponseContext(
 ): Promise<{ isDM: boolean, isMention: boolean, isReplyToBot: boolean, shouldRespond: boolean }> {
     const isDM = !message.guild; // DM channels have no guild
     const isMention = message.content.includes(`<@${botUserId}>`) || message.content.includes(`<@!${botUserId}>`);
-    const channelId = message.channel.id as ChannelId;
+    const channelId = createChannelId(message.channel.id);
 
     // Check for reply to bot
     let isReplyToBot = false;
@@ -381,7 +381,7 @@ async function determineResponseContext(
     // If parent is muted, threads inherit the mute unless override conditions apply
     let shouldRespond = channelRegistry.shouldProcess(channelId, isDM, isMention, isReplyToBot);
     if(shouldRespond && message.channel.isThread?.() && message.channel.parentId) {
-        const parentChannelId = message.channel.parentId as ChannelId;
+        const parentChannelId = createChannelId(message.channel.parentId);
         // Check if parent channel is muted. Override conditions (mention, reply) still apply - if someone @mentions Izzy in a thread of a muted channel, still respond.
         shouldRespond = channelRegistry.shouldProcess(parentChannelId, false, isMention, isReplyToBot);
     }

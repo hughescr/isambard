@@ -1,5 +1,5 @@
 import _ from 'lodash';
-import type { ChannelId } from '../../discord/types';
+import { createChannelId, type ChannelId } from '../../discord/types';
 import type { ChannelRegistryManager } from './manager';
 
 /**
@@ -31,7 +31,7 @@ import type { ChannelRegistryManager } from './manager';
 export function resolveChannelId(input: string, channelRegistry: ChannelRegistryManager): ChannelId {
     // If doesn't start with #, assume it's a numeric ID
     if(!_.startsWith(input, '#')) {
-        return input as ChannelId;
+        return createChannelId(input);
     }
 
     // Strip # and look up by name

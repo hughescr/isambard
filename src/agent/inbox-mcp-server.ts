@@ -3,7 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
-// TODO: Decouple - Inbox MCP server in agent module creates platform coupling. Consider moving to integrations/discord or creating abstraction layer. See roadmaps/
+// TODO: Decouple - Inbox MCP server should expose platform-agnostic MCP tool interfaces wrapping inbox management capabilities
 // eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord inbox manager; decouple per roadmap
 import type { InboxManager } from '../integrations/discord/inbox/inbox-manager';
 // eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord inbox types; decouple per roadmap

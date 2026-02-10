@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import _ from 'lodash';
 import { buildMultimodalContent, hasImages } from '@/agent/multimodal-message-builder';
-import type { FetchedImage } from '@/integrations/discord/attachments/types';
+import type { PlatformImage } from '@/agent/types';
 
 describe.concurrent('multimodal-message-builder', () => {
     describe('buildMultimodalContent', () => {
@@ -50,7 +50,7 @@ describe.concurrent('multimodal-message-builder', () => {
 
         test('should return image blocks then text block when images provided', () => {
             const text = 'Check out this image!';
-            const images: FetchedImage[] = [
+            const images: PlatformImage[] = [
                 {
                     filename:     'test.jpg',
                     mediaType:    'image/jpeg',
@@ -78,7 +78,7 @@ describe.concurrent('multimodal-message-builder', () => {
 
         test('should handle multiple images and preserve order', () => {
             const text = 'Multiple images';
-            const images: FetchedImage[] = [
+            const images: PlatformImage[] = [
                 {
                     filename:     'first.png',
                     mediaType:    'image/png',
@@ -134,7 +134,7 @@ describe.concurrent('multimodal-message-builder', () => {
 
         test('should handle images without optional width/height properties', () => {
             const text = 'Image without dimensions';
-            const images: FetchedImage[] = [
+            const images: PlatformImage[] = [
                 {
                     filename:     'no-dims.jpg',
                     mediaType:    'image/jpeg',
@@ -169,7 +169,7 @@ describe.concurrent('multimodal-message-builder', () => {
         });
 
         test('should return true when images array is non-empty', () => {
-            const images: FetchedImage[] = [
+            const images: PlatformImage[] = [
                 {
                     filename:     'test.jpg',
                     mediaType:    'image/jpeg',
@@ -181,7 +181,7 @@ describe.concurrent('multimodal-message-builder', () => {
         });
 
         test('should return true when images array has multiple items', () => {
-            const images: FetchedImage[] = [
+            const images: PlatformImage[] = [
                 {
                     filename:     'test1.jpg',
                     mediaType:    'image/jpeg',

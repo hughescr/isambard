@@ -10,6 +10,7 @@ export { createEventDeltaTracker, type EventDeltaTracker } from './event-delta-t
 export { createMemoryMCPServer } from './memory-mcp-server';
 export { createDiscordMCPServer, setConversationContext, clearConversationContext, type DiscordMCPServerContext } from './discord-mcp-server';
 export { loadPlugins, type PluginsConfig } from './plugin-loader';
+export type { MessageContext, PlatformImage } from './types';
 
 /** @internal */
 export { buildMultimodalContent, hasImages, type ContentBlock, type TextContentBlock, type ImageContentBlock } from './multimodal-message-builder';

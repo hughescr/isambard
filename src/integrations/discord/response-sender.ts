@@ -1,7 +1,7 @@
 import type { Message, TextChannel, Client } from 'discord.js';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
-import type { ChannelId } from './types';
+import { createChannelId } from './types';
 import type { ResponseRouter, RoutingResult } from './channel-registry';
 import type { BotStateManager } from './state';
 import { WellKnownChannelNotFoundError } from './channel-registry';
@@ -83,7 +83,7 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
         routing = await responseRouter.routeResponse(
             sessionType,
             response,
-            message.channel.id as ChannelId
+            createChannelId(message.channel.id)
         );
     } catch (routeError: unknown) {
         if(routeError instanceof WellKnownChannelNotFoundError) {
@@ -98,7 +98,7 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
                 routing = {
                     shouldSend:      true,
                     content:         response,
-                    targetChannelId: message.channel.id as ChannelId,
+                    targetChannelId: createChannelId(message.channel.id),
                     isFallback:      true,
                     fallbackReason:  routeError.message,
                 };
@@ -258,7 +258,7 @@ export async function sendResponseToWellKnownChannel(config: SendToWellKnownConf
             sessionType,
             response,
             // No origin channel for autonomous sessions - pass undefined
-            undefined as unknown as ChannelId
+            undefined
         );
     } catch (routeError: unknown) {
         if(routeError instanceof WellKnownChannelNotFoundError) {

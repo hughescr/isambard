@@ -2,7 +2,7 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { resolveChannelId } from '../../../../../src/integrations/discord/channel-registry/resolve';
 import type { ChannelRegistryManager } from '../../../../../src/integrations/discord/channel-registry/manager';
-import { createChannelId, createGuildId, type ChannelId } from '../../../../../src/integrations/discord/types';
+import { createChannelId, createGuildId } from '../../../../../src/integrations/discord/types';
 import type { ChannelMetadata } from '../../../../../src/integrations/discord/channel-registry/types';
 
 describe('resolveChannelId', () => {
@@ -83,12 +83,10 @@ describe('resolveChannelId', () => {
             expect(result).toBe(createChannelId(unknownId));
         });
 
-        test('should pass through empty string (validation happens at usage)', () => {
-            // resolveChannelId passes through empty string as-is
-            // Validation happens later at the point of usage (e.g., Discord API call)
-            const result = resolveChannelId('', mockRegistry);
-            // The result is an empty string cast to ChannelId (invalid but not validated here)
-            expect(result).toBe('' as unknown as ChannelId);
+        test('should reject empty string with validation error', () => {
+            // resolveChannelId now validates at creation time via createChannelId
+            // Empty strings are rejected with a ZodError
+            expect(() => resolveChannelId('', mockRegistry)).toThrow('Channel ID cannot be empty');
         });
 
         test('should handle string starting with number but not pure numeric', () => {

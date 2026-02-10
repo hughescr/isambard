@@ -14,6 +14,7 @@ import { createStreamEventHandler, shouldGenerateSynopsis } from './stream-event
 import type { ClaudeAgent } from '../../../agent/agent.js';
 import type { DiscordMessageContext } from '../types.js';
 import type { BotStateManager } from '../state/types.js';
+import { toMessageContext } from '../setup/coordinator-setup.js';
 
 /**
  * Discord channel interface for typing indicator.
@@ -134,7 +135,9 @@ export function createStatusMiddleware(
             }
 
             // Process message with stream callback
-            const result = await agent.handleInput([context], { onStreamEvent });
+            // Map Discord context to platform-agnostic context
+            const messageContext = toMessageContext(context);
+            const result = await agent.handleInput([messageContext], { onStreamEvent });
 
             // Transition to idle after completion
             complete();

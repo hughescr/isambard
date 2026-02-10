@@ -12,7 +12,7 @@ import { map as _map, includes as _includes, isEqual as _isEqual, isObject as _i
 import { logger } from '@hughescr/logger';
 import type { MemoryToolBackendTagIndex } from '../backend-tag-index';
 import type { MemoryPath, MemoryToolItemData, MemoryToolItem, TagIndexItem } from '../types';
-import { extractLayerFromPath, type LayerName, layerNameSchema } from '../types';
+import { createMemoryPath, extractLayerFromPath, type LayerName, layerNameSchema } from '../types';
 import { MemoryToolKeyGenerator, normalizeTags } from '../key-generator';
 import type { ReconciliationProgress, ReconciliationResult } from './types';
 
@@ -447,11 +447,11 @@ async function processTagIndexItem(
         const memoryPath = MemoryToolKeyGenerator.parsePathFromTagSK(indexItem.SK);
         const tag = MemoryToolKeyGenerator.parseTagFromPK(indexItem.PK);
 
-        const memory = await ctx.deps.getMemory(memoryPath as MemoryPath);
+        const memory = await ctx.deps.getMemory(createMemoryPath(memoryPath));
 
         if(!memory) {
             // Memory doesn't exist - delete orphaned index
-            await ctx.deps.tagIndex.deleteTagIndexItems(memoryPath as MemoryPath, /* Stryker disable next-line ArrayDeclaration: Tag argument tested in backend-tag-index.test.ts */
+            await ctx.deps.tagIndex.deleteTagIndexItems(createMemoryPath(memoryPath), /* Stryker disable next-line ArrayDeclaration: Tag argument tested in backend-tag-index.test.ts */
                 [tag]);
             ctx.progress.indexItemsDeleted++;
             /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */

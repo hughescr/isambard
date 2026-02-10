@@ -4,7 +4,7 @@
  * Handles building message content that combines text and images for Claude's multimodal capabilities.
  */
 
-import type { FetchedImage } from '@/integrations/discord/attachments/types';
+import type { PlatformImage } from './types';
 
 /**
  * Anthropic text content block.
@@ -43,7 +43,7 @@ export type ContentBlock = TextContentBlock | ImageContentBlock;
  */
 export function buildMultimodalContent(
     text: string,
-    images?: FetchedImage[]
+    images?: PlatformImage[]
 ): ContentBlock[] {
     const blocks: ContentBlock[] = [];
 
@@ -77,6 +77,6 @@ export function buildMultimodalContent(
  * @param images Optional array of fetched images
  * @returns true if images array is non-empty, false otherwise
  */
-export function hasImages(images?: FetchedImage[]): boolean {
+export function hasImages(images?: PlatformImage[]): boolean {
     return images !== undefined && images.length > 0;
 }

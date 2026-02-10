@@ -98,3 +98,45 @@ export interface SystemEvent {
     subtype?:    'init' | 'status' | 'compact_boundary' | 'hook_response'
     session_id?: string
 }
+
+/**
+ * Attachment metadata for platform-agnostic message handling.
+ * Renamed from AttachmentMetadata to disambiguate from Discord's AttachmentMetadata.
+ * Structurally equivalent but decouples the agent module from platform-specific types.
+ */
+export interface PlatformAttachmentMetadata {
+    url:         string
+    filename:    string
+    contentType: string
+    size:        number
+    width?:      number
+    height?:     number
+}
+
+/**
+ * Platform-agnostic message context for agent input.
+ * Replaces DiscordMessageContext in the agent module.
+ */
+export interface MessageContext {
+    channelId:    string
+    userId:       string
+    messageId:    string
+    content:      string
+    timestamp:    string  // ISO 8601
+    botUserId:    string
+    guildId?:     string
+    attachments?: PlatformAttachmentMetadata[]
+}
+
+/**
+ * Platform-agnostic image data for multimodal input.
+ * Replaces FetchedImage in the agent module.
+ */
+export interface PlatformImage {
+    filename:     string
+    mediaType:    'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
+    base64Data:   string
+    originalSize: number
+    width?:       number
+    height?:      number
+}

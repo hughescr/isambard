@@ -11,7 +11,7 @@ import _ from 'lodash';
 import { stripDynamoKeys } from '@/storage/utils/index.js';
 import { withDynamoTimeout } from '@/storage/dynamo-retry';
 import { ItemNotFoundError, ValidationError } from '@/errors';
-import type { ChannelId, GuildId } from '../types';
+import { createChannelId, type ChannelId, type GuildId } from '../types';
 import {
     type ChannelStorageRecord,
     type WellKnownChannel,
@@ -180,7 +180,7 @@ export class ChannelRegistryBackend {
 
         // Step 2: Extract channelId from PK and fetch full record
         const pk = result.Items[0].PK as string;
-        const channelId = _.replace(pk, 'CHANNEL#', '') as ChannelId;
+        const channelId = createChannelId(_.replace(pk, 'CHANNEL#', ''));
 
         return this.getChannel(channelId);
     }
@@ -219,7 +219,7 @@ export class ChannelRegistryBackend {
         // Step 2: Extract channelIds from PKs
         const channelIds = _.map(result.Items, (item) => {
             const pk = item.PK as string;
-            return _.replace(pk, 'CHANNEL#', '') as ChannelId;
+            return createChannelId(_.replace(pk, 'CHANNEL#', ''));
         });
 
         // Step 3: Fetch all full records in parallel using Promise.all

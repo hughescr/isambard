@@ -45,7 +45,7 @@ export class ResponseRouter {
     async routeResponse(
         sessionType: SessionType,
         response: string,
-        originChannelId: ChannelId
+        originChannelId: ChannelId | undefined
     ): Promise<RoutingResult> {
         // Process response for sentinel
         const { shouldSend, content } = processResponse(response);
@@ -53,6 +53,9 @@ export class ResponseRouter {
         // For DM or regular message processing, use origin channel
         // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant - falls through to same result via !wellKnownType path
         if(sessionType === 'dm' || sessionType === 'processing_message') {
+            if(!originChannelId) {
+                throw new Error(`originChannelId is required for session type: ${sessionType}`);
+            }
             return {
                 targetChannelId: originChannelId,
                 shouldSend,
@@ -65,6 +68,9 @@ export class ResponseRouter {
         const wellKnownType = SESSION_TO_CHANNEL[sessionType];
         if(!wellKnownType) {
             // Shouldn't happen, but fallback to origin
+            if(!originChannelId) {
+                throw new Error(`originChannelId is required for fallback routing with session type: ${sessionType}`);
+            }
             return {
                 targetChannelId: originChannelId,
                 shouldSend,
@@ -107,14 +113,20 @@ export class ResponseRouter {
      * Gets the target channel for a session type without processing a response.
      * Useful for logging or preview.
      */
-    async getTargetChannel(sessionType: SessionType, originChannelId: ChannelId): Promise<ChannelId> {
+    async getTargetChannel(sessionType: SessionType, originChannelId: ChannelId | undefined): Promise<ChannelId> {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant - falls through to same result via !wellKnownType path
         if(sessionType === 'dm' || sessionType === 'processing_message') {
+            if(!originChannelId) {
+                throw new Error(`originChannelId is required for session type: ${sessionType}`);
+            }
             return originChannelId;
         }
 
         const wellKnownType = SESSION_TO_CHANNEL[sessionType];
         if(!wellKnownType) {
+            if(!originChannelId) {
+                throw new Error(`originChannelId is required for fallback routing with session type: ${sessionType}`);
+            }
             return originChannelId;
         }
 

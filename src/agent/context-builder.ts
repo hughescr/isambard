@@ -150,7 +150,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             // Format each item with path, age, and content preview
             // TagIndexItem has memoryPath (not path) and no content field
             const memories = _map(result.items, item =>
-                formatMemoryPreview(item.memoryPath as MemoryPath, undefined, item.contentPreview, item.updatedAt, now)
+                formatMemoryPreview(createMemoryPath(item.memoryPath), undefined, item.contentPreview, item.updatedAt, now)
             );
 
             logger.debug({ userId, memoryCount: memories.length }, 'User context loaded');

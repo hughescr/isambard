@@ -307,6 +307,34 @@ describe('ResponseRouter', () => {
                 expect(result.isFallback).toBe(false);
                 expect(result.fallbackReason).toBeUndefined();
             });
+
+            it('should throw when unmapped session type has no origin channel', () => {
+                const unknownType = 'unknown_type' as unknown as import('../../../../../src/integrations/discord/channel-registry/response-router').SessionType;
+
+                expect(router.routeResponse(
+                    unknownType,
+                    'Response for unknown type',
+                    undefined
+                )).rejects.toThrow('originChannelId is required for fallback routing with session type: unknown_type');
+            });
+        });
+
+        describe('undefined originChannelId', () => {
+            it('should throw when dm session has no origin channel', () => {
+                expect(router.routeResponse(
+                    'dm',
+                    'Hello from DM',
+                    undefined
+                )).rejects.toThrow('originChannelId is required for session type: dm');
+            });
+
+            it('should throw when processing_message session has no origin channel', () => {
+                expect(router.routeResponse(
+                    'processing_message',
+                    'Processing message response',
+                    undefined
+                )).rejects.toThrow('originChannelId is required for session type: processing_message');
+            });
         });
     });
 
@@ -389,6 +417,22 @@ describe('ResponseRouter', () => {
             // Should not call manager since wellKnownType is undefined
             expect(mockManager.getWellKnownChannel).not.toHaveBeenCalled();
             expect(target).toBe(ORIGIN_CHANNEL);
+        });
+
+        it('should throw when unmapped session type has no origin channel', () => {
+            const unknownType = 'unknown_type' as unknown as import('../../../../../src/integrations/discord/channel-registry/response-router').SessionType;
+
+            expect(router.getTargetChannel(unknownType, undefined)).rejects.toThrow('originChannelId is required for fallback routing with session type: unknown_type');
+        });
+
+        describe('undefined originChannelId', () => {
+            it('should throw when dm session has no origin channel', () => {
+                expect(router.getTargetChannel('dm', undefined)).rejects.toThrow('originChannelId is required for session type: dm');
+            });
+
+            it('should throw when processing_message session has no origin channel', () => {
+                expect(router.getTargetChannel('processing_message', undefined)).rejects.toThrow('originChannelId is required for session type: processing_message');
+            });
         });
     });
 });
