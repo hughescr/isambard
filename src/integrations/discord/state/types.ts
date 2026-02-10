@@ -530,6 +530,12 @@ export interface BotStateManager {
     interrupt(message?: InterruptingMessageDetails): void
 
     /**
+     * Update the stored interrupting message without changing interrupted flag.
+     * Used during re-interruption of a resume session.
+     */
+    updateInterruptingMessage(message: InterruptingMessageDetails): void
+
+    /**
      * Clear the interrupted flag.
      */
     resume(): void

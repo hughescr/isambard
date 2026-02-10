@@ -125,6 +125,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
     let sessionStartTime: Date | null = null;
     let isTimingOut = false;
     let resumeInProgress = false;
+    let wasReInterrupted = false;
 
     // Timeout handler - aborts session when max duration reached
     function handleSessionTimeout(): void {
@@ -208,21 +209,27 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 slot: currentSlot ?? 'unscheduled',
             });
         } finally {
-            // Clear resume flag and interrupted state AFTER session completes
-            // This ensures presence stays as 🦉💬 (perching_interrupted) while handling the message
-            stateManager.resume();
-            resumeInProgress = false;
-            // Safety net: handles ALL resume exit paths (incomplete, aborted, errored)
-            // Individual paths log context but don't duplicate cleanup
-            if(stateManager.getMode() === 'perching') {
-                stateManager.goIdle();
-                currentSessionId = undefined;
-                partialWork = null;
-                currentSlot = null;
-                if(sessionTimeout) {
-                    clearTimeout(sessionTimeout);
-                    sessionTimeout = null;
-                    sessionStartTime = null;
+            if(wasReInterrupted) {
+                // Re-interrupted during resume — stay in perching+interrupted
+                // The onResponse callback will trigger a fresh resume
+                wasReInterrupted = false;
+                resumeInProgress = false;
+                // Don't call stateManager.resume() or goIdle()
+            } else {
+                // Normal completion
+                stateManager.resume();
+                resumeInProgress = false;
+                // Safety net: handles ALL resume exit paths (incomplete, aborted, errored)
+                if(stateManager.getMode() === 'perching') {
+                    stateManager.goIdle();
+                    currentSessionId = undefined;
+                    partialWork = null;
+                    currentSlot = null;
+                    if(sessionTimeout) {
+                        clearTimeout(sessionTimeout);
+                        sessionTimeout = null;
+                        sessionStartTime = null;
+                    }
                 }
             }
         }
@@ -382,6 +389,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             if(_.isError(error) && error.name === 'AbortError') {
                 logger.debug({ slot: options.slot }, 'Perch session aborted');
                 // Clear timeout for all AbortError cases to prevent orphaned timers
+                // (may already be null if cleared by interrupt() during re-interruption)
                 if(sessionTimeout) {
                     clearTimeout(sessionTimeout);
                     sessionTimeout = null;
@@ -459,15 +467,23 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
         },
 
         interrupt(message: InterruptingMessage): void {
-            // If already interrupted, don't abort the resume session
-            // The new message will be routed to coordinator for batching
             if(stateManager.isInterrupted()) {
+                // Case: already interrupted
+                if(resumeInProgress && currentAbortController) {
+                    // Re-interrupt: abort the active resume session
+                    wasReInterrupted = true;
+                    stateManager.updateInterruptingMessage(message);
+                    if(sessionTimeout) {
+                        clearTimeout(sessionTimeout);
+                        sessionTimeout = null;
+                    }
+                    currentAbortController.abort();
+                }
+                // Else: interrupted but resume not started yet — no-op, message batches naturally
                 return;
             }
 
-            // Store the interrupting message AND mark as interrupted in BotStateManager
-            // BotStateManager is the SINGLE SOURCE OF TRUTH for all state
-            // The error handler will check isInterrupted() and trigger resume
+            // Normal first interrupt (unchanged logic)
             stateManager.interrupt(message);
 
             // Clear timeout when interrupted by message

@@ -330,6 +330,148 @@ describe('BotStateManager', () => {
             });
         });
 
+        describe('updateInterruptingMessage', () => {
+            it('should update interrupting message when perching and interrupted', () => {
+                manager.startPerching('Observing');
+                const messageA: InterruptingMessageDetails = {
+                    channelId:   testChannelId,
+                    author:      'UserA',
+                    channelName: 'general',
+                    content:     'First message',
+                };
+                manager.interrupt(messageA);
+
+                const messageB: InterruptingMessageDetails = {
+                    channelId:   testChannelId,
+                    author:      'UserB',
+                    channelName: 'random',
+                    content:     'Second message',
+                };
+                manager.updateInterruptingMessage(messageB);
+
+                const state = manager.getState();
+                expect(state.interrupted).toBe(true);
+                const context = state.modeContext as import('@/integrations/discord/state/types').PerchingModeContext;
+                expect(context.interruptingMessage).toEqual(messageB);
+            });
+
+            it('should update interrupting message when catching_up and interrupted', () => {
+                const context: CatchingUpModeContext = {
+                    viewedChannels:      new Set(),
+                    sessionId:           null,
+                    startedAt:           new Date(),
+                    unreadCount:         5,
+                    channelNames:        [],
+                    topAuthors:          [],
+                    timeSinceLastActive: null,
+                };
+                manager.startCatchUp(context);
+
+                const messageA: InterruptingMessageDetails = {
+                    channelId:   testChannelId,
+                    author:      'UserA',
+                    channelName: 'general',
+                    content:     'First message',
+                };
+                manager.interrupt(messageA);
+
+                const messageB: InterruptingMessageDetails = {
+                    channelId:   testChannelId,
+                    author:      'UserB',
+                    channelName: 'random',
+                    content:     'Second message',
+                };
+                manager.updateInterruptingMessage(messageB);
+
+                const state = manager.getState();
+                expect(state.interrupted).toBe(true);
+                const catchUpContext = state.modeContext as CatchingUpModeContext;
+                expect(catchUpContext.interruptingMessage).toEqual(messageB);
+            });
+
+            it('should be no-op when in perching mode and not interrupted', () => {
+                manager.startPerching('Observing');
+
+                const message: InterruptingMessageDetails = {
+                    channelId:   testChannelId,
+                    author:      'UserA',
+                    channelName: 'general',
+                    content:     'Message',
+                };
+                manager.updateInterruptingMessage(message);
+
+                const state = manager.getState();
+                expect(state.interrupted).toBe(false);
+                const context = state.modeContext as import('@/integrations/discord/state/types').PerchingModeContext;
+                expect(context.interruptingMessage).toBeUndefined();
+            });
+
+            it('should be no-op when not interrupted', () => {
+                // Stay in idle mode
+                const message: InterruptingMessageDetails = {
+                    channelId:   testChannelId,
+                    author:      'UserA',
+                    channelName: 'general',
+                    content:     'Message',
+                };
+
+                // Should not throw
+                manager.updateInterruptingMessage(message);
+
+                const state = manager.getState();
+                expect(state.mode).toBe('idle');
+                expect(state.interrupted).toBe(false);
+            });
+
+            it('should be no-op when in processing_message mode even if interrupted', () => {
+                // Start processing a message
+                manager.startProcessingMessage(testChannelId, 'test');
+
+                // Interrupt (sets interrupted=true)
+                manager.interrupt();
+
+                // Verify we're interrupted
+                expect(manager.isInterrupted()).toBe(true);
+
+                // Capture state before update
+                const stateBefore = manager.getState();
+                const contextBefore = stateBefore.modeContext as { channelId: ChannelId, userMessage: string };
+
+                // Try to update interrupting message
+                const message: InterruptingMessageDetails = {
+                    channelId:   testChannelId,
+                    author:      'User',
+                    channelName: 'test',
+                    content:     'msg',
+                };
+                manager.updateInterruptingMessage(message);
+
+                // Verify state is unchanged
+                const stateAfter = manager.getState();
+                expect(stateAfter.interrupted).toBe(true);
+                const contextAfter = stateAfter.modeContext as { channelId: ChannelId, userMessage: string };
+                expect(contextAfter.channelId).toBe(contextBefore.channelId);
+                expect(contextAfter.userMessage).toBe(contextBefore.userMessage);
+                // Verify no interruptingMessage property exists
+                expect(contextAfter).not.toHaveProperty('interruptingMessage');
+            });
+
+            it('should throw when manager is stopped', () => {
+                manager.stop();
+
+                const message: InterruptingMessageDetails = {
+                    channelId:   testChannelId,
+                    author:      'UserA',
+                    channelName: 'general',
+                    content:     'Message',
+                };
+
+                expect(() => {
+                    manager.updateInterruptingMessage(message);
+                }).toThrow();
+            });
+        });
+
         describe('resume', () => {
             it('should clear interrupted flag', () => {
                 const context: CatchingUpModeContext = {

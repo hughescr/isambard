@@ -56,6 +56,11 @@ function createMockStateManager(initialState?: Partial<MockStateManagerState>): 
                 (state.modeContext as PerchingModeContext).interruptingMessage = message;
             }
         }),
+        updateInterruptingMessage: mock((message: InterruptingMessageDetails) => {
+            if(state.interrupted && state.mode === 'perching') {
+                (state.modeContext as PerchingModeContext).interruptingMessage = message;
+            }
+        }),
         resume: mock(() => {
             state.interrupted = false;
         }),
@@ -3239,6 +3244,245 @@ describe('PerchSessionRunner - Wrap-Up Timeout', () => {
             expect.objectContaining({ slot: 'afternoon', wrapUpTimeoutMinutes: 5 }),
             'Wrap-up session timed out - aborting'
         );
+    });
+});
+
+describe('PerchSessionRunner - Re-interrupt during resume', () => {
+    let mockLogger: Logger;
+    let config: PerchConfig;
+
+    beforeEach(() => {
+        mockLogger = createMockLogger();
+
+        config = {
+            enabled:              true,
+            timezone:             'America/Los_Angeles',
+            intervalMinutes:      60,
+            jitterMinutes:        15,
+            maxSessionMinutes:    45,
+            wrapUpTimeoutMinutes: 5,
+        };
+    });
+
+    test('should abort resume session when re-interrupted', async () => {
+        let callCount = 0;
+        let resumeAbortSignal: AbortSignal | undefined;
+
+        const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            callCount++;
+            if(callCount === 1) {
+                // First call - initial session, will be interrupted
+                return new Promise((_resolve, reject) => {
+                    options.abortSignal.addEventListener('abort', () => {
+                        const error = new Error('AbortError');
+                        error.name = 'AbortError';
+                        reject(error);
+                    });
+                });
+            } else if(callCount === 2) {
+                // Second call - resume session, capture abort signal
+                resumeAbortSignal = options.abortSignal;
+                return new Promise((_resolve, reject) => {
+                    options.abortSignal.addEventListener('abort', () => {
+                        const error = new Error('AbortError');
+                        error.name = 'AbortError';
+                        reject(error);
+                    });
+                });
+            } else {
+                // Third call - second resume after re-interrupt
+                return { completed: true, sessionId: 'final-session' };
+            }
+        });
+
+        const mockState = createMockStateManager();
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockState,
+            logger:          mockLogger,
+            config,
+            runAgentSession: sessionMock,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+
+        // Start session
+        const sessionPromise = runner.startPerch('pre-dawn');
+        await Promise.resolve();
+
+        // First interrupt
+        const message1: InterruptingMessage = {
+            channelId:   'ch-1' as ChannelId,
+            author:      'User1',
+            channelName: 'general',
+            content:     'First message',
+        };
+        runner.interrupt(message1);
+        await Promise.resolve();
+
+        // Wait for startPerch to complete (first session aborted)
+        await sessionPromise;
+
+        // Start resume (simulating onResponse callback)
+        const resumePromise = runner.resumeAfterInterruption();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // Second interrupt (re-interrupt during resume)
+        const message2: InterruptingMessage = {
+            channelId:   'ch-2' as ChannelId,
+            author:      'User2',
+            channelName: 'random',
+            content:     'Second message',
+        };
+        runner.interrupt(message2);
+
+        // Verify the resume session's abort signal was triggered
+        expect(resumeAbortSignal?.aborted).toBe(true);
+
+        // Wait for resume to complete
+        await resumePromise;
+
+        // Verify updateInterruptingMessage was called with second message
+        expect(mockState.updateInterruptingMessage).toHaveBeenCalledWith(message2);
+    });
+
+    test('should not call goIdle after re-interrupt', async () => {
+        let callCount = 0;
+
+        const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            callCount++;
+            if(callCount <= 2) {
+                // First and second calls - wait for abort
+                return new Promise((_resolve, reject) => {
+                    options.abortSignal.addEventListener('abort', () => {
+                        const error = new Error('AbortError');
+                        error.name = 'AbortError';
+                        reject(error);
+                    });
+                });
+            } else {
+                return { completed: true };
+            }
+        });
+
+        const mockState = createMockStateManager();
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockState,
+            logger:          mockLogger,
+            config,
+            runAgentSession: sessionMock,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+
+        // Start and interrupt
+        const sessionPromise = runner.startPerch('pre-dawn');
+        await Promise.resolve();
+        runner.interrupt({ channelId: 'ch' as ChannelId, author: 'U', channelName: 'c', content: 'msg1' });
+        await Promise.resolve();
+        await sessionPromise;
+
+        // Clear goIdle mock calls from initial interrupt handling
+        (mockState.goIdle as ReturnType<typeof mock>).mockClear();
+
+        // Start resume, then re-interrupt
+        const resumePromise = runner.resumeAfterInterruption();
+        await Promise.resolve();
+        await Promise.resolve();
+        runner.interrupt({ channelId: 'ch2' as ChannelId, author: 'U2', channelName: 'c2', content: 'msg2' });
+        await resumePromise;
+
+        // goIdle should NOT have been called (we're re-interrupted, waiting for another resume)
+        expect(mockState.goIdle).not.toHaveBeenCalled();
+    });
+
+    test('should allow fresh resume after re-interrupt', async () => {
+        let callCount = 0;
+
+        const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            callCount++;
+            if(callCount <= 2) {
+                return new Promise((_resolve, reject) => {
+                    options.abortSignal.addEventListener('abort', () => {
+                        const error = new Error('AbortError');
+                        error.name = 'AbortError';
+                        reject(error);
+                    });
+                });
+            } else {
+                // Third call - final resume, completes normally
+                return { completed: true, sessionId: 'final' };
+            }
+        });
+
+        const mockState = createMockStateManager();
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockState,
+            logger:          mockLogger,
+            config,
+            runAgentSession: sessionMock,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+
+        // Start → interrupt → resume → re-interrupt
+        const sessionPromise = runner.startPerch('pre-dawn');
+        await Promise.resolve();
+        runner.interrupt({ channelId: 'ch' as ChannelId, author: 'U', channelName: 'c', content: 'msg1' });
+        await Promise.resolve();
+        await sessionPromise;
+
+        const resumePromise = runner.resumeAfterInterruption();
+        await Promise.resolve();
+        await Promise.resolve();
+        runner.interrupt({ channelId: 'ch2' as ChannelId, author: 'U2', channelName: 'c2', content: 'msg2' });
+        await resumePromise;
+
+        // Now trigger fresh resume (simulating second onResponse callback)
+        await runner.resumeAfterInterruption();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // Third call should have been made
+        expect(sessionMock).toHaveBeenCalledTimes(3);
+    });
+
+    test('should be no-op when re-interrupted but resume not started', async () => {
+        const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
+            return new Promise((_resolve, reject) => {
+                options.abortSignal.addEventListener('abort', () => {
+                    const error = new Error('AbortError');
+                    error.name = 'AbortError';
+                    reject(error);
+                });
+            });
+        });
+
+        const mockState = createMockStateManager();
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockState,
+            logger:          mockLogger,
+            config,
+            runAgentSession: sessionMock,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+
+        // Start and interrupt
+        const sessionPromise = runner.startPerch('pre-dawn');
+        await Promise.resolve();
+        runner.interrupt({ channelId: 'ch' as ChannelId, author: 'U', channelName: 'c', content: 'msg1' });
+        await Promise.resolve();
+        await sessionPromise;
+
+        // Second interrupt before resume starts - should be no-op
+        // (isInterrupted is true, but resumeInProgress is false)
+        runner.interrupt({ channelId: 'ch2' as ChannelId, author: 'U2', channelName: 'c2', content: 'msg2' });
+
+        // updateInterruptingMessage should NOT have been called
+        // (because resumeInProgress is false, the no-op branch is taken)
+        expect(mockState.updateInterruptingMessage).not.toHaveBeenCalled();
     });
 });
 

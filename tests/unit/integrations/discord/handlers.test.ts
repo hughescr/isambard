@@ -1137,7 +1137,7 @@ describe('Discord Event Handlers', () => {
             expect(mockCoordinator.handleMessage).toHaveBeenCalled();
         });
 
-        it('should NOT interrupt when already interrupted, allowing coordinator to handle message', async () => {
+        it('should always call interrupt even when already interrupted (session runner decides behavior)', async () => {
             const mockBotStateManager = {
                 getMode:       mock(_.constant('perching' as const)),
                 isInterrupted: mock(_.constant(true)), // Already interrupted
@@ -1163,14 +1163,13 @@ describe('Discord Event Handlers', () => {
             const message = createMockMessageForPerch();
             await handler(message);
 
-            // CRITICAL: Verify interrupt was NOT called (already interrupted)
-            expect(mockPerchSessionRunner.interrupt).not.toHaveBeenCalled();
+            // CRITICAL: Verify interrupt WAS called even when already interrupted
+            // The session runner decides what to do based on its internal state
+            expect(mockPerchSessionRunner.interrupt).toHaveBeenCalled();
 
-            // CRITICAL: Verify coordinator WAS called (message routed to coordinator for batching)
+            // Message should also reach the coordinator after interruption
+            // (perch mode allows message batching to continue)
             expect(mockCoordinator.handleMessage).toHaveBeenCalled();
-
-            // Verify onMessage was NOT called (coordinator handles it)
-            // onMessage no longer exists in coordinator flow;
         });
     });
 

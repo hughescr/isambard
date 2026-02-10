@@ -344,6 +344,30 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
         notifySubscribers(previousState, 'interrupted');
     }
 
+    function updateInterruptingMessage(message: InterruptingMessageDetails): void {
+        assertNotStopped();
+        if(!currentState.interrupted) {
+            return;
+        }
+
+        if(currentState.mode === 'perching') {
+            const perchContext = currentState.modeContext as PerchingModeContext;
+            currentState = {
+                ...currentState,
+                modeContext: { ...perchContext, interruptingMessage: message },
+            };
+        } else if(currentState.mode === 'catching_up') {
+            const catchUpContext = currentState.modeContext as CatchingUpModeContext;
+            currentState = {
+                ...currentState,
+                modeContext: { ...catchUpContext, interruptingMessage: message },
+            };
+        }
+        // No subscriber notification — this is an internal context update used during
+        // re-interruption of a resume session. Presence doesn't use message content,
+        // and the session runner handles re-interrupt logic internally.
+    }
+
     function resume(): void {
         assertNotStopped();
         const previousState = cloneState(currentState);
@@ -515,6 +539,7 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
 
         // Within-mode operations
         interrupt,
+        updateInterruptingMessage,
         resume,
         updateActivityPhase,
         clearActivityPhase,

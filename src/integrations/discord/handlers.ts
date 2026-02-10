@@ -303,10 +303,8 @@ async function handleModeInterruptions(
 
     // Handle perch mode interruption
     if(botStateManager?.getMode() === 'perching' && perchSessionRunner) {
-        // If already interrupted, let message go to coordinator for batching
-        if(botStateManager.isInterrupted()) {
-            return;
-        }
+        // Always call interrupt — session runner decides what to do based on
+        // whether resume is in progress, already interrupted, etc.
         await handlePerchInterruption(message, perchSessionRunner);
     }
 }
