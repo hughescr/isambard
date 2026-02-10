@@ -190,6 +190,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
     let currentAbortController: AbortController | null = null;
     let currentSessionId: string | undefined;
     let resumeInProgress = false;
+    let wasReInterrupted = false;
     // NOTE: interruptingMessage is stored in BotStateManager's CatchingUpModeContext, NOT here
 
     // Local closure function for completing catch-up
@@ -238,9 +239,6 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
                 await completeCatchUp(0, 0);
                 return;
             }
-
-            // Resume (clear interrupted flag)
-            deps.stateManager.resume();
 
             // Create new abort controller
             currentAbortController = new AbortController();
@@ -306,7 +304,23 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
                 statusContext,
             });
         } finally {
-            resumeInProgress = false;
+            if(wasReInterrupted) {
+                // Re-interrupted during resume — stay in catching_up+interrupted
+                // The onResponse callback will trigger a fresh resume
+                wasReInterrupted = false;
+                resumeInProgress = false;
+                // Don't call stateManager.resume() or completeCatchUp
+            } else {
+                // Normal completion
+                deps.stateManager.resume();
+                resumeInProgress = false;
+                // If still in catching_up mode, go idle (safety net for incomplete exits)
+                if(deps.stateManager.getMode() === 'catching_up') {
+                    deps.stateManager.goIdle();
+                    currentSessionId = undefined;
+                    currentAbortController = null;
+                }
+            }
         }
         // Stryker restore BlockStatement,BooleanLiteral
     }
@@ -335,25 +349,45 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
             // Check interrupt state FIRST — state manager is single source of truth
             // The result.completed flag can be incorrect when abort errors are caught
-            if(deps.stateManager.isInterrupted()) {
+            if(deps.stateManager.isInterrupted() && !resumeInProgress) {
                 // Session was interrupted — don't resume here.
                 // The onResponse callback in bot.ts will call resumeAfterInterruption()
                 // after the interrupting message has been handled.
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
                 logger.debug({ msg: 'Session interrupted - awaiting external resume' });
-            } else if(result.completed) {
-                await completeCatchUp(options.channelsProcessed, options.messagesProcessed);
+                return;
             }
+
+            if(result.completed) {
+                await completeCatchUp(options.channelsProcessed, options.messagesProcessed);
+                return;
+            }
+
+            // Stryker disable ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement: Defense-in-depth log — doResume finally block handles actual cleanup regardless
+            if(resumeInProgress && deps.stateManager.getMode() === 'catching_up') {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Defense-in-depth logging for observability
+                logger.info({ msg: 'Resume session exiting - cleanup deferred to doResume' });
+            }
+            // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement
         } catch (error) {
             currentAbortController = null;
 
             // Check BotStateManager - it's the single source of truth for interrupt state
             // If interrupted, leave state as catching_up+interrupted for onResponse to handle
-            if(deps.stateManager.isInterrupted()) {
+            if(deps.stateManager.isInterrupted() && !resumeInProgress) {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
                 logger.debug({ msg: 'Session aborted by interrupt - awaiting external resume' });
                 return;
             }
+
+            // Stryker disable ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement: Defense-in-depth return — doResume finally block handles actual cleanup
+            // Resume session exiting — doResume finally block will handle cleanup
+            if(resumeInProgress && deps.stateManager.getMode() === 'catching_up') {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
+                logger.debug({ msg: 'Resume session exiting - cleanup deferred to doResume' });
+                return;
+            }
+            // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement
 
             // AbortError without interrupt flag - external abort, just return
             // Stryker disable all: AbortError handling is tested with dedicated test cases for abort vs regular errors
@@ -519,12 +553,19 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
         },
 
         interrupt(message: InterruptingMessage): void {
-            // If already interrupted, don't abort the resume session
-            // The new message will be routed to coordinator for batching
             if(deps.stateManager.isInterrupted()) {
+                // Case: already interrupted
+                if(resumeInProgress && currentAbortController) {
+                    // Re-interrupt: abort the active resume session
+                    wasReInterrupted = true;
+                    deps.stateManager.updateInterruptingMessage(message);
+                    currentAbortController.abort();
+                }
+                // Else: interrupted but resume not started yet — no-op, message batches naturally
                 return;
             }
 
+            // Normal first interrupt (unchanged logic)
             // Store the interrupting message AND mark as interrupted in BotStateManager
             // BotStateManager is the SINGLE SOURCE OF TRUTH for all state
             // The error handler will check isInterrupted() and trigger resume

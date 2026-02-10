@@ -774,7 +774,7 @@ describe('Discord Event Handlers', () => {
             expect(mockCoordinator.handleMessage).toHaveBeenCalled();
         });
 
-        it('should NOT interrupt when already interrupted, allowing coordinator to handle message', async () => {
+        it('should always call interrupt when catching_up regardless of interrupted state', async () => {
             const mockBotStateManager = {
                 getMode:       mock(_.constant('catching_up' as const)),
                 isInterrupted: mock(_.constant(true)), // Already interrupted
@@ -799,8 +799,8 @@ describe('Discord Event Handlers', () => {
             const message = createMockMessageForCatchUp();
             await handler(message);
 
-            // CRITICAL: Verify interrupt was NOT called (already interrupted)
-            expect(mockCatchUpSessionRunner.interrupt).not.toHaveBeenCalled();
+            // CRITICAL: Verify interrupt WAS called (session runner decides what to do)
+            expect(mockCatchUpSessionRunner.interrupt).toHaveBeenCalled();
 
             // CRITICAL: Verify coordinator WAS called (message routed to coordinator for batching)
             expect(mockCoordinator.handleMessage).toHaveBeenCalled();

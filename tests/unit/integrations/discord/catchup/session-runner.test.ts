@@ -59,6 +59,9 @@ describe('CatchUpSessionRunner', () => {
                     mockModeContext.interruptingMessage = message;
                 }
             }),
+            updateInterruptingMessage: mock((message: InterruptingMessageDetails) => {
+                mockModeContext.interruptingMessage = message;
+            }),
             resume: mock(() => { mockInterrupted = false; }),
             goIdle: mock(() => {
                 mockMode        = 'idle';
@@ -454,7 +457,7 @@ describe('CatchUpSessionRunner', () => {
             });
 
             // Mock a long-running agent session
-            let capturedSignal: AbortSignal | null = null;
+            let capturedSignal: AbortSignal | undefined;
             mockRunAgentSession.mockImplementation((options: RunAgentSessionOptions) => {
                 capturedSignal = options.abortSignal;
                 return new Promise((resolve) => {
@@ -577,7 +580,7 @@ describe('CatchUpSessionRunner', () => {
             mockInterrupted = false;
 
             // Mock a long-running agent session
-            let capturedSignal: AbortSignal | null = null;
+            let capturedSignal: AbortSignal | undefined;
             mockRunAgentSession.mockImplementation((options: RunAgentSessionOptions) => {
                 capturedSignal = options.abortSignal;
                 return new Promise((resolve) => {
@@ -666,7 +669,8 @@ describe('CatchUpSessionRunner', () => {
             expect(mockRunAgentSession).not.toHaveBeenCalled();
             expect(mockStoreCompletionSignal).toHaveBeenCalled();
             expect(mockDeleteInProgressSignal).toHaveBeenCalled();
-            expect(mockStateManager.goIdle).toHaveBeenCalled();
+            // goIdle called exactly once (by completeCatchUp), not again by finally block safety net
+            expect(mockStateManager.goIdle).toHaveBeenCalledTimes(1);
         });
 
         it('should use fallback values when no interrupting message', async () => {
@@ -784,7 +788,7 @@ describe('CatchUpSessionRunner', () => {
             expect(mockStateManager.goIdle).toHaveBeenCalled();
         });
 
-        it('should NOT call completeCatchUp when session is interrupted during resume', async () => {
+        it('should clean up via safety net when resume session returns incomplete', async () => {
             // Set up state as catching_up + interrupted
             mockMode = 'catching_up';
             mockInterrupted = true;
@@ -792,7 +796,7 @@ describe('CatchUpSessionRunner', () => {
                 totalUnread: 3,
                 channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 3 }],
             });
-            // Session returns NOT completed (was interrupted again)
+            // Session returns NOT completed (incomplete exit, not re-interrupted)
             mockRunAgentSession.mockResolvedValue({ completed: false, sessionId: 'session-456' } as AgentSessionResult);
 
             const runner = createCatchUpSessionRunner(deps);
@@ -800,9 +804,9 @@ describe('CatchUpSessionRunner', () => {
 
             // completeCatchUp should NOT be called
             expect(mockStoreCompletionSignal).not.toHaveBeenCalled();
-            // resume should have been called but NOT goIdle
+            // resume and goIdle should have been called from finally block safety net
             expect(mockStateManager.resume).toHaveBeenCalled();
-            expect(mockStateManager.goIdle).not.toHaveBeenCalled();
+            expect(mockStateManager.goIdle).toHaveBeenCalled();
         });
 
         it('should prevent concurrent doResume execution (resumeInProgress guard)', async () => {
@@ -835,6 +839,198 @@ describe('CatchUpSessionRunner', () => {
 
             // Verify cleanup
             expect(mockStoreCompletionSignal).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('re-interrupt during resume', () => {
+        it('should abort the resume session when interrupted during active resume', async () => {
+            // Set up state as catching_up + interrupted
+            mockMode = 'catching_up';
+            mockInterrupted = true;
+            mockInboxManager.getUnreadOverview = mock().mockReturnValue({
+                totalUnread: 3,
+                channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 3 }],
+            });
+
+            // Mock a long-running agent session
+            let capturedSignal: AbortSignal | undefined;
+            mockRunAgentSession.mockImplementation((options: RunAgentSessionOptions) => {
+                capturedSignal = options.abortSignal;
+                return new Promise((resolve) => {
+                    setTimeout(() => resolve({ completed: true }), 10000);
+                });
+            });
+
+            const runner = createCatchUpSessionRunner(deps);
+
+            // Start resume (don't await)
+            const resumePromise = runner.resumeAfterInterruption();
+
+            // Advance timers to start the session
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Re-interrupt while resume is in progress
+            // This simulates a new message arriving during resume
+            mockInterrupted = true; // Simulate isInterrupted() returning true
+            const reinterruptMessage: InterruptingMessage = {
+                channelId:   createChannelId('999'),
+                author:      'NewUser',
+                channelName: 'urgent',
+                content:     'Re-interrupt message',
+            };
+            runner.interrupt(reinterruptMessage);
+
+            // Verify AbortController was aborted
+            expect(capturedSignal?.aborted).toBe(true);
+
+            // Verify updateInterruptingMessage was called with new message (NOT stateManager.interrupt)
+            expect(mockStateManager.updateInterruptingMessage).toHaveBeenCalledWith(reinterruptMessage);
+            expect(mockStateManager.interrupt).not.toHaveBeenCalled();
+
+            // Complete the promise
+            jest.advanceTimersByTime(10000);
+            await resumePromise;
+        });
+
+        it('should stay in catching_up+interrupted after re-interrupt (not call completeCatchUp)', async () => {
+            // Set up state as catching_up + interrupted
+            mockMode = 'catching_up';
+            mockInterrupted = true;
+            mockInboxManager.getUnreadOverview = mock().mockReturnValue({
+                totalUnread: 3,
+                channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 3 }],
+            });
+
+            // Mock session that completes after abort (simulating graceful shutdown)
+            let abortedDuringResume = false;
+            mockRunAgentSession.mockImplementation((options: RunAgentSessionOptions) => {
+                return new Promise((resolve) => {
+                    options.abortSignal.addEventListener('abort', () => {
+                        abortedDuringResume = true;
+                        resolve({ completed: false, sessionId: 'aborted-session' });
+                    });
+                    setTimeout(() => resolve({ completed: true }), 10000);
+                });
+            });
+
+            const runner = createCatchUpSessionRunner(deps);
+
+            // Start resume
+            const resumePromise = runner.resumeAfterInterruption();
+
+            // Advance timers to start the session
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Re-interrupt
+            mockInterrupted = true;
+            runner.interrupt({
+                channelId:   createChannelId('999'),
+                author:      'NewUser',
+                channelName: 'urgent',
+                content:     'Re-interrupt',
+            });
+
+            // Complete the promise
+            jest.advanceTimersByTime(10000);
+            await resumePromise;
+
+            // Verify session was aborted during resume
+            expect(abortedDuringResume).toBe(true);
+
+            // completeCatchUp should NOT be called (stay interrupted)
+            expect(mockStoreCompletionSignal).not.toHaveBeenCalled();
+
+            // resume() should NOT be called (stay interrupted)
+            expect(mockStateManager.resume).not.toHaveBeenCalled();
+
+            // goIdle should NOT be called (stay in catching_up)
+            expect(mockStateManager.goIdle).not.toHaveBeenCalled();
+        });
+
+        it('should handle new resumeAfterInterruption call after re-interrupt', async () => {
+            // Set up state as catching_up + interrupted
+            mockMode = 'catching_up';
+            mockInterrupted = true;
+            mockInboxManager.getUnreadOverview = mock().mockReturnValue({
+                totalUnread: 3,
+                channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 3 }],
+            });
+
+            // Mock session that aborts gracefully
+            let sessionCounter = 0;
+            mockRunAgentSession.mockImplementation((options: RunAgentSessionOptions) => {
+                const currentSession = ++sessionCounter;
+                return new Promise((resolve) => {
+                    options.abortSignal.addEventListener('abort', () => {
+                        resolve({ completed: false, sessionId: `session-${currentSession}` });
+                    });
+                    setTimeout(() => resolve({ completed: true, sessionId: `session-${currentSession}` }), 1000);
+                });
+            });
+
+            const runner = createCatchUpSessionRunner(deps);
+
+            // First resume
+            const resume1Promise = runner.resumeAfterInterruption();
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Re-interrupt
+            mockInterrupted = true;
+            runner.interrupt({
+                channelId:   createChannelId('999'),
+                author:      'User1',
+                channelName: 'channel1',
+                content:     'First interrupt',
+            });
+
+            // Complete first resume
+            jest.advanceTimersByTime(1000);
+            await resume1Promise;
+
+            // Verify first session ran
+            expect(sessionCounter).toBe(1);
+
+            // Second resume (after re-interrupt)
+            const resume2Promise = runner.resumeAfterInterruption();
+            jest.advanceTimersByTime(1000);
+
+            // Verify second session started
+            expect(sessionCounter).toBe(2);
+
+            await resume2Promise;
+
+            // Second resume should complete successfully
+            expect(mockStoreCompletionSignal).toHaveBeenCalled();
+            expect(mockStateManager.goIdle).toHaveBeenCalled();
+        });
+
+        it('should treat re-interrupt when NOT in resume as no-op', async () => {
+            // Set up as already interrupted but resume NOT in progress
+            mockMode = 'catching_up';
+            mockInterrupted = true;
+
+            const runner = createCatchUpSessionRunner(deps);
+
+            // Interrupt again (but no resume session is running)
+            const message: InterruptingMessage = {
+                channelId:   createChannelId('789'),
+                author:      'TestUser',
+                channelName: 'channel',
+                content:     'Another message',
+            };
+            runner.interrupt(message);
+
+            // Should not call stateManager.interrupt (early return)
+            expect(mockStateManager.interrupt).not.toHaveBeenCalled();
+
+            // updateInterruptingMessage should also NOT be called (no active resume)
+            expect(mockStateManager.updateInterruptingMessage).not.toHaveBeenCalled();
         });
     });
 

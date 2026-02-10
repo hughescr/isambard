@@ -293,10 +293,8 @@ async function handleModeInterruptions(
 ): Promise<void> {
     // Handle catch-up mode interruption
     if(botStateManager?.getMode() === 'catching_up' && catchUpSessionRunner) {
-        // If already interrupted, let message go to coordinator for batching
-        if(botStateManager.isInterrupted()) {
-            return;
-        }
+        // Always call interrupt — session runner decides what to do based on
+        // whether resume is in progress, already interrupted, etc.
         await handleCatchUpInterruption(message, catchUpSessionRunner);
         return;
     }
