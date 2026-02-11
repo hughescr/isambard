@@ -6,7 +6,7 @@ import { setConversationContext, clearConversationContext } from '@/agent';
 import type { BotStateManager } from '../state';
 import { createDynamicStatusGenerator, type PresenceManager } from '../presence';
 import type { DiscordMessageContext } from '../types';
-import { createMessageCoordinator, type MessageCoordinator } from '../message-coordinator';
+import { MessageCoordinator } from '../message-coordinator';
 import type { CatchUpSessionRunner } from '../catchup';
 import type { PerchSessionRunner } from '@/agent/perch';
 import type { ChannelRegistryManager, ResponseRouter } from '../channel-registry';
@@ -187,7 +187,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
         readyClient,
     } = params;
 
-    const coordinator = createMessageCoordinator({
+    const coordinator = new MessageCoordinator({
         debounceMs:        250,
         eventDeltaTracker: params.eventDeltaTracker,
         onResponse:        async (result, discordMessage) => {

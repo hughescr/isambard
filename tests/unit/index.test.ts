@@ -225,8 +225,9 @@ describe('createApp', () => {
             spies.push(createSearchSpy);
 
             const questionRegistryModule = await import('@/agent/question-registry');
-            const createQuestionRegistrySpy = spyOn(questionRegistryModule, 'createQuestionRegistry').mockReturnValue({} as any);
-            spies.push(createQuestionRegistrySpy);
+            // @ts-expect-error - Mocking constructor
+            const QuestionRegistrySpy = spyOn(questionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as any));
+            spies.push(QuestionRegistrySpy);
 
             const memoryToolModule = await import('@/storage/memory-tool');
             // @ts-expect-error - Mocking constructor
@@ -389,8 +390,9 @@ describe('createApp', () => {
             spies.push(createSearchSpy);
 
             const questionRegistryModule = await import('@/agent/question-registry');
-            const createQuestionRegistrySpy = spyOn(questionRegistryModule, 'createQuestionRegistry').mockReturnValue({} as any);
-            spies.push(createQuestionRegistrySpy);
+            // @ts-expect-error - Mocking constructor
+            const QuestionRegistrySpy = spyOn(questionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as any));
+            spies.push(QuestionRegistrySpy);
 
             const memoryToolModule = await import('@/storage/memory-tool');
             // @ts-expect-error - Mocking constructor
@@ -561,8 +563,9 @@ describe('createApp', () => {
             spies.push(createSearchSpy);
 
             const questionRegistryModule = await import('@/agent/question-registry');
-            const createQuestionRegistrySpy = spyOn(questionRegistryModule, 'createQuestionRegistry').mockReturnValue({} as any);
-            spies.push(createQuestionRegistrySpy);
+            // @ts-expect-error - Mocking constructor
+            const QuestionRegistrySpy = spyOn(questionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as any));
+            spies.push(QuestionRegistrySpy);
 
             const memoryToolModule = await import('@/storage/memory-tool');
             // @ts-expect-error - Mocking constructor
@@ -690,8 +693,9 @@ describe('createApp', () => {
             spies.push(createSearchSpy);
 
             const questionRegistryModule = await import('@/agent/question-registry');
-            const createQuestionRegistrySpy = spyOn(questionRegistryModule, 'createQuestionRegistry').mockReturnValue({} as any);
-            spies.push(createQuestionRegistrySpy);
+            // @ts-expect-error - Mocking constructor
+            const QuestionRegistrySpy = spyOn(questionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as any));
+            spies.push(QuestionRegistrySpy);
 
             const memoryToolModule = await import('@/storage/memory-tool');
             // @ts-expect-error - Mocking constructor
@@ -823,8 +827,9 @@ describe('createApp', () => {
             spies.push(createSearchSpy);
 
             const questionRegistryModule = await import('@/agent/question-registry');
-            const createQuestionRegistrySpy = spyOn(questionRegistryModule, 'createQuestionRegistry').mockReturnValue({} as any);
-            spies.push(createQuestionRegistrySpy);
+            // @ts-expect-error - Mocking constructor
+            const QuestionRegistrySpy = spyOn(questionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as any));
+            spies.push(QuestionRegistrySpy);
 
             const memoryToolModule = await import('@/storage/memory-tool');
             // @ts-expect-error - Mocking constructor
@@ -1268,8 +1273,9 @@ describe('createApp', () => {
             spies.push(createSearchSpy);
 
             const questionRegistryModule = await import('@/agent/question-registry');
-            const createQuestionRegistrySpy = spyOn(questionRegistryModule, 'createQuestionRegistry').mockReturnValue({} as any);
-            spies.push(createQuestionRegistrySpy);
+            // @ts-expect-error - Mocking constructor
+            const QuestionRegistrySpy = spyOn(questionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as any));
+            spies.push(QuestionRegistrySpy);
 
             const memoryToolModule = await import('@/storage/memory-tool');
             // @ts-expect-error - Mocking constructor

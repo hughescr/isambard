@@ -6,75 +6,30 @@ export interface QuestionRegistryConfig {
     defaultTimeoutMs?: number  // Default: 300000 (5 minutes)
 }
 
-export interface QuestionRegistry {
-    /**
-     * Register a question and return a promise that resolves when answered or times out.
-     */
-    register(question: Omit<PendingQuestion, 'state'>): Promise<QuestionResult>
-
-    /**
-     * Check if a message might be an answer to a pending question.
-     * Returns the pending question if found, null otherwise.
-     */
-    findPendingQuestion(channelId: ChannelId, threadId?: string): PendingQuestion | null
-
-    /**
-     * Get a question by its ID.
-     * Returns the question if found, null otherwise.
-     */
-    getQuestion(questionId: string): PendingQuestion | null
-
-    /**
-     * Resolve a question with an answer.
-     */
-    resolveWithAnswer(questionId: string, answer: QuestionAnswer): void
-
-    /**
-     * Cancel a question (e.g., due to interruption).
-     */
-    cancel(questionId: string): void
-
-    /**
-     * Stop the registry and clean up all timers.
-     */
-    stop(): void
-}
-
 interface StoredQuestion {
     question: PendingQuestion
     timer:    NodeJS.Timeout
     resolve:  (result: QuestionResult) => void
 }
 
-export function createQuestionRegistry(_config?: QuestionRegistryConfig): QuestionRegistry {
+export class QuestionRegistry {
     // Key by channel:thread for fast lookup
-    const questionsByLocation = new Map<string, StoredQuestion>();
+    private readonly questionsByLocation = new Map<string, StoredQuestion>();
     // Key by questionId for resolution
-    const questionsById = new Map<string, StoredQuestion>();
+    private readonly questionsById = new Map<string, StoredQuestion>();
 
-    function makeLocationKey(channelId: ChannelId, threadId?: string): string {
-        // Stryker disable next-line LogicalOperator,StringLiteral: ?? provides default value
-        return `${channelId}:${threadId ?? 'main'}`;
+    constructor(_config?: QuestionRegistryConfig) {
+        // Config not currently used, but reserved for future use
     }
 
-    function cleanupQuestion(questionId: string): void {
-        const stored = questionsById.get(questionId);
-        if(!stored) {
-            return;
-        }
-
-        clearTimeout(stored.timer);
-        questionsById.delete(questionId);
-
-        const locationKey = makeLocationKey(stored.question.channelId, stored.question.threadId);
-        questionsByLocation.delete(locationKey);
-    }
-
-    function register(question: Omit<PendingQuestion, 'state'>): Promise<QuestionResult> {
-        const locationKey = makeLocationKey(question.channelId, question.threadId);
+    /**
+     * Register a question and return a promise that resolves when answered or times out.
+     */
+    register(question: Omit<PendingQuestion, 'state'>): Promise<QuestionResult> {
+        const locationKey = this.makeLocationKey(question.channelId, question.threadId);
 
         // Cancel any existing question for this location
-        const existing = questionsByLocation.get(locationKey);
+        const existing = this.questionsByLocation.get(locationKey);
         // Stryker disable next-line BlockStatement: Guard clause - tested via behavior
         if(existing) {
             // Stryker disable all: Logger warn object
@@ -86,7 +41,7 @@ export function createQuestionRegistry(_config?: QuestionRegistryConfig): Questi
             });
             // Stryker restore all
 
-            cleanupQuestion(existing.question.questionId);
+            this.cleanupQuestion(existing.question.questionId);
             existing.resolve({
                 questionId: existing.question.questionId,
                 answer:     null,
@@ -104,10 +59,10 @@ export function createQuestionRegistry(_config?: QuestionRegistryConfig): Questi
             };
 
             const timer = setTimeout(() => {
-                const stored = questionsById.get(question.questionId);
+                const stored = this.questionsById.get(question.questionId);
                 if(stored?.question.state === 'waiting') {
                     stored.question.state = 'timed_out';
-                    cleanupQuestion(question.questionId);
+                    this.cleanupQuestion(question.questionId);
                     resolve({
                         questionId: question.questionId,
                         answer:     null,
@@ -124,8 +79,8 @@ export function createQuestionRegistry(_config?: QuestionRegistryConfig): Questi
                 resolve
             };
 
-            questionsById.set(question.questionId, stored);
-            questionsByLocation.set(locationKey, stored);
+            this.questionsById.set(question.questionId, stored);
+            this.questionsByLocation.set(locationKey, stored);
 
             // Stryker disable all: Logger debug object
             logger.debug({
@@ -140,9 +95,13 @@ export function createQuestionRegistry(_config?: QuestionRegistryConfig): Questi
         // Stryker restore all
     }
 
-    function findPendingQuestion(channelId: ChannelId, threadId?: string): PendingQuestion | null {
-        const locationKey = makeLocationKey(channelId, threadId);
-        const stored = questionsByLocation.get(locationKey);
+    /**
+     * Check if a message might be an answer to a pending question.
+     * Returns the pending question if found, null otherwise.
+     */
+    findPendingQuestion(channelId: ChannelId, threadId?: string): PendingQuestion | null {
+        const locationKey = this.makeLocationKey(channelId, threadId);
+        const stored = this.questionsByLocation.get(locationKey);
 
         if(!stored) {
             return null;
@@ -157,19 +116,26 @@ export function createQuestionRegistry(_config?: QuestionRegistryConfig): Questi
         return stored.question;
     }
 
-    function getQuestion(questionId: string): PendingQuestion | null {
-        const stored = questionsById.get(questionId);
+    /**
+     * Get a question by its ID.
+     * Returns the question if found, null otherwise.
+     */
+    getQuestion(questionId: string): PendingQuestion | null {
+        const stored = this.questionsById.get(questionId);
         return stored ? stored.question : null;
     }
 
-    function resolveWithAnswer(questionId: string, answer: QuestionAnswer): void {
-        const stored = questionsById.get(questionId);
+    /**
+     * Resolve a question with an answer.
+     */
+    resolveWithAnswer(questionId: string, answer: QuestionAnswer): void {
+        const stored = this.questionsById.get(questionId);
         if(stored?.question.state !== 'waiting') {
             return;
         }
 
         stored.question.state = 'answered';
-        cleanupQuestion(questionId);
+        this.cleanupQuestion(questionId);
         stored.resolve({
             questionId: stored.question.questionId,
             answer,
@@ -179,14 +145,17 @@ export function createQuestionRegistry(_config?: QuestionRegistryConfig): Questi
         });
     }
 
-    function cancel(questionId: string): void {
-        const stored = questionsById.get(questionId);
+    /**
+     * Cancel a question (e.g., due to interruption).
+     */
+    cancel(questionId: string): void {
+        const stored = this.questionsById.get(questionId);
         if(stored?.question.state !== 'waiting') {
             return;
         }
 
         stored.question.state = 'cancelled';
-        cleanupQuestion(questionId);
+        this.cleanupQuestion(questionId);
         stored.resolve({
             questionId: stored.question.questionId,
             answer:     null,
@@ -196,9 +165,12 @@ export function createQuestionRegistry(_config?: QuestionRegistryConfig): Questi
         });
     }
 
-    function stop(): void {
+    /**
+     * Stop the registry and clean up all timers.
+     */
+    stop(): void {
         // Cancel all pending questions
-        for(const stored of questionsById.values()) {
+        for(const stored of this.questionsById.values()) {
             // Stryker disable next-line ConditionalExpression: State check in cleanup loop
             if(stored.question.state === 'waiting') {
                 stored.question.state = 'cancelled';
@@ -213,16 +185,25 @@ export function createQuestionRegistry(_config?: QuestionRegistryConfig): Questi
             }
         }
 
-        questionsById.clear();
-        questionsByLocation.clear();
+        this.questionsById.clear();
+        this.questionsByLocation.clear();
     }
 
-    return {
-        register,
-        findPendingQuestion,
-        getQuestion,
-        resolveWithAnswer,
-        cancel,
-        stop
-    };
+    private makeLocationKey(channelId: ChannelId, threadId?: string): string {
+        // Stryker disable next-line LogicalOperator,StringLiteral: ?? provides default value
+        return `${channelId}:${threadId ?? 'main'}`;
+    }
+
+    private cleanupQuestion(questionId: string): void {
+        const stored = this.questionsById.get(questionId);
+        if(!stored) {
+            return;
+        }
+
+        clearTimeout(stored.timer);
+        this.questionsById.delete(questionId);
+
+        const locationKey = this.makeLocationKey(stored.question.channelId, stored.question.threadId);
+        this.questionsByLocation.delete(locationKey);
+    }
 }

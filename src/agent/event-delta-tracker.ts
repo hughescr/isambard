@@ -7,41 +7,36 @@
 
 import type { ContextBuilder } from './context-builder';
 
-export interface EventDeltaTracker {
+/**
+ * Event delta tracker for tracking new events during message processing.
+ */
+export class EventDeltaTracker {
+    private startEventCount = 0;
+    private readonly contextBuilder: ContextBuilder;
+
+    constructor(contextBuilder: ContextBuilder) {
+        this.contextBuilder = contextBuilder;
+    }
+
     /**
      * Mark the start of processing. Captures current event count.
      */
-    markStart(): Promise<void>
+    async markStart(): Promise<void> {
+        // Load recent events and store the count
+        const events = await this.contextBuilder.loadRecentEvents(50);
+        this.startEventCount = events.length;
+    }
 
     /**
      * Get events that occurred after the start marker.
      * @returns Array of formatted event strings (from context-builder format)
      */
-    getNewEvents(): Promise<string[]>
-}
+    async getNewEvents(): Promise<string[]> {
+        // Load recent events
+        const events = await this.contextBuilder.loadRecentEvents(50);
 
-/**
- * Creates an event delta tracker
- * @param contextBuilder Context builder to load events from
- * @returns EventDeltaTracker instance
- */
-export function createEventDeltaTracker(contextBuilder: ContextBuilder): EventDeltaTracker {
-    let startEventCount = 0;
-
-    return {
-        async markStart(): Promise<void> {
-            // Load recent events and store the count
-            const events = await contextBuilder.loadRecentEvents(50);
-            startEventCount = events.length;
-        },
-
-        async getNewEvents(): Promise<string[]> {
-            // Load recent events
-            const events = await contextBuilder.loadRecentEvents(50);
-
-            // Return only events that occurred after the start marker
-            // Events are sorted oldest-first, so new events are at the end
-            return events.slice(startEventCount);
-        },
-    };
+        // Return only events that occurred after the start marker
+        // Events are sorted oldest-first, so new events are at the end
+        return events.slice(this.startEventCount);
+    }
 }

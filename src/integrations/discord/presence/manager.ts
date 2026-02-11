@@ -21,39 +21,6 @@ import { withDiscordRetry } from '@/integrations/discord/retry';
 import { DateTime } from 'luxon';
 
 /**
- * Interface for managing Discord presence state.
- */
-export interface PresenceManager {
-    /**
-     * Update presence based on current phase.
-     * Applies updates immediately (throttling handled upstream by BotStateManager).
-     *
-     * @param phase - Current activity phase
-     */
-    updatePhase(phase: PresencePhase): Promise<void>
-
-    /**
-     * Transition to a new presence display mode, managing status updates and lifecycle.
-     * This method has side effects: generates LLM-powered status updates,
-     * manages idle refresh loop lifecycle, and handles complex state transitions.
-     *
-     * @param mode - Presence display mode state
-     * @param catchUpContext - Optional rich context for catch-up status generation
-     */
-    transitionPresenceDisplayMode(mode: PresenceDisplayMode, catchUpContext?: CatchUpSynopsisContext): void
-
-    /**
-     * Start the presence manager (enables idle refresh if idle).
-     */
-    start(): void
-
-    /**
-     * Stop the presence manager (clears all timers).
-     */
-    stop(): void
-}
-
-/**
  * Dependencies for creating a presence manager.
  */
 export interface PresenceManagerDeps {
@@ -79,7 +46,7 @@ export interface PresenceManagerDeps {
 }
 
 /**
- * Creates a presence manager.
+ * Presence manager coordinating Discord presence updates.
  *
  * The manager coordinates all presence updates with:
  * - Immediate updates for all phases (throttling handled upstream by BotStateManager)
@@ -87,12 +54,9 @@ export interface PresenceManagerDeps {
  * - State transitions between active and idle phases
  * - Graceful error handling
  *
- * @param deps - Dependencies including Discord client and status generators
- * @returns PresenceManager instance
- *
  * @example
  * ```typescript
- * const manager = createPresenceManager({
+ * const manager = new PresenceManager({
  *   discordClient: myClient,
  *   activeStatusGenerator: myActiveGen,
  *   idleStatusGenerator: myIdleGen,
@@ -100,6 +64,7 @@ export interface PresenceManagerDeps {
  *   logger: myLogger
  * });
  *
+ * manager.start();
  * await manager.updatePhase({ type: 'thinking', startedAt: new Date(), generatedStatus: 'Thinking...' });
  * // Update is applied immediately (throttling handled upstream)
  *
@@ -110,31 +75,22 @@ export interface PresenceManagerDeps {
  * // Cleans up all timers
  * ```
  */
-export function createPresenceManager(
-    deps: PresenceManagerDeps
-): PresenceManager {
-    const {
-        discordClient,
-        activeStatusGenerator,
-        idleStatusGenerator,
-        dynamicStatusGenerator,
-        config,
-        logger,
-    } = deps;
+export class PresenceManager {
+    private currentPhase: PresencePhase | null = null; // Start uninitialized
+    private idleRefreshInterval: NodeJS.Timeout | null = null;
+    private presenceDisplayMode: PresenceDisplayMode = 'none'; // Track presence display mode for status prefixes
 
-    let currentPhase: PresencePhase | null = null; // Start uninitialized
-    let idleRefreshInterval: NodeJS.Timeout | null = null;
-    let presenceDisplayMode: PresenceDisplayMode = 'none'; // Track presence display mode for status prefixes
+    constructor(private readonly deps: PresenceManagerDeps) {}
 
     /**
      * Actually update Discord presence.
      */
-    async function applyPresenceUpdate(activity: ActivitiesOptions): Promise<void> {
+    private async applyPresenceUpdate(activity: ActivitiesOptions): Promise<void> {
         try {
             // Use low retry count for presence updates (not critical)
             await withDiscordRetry(
                 () => {
-                    discordClient.user?.setActivity(activity);
+                    this.deps.discordClient.user?.setActivity(activity);
                     return Promise.resolve();
                 },
                 // Stryker disable next-line StringLiteral: Operation name for retry logging
@@ -142,9 +98,9 @@ export function createPresenceManager(
                 // Stryker disable next-line ObjectLiteral: Retry policy already tested in retry module
                 { policy: { maxAttempts: 2 } }
             );
-            logger.info({ activity }, 'Updated Discord presence');
+            this.deps.logger.info({ activity }, 'Updated Discord presence');
         } catch (error) {
-            logger.error({ error, activity }, 'Failed to update Discord presence');
+            this.deps.logger.error({ error, activity }, 'Failed to update Discord presence');
         }
     }
 
@@ -159,28 +115,28 @@ export function createPresenceManager(
      * empty block) are effectively equivalent mutants since the guard can only trigger
      * in edge-case timing scenarios that are difficult to reliably reproduce in tests.
      */
-    async function refreshIdleStatus(): Promise<void> {
+    private async refreshIdleStatus(): Promise<void> {
         // Stryker disable next-line ConditionalExpression,OptionalChaining,BlockStatement: Defensive guard for race condition - unreachable in tests
-        if(currentPhase?.type !== 'idle') {
+        if(this.currentPhase?.type !== 'idle') {
             return; // No longer idle
         }
 
         // Capture current mode at start to detect stale results
-        const modeAtStart = presenceDisplayMode;
+        const modeAtStart = this.presenceDisplayMode;
 
         // Stryker disable next-line BooleanLiteral: includeEmoji parameter - always true for idle status generation
-        const activity = await idleStatusGenerator.generate(true, presenceDisplayMode);
+        const activity = await this.deps.idleStatusGenerator.generate(true, this.presenceDisplayMode);
 
         // Check if mode changed while generating - if so, discard stale result
         // Stryker disable BlockStatement,ObjectLiteral,StringLiteral: Logging for observability and race condition guard
         // Stryker disable next-line ConditionalExpression: Guard clause - prevents stale status when mode changes during generation
-        if(presenceDisplayMode !== modeAtStart) {
-            logger.debug({ modeAtStart, currentMode: presenceDisplayMode }, 'Discarding stale idle status (mode changed during generation)');
+        if(this.presenceDisplayMode !== modeAtStart) {
+            this.deps.logger.debug({ modeAtStart, currentMode: this.presenceDisplayMode }, 'Discarding stale idle status (mode changed during generation)');
             return;
         }
         // Stryker restore BlockStatement,ObjectLiteral,StringLiteral
 
-        await applyPresenceUpdate(activity);
+        await this.applyPresenceUpdate(activity);
     }
 
     /**
@@ -188,174 +144,192 @@ export function createPresenceManager(
      * Returns a promise that resolves after the first refresh completes.
      */
     // Stryker disable BlockStatement: Idempotent guard - tested via integration
-    async function startIdleRefresh(): Promise<void> {
+    private async startIdleRefresh(): Promise<void> {
         // Stryker disable next-line ConditionalExpression: Guard clause - prevents duplicate interval creation
-        if(idleRefreshInterval) {
+        if(this.idleRefreshInterval) {
             return; // Already running
         }
         // Stryker restore BlockStatement
 
         // Generate immediately and wait for it
-        await refreshIdleStatus();
+        await this.refreshIdleStatus();
 
         // Then refresh periodically
-        idleRefreshInterval = setInterval(() => {
-            void refreshIdleStatus();
-        }, config.idleRefreshIntervalMs);
+        this.idleRefreshInterval = setInterval(() => {
+            void this.refreshIdleStatus();
+        }, this.deps.config.idleRefreshIntervalMs);
 
-        logger.debug({ intervalMs: config.idleRefreshIntervalMs }, 'Started idle status refresh');
+        this.deps.logger.debug({ intervalMs: this.deps.config.idleRefreshIntervalMs }, 'Started idle status refresh');
     }
 
     /**
      * Stop periodic idle status refresh.
      */
-    function stopIdleRefresh(): void {
-        if(idleRefreshInterval) {
-            clearInterval(idleRefreshInterval);
-            idleRefreshInterval = null;
-            logger.debug('Stopped idle status refresh');
+    private stopIdleRefresh(): void {
+        if(this.idleRefreshInterval) {
+            clearInterval(this.idleRefreshInterval);
+            this.idleRefreshInterval = null;
+            this.deps.logger.debug('Stopped idle status refresh');
         }
     }
 
-    return {
-        transitionPresenceDisplayMode(mode: PresenceDisplayMode, catchUpContext?: CatchUpSynopsisContext): void {
-            // Stryker disable next-line StringLiteral,ObjectLiteral: Log message content is not behavior-affecting
-            logger.debug({ mode, previousMode: presenceDisplayMode }, 'Setting presence display mode');
-            const previousMode = presenceDisplayMode;
-            presenceDisplayMode = mode;
+    /**
+     * Transition to a new presence display mode, managing status updates and lifecycle.
+     * This method has side effects: generates LLM-powered status updates,
+     * manages idle refresh loop lifecycle, and handles complex state transitions.
+     *
+     * @param mode - Presence display mode state
+     * @param catchUpContext - Optional rich context for catch-up status generation
+     */
+    transitionPresenceDisplayMode(mode: PresenceDisplayMode, catchUpContext?: CatchUpSynopsisContext): void {
+        // Stryker disable next-line StringLiteral,ObjectLiteral: Log message content is not behavior-affecting
+        this.deps.logger.debug({ mode, previousMode: this.presenceDisplayMode }, 'Setting presence display mode');
+        const previousMode = this.presenceDisplayMode;
+        this.presenceDisplayMode = mode;
 
-            // When ENTERING catch-up mode (from 'none'), generate ONE initial status update
-            // to show the 📥 prefix. The catch-up agent session's stream handler will then
-            // drive all subsequent status updates (thinking, using_tool, responding).
-            // We do NOT start the idle refresh loop during catch-up.
-            const enteringCatchUp = (mode === 'catching_up' || mode === 'catching_up_interrupted') && previousMode === 'none';
+        // When ENTERING catch-up mode (from 'none'), generate ONE initial status update
+        // to show the 📥 prefix. The catch-up agent session's stream handler will then
+        // drive all subsequent status updates (thinking, using_tool, responding).
+        // We do NOT start the idle refresh loop during catch-up.
+        const enteringCatchUp = (mode === 'catching_up' || mode === 'catching_up_interrupted') && previousMode === 'none';
 
-            // Handle based on current phase state
-            if(currentPhase) {
-                // We have a current phase - update it with the new mode
-                if(currentPhase.type === 'idle') {
-                    // For idle phase, generate ONE initial status when entering catch-up mode
-                    // This shows the 📥 prefix immediately
-                    // Do NOT start the idle refresh loop - stream handler will drive updates
-                    if(enteringCatchUp) {
-                        void (async () => {
-                            // Stryker disable BlockStatement: Error logging catch block for observability
-                            try {
-                                // Use dynamic generator if catch-up context provided and generator available
-                                if(catchUpContext && dynamicStatusGenerator) {
-                                    const statusText = await dynamicStatusGenerator.generateCatchUpSynopsis(catchUpContext);
-                                    const activity = activeStatusGenerator.formatStatus(statusText, mode);
-                                    await applyPresenceUpdate(activity);
-                                } else {
-                                    // Fallback to idle generator
-                                    const activity = await idleStatusGenerator.generate(true, mode);
-                                    await applyPresenceUpdate(activity);
-                                }
-                            } catch (error) {
-                                // Stryker disable next-line ObjectLiteral,StringLiteral: Error logging content
-                                logger.error({ error, mode }, 'Failed to generate catch-up status');
-                            }
-                            // Stryker restore BlockStatement
-                        })();
-                    }
-                    // When exiting catch-up mode, generate an immediate idle refresh
-                    // This ensures we show normal idle status without waiting for the next interval
-                    const exitingCatchUp = mode === 'none' && (previousMode === 'catching_up' || previousMode === 'catching_up_interrupted');
-                    if(exitingCatchUp) {
-                        void refreshIdleStatus();
-                    }
-                } else if(mode !== 'none') {
-                    // For active phases, update immediately with new mode prefix
-                    // Skip when transitioning to 'none' (idle) — the subsequent updatePhase(idle) handles it
-                    const activity = activeStatusGenerator.generate(currentPhase, mode);
-                    void applyPresenceUpdate(activity);
-                }
-            } else {
-                // No current phase (startup case) - generate ONE initial status when entering catch-up mode
+        // Handle based on current phase state
+        if(this.currentPhase) {
+            // We have a current phase - update it with the new mode
+            if(this.currentPhase.type === 'idle') {
+                // For idle phase, generate ONE initial status when entering catch-up mode
+                // This shows the 📥 prefix immediately
+                // Do NOT start the idle refresh loop - stream handler will drive updates
                 if(enteringCatchUp) {
-                    // Generate catch-up status (with 📥 prefix)
-                    // Note: We can't use refreshIdleStatus() here because it checks currentPhase.type === 'idle'
-                    // and returns early if false. At startup, currentPhase is null.
                     void (async () => {
                         // Stryker disable BlockStatement: Error logging catch block for observability
                         try {
                             // Use dynamic generator if catch-up context provided and generator available
-                            if(catchUpContext && dynamicStatusGenerator) {
-                                const statusText = await dynamicStatusGenerator.generateCatchUpSynopsis(catchUpContext);
-                                const activity = activeStatusGenerator.formatStatus(statusText, mode);
-                                await applyPresenceUpdate(activity);
+                            if(catchUpContext && this.deps.dynamicStatusGenerator) {
+                                const statusText = await this.deps.dynamicStatusGenerator.generateCatchUpSynopsis(catchUpContext);
+                                const activity = this.deps.activeStatusGenerator.formatStatus(statusText, mode);
+                                await this.applyPresenceUpdate(activity);
                             } else {
                                 // Fallback to idle generator
-                                const activity = await idleStatusGenerator.generate(true, mode);
-                                await applyPresenceUpdate(activity);
+                                const activity = await this.deps.idleStatusGenerator.generate(true, mode);
+                                await this.applyPresenceUpdate(activity);
                             }
                         } catch (error) {
                             // Stryker disable next-line ObjectLiteral,StringLiteral: Error logging content
-                            logger.error({ error, mode }, 'Failed to generate catch-up status');
+                            this.deps.logger.error({ error, mode }, 'Failed to generate catch-up status');
                         }
                         // Stryker restore BlockStatement
                     })();
                 }
-            }
-
-            // DON'T trigger idle refresh loop during catch-up - stream handler drives updates
-            // DO trigger immediate idle refresh when exiting catch-up to 'none' (handled above)
-        },
-
-        async updatePhase(phase: PresencePhase): Promise<void> {
-            // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            const logPhase = phase.type === 'idle'
-                ? { ...phase, since: DateTime.fromJSDate(phase.since).toISO() }
-                : phase;
-            // Stryker restore ObjectLiteral,StringLiteral
-            logger.debug({ phase: logPhase }, 'Updating presence phase');
-
-            const wasIdle = currentPhase?.type === 'idle';
-            const nowIdle = phase.type === 'idle';
-
-            currentPhase = phase;
-
-            // Handle idle state transitions
-            // Transition TO idle: always immediate (bypasses cooldown)
-            if(nowIdle && !wasIdle) {
-                // If presence display mode is active, don't start idle refresh yet.
-                // The transitionPresenceDisplayMode('none') call will trigger idle refresh with correct mode.
-                // Stryker disable next-line ConditionalExpression: Mode check - prevents idle refresh during catch-up
-                if(presenceDisplayMode === 'none') {
-                    await startIdleRefresh();
+                // When exiting catch-up mode, generate an immediate idle refresh
+                // This ensures we show normal idle status without waiting for the next interval
+                const exitingCatchUp = mode === 'none' && (previousMode === 'catching_up' || previousMode === 'catching_up_interrupted');
+                if(exitingCatchUp) {
+                    void this.refreshIdleStatus();
                 }
-                return;
+            } else if(mode !== 'none') {
+                // For active phases, update immediately with new mode prefix
+                // Skip when transitioning to 'none' (idle) — the subsequent updatePhase(idle) handles it
+                const activity = this.deps.activeStatusGenerator.generate(this.currentPhase, mode);
+                void this.applyPresenceUpdate(activity);
             }
-
-            // Already idle and staying idle - don't restart the refresh loop
-            if(nowIdle && wasIdle) {
-                logger.debug('Already idle, skipping duplicate idle transition');
-                return;
+        } else {
+            // No current phase (startup case) - generate ONE initial status when entering catch-up mode
+            if(enteringCatchUp) {
+                // Generate catch-up status (with 📥 prefix)
+                // Note: We can't use refreshIdleStatus() here because it checks currentPhase.type === 'idle'
+                // and returns early if false. At startup, currentPhase is null.
+                void (async () => {
+                    // Stryker disable BlockStatement: Error logging catch block for observability
+                    try {
+                        // Use dynamic generator if catch-up context provided and generator available
+                        if(catchUpContext && this.deps.dynamicStatusGenerator) {
+                            const statusText = await this.deps.dynamicStatusGenerator.generateCatchUpSynopsis(catchUpContext);
+                            const activity = this.deps.activeStatusGenerator.formatStatus(statusText, mode);
+                            await this.applyPresenceUpdate(activity);
+                        } else {
+                            // Fallback to idle generator
+                            const activity = await this.deps.idleStatusGenerator.generate(true, mode);
+                            await this.applyPresenceUpdate(activity);
+                        }
+                    } catch (error) {
+                        // Stryker disable next-line ObjectLiteral,StringLiteral: Error logging content
+                        this.deps.logger.error({ error, mode }, 'Failed to generate catch-up status');
+                    }
+                    // Stryker restore BlockStatement
+                })();
             }
+        }
 
-            // Transition FROM idle: stop the refresh loop
-            // Stryker disable next-line ConditionalExpression,LogicalOperator: State transition guard - prevents idle refresh when transitioning from idle to active
-            if(!nowIdle && wasIdle) {
-                stopIdleRefresh();
+        // DON'T trigger idle refresh loop during catch-up - stream handler drives updates
+        // DO trigger immediate idle refresh when exiting catch-up to 'none' (handled above)
+    }
+
+    /**
+     * Update presence based on current phase.
+     * Applies updates immediately (throttling handled upstream by BotStateManager).
+     *
+     * @param phase - Current activity phase
+     */
+    async updatePhase(phase: PresencePhase): Promise<void> {
+        // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+        const logPhase = phase.type === 'idle'
+            ? { ...phase, since: DateTime.fromJSDate(phase.since).toISO() }
+            : phase;
+        // Stryker restore ObjectLiteral,StringLiteral
+        this.deps.logger.debug({ phase: logPhase }, 'Updating presence phase');
+
+        const wasIdle = this.currentPhase?.type === 'idle';
+        const nowIdle = phase.type === 'idle';
+
+        this.currentPhase = phase;
+
+        // Handle idle state transitions
+        // Transition TO idle: always immediate (bypasses cooldown)
+        if(nowIdle && !wasIdle) {
+            // If presence display mode is active, don't start idle refresh yet.
+            // The transitionPresenceDisplayMode('none') call will trigger idle refresh with correct mode.
+            // Stryker disable next-line ConditionalExpression: Mode check - prevents idle refresh during catch-up
+            if(this.presenceDisplayMode === 'none') {
+                await this.startIdleRefresh();
             }
+            return;
+        }
 
-            // Handle active phases (throttling is now done upstream by BotStateManager)
-            // Stryker disable next-line ConditionalExpression: Guard clause - active phase handling
-            if(!nowIdle) {
-                const activity = activeStatusGenerator.generate(phase, presenceDisplayMode);
-                await applyPresenceUpdate(activity);
-            }
-        },
+        // Already idle and staying idle - don't restart the refresh loop
+        if(nowIdle && wasIdle) {
+            this.deps.logger.debug('Already idle, skipping duplicate idle transition');
+            return;
+        }
 
-        start(): void {
-            logger.info('Starting presence manager');
-            // Don't start idle refresh here - wait for explicit phase transition
-            // The caller should call updatePhase() after determining if catch-up is needed
-        },
+        // Transition FROM idle: stop the refresh loop
+        // Stryker disable next-line ConditionalExpression,LogicalOperator: State transition guard - prevents idle refresh when transitioning from idle to active
+        if(!nowIdle && wasIdle) {
+            this.stopIdleRefresh();
+        }
 
-        stop(): void {
-            logger.info('Stopping presence manager');
-            stopIdleRefresh();
-        },
-    };
+        // Handle active phases (throttling is now done upstream by BotStateManager)
+        // Stryker disable next-line ConditionalExpression: Guard clause - active phase handling
+        if(!nowIdle) {
+            const activity = this.deps.activeStatusGenerator.generate(phase, this.presenceDisplayMode);
+            await this.applyPresenceUpdate(activity);
+        }
+    }
+
+    /**
+     * Start the presence manager (enables idle refresh if idle).
+     */
+    start(): void {
+        this.deps.logger.info('Starting presence manager');
+        // Don't start idle refresh here - wait for explicit phase transition
+        // The caller should call updatePhase() after determining if catch-up is needed
+    }
+
+    /**
+     * Stop the presence manager (clears all timers).
+     */
+    stop(): void {
+        this.deps.logger.info('Stopping presence manager');
+        this.stopIdleRefresh();
+    }
 }

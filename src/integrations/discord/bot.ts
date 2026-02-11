@@ -10,9 +10,9 @@ import {
 } from './presence';
 import { setupPresence, type PresenceSetupResult } from './setup/presence-setup';
 import type { MessageCoordinator } from './message-coordinator';
-import { createDiscordRateLimiter, type DiscordRateLimiter } from './rate-limiter';
-import { createQuestionRegistry, type QuestionRegistry } from '@/agent/question-registry';
-import { createAnswerClassifier, classifyWithHaiku } from '@/agent/answer-classifier';
+import { DiscordRateLimiter } from './rate-limiter';
+import { QuestionRegistry } from '@/agent/question-registry';
+import { AnswerClassifier, classifyWithHaiku } from '@/agent/answer-classifier';
 import { createInteractionHandler } from './interactions';
 import type { InboxManager } from './inbox';
 import {
@@ -223,7 +223,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     let perchScheduler: PerchScheduler | undefined;
     let perchSessionRunner: PerchSessionRunner | undefined;
     // Use provided registry or create a new one
-    const questionRegistry: QuestionRegistry = options.questionRegistry ?? createQuestionRegistry();
+    const questionRegistry: QuestionRegistry = options.questionRegistry ?? new QuestionRegistry();
 
     // Capture unsubscribe functions for cleanup
     let unsubscribeModeTransition: (() => void) | undefined;
@@ -279,13 +279,13 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         };
 
         // Create rate limiter for Discord message sending
-        rateLimiter = createDiscordRateLimiter({
+        rateLimiter = new DiscordRateLimiter({
             globalConcurrency: 5,
             logger,
         });
 
         // Create answer classifier with Haiku for ambiguous messages
-        const answerClassifier = createAnswerClassifier({
+        const answerClassifier = new AnswerClassifier({
             classifyWithLLM: classifyWithHaiku,
         });
 

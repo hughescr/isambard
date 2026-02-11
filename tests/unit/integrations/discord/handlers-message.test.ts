@@ -704,7 +704,7 @@ describe('Discord Event Handlers', () => {
                     resolveWithAnswer:   mock(() => undefined),
                     cancel:              mock(() => undefined),
                     stop:                mock(() => undefined),
-                };
+                } as unknown as QuestionRegistry;
 
                 mockAnswerClassifier = {
                     classify: mock(async (_question: PendingQuestion, _message) => 'answer' as ClassificationResult),

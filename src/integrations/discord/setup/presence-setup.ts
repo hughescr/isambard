@@ -7,8 +7,7 @@ import {
     createActiveStatusGenerator,
     createDynamicStatusGenerator,
     createIdleStatusGenerator,
-    createPresenceManager,
-    type PresenceManager
+    PresenceManager
 } from '../presence';
 import { logger } from '@hughescr/logger';
 
@@ -66,7 +65,7 @@ export function setupPresence(params: {
         getRecentContext,
     });
 
-    const presenceManager = createPresenceManager({
+    const presenceManager = new PresenceManager({
         discordClient: readyClient,
         config:        presenceConfig,
         activeStatusGenerator,

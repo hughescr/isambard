@@ -14,19 +14,19 @@
 import { describe, expect, test, mock } from 'bun:test';
 import _ from 'lodash';
 import type { TextChannel, Message } from 'discord.js';
-import { createDiscordRateLimiter, type LimitFunction } from '@/integrations/discord/rate-limiter';
+import { DiscordRateLimiter, type LimitFunction } from '@/integrations/discord/rate-limiter';
 
 // Synchronous mock limit function that just executes immediately (no p-limit overhead)
 const syncLimit: LimitFunction = async <T>(fn: () => PromiseLike<T>): Promise<T> => fn();
 
-describe('createDiscordRateLimiter', () => {
+describe('new DiscordRateLimiter', () => {
     test('sends single message to channel', async () => {
         const mockChannel = {
             id:   'channel-1',
             send: mock().mockResolvedValue({ id: 'msg-1' }),
         } as unknown as TextChannel;
 
-        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
 
         const result = await limiter.sendToChannel(mockChannel, 'Hello');
 
@@ -50,7 +50,7 @@ describe('createDiscordRateLimiter', () => {
             }),
         } as unknown as TextChannel;
 
-        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
 
         // Start 3 sends to same channel concurrently
         const promise1 = limiter.sendToChannel(mockChannel, 'Message 1');
@@ -82,7 +82,7 @@ describe('createDiscordRateLimiter', () => {
         const mockChannel1 = createMockChannel('channel-1');
         const mockChannel2 = createMockChannel('channel-2');
 
-        const limiter = createDiscordRateLimiter({ globalConcurrency: 10, limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ globalConcurrency: 10, limitFn: syncLimit });
 
         // Send to different channels concurrently
         const [result1, result2] = await Promise.all([
@@ -113,7 +113,7 @@ describe('createDiscordRateLimiter', () => {
             }),
         } as unknown as TextChannel));
 
-        const limiter = createDiscordRateLimiter({ globalConcurrency: 2, limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ globalConcurrency: 2, limitFn: syncLimit });
 
         // Send to all 3 channels concurrently
         await Promise.all(
@@ -135,7 +135,7 @@ describe('createDiscordRateLimiter', () => {
                 .mockResolvedValueOnce({ id: 'msg-3' }),
         } as unknown as TextChannel;
 
-        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
 
         // First send fails
         expect(
@@ -159,7 +159,7 @@ describe('createDiscordRateLimiter', () => {
             reply:     mock().mockResolvedValue({ id: 'msg-reply' }),
         } as unknown as Message;
 
-        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
 
         const result = await limiter.replyToMessage(mockMessage, 'Reply text');
 
@@ -179,7 +179,7 @@ describe('createDiscordRateLimiter', () => {
             send: mock().mockResolvedValue({ id: 'msg-1' }),
         } as unknown as TextChannel;
 
-        const limiter = createDiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
 
         await limiter.sendToChannel(mockChannel, 'Test message');
 
@@ -195,7 +195,7 @@ describe('createDiscordRateLimiter', () => {
             send: mock().mockResolvedValue({ id: 'msg-1' }),
         } as unknown as TextChannel;
 
-        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
 
         // Start a send
         const promise = limiter.sendToChannel(mockChannel, 'Long message');
@@ -220,7 +220,7 @@ describe('createDiscordRateLimiter', () => {
             }),
         } as unknown as TextChannel));
 
-        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
 
         // Send to all 6 channels concurrently
         await Promise.all(
@@ -245,7 +245,7 @@ describe('createDiscordRateLimiter', () => {
                 .mockResolvedValueOnce({ id: 'msg-2' }),
         } as unknown as TextChannel;
 
-        const limiter = createDiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
 
         // First send fails
         expect(
@@ -274,7 +274,7 @@ describe('createDiscordRateLimiter', () => {
             send: mock().mockResolvedValue({ id: 'msg-1' }),
         } as unknown as TextChannel;
 
-        const limiter = createDiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
 
         await limiter.sendToChannel(mockChannel, 'Test message');
 
@@ -306,7 +306,7 @@ describe('createDiscordRateLimiter', () => {
         } as unknown as TextChannel;
 
         // Create limiter without logger
-        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
 
         // Should work normally
         const result = await limiter.sendToChannel(mockChannel, 'Hello');
@@ -324,7 +324,7 @@ describe('createDiscordRateLimiter', () => {
         } as unknown as TextChannel;
 
         // Create limiter without logger
-        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
 
         // First send fails
         expect(
@@ -344,7 +344,7 @@ describe('createDiscordRateLimiter', () => {
             send: mock().mockResolvedValue({ id: 'msg-1' }),
         } as unknown as TextChannel;
 
-        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
 
         // Start a send
         const promise = limiter.sendToChannel(mockChannel, 'Message');
@@ -358,7 +358,7 @@ describe('createDiscordRateLimiter', () => {
     });
 
     test('multiple sequential stop() calls do not throw', async () => {
-        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
 
         // Call stop multiple times
         expect(() => {
@@ -376,7 +376,7 @@ describe('createDiscordRateLimiter', () => {
             send: mock().mockResolvedValue({ id: 'msg-1' }),
         } as unknown as TextChannel;
 
-        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
 
         const result = await limiter.sendToChannel(mockChannel, longMessage);
 
@@ -392,7 +392,7 @@ describe('createDiscordRateLimiter', () => {
             send: mock().mockResolvedValue({ id: 'msg-1' }),
         } as unknown as TextChannel;
 
-        const limiter = createDiscordRateLimiter({ limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
 
         const result = await limiter.sendToChannel(mockChannel, 'Test');
 
@@ -412,7 +412,7 @@ describe('createDiscordRateLimiter', () => {
             send: mock().mockResolvedValue({ id: 'msg-1' }),
         } as unknown as TextChannel;
 
-        const limiter = createDiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
 
         // Start a send to create a queue
         await limiter.sendToChannel(mockChannel, 'Message');
@@ -438,7 +438,7 @@ describe('createDiscordRateLimiter', () => {
             reply:     mock().mockResolvedValue({ id: 'msg-reply' }),
         } as unknown as Message;
 
-        const limiter = createDiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
 
         await limiter.replyToMessage(mockMessage, 'Reply text');
 

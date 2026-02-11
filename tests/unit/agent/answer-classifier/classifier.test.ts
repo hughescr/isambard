@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test';
-import { createAnswerClassifier } from '@/agent/answer-classifier/classifier';
+import { AnswerClassifier } from '@/agent/answer-classifier/classifier';
 import type { PendingQuestion } from '@/agent/question-registry';
 import type { MessageToClassify, ClassificationResult } from '@/agent/answer-classifier/types';
 import { userIdSchema, channelIdSchema } from '@/integrations/discord/types';
@@ -25,7 +25,7 @@ describe('AnswerClassifier', () => {
 
     describe('Layer 1: Structural cues', () => {
         it('should classify as answer when message replies to question', async () => {
-            const classifier = createAnswerClassifier();
+            const classifier = new AnswerClassifier();
             const message: MessageToClassify = {
                 ...baseMessage,
                 referencedMessageId: 'msg-question',
@@ -37,7 +37,7 @@ describe('AnswerClassifier', () => {
         });
 
         it('should classify as answer when message is in question thread', async () => {
-            const classifier = createAnswerClassifier();
+            const classifier = new AnswerClassifier();
             const questionWithThread: PendingQuestion = {
                 ...baseQuestion,
                 threadId: 'thread-123',
@@ -53,7 +53,7 @@ describe('AnswerClassifier', () => {
         });
 
         it('should not match thread if question has no thread', async () => {
-            const classifier = createAnswerClassifier();
+            const classifier = new AnswerClassifier();
             const message: MessageToClassify = {
                 ...baseMessage,
                 threadId: 'thread-123',
@@ -67,7 +67,7 @@ describe('AnswerClassifier', () => {
         });
 
         it('should not match different thread', async () => {
-            const classifier = createAnswerClassifier();
+            const classifier = new AnswerClassifier();
             const questionWithThread: PendingQuestion = {
                 ...baseQuestion,
                 threadId: 'thread-123',
@@ -87,7 +87,7 @@ describe('AnswerClassifier', () => {
     });
 
     describe('Layer 2: Heuristics', () => {
-        const classifier = createAnswerClassifier();
+        const classifier = new AnswerClassifier();
 
         describe('Answer patterns', () => {
             it('should classify "yes" as answer', async () => {
@@ -96,7 +96,7 @@ describe('AnswerClassifier', () => {
             });
 
             it('should only match answer patterns at start of string', async () => {
-                const classifier = createAnswerClassifier();
+                const classifier = new AnswerClassifier();
                 const message: MessageToClassify = {
                     ...baseMessage,
                     content:        'I said yes yesterday',
@@ -204,7 +204,7 @@ describe('AnswerClassifier', () => {
             });
 
             it('should only match interruption patterns at start of string', async () => {
-                const classifier = createAnswerClassifier();
+                const classifier = new AnswerClassifier();
                 const message: MessageToClassify = {
                     ...baseMessage,
                     content:        'I was thinking, by the way this is nice',
@@ -269,7 +269,7 @@ describe('AnswerClassifier', () => {
     describe('Layer 3: LLM fallback', () => {
         it('should call LLM classifier for ambiguous messages', async () => {
             const llmClassifier = mock(async () => 'answer' as ClassificationResult);
-            const classifier = createAnswerClassifier({ classifyWithLLM: llmClassifier });
+            const classifier = new AnswerClassifier({ classifyWithLLM: llmClassifier });
             const message: MessageToClassify = {
                 ...baseMessage,
                 content: 'This is an ambiguous message that matches no patterns',
@@ -282,7 +282,7 @@ describe('AnswerClassifier', () => {
 
         it('should return LLM result when configured', async () => {
             const llmClassifier = mock(async () => 'answer' as ClassificationResult);
-            const classifier = createAnswerClassifier({ classifyWithLLM: llmClassifier });
+            const classifier = new AnswerClassifier({ classifyWithLLM: llmClassifier });
             const message: MessageToClassify = {
                 ...baseMessage,
                 content: 'This is an ambiguous message',
@@ -295,7 +295,7 @@ describe('AnswerClassifier', () => {
 
         it('should propagate interruption from LLM', async () => {
             const llmClassifier = mock(async () => 'interruption' as ClassificationResult);
-            const classifier = createAnswerClassifier({ classifyWithLLM: llmClassifier });
+            const classifier = new AnswerClassifier({ classifyWithLLM: llmClassifier });
             const message: MessageToClassify = {
                 ...baseMessage,
                 content: 'Ambiguous message',
@@ -308,7 +308,7 @@ describe('AnswerClassifier', () => {
 
         it('should not call LLM for structural matches', async () => {
             const llmClassifier = mock(async () => 'answer' as ClassificationResult);
-            const classifier = createAnswerClassifier({ classifyWithLLM: llmClassifier });
+            const classifier = new AnswerClassifier({ classifyWithLLM: llmClassifier });
             const message: MessageToClassify = {
                 ...baseMessage,
                 referencedMessageId: 'msg-question',
@@ -322,7 +322,7 @@ describe('AnswerClassifier', () => {
 
         it('should not call LLM for heuristic matches', async () => {
             const llmClassifier = mock(async () => 'interruption' as ClassificationResult);
-            const classifier = createAnswerClassifier({ classifyWithLLM: llmClassifier });
+            const classifier = new AnswerClassifier({ classifyWithLLM: llmClassifier });
             const message: MessageToClassify = {
                 ...baseMessage,
                 content: 'yes',
@@ -336,7 +336,7 @@ describe('AnswerClassifier', () => {
 
     describe('Layer 4: Default', () => {
         it('should default to interruption when bot is @mentioned and no LLM configured', async () => {
-            const classifier = createAnswerClassifier();
+            const classifier = new AnswerClassifier();
             const message: MessageToClassify = {
                 ...baseMessage,
                 content:        'This is an ambiguous message that matches no patterns',
@@ -349,7 +349,7 @@ describe('AnswerClassifier', () => {
         });
 
         it('should default to unrelated when bot is NOT @mentioned and no LLM configured', async () => {
-            const classifier = createAnswerClassifier();
+            const classifier = new AnswerClassifier();
             const message: MessageToClassify = {
                 ...baseMessage,
                 content:        'This is an ambiguous message that matches no patterns',
@@ -362,7 +362,7 @@ describe('AnswerClassifier', () => {
         });
 
         it('should default to interruption for empty message when @mentioned', async () => {
-            const classifier = createAnswerClassifier();
+            const classifier = new AnswerClassifier();
             const message: MessageToClassify = {
                 ...baseMessage,
                 content:        '',
@@ -375,7 +375,7 @@ describe('AnswerClassifier', () => {
         });
 
         it('should default to unrelated for empty message when not @mentioned', async () => {
-            const classifier = createAnswerClassifier();
+            const classifier = new AnswerClassifier();
             const message: MessageToClassify = {
                 ...baseMessage,
                 content:        '',
@@ -388,7 +388,7 @@ describe('AnswerClassifier', () => {
         });
 
         it('should default to interruption for whitespace-only message when @mentioned', async () => {
-            const classifier = createAnswerClassifier();
+            const classifier = new AnswerClassifier();
             const message: MessageToClassify = {
                 ...baseMessage,
                 content:        '   \n\t  ',
@@ -401,7 +401,7 @@ describe('AnswerClassifier', () => {
         });
 
         it('should default to unrelated for whitespace-only message when not @mentioned', async () => {
-            const classifier = createAnswerClassifier();
+            const classifier = new AnswerClassifier();
             const message: MessageToClassify = {
                 ...baseMessage,
                 content:        '   \n\t  ',

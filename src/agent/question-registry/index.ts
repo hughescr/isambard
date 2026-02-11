@@ -12,10 +12,9 @@ export {
 } from './types';
 
 export type {
-    QuestionRegistry,
     QuestionRegistryConfig
 } from './registry';
 
 export {
-    createQuestionRegistry
+    QuestionRegistry
 } from './registry';

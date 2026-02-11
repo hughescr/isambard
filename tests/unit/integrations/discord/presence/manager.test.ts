@@ -6,7 +6,7 @@ import _ from 'lodash';
 import { describe, it, expect, beforeEach, afterEach, mock, jest, spyOn } from 'bun:test';
 import type { Client } from 'discord.js';
 import { ActivityType } from 'discord.js';
-import { createPresenceManager } from '@/integrations/discord/presence/manager';
+import { PresenceManager } from '@/integrations/discord/presence/manager';
 import type { PresencePhase, PresenceConfig } from '@/integrations/discord/presence/types';
 import { mockWithDiscordRetry, originalWithDiscordRetry } from '../../../../setup';
 
@@ -68,7 +68,7 @@ describe('PresenceManager', () => {
 
     describe('updatePhase - immediate updates (no internal throttling)', () => {
         it('should update presence immediately for first active phase', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -85,7 +85,7 @@ describe('PresenceManager', () => {
         });
 
         it('should apply all updates immediately (throttling handled upstream)', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -109,7 +109,7 @@ describe('PresenceManager', () => {
         });
 
         it('should apply updates regardless of timing (no internal throttle)', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -132,7 +132,7 @@ describe('PresenceManager', () => {
 
     describe('updatePhase - idle transitions', () => {
         it('should transition to idle immediately', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -153,7 +153,7 @@ describe('PresenceManager', () => {
         });
 
         it('should start idle refresh loop when transitioning to idle', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -169,7 +169,7 @@ describe('PresenceManager', () => {
         });
 
         it('should stop idle refresh when transitioning from idle', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -206,7 +206,7 @@ describe('PresenceManager', () => {
                 },
             } as unknown as Client;
 
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         errorClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -250,7 +250,7 @@ describe('PresenceManager', () => {
                 },
             } as unknown as Client;
 
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         retryClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -317,7 +317,7 @@ describe('PresenceManager', () => {
                 },
             } as unknown as Client;
 
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         retryClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -347,7 +347,7 @@ describe('PresenceManager', () => {
 
     describe('immediate updates - no internal throttle boundaries', () => {
         it('should apply all updates immediately (throttling moved to BotStateManager)', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -374,7 +374,7 @@ describe('PresenceManager', () => {
         });
 
         it('should allow immediate consecutive updates (no internal throttle)', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -402,7 +402,7 @@ describe('PresenceManager', () => {
 
     describe('state transition matrix', () => {
         it('should handle null→idle transition (first phase is idle)', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -419,7 +419,7 @@ describe('PresenceManager', () => {
         });
 
         it('should handle null→active transition (first phase is active)', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -437,7 +437,7 @@ describe('PresenceManager', () => {
         });
 
         it('should handle idle→idle transition (no state change)', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -463,7 +463,7 @@ describe('PresenceManager', () => {
         });
 
         it('should handle active→active transition with throttle', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -487,7 +487,7 @@ describe('PresenceManager', () => {
 
     describe('timer guard verification', () => {
         it('should only start idle refresh once when transitioning to idle multiple times', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -507,7 +507,7 @@ describe('PresenceManager', () => {
         });
 
         it('should properly stop idle refresh when transitioning from idle', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -536,7 +536,7 @@ describe('PresenceManager', () => {
         it('should handle stop when interval is null (no error)', async () => {
             const clearIntervalSpy = spyOn(globalThis, 'clearInterval');
 
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -557,7 +557,7 @@ describe('PresenceManager', () => {
         });
 
         it('should run idle refresh on interval', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -588,7 +588,7 @@ describe('PresenceManager', () => {
 
     describe('assignment mutations', () => {
         it('should properly track currentPhase for state transitions', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -627,7 +627,7 @@ describe('PresenceManager', () => {
 
     describe('transitionPresenceDisplayMode edge cases', () => {
         it('should generate catch-up status when entering catch-up mode with null currentPhase', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -649,7 +649,7 @@ describe('PresenceManager', () => {
         });
 
         it('should NOT trigger idle status when exiting catch-up mode to none', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -673,7 +673,7 @@ describe('PresenceManager', () => {
         });
 
         it('should update active phase status immediately when catch-up mode changes', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -698,7 +698,7 @@ describe('PresenceManager', () => {
         });
 
         it('should NOT generate active status when transitioning to none mode (prevents emoji-less status)', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -745,7 +745,7 @@ describe('PresenceManager', () => {
                 });
             });
 
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -819,7 +819,7 @@ describe('PresenceManager', () => {
 
     describe('idle→idle duplicate transition', () => {
         it('should skip idle refresh when already idle and updatePhase(idle) called again', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -844,7 +844,7 @@ describe('PresenceManager', () => {
 
     describe('transitionPresenceDisplayMode state transitions', () => {
         it('should generate catch-up status when entering catch-up mode with null currentPhase (no dynamic generator)', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -873,7 +873,7 @@ describe('PresenceManager', () => {
                 generateCatchUpSynopsis: mock(async () => 'Ooh, Craig left me something!'),
             };
 
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:          mockClient,
                 activeStatusGenerator:  mockActiveGenerator,
                 idleStatusGenerator:    mockIdleGenerator,
@@ -906,7 +906,7 @@ describe('PresenceManager', () => {
         });
 
         it('should generate catch-up status when entering catch-up mode with idle currentPhase (no context)', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -938,7 +938,7 @@ describe('PresenceManager', () => {
                 generateCatchUpSynopsis: mock(async () => 'Three hours and #general got busy!'),
             };
 
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:          mockClient,
                 activeStatusGenerator:  mockActiveGenerator,
                 idleStatusGenerator:    mockIdleGenerator,
@@ -973,7 +973,7 @@ describe('PresenceManager', () => {
         });
 
         it('should refresh idle status when exiting catch-up mode to none with idle currentPhase', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -1005,7 +1005,7 @@ describe('PresenceManager', () => {
         });
 
         it('should update active phase status immediately when entering catch-up mode', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -1030,7 +1030,7 @@ describe('PresenceManager', () => {
         });
 
         it('should NOT update active phase status when transitioning to none mode', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -1064,7 +1064,7 @@ describe('PresenceManager', () => {
                 generateCatchUpSynopsis: mock(async () => 'New message while catching up!'),
             };
 
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:          mockClient,
                 activeStatusGenerator:  mockActiveGenerator,
                 idleStatusGenerator:    mockIdleGenerator,
@@ -1104,7 +1104,7 @@ describe('PresenceManager', () => {
                 }),
             };
 
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:          mockClient,
                 activeStatusGenerator:  mockActiveGenerator,
                 idleStatusGenerator:    mockIdleGenerator,
@@ -1145,7 +1145,7 @@ describe('PresenceManager', () => {
         });
 
         it('should handle transition from none to processing_message mode with active phase', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -1170,7 +1170,7 @@ describe('PresenceManager', () => {
         });
 
         it('should NOT generate status when transitioning modes without currentPhase (except catch-up)', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -1189,7 +1189,7 @@ describe('PresenceManager', () => {
         });
 
         it('should exit catching_up_interrupted mode correctly', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -1216,7 +1216,7 @@ describe('PresenceManager', () => {
         });
 
         it('should handle mode transition logging', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -1236,7 +1236,7 @@ describe('PresenceManager', () => {
         });
 
         it('should NOT generate catch-up status when entering catch-up from processing_message mode (not from none)', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -1264,7 +1264,7 @@ describe('PresenceManager', () => {
         });
 
         it('should NOT refresh idle status when exiting to none from processing_message (not from catch-up)', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -1290,7 +1290,7 @@ describe('PresenceManager', () => {
         });
 
         it('should refresh idle status when exiting catch-up mode to none (exitingCatchUp true)', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -1317,7 +1317,7 @@ describe('PresenceManager', () => {
         });
 
         it('should NOT refresh idle status when mode is none but previousMode is not catch-up', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,
@@ -1342,7 +1342,7 @@ describe('PresenceManager', () => {
         });
 
         it('should NOT refresh idle status when transitioning from catch-up to processing_message (mode is not none)', async () => {
-            const manager = createPresenceManager({
+            const manager = new PresenceManager({
                 discordClient:         mockClient,
                 activeStatusGenerator: mockActiveGenerator,
                 idleStatusGenerator:   mockIdleGenerator,

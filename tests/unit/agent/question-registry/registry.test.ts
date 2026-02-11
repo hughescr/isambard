@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from 'bun:test';
-import { createQuestionRegistry } from '@/agent/question-registry/registry';
-import type { QuestionRegistry, PendingQuestion, QuestionAnswer } from '@/agent/question-registry';
+import { QuestionRegistry } from '@/agent/question-registry/registry';
+import type { PendingQuestion, QuestionAnswer } from '@/agent/question-registry';
 import type { ChannelId, UserId } from '@/integrations/discord/types';
 
 describe('QuestionRegistry', () => {
@@ -8,7 +8,7 @@ describe('QuestionRegistry', () => {
 
     beforeEach(() => {
         jest.useFakeTimers();
-        registry = createQuestionRegistry({ defaultTimeoutMs: 5000 });
+        registry = new QuestionRegistry({ defaultTimeoutMs: 5000 });
     });
 
     afterEach(() => {
@@ -546,7 +546,7 @@ describe('QuestionRegistry', () => {
 
     describe('custom timeout configuration', () => {
         it('should use custom timeout when provided', async () => {
-            const customRegistry = createQuestionRegistry({ defaultTimeoutMs: 10000 });
+            const customRegistry = new QuestionRegistry({ defaultTimeoutMs: 10000 });
 
             const now = Date.now();
             const question: Omit<PendingQuestion, 'state'> = {

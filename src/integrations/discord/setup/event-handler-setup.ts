@@ -3,7 +3,7 @@ import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import { createUserId, createChannelId, createGuildId } from '../types';
 import { createMessageHandler } from '../handlers';
-import { createAnswerClassifier } from '@/agent/answer-classifier';
+import { AnswerClassifier } from '@/agent/answer-classifier';
 import type { MessageCoordinator } from '../message-coordinator';
 import type { QuestionRegistry } from '@/agent/question-registry';
 import type { InboxManager } from '../inbox';
@@ -108,7 +108,7 @@ export interface SetupMessageProcessingParams {
     addRecentMessage:     (content: string) => void
     coordinator:          MessageCoordinator
     questionRegistry:     QuestionRegistry
-    answerClassifier:     ReturnType<typeof createAnswerClassifier>
+    answerClassifier:     AnswerClassifier
     inboxManager:         InboxManager | undefined
     catchUpSessionRunner: CatchUpSessionRunner | undefined
     botStateManager:      BotStateManager

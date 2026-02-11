@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import { createEventDeltaTracker } from '../../../src/agent/event-delta-tracker';
+import { EventDeltaTracker } from '../../../src/agent/event-delta-tracker';
 import type { ContextBuilder } from '../../../src/agent/context-builder';
 
-describe.concurrent('createEventDeltaTracker', () => {
+describe.concurrent('EventDeltaTracker', () => {
     let mockContextBuilder: ContextBuilder;
 
     beforeEach(() => {
@@ -14,7 +14,7 @@ describe.concurrent('createEventDeltaTracker', () => {
 
     describe('initial state', () => {
         test('should return empty array before markStart is called', async () => {
-            const tracker = createEventDeltaTracker(mockContextBuilder);
+            const tracker = new EventDeltaTracker(mockContextBuilder);
 
             const newEvents = await tracker.getNewEvents();
 
@@ -30,7 +30,7 @@ describe.concurrent('createEventDeltaTracker', () => {
             ];
             mockContextBuilder.loadRecentEvents = mock(async () => existingEvents);
 
-            const tracker = createEventDeltaTracker(mockContextBuilder);
+            const tracker = new EventDeltaTracker(mockContextBuilder);
             await tracker.markStart();
 
             // After markStart, getNewEvents should return empty (no new events yet)
@@ -41,7 +41,7 @@ describe.concurrent('createEventDeltaTracker', () => {
         test('should handle case when no events exist at start', async () => {
             mockContextBuilder.loadRecentEvents = mock(async () => []);
 
-            const tracker = createEventDeltaTracker(mockContextBuilder);
+            const tracker = new EventDeltaTracker(mockContextBuilder);
             await tracker.markStart();
 
             const newEvents = await tracker.getNewEvents();
@@ -55,7 +55,7 @@ describe.concurrent('createEventDeltaTracker', () => {
                 '- /events/2025-01-15/event2 (1h ago): Second event',
             ]);
 
-            const tracker = createEventDeltaTracker(mockContextBuilder);
+            const tracker = new EventDeltaTracker(mockContextBuilder);
             await tracker.markStart();
 
             // Simulate new events being added (3 events total now)
@@ -87,7 +87,7 @@ describe.concurrent('createEventDeltaTracker', () => {
             ];
             mockContextBuilder.loadRecentEvents = mock(async () => existingEvents);
 
-            const tracker = createEventDeltaTracker(mockContextBuilder);
+            const tracker = new EventDeltaTracker(mockContextBuilder);
             await tracker.markStart();
 
             // No new events added, loadRecentEvents still returns same events
@@ -102,7 +102,7 @@ describe.concurrent('createEventDeltaTracker', () => {
                 '- /events/2025-01-15/event2 (2h ago): Second event',
             ]);
 
-            const tracker = createEventDeltaTracker(mockContextBuilder);
+            const tracker = new EventDeltaTracker(mockContextBuilder);
             await tracker.markStart();
 
             // Now simulate 2 new events being added
@@ -127,7 +127,7 @@ describe.concurrent('createEventDeltaTracker', () => {
                 '- /events/2025-01-15/event1 (2h ago): First event',
             ]);
 
-            const tracker = createEventDeltaTracker(mockContextBuilder);
+            const tracker = new EventDeltaTracker(mockContextBuilder);
             await tracker.markStart();
 
             // Add a new event
@@ -155,7 +155,7 @@ describe.concurrent('createEventDeltaTracker', () => {
                 '- /events/2025-01-15/event1 (2h ago): Recent event',
             ]);
 
-            const tracker = createEventDeltaTracker(mockContextBuilder);
+            const tracker = new EventDeltaTracker(mockContextBuilder);
             await tracker.markStart();
 
             // Simulate older events being loaded (they appear at the beginning)
@@ -181,7 +181,7 @@ describe.concurrent('createEventDeltaTracker', () => {
             );
             mockContextBuilder.loadRecentEvents = mock(async () => initialEvents);
 
-            const tracker = createEventDeltaTracker(mockContextBuilder);
+            const tracker = new EventDeltaTracker(mockContextBuilder);
             await tracker.markStart();
 
             // Add 5 more events (total 53, but limit is 50 so oldest 3 are dropped)
@@ -208,7 +208,7 @@ describe.concurrent('createEventDeltaTracker', () => {
                 '- /events/2025-01-15/event3 (1h ago): Third',
             ]);
 
-            const tracker = createEventDeltaTracker(mockContextBuilder);
+            const tracker = new EventDeltaTracker(mockContextBuilder);
             await tracker.markStart();
 
             // Events are removed/expired (only 1 remains)
@@ -226,7 +226,7 @@ describe.concurrent('createEventDeltaTracker', () => {
             const mockLoad = mock(async () => []);
             mockContextBuilder.loadRecentEvents = mockLoad;
 
-            const tracker = createEventDeltaTracker(mockContextBuilder);
+            const tracker = new EventDeltaTracker(mockContextBuilder);
             await tracker.markStart();
 
             // Verify markStart calls with default limit

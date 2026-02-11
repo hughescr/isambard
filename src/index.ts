@@ -5,7 +5,7 @@ import { resolve, join } from 'node:path';
 import { loadConfig, loadDynamoDBConfig } from './config/loader';
 import { createClaudeAgent } from './agent/agent';
 import { loadPlugins } from './agent/plugin-loader';
-import { createQuestionRegistry } from './agent/question-registry';
+import { QuestionRegistry } from './agent/question-registry';
 import { cleanupAllStaleSessions } from './agent/session-cleanup';
 import { syncAgentsAndSkills } from './agent/skill-agent-loader';
 import { createStorageLayer } from './app/storage-layer';
@@ -61,7 +61,7 @@ export async function createApp(): Promise<App> {
     process.env.CLAUDE_CODE_OAUTH_TOKEN = config.agent.oauthToken;
 
     // Create question registry for interactive questions (shared between MCP and bot)
-    const questionRegistry = createQuestionRegistry();
+    const questionRegistry = new QuestionRegistry();
 
     // Create DynamoDB client (REQUIRED)
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- SST Resource type is complex

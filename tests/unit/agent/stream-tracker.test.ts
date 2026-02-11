@@ -1,12 +1,12 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
-import { createStreamTracker } from '../../../src/agent/stream-tracker';
+import { StreamTracker } from '../../../src/agent/stream-tracker';
 import type { AgentStreamEvent, AssistantEvent, SystemEvent } from '../../../src/agent/types';
 
-describe('createStreamTracker', () => {
-    let tracker: ReturnType<typeof createStreamTracker>;
+describe('StreamTracker', () => {
+    let tracker: StreamTracker;
 
     beforeEach(() => {
-        tracker = createStreamTracker();
+        tracker = new StreamTracker();
     });
 
     describe('Initial state', () => {

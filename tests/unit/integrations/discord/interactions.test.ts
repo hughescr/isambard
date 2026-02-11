@@ -2,8 +2,8 @@
 import { constant as _constant } from 'lodash';
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { createInteractionHandler } from '@/integrations/discord/interactions';
-import { createQuestionRegistry } from '@/agent/question-registry/registry';
-import type { QuestionRegistry, PendingQuestion } from '@/agent/question-registry';
+import { QuestionRegistry } from '@/agent/question-registry/registry';
+import type { PendingQuestion } from '@/agent/question-registry';
 import type { ButtonInteraction, Message, User, InteractionResponse } from 'discord.js';
 import type { ChannelId, UserId } from '@/integrations/discord/types';
 import { createUserId } from '@/integrations/discord/types';
@@ -14,7 +14,7 @@ describe('createInteractionHandler', () => {
 
     beforeEach(() => {
         jest.useFakeTimers();
-        registry = createQuestionRegistry({ defaultTimeoutMs: 5000 });
+        registry = new QuestionRegistry({ defaultTimeoutMs: 5000 });
         handler = createInteractionHandler({ questionRegistry: registry });
     });
 

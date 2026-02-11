@@ -4,6 +4,5 @@ export type {
     ClassifierConfig
 } from './types';
 export { classificationResultSchema } from './types';
-export type { AnswerClassifier } from './classifier';
-export { createAnswerClassifier } from './classifier';
+export { AnswerClassifier } from './classifier';
 export { classifyWithHaiku } from './haiku-classifier';

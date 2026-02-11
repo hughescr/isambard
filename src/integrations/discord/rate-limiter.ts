@@ -30,43 +30,12 @@ export interface DiscordRateLimiterOptions {
     limitFn?:           LimitFunction
 }
 
-export interface DiscordRateLimiter {
-    /**
-     * Send a message to a Discord channel with rate limiting.
-     * Messages to the same channel are queued sequentially.
-     *
-     * @param channel The Discord text channel
-     * @param content The message content
-     * @returns The sent Discord message
-     */
-    sendToChannel(channel: TextChannel, content: string): Promise<Message>
-
-    /**
-     * Reply to a Discord message with rate limiting.
-     * Replies are treated as sends to the message's channel.
-     *
-     * @param message The message to reply to
-     * @param content The reply content
-     * @returns The sent reply message
-     */
-    replyToMessage(message: Message, content: string): Promise<Message>
-
-    /**
-     * Stop the rate limiter and clean up pending queues.
-     * In-flight requests are allowed to complete.
-     */
-    stop(): void
-}
-
 /**
- * Create a Discord rate limiter with per-channel queuing and global concurrency limiting.
- *
- * @param options Configuration options
- * @returns DiscordRateLimiter instance
+ * Discord rate limiter with per-channel queuing and global concurrency limiting.
  *
  * @example
  * ```typescript
- * const limiter = createDiscordRateLimiter({
+ * const limiter = new DiscordRateLimiter({
  *   globalConcurrency: 5,
  *   logger: console,
  * });
@@ -81,22 +50,97 @@ export interface DiscordRateLimiter {
  * limiter.stop();
  * ```
  */
-export function createDiscordRateLimiter(options: DiscordRateLimiterOptions = {}): DiscordRateLimiter {
-    const { globalConcurrency = 5, logger, limitFn } = options;
-
+export class DiscordRateLimiter {
     // Global concurrency limiter - use injectable limit or default to p-limit
-    const limit: LimitFunction = limitFn ?? pLimit(globalConcurrency);
-
+    private readonly limit:         LimitFunction;
     // Per-channel promise chains for sequential sends
-    const channelQueues = new Map<string, Promise<unknown>>();
+    private readonly channelQueues = new Map<string, Promise<unknown>>();
+    // Optional logger for debugging
+    private readonly logger?:       { debug: (obj: Record<string, unknown>) => void };
+
+    constructor(options: DiscordRateLimiterOptions = {}) {
+        const { globalConcurrency = 5, logger, limitFn } = options;
+        this.limit = limitFn ?? pLimit(globalConcurrency);
+        this.logger = logger;
+    }
+
+    /**
+     * Send a message to a Discord channel with rate limiting.
+     * Messages to the same channel are queued sequentially.
+     *
+     * @param channel The Discord text channel
+     * @param content The message content
+     * @returns The sent Discord message
+     */
+    async sendToChannel(channel: TextChannel, content: string): Promise<Message> {
+        const channelId = channel.id;
+
+        this.logger?.debug({
+            msg:           'Queueing send to channel',
+            channelId,
+            contentLength: content.length,
+        });
+
+        return this.queueChannelOperation(channelId, async () => {
+            this.logger?.debug({
+                msg: 'Sending to channel',
+                channelId,
+            });
+            return channel.send(content);
+        });
+    }
+
+    /**
+     * Reply to a Discord message with rate limiting.
+     * Replies are treated as sends to the message's channel.
+     *
+     * @param message The message to reply to
+     * @param content The reply content
+     * @returns The sent reply message
+     */
+    async replyToMessage(message: Message, content: string): Promise<Message> {
+        // Treat reply as a send to the message's channel
+        const channelId = message.channelId;
+
+        this.logger?.debug({
+            msg:           'Queueing reply to message',
+            channelId,
+            messageId:     message.id,
+            contentLength: content.length,
+        });
+
+        return this.queueChannelOperation(channelId, async () => {
+            this.logger?.debug({
+                msg:       'Replying to message',
+                channelId,
+                messageId: message.id,
+            });
+            return message.reply(content);
+        });
+    }
+
+    /**
+     * Stop the rate limiter and clean up pending queues.
+     * In-flight requests are allowed to complete.
+     */
+    stop(): void {
+        this.logger?.debug({
+            msg:               'Stopping rate limiter',
+            pendingQueueCount: this.channelQueues.size,
+        });
+
+        // Clear the channel queues map
+        // Note: We don't cancel in-flight requests, we just stop accepting new ones
+        this.channelQueues.clear();
+    }
 
     /**
      * Queue a send operation for a specific channel.
      * Operations are chained sequentially per channel.
      */
-    function queueChannelOperation<T>(channelId: string, operation: () => Promise<T>): Promise<T> {
+    private queueChannelOperation<T>(channelId: string, operation: () => Promise<T>): Promise<T> {
         // Get existing queue for this channel (or start with resolved promise)
-        const existingQueue = channelQueues.get(channelId) ?? Promise.resolve();
+        const existingQueue = this.channelQueues.get(channelId) ?? Promise.resolve();
 
         // Chain the new operation after the existing queue
         // Use .catch(() => {}) to keep queue alive even if previous send failed
@@ -104,76 +148,24 @@ export function createDiscordRateLimiter(options: DiscordRateLimiterOptions = {}
             // Stryker disable all: Observational logging for queue resilience
             .catch(() => {
                 // Swallow errors from previous sends to keep queue alive
-                logger?.debug({
+                this.logger?.debug({
                     msg: 'Previous send in queue failed, continuing queue',
                     channelId,
                 });
             })
             // Stryker restore all
             .then(() => {
-                logger?.debug({
+                this.logger?.debug({
                     msg: 'Executing queued operation',
                     channelId,
                 });
                 // Wrap in global concurrency limiter
-                return limit(operation);
+                return this.limit(operation);
             });
 
         // Update the queue for this channel
-        channelQueues.set(channelId, nextQueue);
+        this.channelQueues.set(channelId, nextQueue);
 
         return nextQueue;
     }
-
-    return {
-        async sendToChannel(channel: TextChannel, content: string): Promise<Message> {
-            const channelId = channel.id;
-
-            logger?.debug({
-                msg:           'Queueing send to channel',
-                channelId,
-                contentLength: content.length,
-            });
-
-            return queueChannelOperation(channelId, async () => {
-                logger?.debug({
-                    msg: 'Sending to channel',
-                    channelId,
-                });
-                return channel.send(content);
-            });
-        },
-
-        async replyToMessage(message: Message, content: string): Promise<Message> {
-            // Treat reply as a send to the message's channel
-            const channelId = message.channelId;
-
-            logger?.debug({
-                msg:           'Queueing reply to message',
-                channelId,
-                messageId:     message.id,
-                contentLength: content.length,
-            });
-
-            return queueChannelOperation(channelId, async () => {
-                logger?.debug({
-                    msg:       'Replying to message',
-                    channelId,
-                    messageId: message.id,
-                });
-                return message.reply(content);
-            });
-        },
-
-        stop(): void {
-            logger?.debug({
-                msg:               'Stopping rate limiter',
-                pendingQueueCount: channelQueues.size,
-            });
-
-            // Clear the channel queues map
-            // Note: We don't cancel in-flight requests, we just stop accepting new ones
-            channelQueues.clear();
-        },
-    };
 }

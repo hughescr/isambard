@@ -26,28 +26,6 @@ export interface StreamProgress {
 }
 
 /**
- * StreamTracker interface for tracking agent stream progress.
- */
-export interface StreamTracker {
-    /**
-     * Update the tracker with a new stream event.
-     * @param message The stream event to process
-     */
-    update(message: AgentStreamEvent): void
-
-    /**
-     * Get the current accumulated progress.
-     * @returns A copy of the current progress (immutable)
-     */
-    getProgress(): StreamProgress
-
-    /**
-     * Reset all accumulated state back to initial values.
-     */
-    reset(): void
-}
-
-/**
  * Extract text content from an assistant message.
  * @param message SDK message with potential content blocks
  * @returns Extracted text or empty string
@@ -71,71 +49,78 @@ function extractAssistantText(message: { type: string, message?: { content?: unk
 }
 
 /**
- * Creates a StreamTracker instance for tracking agent stream progress.
- * @returns A new StreamTracker instance
+ * StreamTracker for tracking agent stream progress.
  */
-export function createStreamTracker(): StreamTracker {
-    // Internal state
-    let thinking = '';
-    let text = '';
-    let pendingToolUse: ToolUseBlock | null = null;
-    let sessionId: string | undefined;
+export class StreamTracker {
+    private thinking = '';
+    private text = '';
+    private pendingToolUse: ToolUseBlock | null = null;
+    private sessionId: string | undefined;
 
-    return {
-        update(message: AgentStreamEvent): void {
-            // Extract session ID from system init events
-            const extractedSessionId = extractSessionId(message);
-            if(extractedSessionId) {
-                sessionId = extractedSessionId;
+    /**
+     * Update the tracker with a new stream event.
+     * @param message The stream event to process
+     */
+    update(message: AgentStreamEvent): void {
+        // Extract session ID from system init events
+        const extractedSessionId = extractSessionId(message);
+        if(extractedSessionId) {
+            this.sessionId = extractedSessionId;
+        }
+
+        // Process assistant events
+        if(message.type === 'assistant') {
+            // Extract thinking content (replaces previous thinking)
+            const thinkingContent = extractThinkingContent(message);
+            if(thinkingContent) {
+                this.thinking = thinkingContent;
+            } else if(message.message?.content !== undefined) {
+                // If there's content but no thinking, clear thinking
+                this.thinking = '';
             }
 
-            // Process assistant events
-            if(message.type === 'assistant') {
-                // Extract thinking content (replaces previous thinking)
-                const thinkingContent = extractThinkingContent(message);
-                if(thinkingContent) {
-                    thinking = thinkingContent;
-                } else if(message.message?.content !== undefined) {
-                    // If there's content but no thinking, clear thinking
-                    thinking = '';
-                }
-
-                // Extract text content (replaces previous text)
-                const textContent = extractAssistantText(message);
-                if(textContent) {
-                    text = textContent;
-                } else if(message.message?.content !== undefined) {
-                    // If there's content but no text, clear text
-                    text = '';
-                }
-
-                // Extract tool_use blocks (capture the last one)
-                const toolUses = extractToolUses(message);
-                if(toolUses.length > 0) {
-                    // Get the last tool_use block
-                    pendingToolUse = _.last(toolUses) ?? null;
-                } else if(message.message?.content !== undefined) {
-                    // If there's content but no tool_use, clear pendingToolUse
-                    pendingToolUse = null;
-                }
+            // Extract text content (replaces previous text)
+            const textContent = extractAssistantText(message);
+            if(textContent) {
+                this.text = textContent;
+            } else if(message.message?.content !== undefined) {
+                // If there's content but no text, clear text
+                this.text = '';
             }
-        },
 
-        getProgress(): StreamProgress {
-            // Return a copy to prevent external mutation
-            return {
-                thinking,
-                text,
-                pendingToolUse,
-                sessionId,
-            };
-        },
+            // Extract tool_use blocks (capture the last one)
+            const toolUses = extractToolUses(message);
+            if(toolUses.length > 0) {
+                // Get the last tool_use block
+                this.pendingToolUse = _.last(toolUses) ?? null;
+            } else if(message.message?.content !== undefined) {
+                // If there's content but no tool_use, clear pendingToolUse
+                this.pendingToolUse = null;
+            }
+        }
+    }
 
-        reset(): void {
-            thinking = '';
-            text = '';
-            pendingToolUse = null;
-            sessionId = undefined;
-        },
-    };
+    /**
+     * Get the current accumulated progress.
+     * @returns A copy of the current progress (immutable)
+     */
+    getProgress(): StreamProgress {
+        // Return a copy to prevent external mutation
+        return {
+            thinking:       this.thinking,
+            text:           this.text,
+            pendingToolUse: this.pendingToolUse,
+            sessionId:      this.sessionId,
+        };
+    }
+
+    /**
+     * Reset all accumulated state back to initial values.
+     */
+    reset(): void {
+        this.thinking = '';
+        this.text = '';
+        this.pendingToolUse = null;
+        this.sessionId = undefined;
+    }
 }

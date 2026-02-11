@@ -10,9 +10,8 @@ import { cleanupSession, extractSessionId } from './session-cleanup';
 import type { AgentStreamEvent } from './types';
 import { createRetryableQuery } from './claude-retry';
 import { loadRetryConfig } from '../config/retry-config';
-import type { StreamTracker } from './stream-tracker';
 import type { ResumeContext } from './resume-prompt-builder';
-import { createStreamTracker } from './stream-tracker';
+import { StreamTracker } from './stream-tracker';
 import { buildResumePrompt } from './resume-prompt-builder';
 import { buildMultimodalContent, hasImages } from './multimodal-message-builder';
 import type { TaskPersistenceCoordinator } from './task-persistence-coordinator';
@@ -1015,7 +1014,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
             contexts: MessageContext[],
             options?: HandleInputOptions
         ): Promise<HandleInputResult> => {
-            const tracker = createStreamTracker();
+            const tracker = new StreamTracker();
             let capturedSessionId: string | undefined;
 
             try {

@@ -57,23 +57,6 @@ export interface TypingChannel {
     sendTyping(): Promise<void>
 }
 
-export interface MessageCoordinator {
-    /** Handle an incoming message */
-    handleMessage(context: DiscordMessageContext, discordMessage: Message, channel?: TypingChannel): void
-
-    /** Set the processor function (called to process messages) */
-    setProcessor(processor: MessageProcessor): void
-
-    /** Remove a single channel's state (cleanup on channel deletion) */
-    removeChannel(channelId: ChannelId): void
-
-    /** Remove multiple channels' state (cleanup on guild deletion) */
-    removeGuildChannels(channelIds: ChannelId[]): void
-
-    /** Stop the coordinator and cleanup */
-    stop(): void
-}
-
 /** Internal queued message type */
 interface QueuedMessage {
     context:        DiscordMessageContext
@@ -105,31 +88,49 @@ interface ChannelState {
 }
 
 /**
- * Creates a MessageCoordinator instance for orchestrating multi-message handling.
- * @param config Optional configuration (debounceMs)
- * @returns A new MessageCoordinator instance
+ * Message coordinator orchestrating multi-message handling.
+ *
+ * @example
+ * ```typescript
+ * const coordinator = new MessageCoordinator({ debounceMs: 500 });
+ *
+ * coordinator.setProcessor(async (contexts, resumeContext, sessionId, abortSignal) => {
+ *   // Process messages
+ *   return {
+ *     response: 'Response text',
+ *     sessionId: 'session-123',
+ *     wasInterrupted: false,
+ *     streamTracker: createStreamTracker()
+ *   };
+ * });
+ *
+ * coordinator.handleMessage(context, message, channel);
+ * coordinator.stop();
+ * ```
  */
-export function createMessageCoordinator(config?: MessageCoordinatorConfig): MessageCoordinator {
-    const debounceMs = config?.debounceMs ?? 2000;
-    const onResponse = config?.onResponse;
-    const eventDeltaTracker = config?.eventDeltaTracker;
+export class MessageCoordinator {
+    private readonly debounceMs: number;
+    private readonly onResponse?: (result: ProcessResult, discordMessage: Message | null) => Promise<void>;
+    private readonly eventDeltaTracker?: EventDeltaTracker;
+    private readonly channelStates = new Map<ChannelId, ChannelState>();
+    private processor: MessageProcessor | null = null;
 
-    // Map of channel states
-    const channelStates = new Map<ChannelId, ChannelState>();
-
-    // Processor function (set by caller)
-    let processor: MessageProcessor | null = null;
+    constructor(config?: MessageCoordinatorConfig) {
+        this.debounceMs = config?.debounceMs ?? 2000;
+        this.onResponse = config?.onResponse;
+        this.eventDeltaTracker = config?.eventDeltaTracker;
+    }
 
     /**
      * Get or create channel state.
      */
-    function getOrCreateState(channelId: ChannelId): ChannelState {
-        let state = channelStates.get(channelId);
+    private getOrCreateState(channelId: ChannelId): ChannelState {
+        let state = this.channelStates.get(channelId);
         if(!state) {
             state = {
                 pendingMessages: [],
             };
-            channelStates.set(channelId, state);
+            this.channelStates.set(channelId, state);
         }
         return state;
     }
@@ -137,7 +138,7 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
     /**
      * Start typing indicator and set up refresh interval.
      */
-    function startTypingIndicator(state: ChannelState): void {
+    private startTypingIndicator(state: ChannelState): void {
         if(!state.typingChannel) {
             return;
         }
@@ -167,7 +168,7 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
     /**
      * Stop typing indicator and clear refresh interval.
      */
-    function stopTypingIndicator(state: ChannelState): void {
+    private stopTypingIndicator(state: ChannelState): void {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Guard clause - clearInterval on undefined is harmless but unnecessary
         if(state.typingInterval) {
             clearInterval(state.typingInterval);
@@ -178,21 +179,21 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
     /**
      * Start processing messages immediately.
      */
-    function startProcessing(
+    private startProcessing(
         channelId: ChannelId,
         contexts: DiscordMessageContext[],
         firstDiscordMessage: Message | null
     ): void {
         // Stryker disable all: Unreachable - handleMessage checks processor first
-        if(!processor) {
+        if(!this.processor) {
             throw new Error('Processor not set. Call setProcessor() before handling messages.');
         }
         // Stryker restore all
 
-        const state = getOrCreateState(channelId);
+        const state = this.getOrCreateState(channelId);
 
         // Start typing indicator
-        startTypingIndicator(state);
+        this.startTypingIndicator(state);
 
         // Create abort controller for this query
         const abortController = new AbortController();
@@ -201,10 +202,10 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
         const processingPromise = (async () => {
             try {
                 // Mark event delta start point before processing begins (must await to prevent race)
-                await eventDeltaTracker?.markStart();
+                await this.eventDeltaTracker?.markStart();
 
                 // Call processor
-                const result = await processor(
+                const result = await this.processor!(
                     contexts,
                     null, // no resume context for initial processing
                     state.sessionId,
@@ -220,13 +221,13 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
                 } else {
                     // Completed - clear sessionId (session was cleaned up), invoke callback
                     state.sessionId = undefined;
-                    if(onResponse) {
-                        await onResponse(result, firstDiscordMessage);
+                    if(this.onResponse) {
+                        await this.onResponse(result, firstDiscordMessage);
                     }
                 }
             } finally {
                 // Stop typing indicator
-                stopTypingIndicator(state);
+                this.stopTypingIndicator(state);
                 // Clear active query
                 state.activeQuery = undefined;
             }
@@ -244,14 +245,14 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
     /**
      * Process with resume context after debounce.
      */
-    function processWithResume(channelId: ChannelId): void {
+    private processWithResume(channelId: ChannelId): void {
         // Stryker disable all: Unreachable - handleMessage checks processor first
-        if(!processor) {
+        if(!this.processor) {
             throw new Error('Processor not set. Call setProcessor() before handling messages.');
         }
         // Stryker restore all
 
-        const state = getOrCreateState(channelId);
+        const state = this.getOrCreateState(channelId);
 
         // Get pending messages and clear the queue
         const pendingMessages = [...state.pendingMessages];
@@ -286,7 +287,7 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
         state.interruptedFirstMessage = undefined;
 
         // Start typing indicator
-        startTypingIndicator(state);
+        this.startTypingIndicator(state);
 
         // Create abort controller for this query
         const abortController = new AbortController();
@@ -298,14 +299,14 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
                 const resumeContext: ResumeContext | null = partialResumeContext
                     ? {
                         ...partialResumeContext,
-                        newEvents: eventDeltaTracker
-                            ? await eventDeltaTracker.getNewEvents()
+                        newEvents: this.eventDeltaTracker
+                            ? await this.eventDeltaTracker.getNewEvents()
                             : [],
                     }
                     : null;
 
                 // Call processor with resume context
-                const result = await processor(
+                const result = await this.processor!(
                     allContexts,
                     resumeContext,
                     state.sessionId,
@@ -321,13 +322,13 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
                 } else {
                     // Completed - clear sessionId (session was cleaned up), invoke callback
                     state.sessionId = undefined;
-                    if(onResponse) {
-                        await onResponse(result, firstDiscordMessage);
+                    if(this.onResponse) {
+                        await this.onResponse(result, firstDiscordMessage);
                     }
                 }
             } finally {
                 // Stop typing indicator
-                stopTypingIndicator(state);
+                this.stopTypingIndicator(state);
                 // Clear active query
                 state.activeQuery = undefined;
             }
@@ -345,13 +346,13 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
     /**
      * Handle an incoming message.
      */
-    function handleMessage(context: DiscordMessageContext, discordMessage: Message, channel?: TypingChannel): void {
+    handleMessage(context: DiscordMessageContext, discordMessage: Message, channel?: TypingChannel): void {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Redundant with checks in startProcessing (line 126) and processWithResume (line 180)
-        if(!processor) {
+        if(!this.processor) {
             throw new Error('Processor not set. Call setProcessor() before handling messages.');
         }
 
-        const state = getOrCreateState(context.channelId);
+        const state = this.getOrCreateState(context.channelId);
 
         // Store the channel reference for typing indicator
         if(channel) {
@@ -396,13 +397,13 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
 
                     // Wait for the interrupted processing to complete, then start processing with resume
                     void processingPromise.finally(() => {
-                        processWithResume(context.channelId);
+                        this.processWithResume(context.channelId);
                     });
                 } else {
                     // Active query finished before debounce expired, just process pending normally
-                    processWithResume(context.channelId);
+                    this.processWithResume(context.channelId);
                 }
-            }, debounceMs);
+            }, this.debounceMs);
 
             return;
         }
@@ -420,28 +421,28 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
             // Stryker disable next-line BlockStatement: Case 2 (debounce active, no query) is covered via Case 1 interrupt flow
             state.debounceTimer = setTimeout(() => {
                 state.debounceTimer = undefined;
-                processWithResume(context.channelId);
-            }, debounceMs);
+                this.processWithResume(context.channelId);
+            }, this.debounceMs);
 
             return;
         }
 
         // Case 3: No active processing, no debounce
-        startProcessing(context.channelId, [context], discordMessage);
+        this.startProcessing(context.channelId, [context], discordMessage);
     }
 
     /**
      * Set the processor function.
      */
-    function setProcessor(newProcessor: MessageProcessor): void {
-        processor = newProcessor;
+    setProcessor(newProcessor: MessageProcessor): void {
+        this.processor = newProcessor;
     }
 
     /**
      * Cleanup a single channel's state.
      */
-    function cleanupChannelState(channelId: ChannelId): void {
-        const state = channelStates.get(channelId);
+    private cleanupChannelState(channelId: ChannelId): void {
+        const state = this.channelStates.get(channelId);
         if(!state) {
             return;
         }
@@ -454,7 +455,7 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
         }
 
         // Stop typing indicator
-        stopTypingIndicator(state);
+        this.stopTypingIndicator(state);
 
         // Abort any active query
         if(state.activeQuery) {
@@ -463,40 +464,32 @@ export function createMessageCoordinator(config?: MessageCoordinatorConfig): Mes
         }
 
         // Remove from map
-        channelStates.delete(channelId);
+        this.channelStates.delete(channelId);
     }
 
     /**
      * Remove a single channel's state (cleanup on channel deletion).
      */
-    function removeChannel(channelId: ChannelId): void {
-        cleanupChannelState(channelId);
+    removeChannel(channelId: ChannelId): void {
+        this.cleanupChannelState(channelId);
     }
 
     /**
      * Remove multiple channels' state (cleanup on guild deletion).
      */
-    function removeGuildChannels(channelIds: ChannelId[]): void {
+    removeGuildChannels(channelIds: ChannelId[]): void {
         for(const channelId of channelIds) {
-            cleanupChannelState(channelId);
+            this.cleanupChannelState(channelId);
         }
     }
 
     /**
      * Stop the coordinator and cleanup.
      */
-    function stop(): void {
+    stop(): void {
         // Clear all channel states
-        for(const channelId of channelStates.keys()) {
-            cleanupChannelState(channelId);
+        for(const channelId of this.channelStates.keys()) {
+            this.cleanupChannelState(channelId);
         }
     }
-
-    return {
-        handleMessage,
-        setProcessor,
-        removeChannel,
-        removeGuildChannels,
-        stop,
-    };
 }
