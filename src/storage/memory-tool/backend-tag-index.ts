@@ -1,5 +1,5 @@
 import { DynamoDBDocumentClient, DeleteCommand, QueryCommand, UpdateCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
-import { map as _map, filter as _filter, difference as _difference, intersection as _intersection, every as _every, includes as _includes, chunk as _chunk, sortBy as _sortBy, keys as _keys, flatMap as _flatMap, values as _values, flatten as _flatten } from 'lodash';
+import { map as _map, filter as _filter, every as _every, includes as _includes, chunk as _chunk, sortBy as _sortBy, keys as _keys, flatMap as _flatMap, values as _values, flatten as _flatten } from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { TagIndexItem } from './types';
 import type { MemoryPath } from './types';
@@ -123,14 +123,14 @@ export class MemoryToolBackendTagIndex {
      * Increments atomic counters for the given tags.
      * Creates META_COUNT items if they don't exist.
      */
-    async incrementTagCounts(tags: string[]): Promise<void> {
+    async incrementTagCounts(tags: Set<string>): Promise<void> {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - empty tags array is a no-op
-        if(tags.length === 0) {
+        if(tags.size === 0) {
             return;
         }
 
         const normalizedTags = normalizeTags(tags);
-        const operations = _map(normalizedTags, tag =>
+        const operations = _map([...normalizedTags], tag =>
             retryWithBackoff(
                 async () => this.docClient.send(new UpdateCommand({
                     TableName: this.tableName,
@@ -159,15 +159,15 @@ export class MemoryToolBackendTagIndex {
      * Decrements atomic counters for the given tags.
      * Deletes META_COUNT items when count reaches 0 or below.
      */
-    async decrementTagCounts(tags: string[]): Promise<void> {
+    async decrementTagCounts(tags: Set<string>): Promise<void> {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - empty tags array is a no-op
-        if(tags.length === 0) {
+        if(tags.size === 0) {
             return;
         }
 
         const normalizedTags = normalizeTags(tags);
 
-        const operations = _map(normalizedTags, async (tag) => {
+        const operations = _map([...normalizedTags], async (tag) => {
             const result = await retryWithBackoff(
                 async () => this.docClient.send(new UpdateCommand({
                     TableName: this.tableName,
@@ -278,20 +278,20 @@ export class MemoryToolBackendTagIndex {
      */
     async createTagIndexItems(
         path: MemoryPath,
-        tags: string[],
+        tags: Set<string>,
         updatedAt: string,
         contentPreview: string,
         layer: string
     ): Promise<void> {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - normalizeTags([]) returns [], making _map a no-op
-        if(tags.length === 0) {
+        if(tags.size === 0) {
             return;
         }
 
         const normalizedTags = normalizeTags(tags);
 
         // Build write requests for tag index items
-        const writeRequests: BatchWriteRequest[] = _map(normalizedTags, tag => ({
+        const writeRequests: BatchWriteRequest[] = _map([...normalizedTags], tag => ({
             PutRequest: {
                 Item: {
                     PK:         `TAG#${tag}`,
@@ -322,23 +322,23 @@ export class MemoryToolBackendTagIndex {
         });
 
         // Only increment counts for tags that succeeded
-        const succeededTags = _difference(normalizedTags, failedTags);
+        const succeededTags = new Set(_filter([...normalizedTags], t => !_includes(failedTags, t)));
         await this.incrementTagCounts(succeededTags);
     }
 
     /**
      * Deletes tag index items for a memory path.
      */
-    async deleteTagIndexItems(path: MemoryPath, tags: string[]): Promise<void> {
+    async deleteTagIndexItems(path: MemoryPath, tags: Set<string>): Promise<void> {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - normalizeTags([]) returns [], making _map a no-op
-        if(tags.length === 0) {
+        if(tags.size === 0) {
             return;
         }
 
         const normalizedTags = normalizeTags(tags);
 
         // Build delete requests for tag index items
-        const writeRequests: BatchWriteRequest[] = _map(normalizedTags, tag => ({
+        const writeRequests: BatchWriteRequest[] = _map([...normalizedTags], tag => ({
             DeleteRequest: {
                 Key: {
                     PK: `TAG#${tag}`,
@@ -364,7 +364,7 @@ export class MemoryToolBackendTagIndex {
         });
 
         // Only decrement counts for tags that succeeded
-        const succeededTags = _difference(normalizedTags, failedTags);
+        const succeededTags = new Set(_filter([...normalizedTags], t => !_includes(failedTags, t)));
         await this.decrementTagCounts(succeededTags);
     }
 
@@ -374,20 +374,20 @@ export class MemoryToolBackendTagIndex {
      */
     async refreshTagIndexItems(
         path: MemoryPath,
-        tags: string[],
+        tags: Set<string>,
         updatedAt: string,
         contentPreview: string,
         layer: string
     ): Promise<void> {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - empty tags array is a no-op
-        if(tags.length === 0) {
+        if(tags.size === 0) {
             return;
         }
 
         const normalizedTags = normalizeTags(tags);
 
         // Build write requests for tag index items
-        const writeRequests: BatchWriteRequest[] = _map(normalizedTags, tag => ({
+        const writeRequests: BatchWriteRequest[] = _map([...normalizedTags], tag => ({
             PutRequest: {
                 Item: {
                     PK:         `TAG#${tag}`,
@@ -416,8 +416,8 @@ export class MemoryToolBackendTagIndex {
      */
     async updateTagIndexItems(
         path: MemoryPath,
-        oldTags: string[],
-        newTags: string[],
+        oldTags: Set<string>,
+        newTags: Set<string>,
         updatedAt: string,
         contentPreview: string,
         layer: string
@@ -425,9 +425,9 @@ export class MemoryToolBackendTagIndex {
         const normalizedOld = normalizeTags(oldTags);
         const normalizedNew = normalizeTags(newTags);
 
-        const added = _difference(normalizedNew, normalizedOld);
-        const removed = _difference(normalizedOld, normalizedNew);
-        const unchanged = _intersection(normalizedOld, normalizedNew);
+        const added = new Set(_filter([...normalizedNew], t => !normalizedOld.has(t)));
+        const removed = new Set(_filter([...normalizedOld], t => !normalizedNew.has(t)));
+        const unchanged = new Set(_filter([...normalizedOld], t => normalizedNew.has(t)));
 
         // Execute all operations in parallel
         await Promise.all([
@@ -449,7 +449,7 @@ export class MemoryToolBackendTagIndex {
         layer?: string,
         options?: ListOptions
     ): Promise<ListResult<TagIndexItem>> {
-        const normalizedTag = normalizeTags([tag])[0];
+        const normalizedTag = [...normalizeTags([tag])][0];
         const pk = `TAG#${normalizedTag}`;
 
         // Stryker disable StringLiteral: DynamoDB expression variable names must match KeyConditionExpression
@@ -526,7 +526,8 @@ export class MemoryToolBackendTagIndex {
         }
 
         // Stryker disable next-line MethodExpression: Normalize all tags upfront to ensure case-insensitive matching
-        const normalizedTags = normalizeTags(tags);
+        const normalizedTagsSet = normalizeTags(tags);
+        const normalizedTags = [...normalizedTagsSet];
 
         // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: Early return optimization
         if(normalizedTags.length === 1) {
@@ -551,7 +552,7 @@ export class MemoryToolBackendTagIndex {
             // Stryker disable next-line MethodExpression: Slicing removes driving tag, but since all items already have it (from query), keeping it is equivalent
             const remainingTags = normalizedTags.slice(1);
             const matching = _filter(pageResult.items, item =>
-                _every(remainingTags, tag => _includes(item.tags, tag))
+                _every(remainingTags, tag => item.tags.has(tag))
             );
             collectedItems.push(...matching);
 

@@ -36,7 +36,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
     describe('retryWithBackoff internal behavior', () => {
         test('should NOT retry when last attempt fails', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             // Reject twice, succeed on third (which shouldn't happen if retry logic is correct)
             ddbMock.on(UpdateCommand)
@@ -59,7 +59,7 @@ describe('MemoryToolBackendTagIndex', () => {
             // For attempts 1,2,3: delays should be 100ms (2^0), 200ms (2^1)
             // We use step-by-step timer advancement to detect incorrect delay formulas
 
-            const tags = ['important'];
+            const tags = new Set(['important']);
             let callCount = 0;
 
             ddbMock.on(UpdateCommand).callsFake(async () => {
@@ -99,7 +99,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should stop retrying when attempt equals MAX_RETRIES', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             // All attempts fail
             ddbMock.on(UpdateCommand).rejects(new Error('Network error'));
@@ -117,7 +117,7 @@ describe('MemoryToolBackendTagIndex', () => {
     describe('batchWriteWithRetry edge cases', () => {
         test('should return empty array when UnprocessedItems is undefined', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important'];
+            const tags = new Set(['important']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
             const layer = 'identity';
@@ -138,7 +138,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should treat UnprocessedItems with empty table array as success', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important'];
+            const tags = new Set(['important']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
             const layer = 'identity';
@@ -176,7 +176,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should stop retry loop when UnprocessedItems becomes empty', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['tag1', 'tag2'];
+            const tags = new Set(['tag1', 'tag2']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
             const layer = 'identity';
@@ -228,7 +228,7 @@ describe('MemoryToolBackendTagIndex', () => {
             // We use step-by-step timer advancement to detect incorrect delay formulas
 
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['tag1'];
+            const tags = new Set(['tag1']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
             const layer = 'identity';
@@ -293,7 +293,7 @@ describe('MemoryToolBackendTagIndex', () => {
     describe('createTagIndexItems', () => {
         test('should use BatchWriteCommand instead of individual PutCommands', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important', 'core'];
+            const tags = new Set(['important', 'core']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
             const layer = 'identity';
@@ -311,7 +311,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should create items with correct structure', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important'];
+            const tags = new Set(['important']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
             const layer = 'identity';
@@ -338,7 +338,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should split into batches of 25', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = Array.from({ length: 30 }, (_, i) => `tag${i}`);
+            const tags = new Set(Array.from({ length: 30 }, (_, i) => `tag${i}`));
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
             const layer = 'identity';
@@ -357,7 +357,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should handle UnprocessedItems retry', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important', 'core'];
+            const tags = new Set(['important', 'core']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
             const layer = 'identity';
@@ -395,7 +395,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should call incrementTagCounts after batch write', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important', 'core'];
+            const tags = new Set(['important', 'core']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
             const layer = 'identity';
@@ -411,7 +411,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should only increment counts for tags that succeeded when some batch writes fail', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important', 'core', 'failed'];
+            const tags = new Set(['important', 'core', 'failed']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
             const layer = 'identity';
@@ -464,7 +464,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should return immediately for empty tags', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags: string[] = [];
+            const tags = new Set<string>();
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
             const layer = 'identity';
@@ -479,7 +479,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should handle exception on first batch write attempt and treat all items as failed', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important', 'core'];
+            const tags = new Set(['important', 'core']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
             const layer = 'identity';
@@ -500,7 +500,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should retry unprocessed items until all succeed', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['tag1', 'tag2', 'tag3'];
+            const tags = new Set(['tag1', 'tag2', 'tag3']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
             const layer = 'identity';
@@ -565,7 +565,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should handle empty UnprocessedItems response', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important'];
+            const tags = new Set(['important']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
             const layer = 'identity';
@@ -585,7 +585,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should exhaust retries when items remain unprocessed', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['stuck-tag'];
+            const tags = new Set(['stuck-tag']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
             const layer = 'identity';
@@ -628,7 +628,7 @@ describe('MemoryToolBackendTagIndex', () => {
     describe('deleteTagIndexItems', () => {
         test('should use BatchWriteCommand instead of individual DeleteCommands', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important', 'core'];
+            const tags = new Set(['important', 'core']);
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
             ddbMock.on(UpdateCommand).resolves({
@@ -645,7 +645,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should delete with correct PK and SK', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
             ddbMock.on(UpdateCommand).resolves({
@@ -666,7 +666,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should call decrementTagCounts after batch write', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important', 'core'];
+            const tags = new Set(['important', 'core']);
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
             ddbMock.on(UpdateCommand).resolves({
@@ -681,7 +681,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should only decrement counts for tags that succeeded when some batch writes fail', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important', 'core', 'failed'];
+            const tags = new Set(['important', 'core', 'failed']);
 
             // Simulate partial failure - 'failed' tag delete remains unprocessed after retries
             const unprocessedItem = {
@@ -728,7 +728,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should return immediately for empty tags', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags: string[] = [];
+            const tags = new Set<string>();
 
             await backend.deleteTagIndexItems(path, tags);
 
@@ -742,8 +742,8 @@ describe('MemoryToolBackendTagIndex', () => {
     describe('updateTagIndexItems', () => {
         test('should create items for added tags', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const oldTags = ['important'];
-            const newTags = ['important', 'core'];
+            const oldTags = new Set(['important']);
+            const newTags = new Set(['important', 'core']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
             const layer = 'identity';
@@ -760,8 +760,8 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should delete items for removed tags', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const oldTags = ['important', 'old'];
-            const newTags = ['important'];
+            const oldTags = new Set(['important', 'old']);
+            const newTags = new Set(['important']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
             const layer = 'identity';
@@ -788,8 +788,8 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should refresh unchanged tags with current data', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const oldTags = ['important'];
-            const newTags = ['important'];
+            const oldTags = new Set(['important']);
+            const newTags = new Set(['important']);
             const updatedAt = '2024-01-02T00:00:00.000Z';
             const contentPreview = 'Updated values';
             const layer = 'identity';
@@ -807,8 +807,8 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should be no-op when tags unchanged', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const oldTags = ['important', 'core'];
-            const newTags = ['core', 'important'];
+            const oldTags = new Set(['important', 'core']);
+            const newTags = new Set(['core', 'important']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
             const layer = 'identity';
@@ -826,8 +826,8 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should handle all-new tags', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const oldTags: string[] = [];
-            const newTags = ['important', 'core'];
+            const oldTags = new Set<string>();
+            const newTags = new Set(['important', 'core']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
             const layer = 'identity';
@@ -845,8 +845,8 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should handle all-removed tags', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const oldTags = ['important', 'core'];
-            const newTags: string[] = [];
+            const oldTags = new Set(['important', 'core']);
+            const newTags = new Set<string>();
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
             const layer = 'identity';
@@ -866,8 +866,8 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should NOT increment counts for unchanged tags', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const oldTags = ['important', 'core'];
-            const newTags = ['important', 'core', 'new'];
+            const oldTags = new Set(['important', 'core']);
+            const newTags = new Set(['important', 'core', 'new']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
             const layer = 'identity';
@@ -905,7 +905,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     memoryPath:     '/identity/values.md',
                     layer:          'identity',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
-                    tags:           ['important'],
+                    tags:           new Set(['important']),
                     contentPreview: 'My values',
                 },
             ];
@@ -1048,7 +1048,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     memoryPath:     '/identity/values.md',
                     layer:          'identity',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
-                    tags:           ['important'],
+                    tags:           new Set(['important']),
                     contentPreview: 'My values',
                 },
             ];
@@ -1068,7 +1068,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     memoryPath:     '/identity/values.md',
                     layer:          'identity',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
-                    tags:           ['important', 'core'],
+                    tags:           new Set(['important', 'core']),
                     contentPreview: 'My values',
                 },
                 {
@@ -1077,7 +1077,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     memoryPath:     '/identity/other.md',
                     layer:          'identity',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
-                    tags:           ['important'],
+                    tags:           new Set(['important']),
                     contentPreview: 'Other content',
                 },
             ];
@@ -1098,7 +1098,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     memoryPath:     '/identity/file1.md',
                     layer:          'identity',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
-                    tags:           ['important', 'core'],
+                    tags:           new Set(['important', 'core']),
                     contentPreview: 'File 1',
                 },
                 {
@@ -1107,7 +1107,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     memoryPath:     '/identity/file2.md',
                     layer:          'identity',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
-                    tags:           ['important'],
+                    tags:           new Set(['important']),
                     contentPreview: 'File 2',
                 },
             ];
@@ -1119,7 +1119,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     memoryPath:     '/identity/file3.md',
                     layer:          'identity',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
-                    tags:           ['important', 'core'],
+                    tags:           new Set(['important', 'core']),
                     contentPreview: 'File 3',
                 },
             ];
@@ -1146,7 +1146,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     memoryPath:     '/identity/file1.md',
                     layer:          'identity',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
-                    tags:           ['important', 'core'],
+                    tags:           new Set(['important', 'core']),
                     contentPreview: 'File 1',
                 },
             ];
@@ -1166,7 +1166,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     memoryPath:     '/identity/file1.md',
                     layer:          'identity',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
-                    tags:           ['important', 'core'],
+                    tags:           new Set(['important', 'core']),
                     contentPreview: 'File 1',
                 },
                 {
@@ -1175,7 +1175,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     memoryPath:     '/identity/file2.md',
                     layer:          'identity',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
-                    tags:           ['important', 'core'],
+                    tags:           new Set(['important', 'core']),
                     contentPreview: 'File 2',
                 },
             ];
@@ -1196,7 +1196,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     memoryPath:     '/identity/file1.md',
                     layer:          'identity',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
-                    tags:           ['testtag', 'othertag'], // Stored tags are normalized (lowercase)
+                    tags:           new Set(['testtag', 'othertag']), // Stored tags are normalized (lowercase)
                     contentPreview: 'File with both tags',
                 },
                 {
@@ -1205,7 +1205,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     memoryPath:     '/identity/file2.md',
                     layer:          'identity',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
-                    tags:           ['testtag'], // Only has the driving tag
+                    tags:           new Set(['testtag']), // Only has the driving tag
                     contentPreview: 'File with only first tag',
                 },
             ];
@@ -1228,7 +1228,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     memoryPath:     '/identity/file1.md',
                     layer:          'identity',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
-                    tags:           ['important'],
+                    tags:           new Set(['important']),
                     contentPreview: 'File 1',
                 },
             ];
@@ -1245,7 +1245,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
     describe('incrementTagCounts', () => {
         test('should send UpdateCommand for each tag', async () => {
-            const tags = ['important', 'core'];
+            const tags = new Set(['important', 'core']);
 
             ddbMock.on(UpdateCommand).resolves({});
 
@@ -1256,7 +1256,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should set correct PK/SK/GSI2PK/GSI2SK', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             ddbMock.on(UpdateCommand).resolves({});
 
@@ -1276,7 +1276,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should use atomic increment expression with if_not_exists', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             ddbMock.on(UpdateCommand).resolves({});
 
@@ -1291,7 +1291,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should return immediately for empty tags', async () => {
-            const tags: string[] = [];
+            const tags = new Set<string>();
 
             await backend.incrementTagCounts(tags);
 
@@ -1300,7 +1300,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should retry on failure', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             ddbMock.on(UpdateCommand)
                 .rejectsOnce(new Error('Network error'))
@@ -1315,7 +1315,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should retry exactly MAX_RETRIES times and succeed on last attempt', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             ddbMock.on(UpdateCommand)
                 .rejectsOnce(new Error('Network error'))
@@ -1331,7 +1331,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should exhaust retries and return undefined after MAX_RETRIES failures', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             // Always reject
             ddbMock.on(UpdateCommand).rejects(new Error('Network error'));
@@ -1345,7 +1345,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should verify UpdateCommand has correct ExpressionAttributeNames', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             ddbMock.on(UpdateCommand).resolves({});
 
@@ -1360,7 +1360,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
     describe('decrementTagCounts', () => {
         test('should send UpdateCommand for each tag', async () => {
-            const tags = ['important', 'core'];
+            const tags = new Set(['important', 'core']);
 
             ddbMock.on(UpdateCommand).resolves({
                 Attributes: { count: 5 },
@@ -1373,7 +1373,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should delete META_COUNT item when count reaches 0', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             ddbMock.on(UpdateCommand).resolves({
                 Attributes: { count: 0 },
@@ -1394,7 +1394,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should delete META_COUNT item when count goes negative', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             ddbMock.on(UpdateCommand).resolves({
                 Attributes: { count: -1 },
@@ -1408,7 +1408,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should not delete when count is still positive', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             ddbMock.on(UpdateCommand).resolves({
                 Attributes: { count: 3 },
@@ -1421,7 +1421,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should return immediately for empty tags', async () => {
-            const tags: string[] = [];
+            const tags = new Set<string>();
 
             await backend.decrementTagCounts(tags);
 
@@ -1430,7 +1430,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should retry on failure', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             ddbMock.on(UpdateCommand)
                 .rejectsOnce(new Error('Network error'))
@@ -1447,7 +1447,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should use ConditionExpression on DeleteCommand when count reaches 0', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             ddbMock.on(UpdateCommand).resolves({
                 Attributes: { count: 0 },
@@ -1467,7 +1467,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should silently ignore ConditionalCheckFailedException on delete', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             ddbMock.on(UpdateCommand).resolves({
                 Attributes: { count: 0 },
@@ -1485,7 +1485,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should verify UpdateCommand has correct ExpressionAttributeNames and Values for decrement', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             ddbMock.on(UpdateCommand).resolves({
                 Attributes: { count: 5 },
@@ -1502,7 +1502,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should verify DeleteCommand has correct ConditionExpression attributes', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             ddbMock.on(UpdateCommand).resolves({
                 Attributes: { count: 0 },
@@ -1520,7 +1520,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should propagate non-ConditionalCheckFailedException errors through retryWithBackoff', async () => {
-            const tags = ['important'];
+            const tags = new Set(['important']);
 
             ddbMock.on(UpdateCommand).resolves({
                 Attributes: { count: 0 },
@@ -1544,7 +1544,7 @@ describe('MemoryToolBackendTagIndex', () => {
     describe('refreshTagIndexItems', () => {
         test('should be publicly accessible', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important'];
+            const tags = new Set(['important']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
             const layer = 'identity';
@@ -1559,7 +1559,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should NOT call incrementTagCounts or decrementTagCounts', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important', 'core'];
+            const tags = new Set(['important', 'core']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
             const layer = 'identity';
@@ -1575,7 +1575,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should write tag index items with correct structure', async () => {
             const path = '/identity/values.md' as MemoryPath;
-            const tags = ['important'];
+            const tags = new Set(['important']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
             const layer = 'identity';
