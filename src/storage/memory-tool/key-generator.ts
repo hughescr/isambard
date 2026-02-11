@@ -31,15 +31,16 @@ export function generateContentPreview(content: string): string {
 /**
  * Normalizes tags by lowercasing and deduplicating.
  * Applied on all write paths before index/registry operations.
- * @param tags - Array of tag strings
- * @returns Normalized, deduplicated, lowercase tags
+ * @param tags - Set or array of tag strings
+ * @returns Normalized, deduplicated, lowercase tags as Set
  */
-export function normalizeTags(tags: string[] | undefined): string[] {
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - _map handles undefined/empty arrays gracefully
-    if(!tags || tags.length === 0) {
-        return [];
+export function normalizeTags(tags: Set<string> | string[] | undefined): Set<string> {
+    // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - early return for empty/undefined
+    if(!tags || (tags instanceof Set ? tags.size === 0 : tags.length === 0)) {
+        return new Set();
     }
-    return [...new Set(_map(tags, tag => _toLower(tag)))];
+    const source = tags instanceof Set ? [...tags] : tags;
+    return new Set(_map(source, tag => _toLower(tag)));
 }
 
 /**
@@ -122,14 +123,14 @@ export class MemoryToolKeyGenerator {
    * Returns one key pair per tag. Empty array if no tags.
    *
    * @param path - Full path to the memory file
-   * @param tags - Array of tags
+   * @param tags - Set or array of tags
    * @returns Array of PK/SK pairs, one per tag
    *
    * @example
    * ```ts
    * const keys = MemoryToolKeyGenerator.createTagIndexKeys(
    *   '/identity/values.md' as MemoryPath,
-   *   ['important', 'core']
+   *   new Set(['important', 'core'])
    * );
    * // [
    * //   { PK: 'TAG#important', SK: 'PATH#/identity/values.md' },
@@ -139,13 +140,14 @@ export class MemoryToolKeyGenerator {
    */
     static createTagIndexKeys(
         path: MemoryPath,
-        tags: string[]
+        tags: Set<string> | string[]
     ): { PK: string, SK: string }[] {
+        const tagsArray = tags instanceof Set ? [...tags] : tags;
         // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - _map([]) returns [] anyway
-        if(tags.length === 0) {
+        if(tagsArray.length === 0) {
             return [];
         }
-        return _map(tags, tag => ({
+        return _map(tagsArray, tag => ({
             PK: `TAG#${tag}`,
             SK: `PATH#${path}`,
         }));

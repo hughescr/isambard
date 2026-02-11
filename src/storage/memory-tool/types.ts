@@ -52,13 +52,27 @@ export function isContentType(value: unknown): value is ContentType {
  * Represents a stored piece of content in the agent's memory system.
  */
 export const memoryToolItemSchema = z.object({
-    path:           memoryPathSchema,
-    content:        z.string().min(1).max(300000), // 300KB limit for DynamoDB
-    contentType:    contentTypeSchema,
-    metadata:       z.record(z.string(), z.unknown()).default({}),
-    createdAt:      z.string().datetime(),
-    updatedAt:      z.string().datetime(),
-    tags:           z.array(z.string()).optional(),
+    path:        memoryPathSchema,
+    content:     z.string().min(1).max(300000), // 300KB limit for DynamoDB
+    contentType: contentTypeSchema,
+    metadata:    z.record(z.string(), z.unknown()).default({}),
+    createdAt:   z.string().datetime(),
+    updatedAt:   z.string().datetime(),
+    tags:        z.preprocess(
+        (val) => {
+            if(val === undefined || val === null) {
+                return undefined;
+            }
+            if(val instanceof Set) {
+                return val;
+            }
+            if(_.isArray(val)) {
+                return new Set(val as string[]);
+            }
+            return val; // Let Zod handle invalid types
+        },
+        z.custom<Set<string>>(val => val instanceof Set).optional()
+    ),
     contentPreview: z.string().max(100).optional(), // First 100 chars of content for tag index preview
 });
 
@@ -79,13 +93,13 @@ export interface MemoryToolItem extends MemoryToolItemData {
  * Fat pointer carrying preview data to enable search results without fetching full items.
  */
 export interface TagIndexItem {
-    PK:             string    // TAG#tagname
-    SK:             string    // PATH#memoryPath
+    PK:             string       // TAG#tagname
+    SK:             string       // PATH#memoryPath
     memoryPath:     string
     layer:          string
-    updatedAt:      string    // ISO 8601
-    tags:           string[]  // Full normalized tags array
-    contentPreview: string    // First 100 chars of content
+    updatedAt:      string       // ISO 8601
+    tags:           Set<string>  // Full normalized tags set
+    contentPreview: string       // First 100 chars of content
 }
 
 /**

@@ -213,40 +213,42 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
     });
 
     describe('normalizeTags', () => {
-        test('returns empty array for undefined', () => {
-            expect(normalizeTags(undefined)).toEqual([]);
+        test('returns empty set for undefined', () => {
+            expect(normalizeTags(undefined)).toEqual(new Set());
         });
 
-        test('returns empty array for empty array', () => {
-            expect(normalizeTags([])).toEqual([]);
+        test('returns empty set for empty array', () => {
+            expect(normalizeTags([])).toEqual(new Set());
         });
 
-        test('lowercases all tags', () => {
-            expect(normalizeTags(['UPPERCASE', 'MixedCase', 'lowercase'])).toEqual([
-                'uppercase',
-                'mixedcase',
-                'lowercase',
-            ]);
+        test('returns empty set for empty Set', () => {
+            expect(normalizeTags(new Set<string>())).toEqual(new Set());
+        });
+
+        test('lowercases all tags from array', () => {
+            expect(normalizeTags(['UPPERCASE', 'MixedCase', 'lowercase'])).toEqual(
+                new Set(['uppercase', 'mixedcase', 'lowercase'])
+            );
+        });
+
+        test('lowercases all tags from Set', () => {
+            expect(normalizeTags(new Set(['UPPERCASE', 'MixedCase', 'lowercase']))).toEqual(
+                new Set(['uppercase', 'mixedcase', 'lowercase'])
+            );
         });
 
         test('deduplicates tags', () => {
-            expect(normalizeTags(['tag1', 'tag2', 'tag1', 'tag3'])).toEqual([
-                'tag1',
-                'tag2',
-                'tag3',
-            ]);
+            expect(normalizeTags(['tag1', 'tag2', 'tag1', 'tag3'])).toEqual(
+                new Set(['tag1', 'tag2', 'tag3'])
+            );
         });
 
         test('handles mixed case duplicates', () => {
-            expect(normalizeTags(['Craig', 'craig', 'CRAIG'])).toEqual(['craig']);
+            expect(normalizeTags(['Craig', 'craig', 'CRAIG'])).toEqual(new Set(['craig']));
         });
 
-        test('preserves order (first occurrence wins after dedup)', () => {
-            expect(normalizeTags(['zebra', 'apple', 'Zebra', 'banana'])).toEqual([
-                'zebra',
-                'apple',
-                'banana',
-            ]);
+        test('handles mixed case duplicates from Set', () => {
+            expect(normalizeTags(new Set(['Craig', 'craig', 'CRAIG']))).toEqual(new Set(['craig']));
         });
     });
 
@@ -307,6 +309,30 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
             );
             expect(result[0].SK).toMatch(/^PATH#/);
             expect(result[0].SK).toBe('PATH#/identity/test.md');
+        });
+
+        test('returns empty array for empty Set', () => {
+            const result = MemoryToolKeyGenerator.createTagIndexKeys(
+                '/identity/core.md' as MemoryPath,
+                new Set<string>()
+            );
+            expect(result).toEqual([]);
+        });
+
+        test('returns correct PK/SK for Set input', () => {
+            const result = MemoryToolKeyGenerator.createTagIndexKeys(
+                '/identity/values.md' as MemoryPath,
+                new Set(['important', 'core'])
+            );
+            expect(result).toHaveLength(2);
+            expect(result).toContainEqual({
+                PK: 'TAG#important',
+                SK: 'PATH#/identity/values.md',
+            });
+            expect(result).toContainEqual({
+                PK: 'TAG#core',
+                SK: 'PATH#/identity/values.md',
+            });
         });
     });
 
