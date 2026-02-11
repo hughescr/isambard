@@ -49,7 +49,7 @@ Isambard can propose improvements to its own code:
 - `src/storage/` - DynamoDB models, repositories, and storage backends
 - `src/integrations/` - External services (Discord, etc.)
 - `src/config/` - Configuration with Zod validation
-- `src/app/` - Application composition root (factory functions for createApp decomposition)
+- `src/app/` - Application composition root (composition layer for createApp decomposition)
 - `src/utils/` - Shared utilities
 
 ### Agents, Skills, and Plugins
@@ -73,6 +73,12 @@ The agent subsystem connects Discord to Claude with persistent memory:
 - `src/agent/prompts/` - Agent system prompts
   - `system-prompt.ts` - Main system prompt for the agent
   - `index.ts` - Public exports
+- `src/agent/event-delta-tracker.ts` - `EventDeltaTracker` class for tracking new events between agent interactions
+- `src/agent/stream-tracker.ts` - `StreamTracker` class for tracking Claude streaming response progress
+- `src/agent/answer-classifier/` - Answer classification subsystem
+  - `classifier.ts` - `AnswerClassifier` class for LLM-based answer classification
+- `src/agent/question-registry/` - Question lifecycle management
+  - `registry.ts` - `QuestionRegistry` class for tracking pending questions with timeouts
 - `src/agent/index.ts` - Public exports
 - `src/index.ts` - Application entry point with lifecycle management
 
@@ -82,9 +88,10 @@ The Discord integration provides bot functionality:
 - `src/integrations/discord/errors.ts` - Error hierarchy
 - `src/integrations/discord/client.ts` - Discord.js client factory
 - `src/integrations/discord/handlers.ts` - Event handlers (ready, error, messageCreate)
-- `src/integrations/discord/bot.ts` - Thin bot factory orchestrator delegating to setup/ modules with start/stop lifecycle
+- `src/integrations/discord/bot.ts` - Thin bot orchestrator delegating to setup/ modules with start/stop lifecycle
 - `src/integrations/discord/messages.ts` - Message splitting utilities (splitMessage for Discord's 2000-char limit)
-- `src/integrations/discord/rate-limiter.ts` - Rate limiting for Discord API calls
+- `src/integrations/discord/message-coordinator.ts` - `MessageCoordinator` class for debounced message queue processing per channel
+- `src/integrations/discord/rate-limiter.ts` - `DiscordRateLimiter` class for rate-limited Discord API calls
 - `src/integrations/discord/retry.ts` - Retry logic for Discord operations
 - `src/integrations/discord/setup/` - Bot initialization setup modules (extracted from bot.ts)
   - `presence-stream-handler.ts` - Shared utility for creating stream event handlers for presence updates
@@ -100,7 +107,7 @@ Dynamic status updates reflecting agent activity:
 - `src/integrations/discord/presence/` - Complete presence management
   - `types.ts` - PresencePhase types (idle, thinking, responding, tool-use)
   - `errors.ts` - Presence-related errors
-  - `manager.ts` - Presence manager with debouncing and rate limiting
+  - `manager.ts` - `PresenceManager` class with debouncing and rate limiting
   - `middleware.ts` - Middleware for presence state transitions
   - `status-generator-active.ts` - Generates status text for active phases
   - `status-generator-idle.ts` - Generates LLM-powered idle status text
@@ -119,7 +126,7 @@ Message search and caching for historical context:
 ### Memory Tool Subsystem
 Custom memory tool implementation with DynamoDB backend and three-layer architecture:
 - `src/storage/memory-tool/` - Complete memory tool implementation
-  - `types.ts` - Zod schemas (MemoryPath, LayerName, MemoryToolItem), branded types
+  - `types.ts` - Zod schemas (MemoryPath, LayerName, MemoryToolItem), branded types, type guards and factory functions (createMemoryPath, createLayerName, createContentType)
   - `errors.ts` - MemoryToolError hierarchy
   - `key-generator.ts` - DynamoDB key structure (PK/SK/GSI1), tag index keys, content preview
   - `layer-config.ts` - Layer configuration (identity/state/events with TTL and autoLoad)
@@ -177,6 +184,8 @@ Zod-validated configuration loading with env-var for type-safe environment varia
 - **Module Boundary Enforcement** with eslint-plugin-boundaries for architectural import rules
 - **@internal JSDoc Tags** for marking implementation-only exports
 - **Per-Tag Atomic Counters** replacing centralized tag registry for race-condition-free tag counting
+- **Type Guards and Factory Functions** for branded types — `createLayerName()`, `createContentType()`, `isLayerName()`, `isContentType()` replace unsafe `as` casts with runtime-validated factories
+- **Class-Based Components** — `EventDeltaTracker`, `AnswerClassifier`, `StreamTracker`, `QuestionRegistry`, `DiscordRateLimiter`, `PresenceManager`, `MessageCoordinator`, `BotStateManagerImpl` use proper TypeScript classes with private fields instead of closure-based factories
 
 ## Roadmaps
 - [Short-term (Weeks 1-2)](../roadmaps/short-term.md)

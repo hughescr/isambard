@@ -91,6 +91,26 @@ Decomposed the 1,451-line `createDiscordBot()` god function into focused setup m
 - Simplified `??=` subscription guards to `=` (`.once()` guarantees single execution)
 - 100% mutation score on all changed files
 
+### Type System Consistency + Factory-to-Class Conversions (Completed February 2026)
+Strengthened type safety and modernized component architecture across the codebase.
+
+**What was implemented:**
+- Added type guard and factory functions for `LayerName` and `ContentType` (`createLayerName()`, `isLayerName()`, `createContentType()`, `isContentType()`) following the existing `createMemoryPath()`/`isMemoryPath()` pattern
+- Replaced all unsafe `as LayerName` and `as ContentType` type assertions with validated factory calls across 4 production files
+- Converted 8 closure-based `createX()` factory functions to proper TypeScript classes:
+  - `EventDeltaTracker` — event tracking between agent interactions
+  - `AnswerClassifier` — LLM-based answer classification
+  - `StreamTracker` — Claude streaming response progress
+  - `QuestionRegistry` — pending question lifecycle with timeouts
+  - `DiscordRateLimiter` — rate-limited Discord API calls
+  - `PresenceManager` — presence state with debouncing
+  - `MessageCoordinator` — debounced per-channel message queue
+  - `BotStateManagerImpl` — operational state machine (retains `BotStateManager` interface)
+- Closure variables became `private` fields, internal helpers became `private` methods
+- Module-level utilities (e.g., `extractAssistantText`) remained as standalone functions
+- Updated all call sites, barrel exports, and test files
+- 100% mutation score on all changed files
+
 ### Channel Discovery and Registration (Completed February 2026)
 Dynamic channel discovery and registration system replacing hardcoded channel IDs.
 
