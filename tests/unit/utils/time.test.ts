@@ -12,6 +12,7 @@ import {
     resolveTimezone,
     type TimeContext
 } from '@/utils/time';
+import { mockLogger } from '../../setup';
 
 describe.concurrent('timeOfDaySchema', () => {
     test.each(['morning', 'afternoon', 'evening', 'night'])('should accept valid time of day "%s"', (timeOfDay) => {
@@ -218,6 +219,52 @@ describe('formatTimeSince', () => {
 
         const result = formatTimeSince(since);
         expect(result).toBe(expected);
+    });
+});
+
+describe('resolveTimezone', () => {
+    test('should warn when invalid timezone is provided and fallback to server timezone', () => {
+        // Clear previous mock calls
+        mockLogger.warn.mockClear();
+
+        const result = resolveTimezone('Invalid/Timezone');
+
+        // Should have logged a warning about invalid timezone
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({
+                userTimezone: 'Invalid/Timezone',
+            }),
+            expect.stringContaining('Invalid timezone')
+        );
+
+        // Should return a valid timezone (the server's default)
+        expect(result).toBeTruthy();
+        expect(typeof result).toBe('string');
+    });
+
+    test('should return valid timezone without warning when timezone is valid', () => {
+        mockLogger.warn.mockClear();
+
+        const result = resolveTimezone('America/New_York');
+
+        // Should NOT have logged a warning
+        expect(mockLogger.warn).not.toHaveBeenCalled();
+
+        // Should return the provided timezone
+        expect(result).toBe('America/New_York');
+    });
+
+    test('should return server timezone when no timezone provided', () => {
+        mockLogger.warn.mockClear();
+
+        const result = resolveTimezone();
+
+        // Should NOT have logged a warning
+        expect(mockLogger.warn).not.toHaveBeenCalled();
+
+        // Should return a valid timezone
+        expect(result).toBeTruthy();
+        expect(typeof result).toBe('string');
     });
 });
 

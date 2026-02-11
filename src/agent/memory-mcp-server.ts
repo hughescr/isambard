@@ -205,7 +205,6 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                             };
                         }
                         let formatted = _.map(results.items, (r) => {
-                            // Stryker disable next-line StringLiteral: Default preview fallback not exercised in unit tests
                             const preview = r.contentPreview ?? 'No content';
                             return `${r.memoryPath}: ${preview.substring(0, 200)}${preview.length > 200 ? '...' : ''}`;
                         }).join('\n\n');

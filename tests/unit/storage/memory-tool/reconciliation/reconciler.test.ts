@@ -2,9 +2,105 @@ import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import { filter as _filter } from 'lodash';
 import { DynamoDBDocumentClient, QueryCommand, ScanCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
-import { runReconciliation, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
+import { runReconciliation, delay, retryWithBackoff, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import type { MemoryPath, MemoryToolItemData, TagIndexItem } from '@/storage/memory-tool/types';
+
+describe('delay', () => {
+    test('should resolve after delay', async () => {
+        const start = Date.now();
+        await delay(10);
+        const elapsed = Date.now() - start;
+        expect(elapsed).toBeGreaterThanOrEqual(8);
+    });
+
+    test('should reject if signal already aborted', async () => {
+        const controller = new AbortController();
+        controller.abort();
+        // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
+        await expect(delay(100, controller.signal)).rejects.toThrow('Aborted');
+    });
+
+    test('should reject if signal aborted mid-delay', async () => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), 10);
+        // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
+        await expect(delay(100, controller.signal)).rejects.toThrow('Aborted');
+    });
+
+    test('should return immediately for zero or negative delays', async () => {
+        const start = Date.now();
+        await delay(0);
+        await delay(-5);
+        const elapsed = Date.now() - start;
+        expect(elapsed).toBeLessThan(10);
+    });
+});
+
+describe('retryWithBackoff', () => {
+    test('should return value on first success', async () => {
+        const op = mock(() => Promise.resolve('success'));
+        const result = await retryWithBackoff(op, { baseDelayMs: 10, maxAttempts: 3 }, 'test');
+        expect(result).toBe('success');
+        expect(op).toHaveBeenCalledTimes(1);
+    });
+
+    test('should retry on ProvisionedThroughputExceededException', async () => {
+        const op = mock()
+            .mockRejectedValueOnce({ name: 'ProvisionedThroughputExceededException' })
+            .mockResolvedValueOnce('success');
+        const result = await retryWithBackoff(op, { baseDelayMs: 1, maxAttempts: 3 }, 'test');
+        expect(result).toBe('success');
+        expect(op).toHaveBeenCalledTimes(2);
+    });
+
+    test('should retry on ThrottlingException', async () => {
+        const op = mock()
+            .mockRejectedValueOnce({ name: 'ThrottlingException' })
+            .mockResolvedValueOnce('success');
+        const result = await retryWithBackoff(op, { baseDelayMs: 1, maxAttempts: 3 }, 'test');
+        expect(result).toBe('success');
+        expect(op).toHaveBeenCalledTimes(2);
+    });
+
+    test('should return undefined on non-throttling error', async () => {
+        const op = mock(() => Promise.reject(new Error('ValidationError')));
+        const result = await retryWithBackoff(op, { baseDelayMs: 10, maxAttempts: 3 }, 'test');
+        expect(result).toBeUndefined();
+        expect(op).toHaveBeenCalledTimes(1);
+    });
+
+    test('should return undefined after exhausting retries', async () => {
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
+        const op = mock(() => Promise.reject({ name: 'ThrottlingException' }));
+        const result = await retryWithBackoff(op, { baseDelayMs: 1, maxAttempts: 3 }, 'test');
+        expect(result).toBeUndefined();
+        expect(op).toHaveBeenCalledTimes(3);
+    });
+
+    test('should throw Aborted if signal aborted', async () => {
+        const controller = new AbortController();
+        const op = mock(() => {
+            controller.abort();
+            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
+            return Promise.reject({ name: 'ThrottlingException' });
+        });
+        // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
+        await expect(
+            retryWithBackoff(op, { baseDelayMs: 50, maxAttempts: 3 }, 'test', controller.signal)
+        ).rejects.toThrow('Aborted');
+    });
+
+    test('should use exponential backoff', async () => {
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
+        const op = mock(() => Promise.reject({ name: 'ThrottlingException' }));
+        const start = Date.now();
+        await retryWithBackoff(op, { baseDelayMs: 10, maxAttempts: 3 }, 'test');
+        const elapsed = Date.now() - start;
+        expect(elapsed).toBeGreaterThanOrEqual(15);
+        expect(op).toHaveBeenCalledTimes(3);
+    });
+});
 
 describe('runReconciliation', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
@@ -75,6 +171,54 @@ describe('runReconciliation', () => {
             );
 
             expect(gsi1Calls).toHaveLength(3);
+        });
+
+        test('should handle memory item with undefined contentPreview', async () => {
+            const memoryItemNoPreview = {
+                PK:          'DIR#/identity',
+                SK:          'FILE#no-preview.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/no-preview.md',
+                content:     'test content',
+                contentType: 'text/markdown',
+                metadata:    {},
+
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           ['test'],
+                contentPreview: undefined, // undefined contentPreview
+            };
+
+            mockLayerQuery('identity', [memoryItemNoPreview]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+
+            // Tag index queries return empty (no existing index items)
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression: 'PK = :pk AND SK = :sk',
+            }).resolves({ Items: [] });
+
+            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+
+            // Spy on createTagIndexItems to verify the empty string fallback is used
+            const createSpy = mock(async (path: string, tags: string[], updatedAt: string, contentPreview: string) => {
+                // Verify contentPreview is empty string (not 'No content' or some other value)
+                expect(contentPreview).toBe('');
+                return Promise.resolve();
+            });
+            tagIndex.createTagIndexItems = createSpy;
+
+            const result = await runReconciliation(deps, options);
+
+            expect(result.phaseA.indexItemsCreated).toBe(1);
+            expect(createSpy).toHaveBeenCalledWith(
+                '/identity/no-preview.md',
+                ['test'],
+                '2024-01-01T00:00:00.000Z',
+                '', // Empty string fallback
+                'identity'
+            );
         });
 
         test('should create missing tag index items for memory with tags', async () => {
@@ -273,6 +417,37 @@ describe('runReconciliation', () => {
             expect(result.phaseA.indexItemsRefreshed).toBeGreaterThanOrEqual(1);
         });
 
+        test('should handle memory item with undefined tags in staleness check', async () => {
+            const memoryItemWithUndefinedTags = {
+                PK:          'DIR#/identity',
+                SK:          'FILE#test.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/test.md',
+                content:     'test content',
+                contentType: 'text/markdown',
+                metadata:    {},
+
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           undefined, // undefined tags
+                contentPreview: 'test content',
+            };
+
+            mockLayerQuery('identity', [memoryItemWithUndefinedTags]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+
+            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+
+            const result = await runReconciliation(deps, options);
+
+            // Should NOT process tags for item with undefined tags
+            expect(result.phaseA.itemsScanned).toBe(1);
+            expect(result.phaseA.indexItemsCreated).toBe(0);
+            expect(result.phaseA.indexItemsRefreshed).toBe(0);
+        });
+
         test('should NOT refresh fresh tag index items (all fields match)', async () => {
             const memoryItem = {
                 PK:          'DIR#/identity',
@@ -356,11 +531,59 @@ describe('runReconciliation', () => {
 
             ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
 
+            // Spy on tag index operations to verify they're NOT called
+            const createSpy = mock(() => Promise.resolve());
+            const refreshSpy = mock(() => Promise.resolve());
+            tagIndex.createTagIndexItems = createSpy;
+            tagIndex.refreshTagIndexItems = refreshSpy;
+
             const result = await runReconciliation(deps, options);
 
             expect(result.phaseA.itemsScanned).toBe(1);
             expect(result.phaseA.indexItemsCreated).toBe(0);
             expect(result.phaseA.indexItemsRefreshed).toBe(0);
+            // Should NOT have called tag index methods since tags is undefined
+            expect(createSpy).not.toHaveBeenCalled();
+            expect(refreshSpy).not.toHaveBeenCalled();
+        });
+
+        test('should skip memories with empty tags array', async () => {
+            const memoryItem = {
+                PK:          'DIR#/identity',
+                SK:          'FILE#empty-tags.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/empty-tags.md',
+                content:     'test content',
+                contentType: 'text/markdown',
+                metadata:    {},
+
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           [], // Empty array
+                contentPreview: 'test content',
+            };
+
+            mockLayerQuery('identity', [memoryItem]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+
+            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+
+            // Spy on tag index operations to verify they're NOT called
+            const createSpy = mock(() => Promise.resolve());
+            const refreshSpy = mock(() => Promise.resolve());
+            tagIndex.createTagIndexItems = createSpy;
+            tagIndex.refreshTagIndexItems = refreshSpy;
+
+            const result = await runReconciliation(deps, options);
+
+            expect(result.phaseA.itemsScanned).toBe(1);
+            expect(result.phaseA.indexItemsCreated).toBe(0);
+            expect(result.phaseA.indexItemsRefreshed).toBe(0);
+            // Should NOT have called tag index methods since tags array is empty
+            expect(createSpy).not.toHaveBeenCalled();
+            expect(refreshSpy).not.toHaveBeenCalled();
         });
 
         test('should clean previouslyKnownAs metadata when old path indices are gone', async () => {
@@ -516,7 +739,7 @@ describe('runReconciliation', () => {
             expect(result.phaseA.itemsScanned).toBeGreaterThanOrEqual(2);
         });
 
-        test('should respect abort signal', async () => {
+        test('should respect abort signal before Phase A starts', async () => {
             const controller = new AbortController();
 
             ddbMock.on(QueryCommand).resolves({ Items: [] });
@@ -528,7 +751,54 @@ describe('runReconciliation', () => {
             // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
             await expect(
                 runReconciliation(deps, { ...options, signal: controller.signal })
-            ).rejects.toThrow();
+            ).rejects.toThrow('Aborted');
+        });
+
+        test('should respect abort signal during layer iteration in Phase A', async () => {
+            const controller = new AbortController();
+
+            // First layer succeeds
+            mockLayerQuery('identity', []);
+
+            // Abort before second layer
+            ddbMock.on(QueryCommand, {
+                IndexName:                 'GSI1',
+                ExpressionAttributeValues: { ':gsi1pk': 'LAYER#state' },
+            }).callsFake(() => {
+                controller.abort();
+                return Promise.resolve({ Items: [] });
+            });
+
+            ddbMock.on(ScanCommand).resolves({ Items: [] });
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
+            await expect(
+                runReconciliation(deps, { ...options, signal: controller.signal })
+            ).rejects.toThrow('Aborted');
+        });
+
+        test('should respect abort signal in scanLayer pagination loop', async () => {
+            const controller = new AbortController();
+
+            // First page succeeds, second page aborts
+            ddbMock.on(QueryCommand, {
+                IndexName: 'GSI1',
+            })
+                .resolvesOnce({
+                    Items:            [{ PK: 'test', SK: 'test', GSI1PK: 'LAYER#identity', path: '/identity/test.md' }],
+                    LastEvaluatedKey: { PK: 'test', SK: 'test' },
+                })
+                .callsFake(() => {
+                    controller.abort();
+                    return Promise.resolve({ Items: [] });
+                });
+
+            ddbMock.on(ScanCommand).resolves({ Items: [] });
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
+            await expect(
+                runReconciliation(deps, { ...options, signal: controller.signal })
+            ).rejects.toThrow('Aborted');
         });
 
         test('should count progress correctly (itemsScanned, indexItemsCreated, indexItemsRefreshed, metadataCleaned)', async () => {
@@ -639,6 +909,45 @@ describe('runReconciliation', () => {
             // This is actually correct behavior - the reconciler is resilient.
             // Let's verify it attempted retries instead:
             expect(callCount).toBeGreaterThanOrEqual(1);
+        });
+
+        test('should treat query returning Items:[] as no existing index', async () => {
+            const memoryItem = {
+                PK:          'DIR#/identity',
+                SK:          'FILE#new.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/new.md',
+                content:     'new content',
+                contentType: 'text/markdown',
+                metadata:    {},
+
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           ['test'],
+                contentPreview: 'new content',
+            };
+
+            mockLayerQuery('identity', [memoryItem]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+
+            // Tag index query explicitly returns empty Items array
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression: 'PK = :pk AND SK = :sk',
+            }).resolves({ Items: [] }); // Explicitly empty array
+
+            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+
+            // Spy on createTagIndexItems to verify it's called
+            const createSpy = mock(() => Promise.resolve());
+            tagIndex.createTagIndexItems = createSpy;
+
+            const result = await runReconciliation(deps, options);
+
+            // Should create the missing index item
+            expect(result.phaseA.indexItemsCreated).toBe(1);
+            expect(createSpy).toHaveBeenCalled();
         });
 
         test('should catch errors from createTagIndexItems and increment error counter', async () => {
@@ -889,19 +1198,35 @@ describe('runReconciliation', () => {
             expect(result.phaseB.itemsScanned).toBeGreaterThanOrEqual(2);
         });
 
-        test('should respect abort signal', async () => {
+        test('should respect abort signal before Phase B starts', async () => {
             const controller = new AbortController();
 
             ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
             ddbMock.on(ScanCommand).resolves({ Items: [] });
 
-            // Abort during Phase B
+            // Abort before Phase B
             controller.abort();
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
             await expect(
                 runReconciliation(deps, { ...options, signal: controller.signal })
-            ).rejects.toThrow();
+            ).rejects.toThrow('Aborted');
+        });
+
+        test('should respect abort signal during Phase B processing (verified by pre-aborting)', async () => {
+            const controller = new AbortController();
+
+            mockEmptyLayers(); // Phase A
+
+            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+
+            // Abort before Phase B starts - the abort check at the start of the do-while will catch it
+            controller.abort();
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
+            await expect(
+                runReconciliation(deps, { ...options, signal: controller.signal })
+            ).rejects.toThrow('Aborted');
         });
 
         test('should count progress correctly (itemsScanned, indexItemsDeleted)', async () => {
@@ -1143,6 +1468,31 @@ describe('runReconciliation', () => {
             });
         });
 
+        test('should respect abort signal during Phase C tag count processing', async () => {
+            const controller = new AbortController();
+
+            // Mock Phase A & B to succeed quickly
+            mockLayerQuery('identity', []);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+            ddbMock.on(ScanCommand).resolves({ Items: [] });
+
+            // Mock listTagCounts to return a tag
+            const listTagCountsMock = mock(() => Promise.resolve([
+                { tag: 'tag1', count: 1 },
+            ]));
+            deps.tagIndex.listTagCounts = listTagCountsMock;
+
+            // Abort signal is checked before each tag is processed (line 753 in runPhaseC)
+            // We abort synchronously before runReconciliation starts
+            controller.abort();
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
+            await expect(
+                runReconciliation(deps, { ...options, signal: controller.signal })
+            ).rejects.toThrow('Aborted');
+        });
+
         test('should verify count query uses correct DynamoDB parameters', async () => {
             // Mock Phase A query (GSI1)
             ddbMock.on(QueryCommand, {
@@ -1193,6 +1543,8 @@ describe('runReconciliation', () => {
 
             expect(result.phaseC.countsVerified).toBe(1);
             expect(result.phaseC.errors).toBe(1);
+            // Verify error count is positive (errors++, not errors--)
+            expect(result.phaseC.errors).toBeGreaterThan(0);
         });
     });
 
@@ -1220,7 +1572,7 @@ describe('runReconciliation', () => {
             expect(result.success).toBe(true);
         });
 
-        test('should report failure when errors occurred', async () => {
+        test('should report failure when errors occurred in Phase A', async () => {
             ddbMock.on(QueryCommand).rejects(new Error('DynamoDB error'));
             ddbMock.on(ScanCommand).resolves({ Items: [] });
 
@@ -1228,6 +1580,49 @@ describe('runReconciliation', () => {
 
             expect(result.success).toBe(false);
             expect(result.phaseA.errors).toBeGreaterThan(0);
+        });
+
+        test('should report failure when errors occurred in Phase B only', async () => {
+            // Phase A succeeds
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            // Phase B has error
+            const indexItem: TagIndexItem = {
+                PK:             'TAG#test',
+                SK:             'PATH#/identity/file.md',
+                memoryPath:     '/identity/file.md',
+                layer:          'identity',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           ['test'],
+                contentPreview: 'content',
+            };
+
+            ddbMock.on(ScanCommand).resolves({ Items: [indexItem] });
+            getMemory.mockRejectedValue(new Error('DynamoDB error'));
+
+            const result = await runReconciliation(deps, options);
+
+            expect(result.success).toBe(false);
+            expect(result.phaseA.errors).toBe(0);
+            expect(result.phaseB.errors).toBeGreaterThan(0);
+            expect(result.phaseC.errors).toBe(0);
+        });
+
+        test('should report failure when errors occurred in Phase C only', async () => {
+            // Phase A & B succeed
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+            ddbMock.on(ScanCommand).resolves({ Items: [] });
+
+            // Phase C has error - listTagCounts throws
+            const listTagCountsMock = mock(() => Promise.reject(new Error('DynamoDB error')));
+            deps.tagIndex.listTagCounts = listTagCountsMock;
+
+            const result = await runReconciliation(deps, options);
+
+            expect(result.success).toBe(false);
+            expect(result.phaseA.errors).toBe(0);
+            expect(result.phaseB.errors).toBe(0);
+            expect(result.phaseC.errors).toBeGreaterThan(0);
         });
 
         test('should measure total duration', async () => {

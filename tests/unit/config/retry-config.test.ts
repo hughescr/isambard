@@ -138,6 +138,26 @@ describe('loadRetryConfig', () => {
         expect(config.dynamodb.defaultTimeoutMs).toBe(DEFAULT_RETRY_CONFIG.dynamodb.defaultTimeoutMs);
     });
 
+    test('should override Discord maxAttempts from env var', () => {
+        process.env.DISCORD_RETRY_MAX_ATTEMPTS = '3';
+
+        const config = loadRetryConfig();
+
+        expect(config.discord.maxAttempts).toBe(3);
+        expect(config.claude.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.claude.maxAttempts);
+        expect(config.dynamodb.defaultTimeoutMs).toBe(DEFAULT_RETRY_CONFIG.dynamodb.defaultTimeoutMs);
+    });
+
+    test('should override DynamoDB timeout from env var', () => {
+        process.env.DYNAMODB_TIMEOUT_MS = '25000';
+
+        const config = loadRetryConfig();
+
+        expect(config.dynamodb.defaultTimeoutMs).toBe(25000);
+        expect(config.claude.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.claude.maxAttempts);
+        expect(config.discord.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.discord.maxAttempts);
+    });
+
     test('should override multiple env vars simultaneously', () => {
         process.env.CLAUDE_RETRY_MAX_ATTEMPTS = '5';
         process.env.DISCORD_RETRY_MAX_ATTEMPTS = '2';
@@ -162,6 +182,22 @@ describe('loadRetryConfig', () => {
         const config = loadRetryConfig();
 
         expect(config.claude.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.claude.maxAttempts);
+    });
+
+    test('should handle empty Discord env var by using defaults', () => {
+        process.env.DISCORD_RETRY_MAX_ATTEMPTS = '';
+
+        const config = loadRetryConfig();
+
+        expect(config.discord.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.discord.maxAttempts);
+    });
+
+    test('should handle empty DynamoDB env var by using defaults', () => {
+        process.env.DYNAMODB_TIMEOUT_MS = '';
+
+        const config = loadRetryConfig();
+
+        expect(config.dynamodb.defaultTimeoutMs).toBe(DEFAULT_RETRY_CONFIG.dynamodb.defaultTimeoutMs);
     });
 
     test('should preserve other retry policy fields when overriding', () => {

@@ -2017,6 +2017,397 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
     });
 
+    describe('normalizeChannelId helper', () => {
+        test('should normalize thread channel to parent channel ID', async () => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock for testing
+            const mockThread: any = {
+                id:          'thread-id',
+                parentId:    'parent-channel-id',
+                isThread:    _constant(true),
+                isTextBased: _constant(true),
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock message options for testing
+                send:        mock(async (_content: any) => ({ id: 'question-message-id' })),
+            };
+            const mockParentChannel = {
+                id:          'parent-channel-id',
+                isTextBased: _constant(true),
+                isThread:    _constant(false),
+                isDMBased:   _constant(false),
+            };
+            mockClient.channels.fetch = mock(async (channelId: string) => {
+                if(channelId === 'thread-id') {
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- Mock object
+                    return mockThread;
+                }
+
+                return mockParentChannel;
+            });
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({
+                channelId: 'thread-id',
+                question:  'Test question in thread?',
+            });
+
+            // Verify that the message was sent to the thread
+            expect(mockThread.send).toHaveBeenCalled();
+            // Verify registration uses parent channel ID
+            const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
+            expect(registerCall.channelId).toBe('parent-channel-id');
+        });
+
+        test('should return non-thread channel as-is', async () => {
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: _constant(true),
+                isThread:    _constant(false),
+                isDMBased:   _constant(false),
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock message options for testing
+                send:        mock(async (_content: any) => ({ id: 'question-message-id' })),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({
+                channelId: '123456789012345678',
+                question:  'Test question?',
+            });
+
+            expect(mockChannel.send).toHaveBeenCalled();
+            const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
+            expect(registerCall.channelId).toBe('123456789012345678');
+        });
+
+        test('should return error when parent channel fetch fails', async () => {
+            const mockThread = {
+                id:          'thread-id',
+                parentId:    'parent-channel-id',
+                isThread:    _constant(true),
+                isTextBased: _constant(true),
+            };
+            mockClient.channels.fetch = mock(async (channelId: string) => {
+                if(channelId === 'thread-id') {
+                    return mockThread;
+                }
+                // Parent channel fetch returns null
+                return null;
+            });
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: 'thread-id',
+                question:  'Test question?',
+            });
+
+            expect(result.isError).toBe(true);
+            expect(result.content[0].text).toContain('Parent channel not found');
+        });
+
+        test('should return error when parent channel is not text-based', async () => {
+            const mockNonTextChannel = {
+                id:          'parent-channel-id',
+                isTextBased: _constant(false),
+                isThread:    _constant(false),
+            };
+            const mockThread = {
+                id:          'thread-id',
+                parentId:    'parent-channel-id',
+                isThread:    _constant(true),
+                isTextBased: _constant(true),
+            };
+            mockClient.channels.fetch = mock(async (channelId: string) => {
+                if(channelId === 'thread-id') {
+                    return mockThread;
+                }
+                return mockNonTextChannel;
+            });
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: 'thread-id',
+                question:  'Test question?',
+            });
+
+            expect(result.isError).toBe(true);
+            expect(result.content[0].text).toContain('Channel is not a text-based channel');
+        });
+    });
+
+    describe('prepareQuestionChannel helper', () => {
+        test('should use existing thread when available', async () => {
+            const mockThread = {
+                id:          'existing-thread-id',
+                isThread:    _constant(true),
+                isTextBased: _constant(true),
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock message options for testing
+                send:        mock(async (_content: any) => ({ id: 'question-message-id' })),
+            };
+            const mockParentChannel = {
+                id:          'parent-channel-id',
+                isTextBased: _constant(true),
+                isThread:    _constant(false),
+                isDMBased:   _constant(false),
+            };
+            mockClient.channels.fetch = mock(async (channelId: string) => {
+                if(channelId === 'existing-thread-id') {
+                    return mockThread;
+                }
+                return mockParentChannel;
+            });
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({
+                channelId: 'existing-thread-id',
+                question:  'Test question in existing thread?',
+            });
+
+            // Verify message sent to existing thread
+            expect(mockThread.send).toHaveBeenCalled();
+        });
+
+        test('should create new thread when requested', async () => {
+            const mockThread = {
+                id:          'new-thread-id',
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock message options for testing
+                send:        mock(async (_content: any) => ({ id: 'question-message-id' })),
+                isTextBased: _constant(true),
+                isThread:    _constant(false),
+            };
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: _constant(true),
+                isThread:    _constant(false),
+                isDMBased:   _constant(false),
+                threads:     {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock thread options for testing
+                    create: mock(async (_options: any) => mockThread),
+                },
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({
+                channelId:    '123456789012345678',
+                question:     'Test question?',
+                createThread: true,
+                threadName:   'New Thread',
+            });
+
+            expect(mockChannel.threads.create).toHaveBeenCalledWith({ name: 'New Thread' });
+            expect(mockThread.send).toHaveBeenCalled();
+        });
+
+        test('should fallback to original channel when thread creation fails gracefully', async () => {
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: _constant(true),
+                isThread:    _constant(false),
+                isDMBased:   _constant(false),
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock message options for testing
+                send:        mock(async (_content: any) => ({ id: 'question-message-id' })),
+                threads:     {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock thread options for testing
+                    create: mock(async (_options: any) => {
+                        throw new Error('Thread creation failed');
+                    }),
+                },
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId:    '123456789012345678',
+                question:     'Test question?',
+                createThread: true,
+                threadName:   'New Thread',
+            });
+
+            // Should return error since thread creation threw
+            expect(result.isError).toBe(true);
+        });
+    });
+
+    describe('fetchAndValidateChannel helper', () => {
+        test('should reject non-text-based channel', async () => {
+            const mockVoiceChannel = {
+                id:          '123456789012345678',
+                isTextBased: _constant(false),
+            };
+            mockClient.channels.fetch = mock(async () => mockVoiceChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'sendDiscordMessage');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                content:   'Test message',
+            });
+
+            expect(result.isError).toBe(true);
+            expect(result.content[0].text).toContain('Channel is not a text-based channel');
+        });
+    });
+
+    describe('createThreadIfRequested helper', () => {
+        test('should return undefined for thread-incapable channels', async () => {
+            const mockDMChannel = {
+                id:          'dm-channel-id',
+                isTextBased: _constant(true),
+                isThread:    _constant(false),
+                isDMBased:   _constant(true),  // DM channels can't have threads
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock message options for testing
+                send:        mock(async (_content: any) => ({ id: 'sent-message-id', startThread: undefined })),
+            };
+            mockClient.channels.fetch = mock(async () => mockDMChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'sendDiscordMessage');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId:    'dm-channel-id',
+                content:      'Test message',
+                createThread: true,
+                threadName:   'Test Thread',
+            });
+
+            // Should succeed but not create thread
+            expect(result.isError).toBeUndefined();
+            const parsed = JSON.parse(result.content[0].text as string);
+            expect(parsed.threadId).toBeUndefined();
+        });
+    });
+
+    describe('triggerUserId fallback chain', () => {
+        test('should use currentUserId when available', async () => {
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: _constant(true),
+                isThread:    _constant(false),
+                isDMBased:   _constant(false),
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock message options for testing
+                send:        mock(async (_content: any) => ({ id: 'question-message-id' })),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            setConversationContext({
+                currentUserId:    'user-123' as UserId,
+                currentChannelId: '123456789012345678' as ChannelId,
+            });
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({
+                channelId: '123456789012345678',
+                question:  'Test question?',
+            });
+
+            const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
+            expect(registerCall.triggerUserId).toBe('user-123');
+        });
+
+        test('should fallback to clientUser.id when currentUserId not available', async () => {
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: _constant(true),
+                isThread:    _constant(false),
+                isDMBased:   _constant(false),
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock message options for testing
+                send:        mock(async (_content: any) => ({ id: 'question-message-id' })),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            clearConversationContext();
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({
+                channelId: '123456789012345678',
+                question:  'Test question?',
+            });
+
+            const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
+            expect(registerCall.triggerUserId).toBe('bot-user-id-12345');
+        });
+
+        test('should fallback to system when neither currentUserId nor clientUser available', async () => {
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: _constant(true),
+                isThread:    _constant(false),
+                isDMBased:   _constant(false),
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock message options for testing
+                send:        mock(async (_content: any) => ({ id: 'question-message-id' })),
+            };
+            const mockClientWithoutUser = {
+                user:     null,
+                channels: {
+                    fetch: mock(async () => mockChannel),
+                },
+            };
+
+            clearConversationContext();
+
+            const server = createDiscordMCPServer(mockSearchService, mockClientWithoutUser as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({
+                channelId: '123456789012345678',
+                question:  'Test question?',
+            });
+
+            const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
+            expect(registerCall.triggerUserId).toBe('system');
+        });
+    });
+
+    describe('askUserQuestion error handling', () => {
+        test('should return error result when tool call throws', async () => {
+            mockClient.channels.fetch = mock(async () => {
+                throw new Error('Network error');
+            });
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                question:  'Test question?',
+            });
+
+            expect(result.isError).toBe(true);
+            expect(result.content[0].text).toContain('Network error');
+        });
+    });
+
     describe('conversation context', () => {
         test('should use conversation context userId for triggerUserId when set', async () => {
             const mockChannel = {
@@ -2473,6 +2864,31 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(parsed.success).toBe(false);
             expect(parsed.addedEmojis).toEqual(['👍', '🎉']);
             expect(parsed.failedEmojis[0].emoji).toBe('❤️');
+        });
+
+        test('should return error when message not found', async () => {
+            const mockChannel = {
+                id:       '123456789012345678',
+                messages: {
+                    // eslint-disable-next-line lodash/prefer-constant -- mock requires async function
+                    fetch: mock(async () => null),
+                },
+                isTextBased: _constant(true),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'addReaction');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: 'nonexistent-message',
+                emoji:     '👍',
+            });
+
+            expect(result.isError).toBe(true);
+            expect(result.content[0].text).toContain('Message not found');
         });
     });
 

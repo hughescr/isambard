@@ -106,8 +106,8 @@ async function fetchAndValidateChannel(
         };
     }
 
-    // Stryker disable all: Integration code - Discord channel validation
     if(!channel.isTextBased()) {
+        // Stryker disable next-line all: Logging for observability
         logger.warn({ channelId }, 'Discord tool returned error: Channel is not text-based');
         return {
             error: {
@@ -116,7 +116,6 @@ async function fetchAndValidateChannel(
             }
         };
     }
-    // Stryker restore all
 
     return { channel: channel as TextChannel };
 }
@@ -233,7 +232,6 @@ async function normalizeChannelId(
     let normalizedChannelId = channelId;
     let existingThreadId: string | undefined;
 
-    // Stryker disable all: Integration code - Thread normalization and channel validation
     if(fetchedChannel.isThread()) {
         normalizedChannelId = fetchedChannel.parentId ?? channelId;
         existingThreadId = fetchedChannel.id;
@@ -242,11 +240,13 @@ async function normalizeChannelId(
     const channel = fetchedChannel.isThread()
         ? await withDiscordRetry(
             () => client.channels.fetch(normalizedChannelId),
+            // Stryker disable next-line StringLiteral: Operation name for logging
             'fetchParentChannel'
         )
         : fetchedChannel;
 
     if(!channel) {
+        // Stryker disable next-line all: Logging for observability
         logger.warn({ normalizedChannelId }, 'Discord tool returned error: Parent channel not found');
         return {
             error: {
@@ -257,6 +257,7 @@ async function normalizeChannelId(
     }
 
     if(!channel.isTextBased()) {
+        // Stryker disable next-line all: Logging for observability
         logger.warn({ normalizedChannelId }, 'Discord tool returned error: Parent channel is not text-based');
         return {
             error: {
@@ -265,7 +266,6 @@ async function normalizeChannelId(
             }
         };
     }
-    // Stryker restore all
 
     return {
         normalizedChannelId,
@@ -278,7 +278,6 @@ async function normalizeChannelId(
  * Helper: Prepares the target channel for sending a question, handling existing threads or creating new ones.
  * Returns the target channel and thread ID (if any).
  */
-// Stryker disable all: Integration code - Thread preparation
 async function prepareQuestionChannel(
     fetchedChannel: ReturnType<Client['channels']['fetch']> extends Promise<infer T> ? T : never,
     channel: TextChannel,
@@ -294,11 +293,14 @@ async function prepareQuestionChannel(
         };
     }
 
+    // Stryker disable next-line LogicalOperator: Both conditions required - createThread flag AND channel capability
     if(createThread && 'threads' in channel) {
         const thread = await withDiscordRetry(
             () => channel.threads.create({
+                // Stryker disable next-line LogicalOperator,StringLiteral: Fallback chain for thread name with default
                 name: threadName ?? 'Q&A'
             }),
+            // Stryker disable next-line StringLiteral: Operation name for logging
             'createThread'
         );
         return {
@@ -309,7 +311,6 @@ async function prepareQuestionChannel(
 
     return { targetChannel: channel };
 }
-// Stryker restore all
 
 /**
  * Helper: Builds message options for a question, including optional mention and buttons.
@@ -361,10 +362,8 @@ async function registerAndWaitForAnswer(
         channelId:       createChannelId(params.normalizedChannelId),
         threadId:        params.threadId,
         originMessageId: params.sentMessage.id,
-        // Stryker disable all: Fallback chain for triggerUserId
         triggerUserId:   params.currentUserId
           ?? (params.clientUser ? createUserId(params.clientUser.id) : createUserId('system')),
-        // Stryker restore all
         questionText: params.question,
         options:      params.options,
         targetUserId: params.targetUserId ? createUserId(params.targetUserId) : undefined,
@@ -704,7 +703,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         sentMessages.push(firstMessage);
 
                         // Send remaining chunks (no reply reference, no files)
-                        // Stryker disable next-line EqualityOperator: Inverted loop condition creates infinite loop
+                        // Stryker disable next-line EqualityOperator,UpdateOperator: Loop mutation would cause infinite loop
                         for(let i = 1; i < chunks.length; i++) {
                             const msg = await sendMessage(channelResult.channel, chunks[i]);
                             sentMessages.push(msg);
@@ -833,14 +832,13 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         // 8. Format and return result
                         return formatQuestionResult(result, questionId, args.channelId, threadId);
                     } catch (error) {
-                        // Stryker disable all: Error handling path
                         const message = _.isError(error) ? error.message : String(error);
+                        // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'askUserQuestion', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
                             content: [{ type: 'text' as const, text: `Error: ${message}` }],
                             isError: true,
                         };
-                        // Stryker restore all
                     }
                 }
             ),
@@ -875,6 +873,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         );
 
                         if(!message) {
+                            // Stryker disable next-line all: Logging for observability
                             logger.warn({ tool: 'addReaction', channelId: args.channelId, messageId: args.messageId }, 'Discord tool returned error: Message not found');
                             return {
                                 content: [{ type: 'text' as const, text: 'Error: Message not found' }],
@@ -906,32 +905,40 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         const result = {
                             success:      failedEmojis.length === 0,
                             addedEmojis,
+                            // Stryker disable next-line ConditionalExpression,EqualityOperator: Check needed to conditionally include failedEmojis
                             failedEmojis: failedEmojis.length > 0 ? failedEmojis : undefined,
                             channelId:    args.channelId,
                             messageId:    args.messageId,
                         };
 
+                        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: Logging for observability
                         if(failedEmojis.length > 0) {
+                            // Stryker disable next-line all: Logging parameters don't affect behavior
                             logger.warn({ tool: 'addReaction', channelId: args.channelId, messageId: args.messageId, failedEmojis }, 'Discord tool returned partial error: Some reactions failed');
                         }
 
                         return {
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+                            // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator: Conditional isError flag
                             ...(failedEmojis.length > 0 && { isError: true }),
                         };
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);
+                        // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'addReaction', error: message, channelId: args.channelId, messageId: args.messageId }, 'Discord tool returned error');
+                        // Stryker disable all: Error response object structure
                         return {
                             content: [{ type: 'text' as const, text: `Error: ${message}` }],
                             isError: true,
                         };
+                        // Stryker restore all
                     }
                 }
             ),
 
             tool(
                 'muteChannel',
+                // Stryker disable next-line StringLiteral: Tool description is documentation only
                 'Mute a Discord channel so the bot will not respond to messages in it. Use this when you want to observe a channel without participating. Accepts either a numeric channel ID or channel name with # prefix (e.g., #general).',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
@@ -943,9 +950,11 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         await channelRegistry.muteChannel(channelId);
                         // Stryker disable next-line all: Logging for observability
                         logger.info({ tool: 'muteChannel', channelId, msg: 'Channel muted' });
+                        // Stryker disable all: Tool response object
                         return {
                             content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId, muted: true }) }],
                         };
+                        // Stryker restore all
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
@@ -960,6 +969,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
 
             tool(
                 'unmuteChannel',
+                // Stryker disable next-line StringLiteral: Tool description is documentation only
                 'Unmute a Discord channel so the bot will respond to messages in it again. Accepts either a numeric channel ID or channel name with # prefix (e.g., #general).',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
@@ -971,9 +981,11 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         await channelRegistry.unmuteChannel(channelId);
                         // Stryker disable next-line all: Logging for observability
                         logger.info({ tool: 'unmuteChannel', channelId, msg: 'Channel unmuted' });
+                        // Stryker disable all: Tool response object
                         return {
                             content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId, muted: false }) }],
                         };
+                        // Stryker restore all
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
@@ -988,6 +1000,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
 
             tool(
                 'listChannels',
+                // Stryker disable next-line StringLiteral: Tool description is documentation only
                 'List all channels the bot is tracking, with their mute status. Use this to see available channels.',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only

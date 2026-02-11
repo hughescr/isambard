@@ -229,7 +229,6 @@ const cleanupSubAgentSessions = async (sessionId: string, projectPath: string): 
  *
  * @returns Promise that resolves when cleanup is complete
  */
-// Stryker disable all: Startup cleanup is fire-and-forget, not observable in tests
 export const cleanupAllStaleSessions = async (): Promise<void> => {
     const projectPath = getProjectPath();
     const projectsDir = join(homedir(), '.claude', 'projects', projectPath);
@@ -283,7 +282,6 @@ export const cleanupAllStaleSessions = async (): Promise<void> => {
             msg: `Cleaned up ${cleanedCount} stale session files on startup`,
         });
     }
-    // Stryker restore all
 };
 
 /**

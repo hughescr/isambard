@@ -1712,6 +1712,67 @@ describe('createClaudeAgent', () => {
             // Should use the perchPrompt
             expect(prompt).toBe(perchPrompt);
         });
+
+        test('should build multimodal prompt when images are provided', async () => {
+            const agent = createClaudeAgent({});
+            const testImage: import('../../../src/agent/types').PlatformImage = {
+                filename:     'test.png',
+                mediaType:    'image/png',
+                base64Data:   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+                originalSize: 100,
+                width:        1,
+                height:       1,
+            };
+
+            await agent.handleInput([mockMessageContext], { images: [testImage] });
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+
+            // Should use async generator for multimodal prompt
+            expect(typeof queryParams.prompt[Symbol.asyncIterator]).toBe('function');
+
+            // Verify the generator yields a message with multimodal content
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const promptIterator = queryParams.prompt[Symbol.asyncIterator]();
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const firstYield = await promptIterator.next();
+
+            expect(_.isArray(firstYield.value.message.content)).toBe(true);
+
+            expect(firstYield.value.message.content[0].type).toBe('image');
+
+            expect(firstYield.value.message.content[1].type).toBe('text');
+        });
+
+        test('should build text-only prompt when no images are provided', async () => {
+            const agent = createClaudeAgent({});
+
+            await agent.handleInput([mockMessageContext]);
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+
+            // Should use string for text-only prompt (not async generator)
+            expect(typeof queryParams.prompt).toBe('string');
+            expect(queryParams.prompt).toContain('Hello Claude!');
+        });
+
+        test('should build text-only prompt when images array is empty', async () => {
+            const agent = createClaudeAgent({});
+
+            await agent.handleInput([mockMessageContext], { images: [] });
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+
+            // Should use string for text-only prompt when images array is empty
+            expect(typeof queryParams.prompt).toBe('string');
+            expect(queryParams.prompt).toContain('Hello Claude!');
+        });
     });
 
     describe('logUserEvent and logAssistantEvent', () => {

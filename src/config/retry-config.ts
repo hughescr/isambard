@@ -46,23 +46,21 @@ export function loadRetryConfig(): RetryConfig {
         };
     }
 
-    // Stryker disable BlockStatement,ObjectLiteral,ConditionalExpression: Env override block is optional configuration, tested via integration
     const discordMaxAttemptsRaw = env.get('DISCORD_RETRY_MAX_ATTEMPTS').asString();
     if(discordMaxAttemptsRaw) {
+        // Stryker disable next-line ObjectLiteral: Empty object for env override structure
         envOverrides.discord = {
             maxAttempts: env.get('DISCORD_RETRY_MAX_ATTEMPTS').asInt(),
         };
     }
-    // Stryker restore BlockStatement,ObjectLiteral,ConditionalExpression
 
-    // Stryker disable BlockStatement,ObjectLiteral,ConditionalExpression: Env override block is optional configuration, tested via integration
     const dynamodbTimeoutRaw = env.get('DYNAMODB_TIMEOUT_MS').asString();
     if(dynamodbTimeoutRaw) {
+        // Stryker disable next-line ObjectLiteral: Empty object for env override structure
         envOverrides.dynamodb = {
             defaultTimeoutMs: env.get('DYNAMODB_TIMEOUT_MS').asInt(),
         };
     }
-    // Stryker restore BlockStatement,ObjectLiteral,ConditionalExpression
 
     // Parse with defaults, then merge overrides
     const defaults = retryConfigSchema.parse({});

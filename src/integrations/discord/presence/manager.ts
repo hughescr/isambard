@@ -218,8 +218,8 @@ export function createPresenceManager(
     }
 
     return {
-        // Stryker disable all: transitionPresenceDisplayMode integration tested via bot lifecycle, not unit tested
         transitionPresenceDisplayMode(mode: PresenceDisplayMode, catchUpContext?: CatchUpSynopsisContext): void {
+            // Stryker disable next-line StringLiteral,ObjectLiteral: Log message content is not behavior-affecting
             logger.debug({ mode, previousMode: presenceDisplayMode }, 'Setting presence display mode');
             const previousMode = presenceDisplayMode;
             presenceDisplayMode = mode;
@@ -239,16 +239,23 @@ export function createPresenceManager(
                     // Do NOT start the idle refresh loop - stream handler will drive updates
                     if(enteringCatchUp) {
                         void (async () => {
-                            // Use dynamic generator if catch-up context provided and generator available
-                            if(catchUpContext && dynamicStatusGenerator) {
-                                const statusText = await dynamicStatusGenerator.generateCatchUpSynopsis(catchUpContext);
-                                const activity = activeStatusGenerator.formatStatus(statusText, mode);
-                                await applyPresenceUpdate(activity);
-                            } else {
-                                // Fallback to idle generator
-                                const activity = await idleStatusGenerator.generate(true, mode);
-                                await applyPresenceUpdate(activity);
+                            // Stryker disable BlockStatement: Error logging catch block for observability
+                            try {
+                                // Use dynamic generator if catch-up context provided and generator available
+                                if(catchUpContext && dynamicStatusGenerator) {
+                                    const statusText = await dynamicStatusGenerator.generateCatchUpSynopsis(catchUpContext);
+                                    const activity = activeStatusGenerator.formatStatus(statusText, mode);
+                                    await applyPresenceUpdate(activity);
+                                } else {
+                                    // Fallback to idle generator
+                                    const activity = await idleStatusGenerator.generate(true, mode);
+                                    await applyPresenceUpdate(activity);
+                                }
+                            } catch (error) {
+                                // Stryker disable next-line ObjectLiteral,StringLiteral: Error logging content
+                                logger.error({ error, mode }, 'Failed to generate catch-up status');
                             }
+                            // Stryker restore BlockStatement
                         })();
                     }
                     // When exiting catch-up mode, generate an immediate idle refresh
@@ -270,16 +277,23 @@ export function createPresenceManager(
                     // Note: We can't use refreshIdleStatus() here because it checks currentPhase.type === 'idle'
                     // and returns early if false. At startup, currentPhase is null.
                     void (async () => {
-                        // Use dynamic generator if catch-up context provided and generator available
-                        if(catchUpContext && dynamicStatusGenerator) {
-                            const statusText = await dynamicStatusGenerator.generateCatchUpSynopsis(catchUpContext);
-                            const activity = activeStatusGenerator.formatStatus(statusText, mode);
-                            await applyPresenceUpdate(activity);
-                        } else {
-                            // Fallback to idle generator
-                            const activity = await idleStatusGenerator.generate(true, mode);
-                            await applyPresenceUpdate(activity);
+                        // Stryker disable BlockStatement: Error logging catch block for observability
+                        try {
+                            // Use dynamic generator if catch-up context provided and generator available
+                            if(catchUpContext && dynamicStatusGenerator) {
+                                const statusText = await dynamicStatusGenerator.generateCatchUpSynopsis(catchUpContext);
+                                const activity = activeStatusGenerator.formatStatus(statusText, mode);
+                                await applyPresenceUpdate(activity);
+                            } else {
+                                // Fallback to idle generator
+                                const activity = await idleStatusGenerator.generate(true, mode);
+                                await applyPresenceUpdate(activity);
+                            }
+                        } catch (error) {
+                            // Stryker disable next-line ObjectLiteral,StringLiteral: Error logging content
+                            logger.error({ error, mode }, 'Failed to generate catch-up status');
                         }
+                        // Stryker restore BlockStatement
                     })();
                 }
             }
@@ -287,7 +301,6 @@ export function createPresenceManager(
             // DON'T trigger idle refresh loop during catch-up - stream handler drives updates
             // DO trigger immediate idle refresh when exiting catch-up to 'none' (handled above)
         },
-        // Stryker restore all
 
         async updatePhase(phase: PresencePhase): Promise<void> {
             // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting

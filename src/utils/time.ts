@@ -100,7 +100,6 @@ export function formatRelativeTime(date: Date, now: Date = new Date()): string {
  */
 export function resolveTimezone(userTimezone?: string): string {
     if(userTimezone) {
-        // Stryker disable BlockStatement: Logging for observability
         if(IANAZone.isValidZone(userTimezone)) {
             return userTimezone;
         } else {
@@ -110,7 +109,6 @@ export function resolveTimezone(userTimezone?: string): string {
         }
     }
 
-    // Stryker disable BlockStatement: Catch block returns UTC fallback
     try {
         return DateTime.local().zoneName;
     } catch{
@@ -315,7 +313,6 @@ export function formatTimeHeader(userTimezone?: string): string {
         `- Izzy: ${izzyLocal} ${izzyTimezone} (${izzyDow} ${izzyTod})`,
     ];
 
-    // Stryker disable next-line ConditionalExpression: Timezone comparison controls optional user line
     if(userTimezone && userTimezone !== izzyTimezone) {
         const userLocal = formatLocalDateTime(timeContext.utc, userTimezone);
         const userDow = getDayOfWeek(new Date(timeContext.utc), userTimezone);

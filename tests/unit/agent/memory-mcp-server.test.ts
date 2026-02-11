@@ -3,7 +3,7 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
-import type { MemoryPath, ContentType, MemoryToolItemData } from '../../../src/storage/memory-tool/types';
+import type { MemoryPath, ContentType, MemoryToolItemData, TagIndexItem } from '../../../src/storage/memory-tool/types';
 
 // Helper to create mock memory item data
 const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryToolItemData => ({
@@ -14,6 +14,18 @@ const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryTool
 
     createdAt: '2025-01-01T00:00:00.000Z',
     updatedAt: '2025-01-01T00:00:00.000Z',
+    ...overrides,
+});
+
+// Helper to create mock tag index item
+const createMockTagIndexItem = (overrides: Partial<TagIndexItem> = {}): TagIndexItem => ({
+    PK:             'TAG#mock',
+    SK:             'PATH#/mock/path',
+    memoryPath:     '/mock/path',
+    layer:          'identity',
+    updatedAt:      '2025-01-01T00:00:00.000Z',
+    tags:           [],
+    contentPreview: 'mock preview',
     ...overrides,
 });
 
@@ -858,6 +870,60 @@ describe.concurrent('createMemoryMCPServer', () => {
             expect(result.content[0].text).toBe('Error deleting memory: Network timeout');
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBe(true);
+        });
+    });
+
+    describe('search tool', () => {
+        test('should show "No content" when memory item has no contentPreview', async () => {
+            const itemWithoutPreview = createMockTagIndexItem({
+                memoryPath:     '/identity/test.md',
+                PK:             'TAG#test',
+                SK:             'PATH#/identity/test.md',
+                contentPreview: undefined, // No preview
+                tags:           ['test'],
+            });
+
+            mockBackend.searchByTags = mock(async () => ({
+                items:      [itemWithoutPreview],
+                nextCursor: undefined,
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'search');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ tags: ['test'] });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('/identity/test.md: No content');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBeUndefined();
+        });
+
+        test('should show contentPreview when available', async () => {
+            const itemWithPreview = createMockTagIndexItem({
+                memoryPath:     '/identity/test.md',
+                PK:             'TAG#test',
+                SK:             'PATH#/identity/test.md',
+                contentPreview: 'Test preview content',
+                tags:           ['test'],
+            });
+
+            mockBackend.searchByTags = mock(async () => ({
+                items:      [itemWithPreview],
+                nextCursor: undefined,
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'search');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ tags: ['test'] });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('/identity/test.md: Test preview content');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBeUndefined();
         });
     });
 });

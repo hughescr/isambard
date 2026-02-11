@@ -19,7 +19,7 @@ const mockReaddir = mockFsPromises.readdir;
 const mockReadFile = mockFsPromises.readFile;
 
 // Import after setup.ts has mocked the module
-import { cleanupSession, getSessionFilePath, extractSessionId } from '../../../src/agent/session-cleanup';
+import { cleanupSession, getSessionFilePath, extractSessionId, cleanupAllStaleSessions } from '../../../src/agent/session-cleanup';
 import type { SystemEvent } from '../../../src/agent/types';
 
 describe('getSessionFilePath', () => {
@@ -228,11 +228,17 @@ describe('cleanupSession', () => {
 
         await cleanupSession(sessionId);
 
-        // Should call rm to remove the session-env directory
+        // Should call rm to remove the session-env directory with correct options
         expect(mockRm).toHaveBeenCalledWith(
             expect.stringContaining(`.claude/session-env/${sessionId}`),
             { recursive: true, force: true }
         );
+
+        // Verify the exact options object to kill ObjectLiteral and BooleanLiteral mutants
+        const rmCalls = mockRm.mock.calls;
+        expect(rmCalls.length).toBeGreaterThan(0);
+        const lastCall = rmCalls[rmCalls.length - 1];
+        expect(lastCall[1]).toEqual({ recursive: true, force: true });
     });
 
     test('should log warning when session-env cleanup fails with non-ENOENT error', async () => {
@@ -589,5 +595,282 @@ describe('cleanupSession', () => {
 
         // Should scan for sub-agent files (backward compatible default)
         expect(mockReaddir).toHaveBeenCalledWith(expect.stringContaining('.claude/projects/'));
+    });
+});
+
+describe('cleanupAllStaleSessions', () => {
+    beforeEach(() => {
+        mockLogger.info.mockClear();
+        mockLogger.warn.mockClear();
+        mockAccess.mockClear();
+        mockUnlink.mockClear();
+        mockRm.mockClear();
+        mockReaddir.mockClear();
+        // Reset to default successful behavior
+        mockAccess.mockImplementation(() => Promise.resolve());
+        mockUnlink.mockImplementation(() => Promise.resolve());
+        mockRm.mockImplementation(() => Promise.resolve());
+        mockReaddir.mockImplementation(() => Promise.resolve([]));
+    });
+
+    afterEach(() => {
+        resetMockFs();
+    });
+
+    test('should delete all session files in projects directory', async () => {
+        const sessionFiles = ['session-1.jsonl', 'session-2.jsonl', 'agent-abc.jsonl'];
+        mockReaddir.mockImplementation((path: string) => {
+            if(path.includes('.claude/projects/')) {
+                return Promise.resolve(sessionFiles);
+            }
+            return Promise.resolve([]);
+        });
+
+        await cleanupAllStaleSessions();
+
+        // Should have attempted to delete all .jsonl files
+        expect(mockUnlink).toHaveBeenCalledTimes(3);
+        expect(mockUnlink.mock.calls[0][0]).toContain('session-1.jsonl');
+        expect(mockUnlink.mock.calls[1][0]).toContain('session-2.jsonl');
+        expect(mockUnlink.mock.calls[2][0]).toContain('agent-abc.jsonl');
+    });
+
+    test('should delete all session-env directories', async () => {
+        const envDirs = ['session-env-1', 'session-env-2', 'session-env-3'];
+        mockReaddir.mockImplementation((path: string) => {
+            if(path.includes('.claude/session-env')) {
+                return Promise.resolve(envDirs);
+            }
+            return Promise.resolve([]);
+        });
+
+        await cleanupAllStaleSessions();
+
+        // Should have attempted to delete all session-env directories
+        expect(mockRm).toHaveBeenCalledTimes(3);
+        expect(mockRm.mock.calls[0][0]).toContain('session-env-1');
+        expect(mockRm.mock.calls[1][0]).toContain('session-env-2');
+        expect(mockRm.mock.calls[2][0]).toContain('session-env-3');
+
+        // Verify the exact options object to kill ObjectLiteral and BooleanLiteral mutants
+        for(const call of mockRm.mock.calls) {
+            expect(call[1]).toEqual({ recursive: true, force: true });
+        }
+    });
+
+    test('should log summary when files were cleaned', async () => {
+        const sessionFiles = ['session-1.jsonl', 'session-2.jsonl'];
+        const envDirs = ['env-1'];
+
+        mockReaddir.mockImplementation((path: string) => {
+            if(path.includes('.claude/projects/')) {
+                return Promise.resolve(sessionFiles);
+            }
+            if(path.includes('.claude/session-env')) {
+                return Promise.resolve(envDirs);
+            }
+            return Promise.resolve([]);
+        });
+
+        await cleanupAllStaleSessions();
+
+        // Should log summary with total count (2 session files + 1 env dir = 3)
+        expect(mockLogger.info).toHaveBeenCalledWith(
+            expect.objectContaining({
+                cleanedCount: 3,
+                msg:          expect.stringContaining('Cleaned up 3 stale session files'),
+            })
+        );
+    });
+
+    test('should not log when no files were cleaned', async () => {
+        mockReaddir.mockImplementation(() => Promise.resolve([]));
+
+        await cleanupAllStaleSessions();
+
+        // Should NOT log when cleanedCount is 0
+        expect(mockLogger.info).not.toHaveBeenCalled();
+    });
+
+    test('should handle missing projects directory gracefully', async () => {
+        const notFoundError = new Error('ENOENT') as NodeJS.ErrnoException;
+        notFoundError.code = 'ENOENT';
+
+        mockAccess.mockImplementation((path: string) => {
+            if(path.includes('.claude/projects/')) {
+                return Promise.reject(notFoundError);
+            }
+            // session-env directory doesn't exist either
+            return Promise.reject(notFoundError);
+        });
+
+        // Should complete without throwing
+        await cleanupAllStaleSessions();
+
+        // Should not attempt to delete session files
+        expect(mockUnlink).not.toHaveBeenCalled();
+        // Should not attempt to delete session-env directories
+        expect(mockRm).not.toHaveBeenCalled();
+    });
+
+    test('should handle missing session-env directory gracefully', async () => {
+        const notFoundError = new Error('ENOENT') as NodeJS.ErrnoException;
+        notFoundError.code = 'ENOENT';
+
+        mockAccess.mockImplementation((path: string) => {
+            if(path.includes('.claude/session-env')) {
+                return Promise.reject(notFoundError);
+            }
+            return Promise.resolve();
+        });
+
+        mockReaddir.mockImplementation(() => Promise.resolve([]));
+
+        // Should complete without throwing
+        await cleanupAllStaleSessions();
+
+        // Should not attempt to delete session-env directories
+        expect(mockRm).not.toHaveBeenCalled();
+    });
+
+    test('should continue cleanup when individual file deletion fails', async () => {
+        const sessionFiles = ['session-1.jsonl', 'session-2.jsonl', 'session-3.jsonl'];
+        mockReaddir.mockImplementation((path: string) => {
+            if(path.includes('.claude/projects/')) {
+                return Promise.resolve(sessionFiles);
+            }
+            return Promise.resolve([]);
+        });
+
+        // Make the second file deletion fail
+        let unlinkCount = 0;
+        mockUnlink.mockImplementation(() => {
+            unlinkCount++;
+            if(unlinkCount === 2) {
+                return Promise.reject(new Error('EPERM'));
+            }
+            return Promise.resolve();
+        });
+
+        await cleanupAllStaleSessions();
+
+        // Should still attempt to delete all files
+        expect(mockUnlink).toHaveBeenCalledTimes(3);
+
+        // Should count only successful deletions (2 out of 3)
+        expect(mockLogger.info).toHaveBeenCalledWith(
+            expect.objectContaining({
+                cleanedCount: 2,
+            })
+        );
+    });
+
+    test('should continue cleanup when individual session-env deletion fails', async () => {
+        const envDirs = ['env-1', 'env-2', 'env-3'];
+        mockReaddir.mockImplementation((path: string) => {
+            if(path.includes('.claude/session-env')) {
+                return Promise.resolve(envDirs);
+            }
+            return Promise.resolve([]);
+        });
+
+        // Make the second directory deletion fail
+        let rmCount = 0;
+        mockRm.mockImplementation(() => {
+            rmCount++;
+            if(rmCount === 2) {
+                return Promise.reject(new Error('EPERM'));
+            }
+            return Promise.resolve();
+        });
+
+        await cleanupAllStaleSessions();
+
+        // Should still attempt to delete all directories
+        expect(mockRm).toHaveBeenCalledTimes(3);
+
+        // Should count only successful deletions (2 out of 3)
+        expect(mockLogger.info).toHaveBeenCalledWith(
+            expect.objectContaining({
+                cleanedCount: 2,
+            })
+        );
+    });
+
+    test('should only delete .jsonl files from projects directory', async () => {
+        const files = ['session.jsonl', 'other.txt', 'README.md', 'agent.jsonl'];
+        mockReaddir.mockImplementation((path: string) => {
+            if(path.includes('.claude/projects/')) {
+                return Promise.resolve(files);
+            }
+            return Promise.resolve([]);
+        });
+
+        await cleanupAllStaleSessions();
+
+        // Should only delete .jsonl files (2 files)
+        expect(mockUnlink).toHaveBeenCalledTimes(2);
+        expect(mockUnlink.mock.calls[0][0]).toContain('session.jsonl');
+        expect(mockUnlink.mock.calls[1][0]).toContain('agent.jsonl');
+    });
+
+    test('should handle readdir errors for projects directory gracefully', async () => {
+        mockAccess.mockImplementation(() => Promise.resolve());
+        mockReaddir.mockImplementation((path: string) => {
+            if(path.includes('.claude/projects/')) {
+                return Promise.reject(new Error('Permission denied'));
+            }
+            return Promise.resolve([]);
+        });
+
+        // Should complete without throwing
+        await cleanupAllStaleSessions();
+
+        // Should not attempt to delete files
+        expect(mockUnlink).not.toHaveBeenCalled();
+    });
+
+    test('should handle readdir errors for session-env directory gracefully', async () => {
+        mockAccess.mockImplementation(() => Promise.resolve());
+        mockReaddir.mockImplementation((path: string) => {
+            if(path.includes('.claude/session-env')) {
+                return Promise.reject(new Error('Permission denied'));
+            }
+            return Promise.resolve([]);
+        });
+
+        // Should complete without throwing
+        await cleanupAllStaleSessions();
+
+        // Should not attempt to delete session-env directories
+        expect(mockRm).not.toHaveBeenCalled();
+    });
+
+    test('should clean both session files and session-env directories', async () => {
+        const sessionFiles = ['session-1.jsonl'];
+        const envDirs = ['env-1'];
+
+        mockReaddir.mockImplementation((path: string) => {
+            if(path.includes('.claude/projects/')) {
+                return Promise.resolve(sessionFiles);
+            }
+            if(path.includes('.claude/session-env')) {
+                return Promise.resolve(envDirs);
+            }
+            return Promise.resolve([]);
+        });
+
+        await cleanupAllStaleSessions();
+
+        // Should clean both types
+        expect(mockUnlink).toHaveBeenCalledTimes(1);
+        expect(mockRm).toHaveBeenCalledTimes(1);
+
+        // Total cleaned count should be 2
+        expect(mockLogger.info).toHaveBeenCalledWith(
+            expect.objectContaining({
+                cleanedCount: 2,
+            })
+        );
     });
 });

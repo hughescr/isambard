@@ -658,7 +658,6 @@ async function buildUserMessageTextForBatch(
  * @param images Optional images to include
  * @returns Async generator yielding SDKUserMessage
  */
-// Stryker disable all: Private async generator - behavior tested via handleInput() integration tests
 async function* buildPromptForSdk(
     textContent: string,
     images?: PlatformImage[]
@@ -670,6 +669,7 @@ async function* buildPromptForSdk(
         ? buildMultimodalContent(textContent, images)
         : textContent;
 
+    // Stryker disable ObjectLiteral,StringLiteral: Protocol constants for Claude SDK
     yield {
         type:    'user',
         message: {
@@ -679,8 +679,8 @@ async function* buildPromptForSdk(
         parent_tool_use_id: null,
         session_id:         sessionId,
     };
+    // Stryker restore ObjectLiteral,StringLiteral
 }
-// Stryker restore all
 
 /**
  * Handles session ID extraction and task persistence setup.
@@ -913,6 +913,91 @@ function buildHandleInputResult(
     };
 }
 
+/**
+ * Load user timezone for normal message flows.
+ * Returns undefined for catch-up/perch/resume flows which use server timezone.
+ * @param contextBuilder Context builder with timezone loading capability
+ * @param options Handle input options
+ * @param contexts Message contexts (may be empty for catch-up/perch)
+ * @returns User timezone or undefined
+ */
+async function loadUserTimezoneForFlow(
+    contextBuilder: ContextBuilder | undefined,
+    options: HandleInputOptions | undefined,
+    contexts: MessageContext[]
+): Promise<string | undefined> {
+    // Only load user timezone for normal message flows — catch-up/perch/resume use server TZ
+    const isNormalFlow = !options?.catchUpPrompt && !options?.perchPrompt && !options?.resumeContext;
+    if(!contextBuilder || !isNormalFlow || contexts.length === 0) {
+        return undefined;
+    }
+
+    try {
+        return await contextBuilder.loadUserTimezone(contexts[0].userId);
+    } catch (error) {
+        /* Stryker disable all: Logging for observability */
+        logger.warn({ error, userId: contexts[0].userId }, 'Failed to load user timezone, falling back to server timezone');
+        /* Stryker restore all */
+        return undefined;
+    }
+}
+
+/**
+ * Build prompt for Agent SDK (string for text-only, async generator for images).
+ * @param userMessageText Text content of the message
+ * @param images Optional images to include
+ * @returns String or async generator of SDK messages
+ */
+function buildPromptForHandleInput(
+    userMessageText: string,
+    images: PlatformImage[] | undefined
+): string | AsyncIterable<SDKUserMessage> {
+    return hasImages(images)
+        ? buildPromptForSdk(userMessageText, images)
+        : userMessageText;
+}
+
+/**
+ * Clean up session if processing completed without interruption.
+ * Fire-and-forget cleanup operation.
+ * @param wasInterrupted Whether processing was interrupted
+ * @param capturedSessionId Session ID to clean up
+ */
+function cleanupSessionIfComplete(
+    wasInterrupted: boolean,
+    capturedSessionId: string | undefined
+): void {
+    // Stryker disable next-line all: Cleanup is fire-and-forget, not observable in tests
+    if(!wasInterrupted && capturedSessionId) {
+        // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Fire-and-forget cleanup
+        cleanupSession(capturedSessionId);
+    }
+}
+
+/**
+ * Build error result for handleInput catch block.
+ * Checks for abort signal and returns appropriate result.
+ * @param error The caught error
+ * @param options Handle input options
+ * @param capturedSessionId Session ID if captured
+ * @param tracker Stream tracker
+ * @param contextCount Number of contexts being processed
+ * @returns HandleInputResult for error case
+ */
+function buildErrorHandleInputResult(
+    error: unknown,
+    options: HandleInputOptions | undefined,
+    capturedSessionId: string | undefined,
+    tracker: StreamTracker,
+    contextCount: number
+): HandleInputResult {
+    const errorMessage = _.isError(error) ? error.message : String(error);
+    logger.error({ error, contextCount }, `Failed to process batch: ${errorMessage}`);
+    // Check abort signal — SDK may throw non-AbortError on abort
+    const abortedBySignal = options?.abortController?.signal.aborted ?? false;
+    return buildHandleInputResult('', abortedBySignal, capturedSessionId, tracker);
+}
+
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, taskPersistenceCoordinator } = options;
 
@@ -926,7 +1011,6 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     });
 
     return {
-        // eslint-disable-next-line complexity -- Pre-existing complexity, refactoring planned
         handleInput: async (
             contexts: MessageContext[],
             options?: HandleInputOptions
@@ -936,19 +1020,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
 
             try {
                 // 1. Load user timezone for prompt localization
-                let userTimezone: string | undefined;
-                // Only load user timezone for normal message flows — catch-up/perch/resume use server TZ
-                const isNormalFlow = !options?.catchUpPrompt && !options?.perchPrompt && !options?.resumeContext;
-                if(contextBuilder && isNormalFlow) {
-                    // Stryker disable BlockStatement: Logging for observability
-                    try {
-                        userTimezone = await contextBuilder.loadUserTimezone(contexts[0].userId);
-                    } catch (error) {
-                        /* Stryker disable all: Logging for observability */
-                        logger.warn({ error, userId: contexts[0].userId }, 'Failed to load user timezone, falling back to server timezone');
-                        /* Stryker restore all */
-                    }
-                }
+                const userTimezone = await loadUserTimezoneForFlow(contextBuilder, options, contexts);
 
                 // 2. Build system prompt with core identity, channel list, and user timezone
                 const channelList = options?.channelList;
@@ -965,11 +1037,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 );
 
                 // 4. Build prompt (string for text-only, async generator for images or text)
-                // The SDK accepts either a plain string or an AsyncIterable<SDKUserMessage>
-                // For multimodal messages, we always use the generator form
-                const prompt = hasImages(options?.images)
-                    ? buildPromptForSdk(userMessageText, options?.images)
-                    : userMessageText;
+                const prompt = buildPromptForHandleInput(userMessageText, options?.images);
 
                 // 5. Log start of processing
                 logger.info({
@@ -991,28 +1059,22 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 capturedSessionId = sessionId;
 
                 // 9. Clean up session only on completion (not on interrupt)
-                // Stryker disable next-line all: Cleanup is fire-and-forget, not observable in tests
-                if(!wasInterrupted && capturedSessionId) {
-                    // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Fire-and-forget cleanup
-                    cleanupSession(capturedSessionId);
-                }
+                cleanupSessionIfComplete(wasInterrupted, capturedSessionId);
 
                 // 10. Log completion
+                /* Stryker disable all: Logging for observability */
                 logger.info({
                     contextCount:   contexts.length,
                     wasInterrupted,
                     responseLength: lastAssistantText.length,
                     msg:            `Batch processing ${wasInterrupted ? 'interrupted' : 'completed'} (${lastAssistantText.length} chars)`,
                 });
+                /* Stryker restore all */
 
                 // 11. Return result
                 return buildHandleInputResult(lastAssistantText, wasInterrupted, capturedSessionId, tracker);
             } catch (error) {
-                const errorMessage = _.isError(error) ? error.message : String(error);
-                logger.error({ error, contextCount: contexts.length }, `Failed to process batch: ${errorMessage}`);
-                // Check abort signal — SDK may throw non-AbortError on abort
-                const abortedBySignal = options?.abortController?.signal.aborted ?? false;
-                return buildHandleInputResult('', abortedBySignal, capturedSessionId, tracker);
+                return buildErrorHandleInputResult(error, options, capturedSessionId, tracker, contexts.length);
             }
         },
     };
