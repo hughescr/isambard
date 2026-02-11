@@ -8,8 +8,8 @@
 import { logger } from '@hughescr/logger';
 import { map as _map, groupBy as _groupBy, isNumber as _isNumber, sortBy as _sortBy } from 'lodash';
 import type { MemoryToolBackend } from '../storage/memory-tool/backend';
-import type { MemoryPath, LayerName } from '../storage/memory-tool/types';
-import { extractLayerFromPath, createMemoryPath } from '../storage/memory-tool/types';
+import type { MemoryPath } from '../storage/memory-tool/types';
+import { extractLayerFromPath, createMemoryPath, createLayerName } from '../storage/memory-tool/types';
 import { formatShortRelativeTime } from '../utils/time';
 
 export interface ContextBuilderOptions {
@@ -123,7 +123,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             logger.debug({ msg: 'Loading core identity...' });
 
             // Load identity layer items (permanent, auto-loaded)
-            const result = await backend.listByLayer('identity' as LayerName);
+            const result = await backend.listByLayer(createLayerName('identity'));
 
             // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant - empty array join returns ''
             if(result.items.length === 0) {
@@ -248,14 +248,14 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             let result = await backend.searchByTimeRange(
                 twoWeeksAgo.toISOString(),
                 now.toISOString(),
-                'events' as LayerName,
+                createLayerName('events'),
                 { limit }
             );
 
             // Fallback: if no events in 14 days, get most recent regardless of age
             let showingOlderEventsNote = false;
             if(result.length === 0) {
-                const fallbackResult = await backend.listByLayer('events' as LayerName, { limit });
+                const fallbackResult = await backend.listByLayer(createLayerName('events'), { limit });
                 result = fallbackResult.items;
                 showingOlderEventsNote = result.length > 0;
             }

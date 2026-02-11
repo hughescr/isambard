@@ -55,7 +55,7 @@ export class MemoryToolKeyGenerator {
    *
    * @example
    * ```ts
-   * const keys = MemoryToolKeyGenerator.createKeys('/identity/core-values.md' as MemoryPath);
+   * const keys = MemoryToolKeyGenerator.createKeys(createMemoryPath('/identity/core-values.md'));
    * // {
    * //   PK: 'DIR#/identity',
    * //   SK: 'FILE#core-values.md',

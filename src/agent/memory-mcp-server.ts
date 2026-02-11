@@ -4,7 +4,7 @@ import { z } from 'zod';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { MemoryToolBackend } from '../storage/memory-tool';
-import { ContentType, createMemoryPath, LayerName } from '../storage/memory-tool/types';
+import { type LayerName, createMemoryPath, createLayerName, createContentType } from '../storage/memory-tool/types';
 
 /**
  * Creates an MCP server for memory operations.
@@ -75,7 +75,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                             await backend.create({
                                 path,
                                 content:     args.content,
-                                contentType: 'text/plain' as ContentType,
+                                contentType: createContentType('text/plain'),
                                 tags:        args.tags,
                             });
                         }
@@ -115,7 +115,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                             await backend.create({
                                 path,
                                 content:     args.content,
-                                contentType: 'text/plain' as ContentType,
+                                contentType: createContentType('text/plain'),
                                 tags:        args.tags,
                             });
                         }
@@ -155,7 +155,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                         await backend.create({
                             path,
                             content,
-                            contentType: 'text/plain' as ContentType,
+                            contentType: createContentType('text/plain'),
                             tags:        args.tags,
                         });
                         return {
@@ -196,7 +196,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                             : undefined;
                         const results = await backend.searchByTags(
                             args.tags,
-                            args.layer as LayerName | undefined,
+                            args.layer ? createLayerName(args.layer) : undefined,
                             options
                         );
                         if(results.items.length === 0) {
@@ -256,9 +256,9 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
 
                         // Check if path is a layer root - use listByLayer for efficient GSI1 query
                         const layerPaths: Record<string, LayerName> = {
-                            '/events':   'events' as LayerName,
-                            '/identity': 'identity' as LayerName,
-                            '/state':    'state' as LayerName,
+                            '/events':   createLayerName('events'),
+                            '/identity': createLayerName('identity'),
+                            '/state':    createLayerName('state'),
                         };
                         const layer = layerPaths[dirPath];
 

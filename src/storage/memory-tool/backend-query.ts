@@ -4,7 +4,8 @@ import {
     type MemoryToolItemData,
     type MemoryToolItem,
     type LayerName,
-    type TagIndexItem
+    type TagIndexItem,
+    createLayerName
 } from './types';
 import { MemoryToolBackendTagIndex } from './backend-tag-index';
 
@@ -223,11 +224,11 @@ export class MemoryToolBackendQuery {
         const maxStateItems = options?.maxStateItems ?? 50;
 
         // Get identity items (all items from /identity layer)
-        const identityResult = await this.listByLayer('identity' as LayerName, { limit: maxIdentityItems });
+        const identityResult = await this.listByLayer(createLayerName('identity'), { limit: maxIdentityItems });
         const identityItems = _take(identityResult.items, maxIdentityItems);
 
         // Get state items (all items from /state layer)
-        const stateResult = await this.listByLayer('state' as LayerName, { limit: maxStateItems });
+        const stateResult = await this.listByLayer(createLayerName('state'), { limit: maxStateItems });
         let stateItems = stateResult.items;
 
         // Filter for "hot" state items if metadata exists
