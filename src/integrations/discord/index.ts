@@ -58,8 +58,7 @@ export {
     type MessageProcessor,
     type MessageCoordinatorConfig,
     type TypingChannel,
-    type MessageCoordinator,
-    createMessageCoordinator
+    MessageCoordinator
 } from './message-coordinator';
 
 export {

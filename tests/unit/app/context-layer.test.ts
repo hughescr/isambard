@@ -59,7 +59,7 @@ describe('createContextLayer', () => {
 
         // Mock EventDeltaTracker constructor
         const eventDeltaTrackerModule = await import('@/agent/event-delta-tracker');
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- Test mock
+
         spies.push(spyOn(eventDeltaTrackerModule, 'EventDeltaTracker').mockImplementation(() => ({})));
 
         // Import and call createContextLayer
@@ -78,7 +78,7 @@ describe('createContextLayer', () => {
 
         // Mock EventDeltaTracker constructor
         const eventDeltaTrackerModule = await import('@/agent/event-delta-tracker');
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- Test mock
+
         const EventDeltaTrackerSpy = spyOn(eventDeltaTrackerModule, 'EventDeltaTracker').mockImplementation(() => ({}));
         spies.push(EventDeltaTrackerSpy);
 

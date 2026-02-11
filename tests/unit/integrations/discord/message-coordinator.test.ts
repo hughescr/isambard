@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import _ from 'lodash';
 import type { Message } from 'discord.js';
-import { createMessageCoordinator } from '@/integrations/discord/message-coordinator';
-import type { MessageCoordinator, ProcessResult, MessageProcessor } from '@/integrations/discord/message-coordinator';
+import { MessageCoordinator } from '@/integrations/discord/message-coordinator';
+import type { ProcessResult, MessageProcessor } from '@/integrations/discord/message-coordinator';
 import type { DiscordMessageContext } from '@/integrations/discord/types';
 import { createChannelId, createGuildId, createUserId } from '@/integrations/discord/types';
 import { createStreamTracker } from '@/agent/stream-tracker';
@@ -56,7 +56,7 @@ describe('MessageCoordinator', () => {
 
     describe('Configuration', () => {
         it('should create coordinator with default config', () => {
-            coordinator = createMessageCoordinator();
+            coordinator = new MessageCoordinator();
             expect(coordinator).toBeDefined();
             expect(typeof coordinator.handleMessage).toBe('function');
             expect(typeof coordinator.setProcessor).toBe('function');
@@ -64,14 +64,14 @@ describe('MessageCoordinator', () => {
         });
 
         it('should create coordinator with custom debounceMs', () => {
-            coordinator = createMessageCoordinator({ debounceMs: 500 });
+            coordinator = new MessageCoordinator({ debounceMs: 500 });
             expect(coordinator).toBeDefined();
         });
     });
 
     describe('Processor Management', () => {
         beforeEach(() => {
-            coordinator = createMessageCoordinator();
+            coordinator = new MessageCoordinator();
         });
 
         it('should set the processor function', () => {
@@ -85,7 +85,7 @@ describe('MessageCoordinator', () => {
 
     describe('Message Processing', () => {
         beforeEach(() => {
-            coordinator = createMessageCoordinator();
+            coordinator = new MessageCoordinator();
             coordinator.setProcessor(processorMock);
         });
 
@@ -135,7 +135,7 @@ describe('MessageCoordinator', () => {
 
     describe('Interruption Handling', () => {
         beforeEach(() => {
-            coordinator = createMessageCoordinator({ debounceMs: 100 });
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
         });
 
@@ -279,7 +279,7 @@ describe('MessageCoordinator', () => {
 
     describe('Debounce Batching', () => {
         beforeEach(() => {
-            coordinator = createMessageCoordinator({ debounceMs: 100 });
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
         });
 
@@ -375,7 +375,7 @@ describe('MessageCoordinator', () => {
 
     describe('Resume Context', () => {
         beforeEach(() => {
-            coordinator = createMessageCoordinator({ debounceMs: 100 });
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
         });
 
@@ -419,7 +419,7 @@ describe('MessageCoordinator', () => {
 
     describe('Channel Independence', () => {
         beforeEach(() => {
-            coordinator = createMessageCoordinator();
+            coordinator = new MessageCoordinator();
             coordinator.setProcessor(processorMock);
         });
 
@@ -456,7 +456,7 @@ describe('MessageCoordinator', () => {
     describe('Response Callback', () => {
         it('should invoke onResponse callback when processing completes', async () => {
             const onResponseMock = mock(async () => undefined);
-            coordinator = createMessageCoordinator({
+            coordinator = new MessageCoordinator({
                 debounceMs: 100,
                 onResponse: onResponseMock
             });
@@ -478,7 +478,7 @@ describe('MessageCoordinator', () => {
 
         it('should invoke onResponse with first message from batch', async () => {
             const onResponseMock = mock(async () => undefined);
-            coordinator = createMessageCoordinator({
+            coordinator = new MessageCoordinator({
                 debounceMs: 100,
                 onResponse: onResponseMock
             });
@@ -517,7 +517,7 @@ describe('MessageCoordinator', () => {
 
         it('should not invoke onResponse when interrupted', async () => {
             const onResponseMock = mock(async () => undefined);
-            coordinator = createMessageCoordinator({
+            coordinator = new MessageCoordinator({
                 debounceMs: 100,
                 onResponse: onResponseMock
             });
@@ -553,7 +553,7 @@ describe('MessageCoordinator', () => {
         });
 
         it('should handle onResponse callback not being provided', async () => {
-            coordinator = createMessageCoordinator(); // No onResponse
+            coordinator = new MessageCoordinator(); // No onResponse
             coordinator.setProcessor(processorMock);
 
             // Should not throw
@@ -565,7 +565,7 @@ describe('MessageCoordinator', () => {
 
         it('should invoke onResponse with null message for re-queued messages', async () => {
             const onResponseMock = mock(async () => undefined);
-            coordinator = createMessageCoordinator({
+            coordinator = new MessageCoordinator({
                 debounceMs: 100,
                 onResponse: onResponseMock
             });
@@ -605,7 +605,7 @@ describe('MessageCoordinator', () => {
 
     describe('Cleanup', () => {
         it('should clear all timers and state on stop', async () => {
-            coordinator = createMessageCoordinator({ debounceMs: 100 });
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
 
             const cleanupProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
@@ -642,7 +642,7 @@ describe('MessageCoordinator', () => {
         });
 
         it('should abort active queries on stop', async () => {
-            coordinator = createMessageCoordinator();
+            coordinator = new MessageCoordinator();
             coordinator.setProcessor(processorMock);
 
             let abortSignalReceived: AbortSignal | null = null;
@@ -670,7 +670,7 @@ describe('MessageCoordinator', () => {
 
     describe('Mutant Testing - wasInterrupted Logic', () => {
         beforeEach(() => {
-            coordinator = createMessageCoordinator({ debounceMs: 100 });
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
         });
 
@@ -877,7 +877,7 @@ describe('MessageCoordinator', () => {
 
     describe('Mutant Testing - processWithResume Logic', () => {
         beforeEach(() => {
-            coordinator = createMessageCoordinator({ debounceMs: 100 });
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
         });
 
@@ -1193,7 +1193,7 @@ describe('MessageCoordinator', () => {
 
     describe('Mutant Testing - Message Filtering and Context Building', () => {
         beforeEach(() => {
-            coordinator = createMessageCoordinator({ debounceMs: 100 });
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
         });
 
@@ -1319,7 +1319,7 @@ describe('MessageCoordinator', () => {
 
     describe('Mutant Testing - Processor Error Handling', () => {
         beforeEach(() => {
-            coordinator = createMessageCoordinator();
+            coordinator = new MessageCoordinator();
         });
 
         it('should throw error with correct message when processor not set in handleMessage', () => {
@@ -1340,7 +1340,7 @@ describe('MessageCoordinator', () => {
 
     describe('Mutant Testing - SessionId Undefined Handling', () => {
         beforeEach(() => {
-            coordinator = createMessageCoordinator({ debounceMs: 100 });
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
         });
 
@@ -1582,7 +1582,7 @@ describe('MessageCoordinator', () => {
 
     describe('Mutant Testing - Optional Chaining on newMessages[0]', () => {
         beforeEach(() => {
-            coordinator = createMessageCoordinator({ debounceMs: 100 });
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
         });
 
@@ -1639,7 +1639,7 @@ describe('MessageCoordinator', () => {
 
     describe('Mutant Testing - NewEvents Array Verification', () => {
         beforeEach(() => {
-            coordinator = createMessageCoordinator({ debounceMs: 100 });
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
         });
 
@@ -1689,7 +1689,7 @@ describe('MessageCoordinator', () => {
                 getNewEvents: mock(async () => []),
             };
 
-            coordinator = createMessageCoordinator({
+            coordinator = new MessageCoordinator({
                 eventDeltaTracker: mockTracker,
             });
             coordinator.setProcessor(processorMock);
@@ -1722,7 +1722,7 @@ describe('MessageCoordinator', () => {
                 };
             };
 
-            coordinator = createMessageCoordinator({
+            coordinator = new MessageCoordinator({
                 debounceMs:        100,
                 eventDeltaTracker: mockTracker,
             });
@@ -1759,7 +1759,7 @@ describe('MessageCoordinator', () => {
                 };
             };
 
-            coordinator = createMessageCoordinator({ debounceMs: 100 }); // No tracker, short debounce
+            coordinator = new MessageCoordinator({ debounceMs: 100 }); // No tracker, short debounce
             coordinator.setProcessor(noTrackerProcessor);
 
             // First message
@@ -1789,7 +1789,7 @@ describe('MessageCoordinator', () => {
                 getNewEvents: mock(async () => ['Event 1']),
             };
 
-            coordinator = createMessageCoordinator({
+            coordinator = new MessageCoordinator({
                 eventDeltaTracker: mockTracker,
             });
             coordinator.setProcessor(processorMock);
@@ -1807,7 +1807,7 @@ describe('MessageCoordinator', () => {
 
     describe('Mutant Testing - Processor Not Set Error Throwing', () => {
         beforeEach(() => {
-            coordinator = createMessageCoordinator();
+            coordinator = new MessageCoordinator();
         });
 
         it('should explicitly throw error when processor not set (verify !processor check) - Mutants #1816, #1817', async () => {
@@ -1888,7 +1888,7 @@ describe('MessageCoordinator', () => {
 
     describe('Mutant Testing - Debounce Timer Creation', () => {
         beforeEach(() => {
-            coordinator = createMessageCoordinator({ debounceMs: 100 });
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
         });
 
@@ -1981,7 +1981,7 @@ describe('MessageCoordinator', () => {
 
     describe('Mutant Testing - Debounce Timer Management', () => {
         beforeEach(() => {
-            coordinator = createMessageCoordinator({ debounceMs: 100 });
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
         });
 
         it('should clear debounce timer when new message arrives during active processing', async () => {
@@ -2121,7 +2121,7 @@ describe('MessageCoordinator', () => {
         let mockChannel: { sendTyping: ReturnType<typeof mock> };
 
         beforeEach(() => {
-            coordinator = createMessageCoordinator();
+            coordinator = new MessageCoordinator();
             mockChannel = {
                 sendTyping: mock(async () => {
                     // Intentionally empty - just needs to be async
@@ -3004,7 +3004,7 @@ describe('MessageCoordinator', () => {
         let mockChannel: { sendTyping: ReturnType<typeof mock> };
 
         beforeEach(() => {
-            coordinator = createMessageCoordinator();
+            coordinator = new MessageCoordinator();
             coordinator.setProcessor(processorMock);
             mockChannel = {
                 sendTyping: mock(async () => {

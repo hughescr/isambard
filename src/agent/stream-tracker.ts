@@ -55,7 +55,7 @@ export class StreamTracker {
     private thinking = '';
     private text = '';
     private pendingToolUse: ToolUseBlock | null = null;
-    private sessionId: string | undefined;
+    private sessionId:      string | undefined;
 
     /**
      * Update the tracker with a new stream event.
