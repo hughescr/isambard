@@ -49,6 +49,7 @@ import type { StreamTracker } from '@/agent/stream-tracker';
 import type { DiscordMessageContext } from '@/integrations/discord/types';
 import type { DynamicStatusGenerator } from '@/integrations/discord/presence/status-generator-dynamic';
 import type { BotStateManager } from '@/integrations/discord/state/types';
+import type { PresenceManager } from '@/integrations/discord/presence/manager';
 
 // Helper to wait for async safeUpdatePhase promises to settle
 // Using queueMicrotask instead of setImmediate for faster promise resolution
@@ -370,7 +371,7 @@ describe('StatusMiddleware', () => {
                 start:                         mock(() => undefined),
                 stop:                          mock(() => undefined),
                 transitionPresenceDisplayMode: mock(() => undefined),
-            };
+            } as unknown as PresenceManager;
 
             const middleware = createStatusMiddleware({
                 presenceManager: errorPresenceManager,
@@ -713,7 +714,7 @@ describe('StatusMiddleware', () => {
                 start:                         mock(() => undefined),
                 stop:                          mock(() => undefined),
                 transitionPresenceDisplayMode: mock(() => undefined),
-            };
+            } as unknown as PresenceManager;
 
             const middleware = createStatusMiddleware({
                 presenceManager: errorPresenceManager,

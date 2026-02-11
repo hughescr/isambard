@@ -36,8 +36,7 @@ describe('createContextLayer', () => {
         // Mock EventDeltaTracker constructor
         const eventDeltaTrackerModule = await import('@/agent/event-delta-tracker');
         const mockEventDeltaTracker = {} as any;
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- Test mock
-        const EventDeltaTrackerSpy = spyOn(eventDeltaTrackerModule, 'EventDeltaTracker').mockImplementation(() => mockEventDeltaTracker);
+        const EventDeltaTrackerSpy = spyOn(eventDeltaTrackerModule as any, 'EventDeltaTracker').mockImplementation(((): any => mockEventDeltaTracker) as any);
         spies.push(EventDeltaTrackerSpy);
 
         // Import and call createContextLayer
@@ -60,7 +59,7 @@ describe('createContextLayer', () => {
         // Mock EventDeltaTracker constructor
         const eventDeltaTrackerModule = await import('@/agent/event-delta-tracker');
 
-        spies.push(spyOn(eventDeltaTrackerModule, 'EventDeltaTracker').mockImplementation(() => ({})));
+        spies.push(spyOn(eventDeltaTrackerModule as any, 'EventDeltaTracker').mockImplementation(((): any => ({})) as any));
 
         // Import and call createContextLayer
         const { createContextLayer } = await import('@/app/context-layer');
@@ -79,7 +78,7 @@ describe('createContextLayer', () => {
         // Mock EventDeltaTracker constructor
         const eventDeltaTrackerModule = await import('@/agent/event-delta-tracker');
 
-        const EventDeltaTrackerSpy = spyOn(eventDeltaTrackerModule, 'EventDeltaTracker').mockImplementation(() => ({}));
+        const EventDeltaTrackerSpy = spyOn(eventDeltaTrackerModule as any, 'EventDeltaTracker').mockImplementation(((): any => ({})) as any);
         spies.push(EventDeltaTrackerSpy);
 
         // Import and call createContextLayer
@@ -110,7 +109,7 @@ describe('createContextLayer', () => {
 
         // Mock EventDeltaTracker constructor to throw
         const eventDeltaTrackerModule = await import('@/agent/event-delta-tracker');
-        const EventDeltaTrackerSpy = spyOn(eventDeltaTrackerModule, 'EventDeltaTracker').mockImplementation(() => {
+        const EventDeltaTrackerSpy = spyOn(eventDeltaTrackerModule as any, 'EventDeltaTracker').mockImplementation((): any => {
             throw new Error('Event delta tracker initialization failed');
         });
         spies.push(EventDeltaTrackerSpy);

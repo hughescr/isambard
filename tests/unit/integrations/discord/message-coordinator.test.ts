@@ -7,6 +7,7 @@ import type { DiscordMessageContext } from '@/integrations/discord/types';
 import { createChannelId, createGuildId, createUserId } from '@/integrations/discord/types';
 import { StreamTracker } from '@/agent/stream-tracker';
 import type { ResumeContext } from '@/agent/resume-prompt-builder';
+import type { EventDeltaTracker } from '@/agent/event-delta-tracker';
 import { logger } from '@hughescr/logger';
 
 describe('MessageCoordinator', () => {
@@ -1687,7 +1688,7 @@ describe('MessageCoordinator', () => {
             const mockTracker = {
                 markStart:    mock(async () => { /* no-op */ }),
                 getNewEvents: mock(async () => []),
-            };
+            } as unknown as EventDeltaTracker;
 
             coordinator = new MessageCoordinator({
                 eventDeltaTracker: mockTracker,
@@ -1708,7 +1709,7 @@ describe('MessageCoordinator', () => {
             const mockTracker = {
                 markStart:    mock(async () => { /* no-op */ }),
                 getNewEvents: mock(async () => testEvents),
-            };
+            } as unknown as EventDeltaTracker;
 
             let resumeContextReceived: ResumeContext | null = null;
 
@@ -1787,7 +1788,7 @@ describe('MessageCoordinator', () => {
             const mockTracker = {
                 markStart:    mock(async () => { /* no-op */ }),
                 getNewEvents: mock(async () => ['Event 1']),
-            };
+            } as unknown as EventDeltaTracker;
 
             coordinator = new MessageCoordinator({
                 eventDeltaTracker: mockTracker,
