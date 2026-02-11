@@ -685,7 +685,7 @@ describe('MemoryToolBackend - Date Filtering', () => {
             expect(result[1].path).toBe('/state/st1.md' as MemoryPath);
         });
 
-        test('should sort state items by accessCount and lastAccessed', async () => {
+        test('should sort state items by sigmoid score (frequency × recency)', async () => {
             const stateItems: MemoryToolItem[] = [
                 {
                     PK:          'DIR#/state',
@@ -717,12 +717,99 @@ describe('MemoryToolBackend - Date Filtering', () => {
                 .resolvesOnce({ Items: [] }) // identity layer
                 .resolvesOnce({ Items: stateItems }); // state layer
 
-            const result = await backend.getAutoLoadItems();
+            const result = await backend.getAutoLoadItems({
+                now: new Date('2024-02-01T00:00:00.000Z'),
+            });
 
             expect(result).toHaveLength(2);
-            // High access count should come first
+            // High access count + recent should score higher than low access count + old
             expect(result[0].path).toBe('/state/high-access.md' as MemoryPath);
             expect(result[1].path).toBe('/state/low-access.md' as MemoryPath);
+        });
+
+        test('high-count stale item ranks lower than moderate-count recent item', async () => {
+            const stateItems: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#stale.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/state/stale.md' as MemoryPath,
+                    content:     'Stale but high count',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 20, lastAccessed: '2024-01-01T00:00:00.000Z' },
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#recent.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-06-01T00:00:00.000Z',
+                    path:        '/state/recent.md' as MemoryPath,
+                    content:     'Recent with moderate count',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 8, lastAccessed: '2024-06-01T00:00:00.000Z' },
+                    createdAt:   '2024-06-01T00:00:00.000Z',
+                    updatedAt:   '2024-06-01T00:00:00.000Z',
+                },
+            ];
+
+            ddbMock.on(QueryCommand)
+                .resolvesOnce({ Items: [] }) // identity layer
+                .resolvesOnce({ Items: stateItems }); // state layer
+
+            const result = await backend.getAutoLoadItems({
+                now: new Date('2024-07-01T00:00:00.000Z'),
+            });
+
+            expect(result).toHaveLength(2);
+            // Recent item with moderate count should score higher than stale item with high count
+            // (sigmoid scoring favors recency over raw frequency for old memories)
+            expect(result[0].path).toBe('/state/recent.md' as MemoryPath);
+            expect(result[1].path).toBe('/state/stale.md' as MemoryPath);
+        });
+
+        test('items with no access metadata score by updatedAt age', async () => {
+            const stateItems: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#old.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/state/old.md' as MemoryPath,
+                    content:     'Old item',
+                    contentType: 'text/markdown',
+                    metadata:    {}, // No access metadata
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#newer.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-06-01T00:00:00.000Z',
+                    path:        '/state/newer.md' as MemoryPath,
+                    content:     'Newer item',
+                    contentType: 'text/markdown',
+                    metadata:    {}, // No access metadata
+                    createdAt:   '2024-06-01T00:00:00.000Z',
+                    updatedAt:   '2024-06-01T00:00:00.000Z',
+                },
+            ];
+
+            ddbMock.on(QueryCommand)
+                .resolvesOnce({ Items: [] }) // identity layer
+                .resolvesOnce({ Items: stateItems }); // state layer
+
+            const result = await backend.getAutoLoadItems({
+                now: new Date('2024-07-01T00:00:00.000Z'),
+            });
+
+            expect(result).toHaveLength(2);
+            // Both have accessCount=0, so recency (based on updatedAt) determines order
+            expect(result[0].path).toBe('/state/newer.md' as MemoryPath);
+            expect(result[1].path).toBe('/state/old.md' as MemoryPath);
         });
 
         test('should use default accessCount of 0 when metadata is missing', async () => {

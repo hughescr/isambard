@@ -37,14 +37,14 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
                 memoryPath:     '/identity/values.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['important'],
+                tags:           new Set(['important']),
                 contentPreview: 'My values',
             },
         ];
 
         ddbMock.on(QueryCommand).resolves({ Items: tagIndexItems });
 
-        const result = await queryOps.searchByTags(['important']);
+        const result = await queryOps.searchByTags(new Set(['important']));
 
         expect(result.items).toHaveLength(1);
         expect(result.items[0].memoryPath).toBe('/identity/values.md');
@@ -60,7 +60,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
                 memoryPath:     '/identity/values.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['important', 'core'],
+                tags:           new Set(['important', 'core']),
                 contentPreview: 'My core values',
             },
         ];
@@ -68,17 +68,17 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
         // First query for 'important' tag
         ddbMock.on(QueryCommand).resolves({ Items: tagIndexItems });
 
-        const result = await queryOps.searchByTags(['important', 'core']);
+        const result = await queryOps.searchByTags(new Set(['important', 'core']));
 
         expect(result.items).toHaveLength(1);
-        expect(result.items[0].tags).toContain('important');
-        expect(result.items[0].tags).toContain('core');
+        expect(result.items[0].tags.has('important')).toBe(true);
+        expect(result.items[0].tags.has('core')).toBe(true);
     });
 
     test('should pass layer parameter through to tagIndex', async () => {
         ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-        await queryOps.searchByTags(['important'], 'identity' as LayerName);
+        await queryOps.searchByTags(new Set(['important']), 'identity' as LayerName);
 
         const calls = ddbMock.commandCalls(QueryCommand);
         expect(calls).toHaveLength(1);
@@ -94,7 +94,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
 
         ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-        await queryOps.searchByTags(['important'], undefined, { cursor, limit: 5 });
+        await queryOps.searchByTags(new Set(['important']), undefined, { cursor, limit: 5 });
 
         const calls = ddbMock.commandCalls(QueryCommand);
         expect(calls).toHaveLength(1);
@@ -106,7 +106,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
     test('should pass startDate and endDate options through to tagIndex', async () => {
         ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-        await queryOps.searchByTags(['important'], undefined, {
+        await queryOps.searchByTags(new Set(['important']), undefined, {
             startDate: '2024-01-01T00:00:00.000Z',
             endDate:   '2024-01-31T23:59:59.999Z',
         });
@@ -127,14 +127,14 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
                 memoryPath:     '/identity/values.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['important'],
+                tags:           new Set(['important']),
                 contentPreview: 'My values...',
             },
         ];
 
         ddbMock.on(QueryCommand).resolves({ Items: tagIndexItems });
 
-        const result = await queryOps.searchByTags(['important']);
+        const result = await queryOps.searchByTags(new Set(['important']));
 
         expect(result.items).toHaveLength(1);
         // Verify it's TagIndexItem structure, not MemoryToolItemData
@@ -153,7 +153,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
             LastEvaluatedKey: lastEvaluatedKey,
         });
 
-        const result = await queryOps.searchByTags(['important']);
+        const result = await queryOps.searchByTags(new Set(['important']));
 
         expect(result.nextCursor).toBeDefined();
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- JSON.parse returns any
@@ -166,7 +166,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
     test('should return empty list when no matches', async () => {
         ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-        const result = await queryOps.searchByTags(['nonexistent']);
+        const result = await queryOps.searchByTags(new Set(['nonexistent']));
 
         expect(result.items).toEqual([]);
         expect(result.nextCursor).toBeUndefined();
@@ -180,7 +180,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
             // No tagIndex parameter
         );
 
-        expect(queryOpsWithoutIndex.searchByTags(['test'])).rejects.toThrow(
+        expect(queryOpsWithoutIndex.searchByTags(new Set(['test']))).rejects.toThrow(
             'Tag index not configured'
         );
     });
@@ -188,7 +188,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
     test('should handle empty tags array', async () => {
         ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-        const result = await queryOps.searchByTags([]);
+        const result = await queryOps.searchByTags(new Set());
 
         expect(result.items).toEqual([]);
         // Verify no query was sent (queryByTags returns early for empty tags)
@@ -198,7 +198,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
     test('should combine layer and date filters', async () => {
         ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-        await queryOps.searchByTags(['important'], 'identity' as LayerName, {
+        await queryOps.searchByTags(new Set(['important']), 'identity' as LayerName, {
             startDate: '2024-01-01T00:00:00.000Z',
             endDate:   '2024-01-31T23:59:59.999Z',
         });
@@ -222,7 +222,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
                 memoryPath:     '/identity/values.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['important', 'core'],
+                tags:           new Set(['important', 'core']),
                 contentPreview: 'Values',
             },
             {
@@ -231,7 +231,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
                 memoryPath:     '/identity/beliefs.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-02T00:00:00.000Z',
-                tags:           ['important', 'core'],
+                tags:           new Set(['important', 'core']),
                 contentPreview: 'Beliefs',
             },
         ];
@@ -243,7 +243,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
             LastEvaluatedKey: lastEvaluatedKey,
         });
 
-        const result = await queryOps.searchByTags(['important', 'core'], undefined, { limit: 2 });
+        const result = await queryOps.searchByTags(new Set(['important', 'core']), undefined, { limit: 2 });
 
         expect(result.items).toHaveLength(2);
         // Multi-tag queries do not return cursors to avoid losing trimmed items at page boundaries

@@ -95,7 +95,7 @@ describe('MemoryToolBackend', () => {
                 path:        '/identity/core-values.md' as MemoryPath,
                 content:     'Test content',
                 contentType: 'text/markdown',
-                tags:        ['beliefs', 'philosophy'],
+                tags:        new Set(['beliefs', 'philosophy']),
             });
 
             const calls = ddbMock.commandCalls(PutCommand);
@@ -198,7 +198,7 @@ describe('MemoryToolBackend', () => {
             const itemWithAllFields = {
                 ...existingItem,
                 metadata: { key: 'original' },
-                tags:     ['tag1'],
+                tags:     new Set(['tag1']),
             };
             ddbMock.on(GetCommand).resolves({ Item: itemWithAllFields });
             ddbMock.on(PutCommand).resolves({}); // Main item
@@ -209,7 +209,7 @@ describe('MemoryToolBackend', () => {
             });
             expect(result1.content).toBe('New content');
             expect(result1.metadata).toEqual({ key: 'original' }); // unchanged
-            expect(result1.tags).toEqual(['tag1']); // unchanged
+            expect(result1.tags).toEqual(new Set(['tag1'])); // unchanged
 
             // Reset mocks for next test
             ddbMock.reset();
@@ -230,10 +230,10 @@ describe('MemoryToolBackend', () => {
 
             // Test 3: Update only tags
             const result3 = await backend.update(testPath, {
-                tags: ['newtag'],
+                tags: new Set(['newtag']),
             });
             expect(result3.content).toBe('Original content'); // unchanged
-            expect(result3.tags).toEqual(['newtag']);
+            expect(result3.tags).toEqual(new Set(['newtag']));
         });
 
         test('should NOT create GSI2 keys when tags are added in update', async () => {
@@ -241,7 +241,7 @@ describe('MemoryToolBackend', () => {
             ddbMock.on(PutCommand).resolves({}); // Main item update succeeds
 
             await backend.update(testPath, {
-                tags: ['important', 'work'],
+                tags: new Set(['important', 'work']),
             });
 
             const calls = ddbMock.commandCalls(PutCommand);
@@ -287,11 +287,11 @@ describe('MemoryToolBackend', () => {
             expect(result1).toBeDefined();
             expect(result1.items).toBeInstanceOf(Array);
 
-            const result2 = await backend.searchByTags(['test-tag'], 'events' as _LayerName, undefined);
+            const result2 = await backend.searchByTags(new Set(['test-tag']), 'events' as _LayerName, undefined);
             expect(result2).toBeDefined();
             expect(result2.items).toBeInstanceOf(Array);
 
-            const result3 = await backend.searchByTags(['test-tag'], undefined, undefined);
+            const result3 = await backend.searchByTags(new Set(['test-tag']), undefined, undefined);
             expect(result3).toBeDefined();
             expect(result3.items).toBeInstanceOf(Array);
 
@@ -415,7 +415,7 @@ describe('MemoryToolBackend', () => {
                     path:        testPath,
                     content:     'Test content with tags',
                     contentType: 'text/markdown',
-                    tags:        ['important', 'work'],
+                    tags:        new Set(['important', 'work']),
                 });
 
                 const putCalls = ddbMock.commandCalls(PutCommand);
@@ -469,7 +469,7 @@ describe('MemoryToolBackend', () => {
                         path:        testPath,
                         content:     'Test content',
                         contentType: 'text/markdown',
-                        tags:        ['test'],
+                        tags:        new Set(['test']),
                     });
 
                     expect(result.path).toBe(testPath);
@@ -489,7 +489,7 @@ describe('MemoryToolBackend', () => {
                 content:     'Original content',
                 contentType: 'text/markdown',
                 metadata:    {},
-                tags:        ['oldtag'],
+                tags:        new Set(['oldtag']),
 
                 createdAt: '2024-01-01T00:00:00.000Z',
                 updatedAt: '2024-01-01T00:00:00.000Z',
@@ -501,7 +501,7 @@ describe('MemoryToolBackend', () => {
                 ddbMock.on(DeleteCommand).resolves({});
 
                 await backend.update(testPath, {
-                    tags: ['newtag'],
+                    tags: new Set(['newtag']),
                 });
 
                 // Verify tag index operations
@@ -576,7 +576,7 @@ describe('MemoryToolBackend', () => {
                 content:     'Content',
                 contentType: 'text/markdown',
                 metadata:    {},
-                tags:        ['tag1', 'tag2'],
+                tags:        new Set(['tag1', 'tag2']),
 
                 createdAt: '2024-01-01T00:00:00.000Z',
                 updatedAt: '2024-01-01T00:00:00.000Z',
@@ -639,7 +639,7 @@ describe('MemoryToolBackend', () => {
                         path:        testPath,
                         content:     'Content',
                         contentType: 'text/markdown',
-                        tags:        ['tag1', 'tag2'],
+                        tags:        new Set(['tag1', 'tag2']),
                     });
                 } finally {
                     global.setTimeout = originalSetTimeout;
@@ -656,7 +656,7 @@ describe('MemoryToolBackend', () => {
                     path:        testPath,
                     content:     'Content',
                     contentType: 'text/markdown',
-                    tags:        ['tag1', 'tag2'],
+                    tags:        new Set(['tag1', 'tag2']),
                 });
             });
 
@@ -681,24 +681,24 @@ describe('MemoryToolBackend', () => {
                             memoryPath:     '/state/test.md',
                             layer:          'state',
                             updatedAt:      '2024-01-01T00:00:00.000Z',
-                            tags:           ['important', 'work'],
+                            tags:           new Set(['important', 'work']),
                             contentPreview: 'Test content',
                         },
                     ],
                 });
 
-                const result = await backend.searchByTags(['important', 'work']);
+                const result = await backend.searchByTags(new Set(['important', 'work']));
 
                 expect(result.items).toHaveLength(1);
                 expect(result.items[0].memoryPath).toBe('/state/test.md');
-                expect(result.items[0].tags).toEqual(['important', 'work']);
+                expect(result.items[0].tags).toEqual(new Set(['important', 'work']));
                 expect(result.items[0].contentPreview).toBe('Test content');
             });
 
             test('should support layer filtering', async () => {
                 ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-                const result = await backend.searchByTags(['test'], 'identity' as _LayerName);
+                const result = await backend.searchByTags(new Set(['test']), 'identity' as _LayerName);
 
                 expect(result.items).toHaveLength(0);
                 // Verify QueryCommand was called with layer filter
@@ -712,7 +712,7 @@ describe('MemoryToolBackend', () => {
                     LastEvaluatedKey: { PK: 'TAG#test', SK: 'PATH#/test.md' },
                 });
 
-                const result = await backend.searchByTags(['test'], undefined, {
+                const result = await backend.searchByTags(new Set(['test']), undefined, {
                     limit:  10,
                     cursor: Buffer.from(JSON.stringify({ PK: 'TAG#test', SK: 'PATH#/prev.md' })).toString('base64'),
                 });

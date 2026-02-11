@@ -8,6 +8,7 @@ import {
     createLayerName
 } from './types';
 import { MemoryToolBackendTagIndex } from './backend-tag-index';
+import { sigmoidScore } from './sigmoid';
 
 export interface ListOptions {
     limit?:     number
@@ -108,21 +109,21 @@ export class MemoryToolBackendQuery {
     /**
      * Searches by multiple tags using the tag index.
      * Delegates to MemoryToolBackendTagIndex for efficient multi-tag queries.
-     * @param tags - Array of tags to search for (AND semantics - items must have all tags)
+     * @param tags - Set of tags to search for (AND semantics - items must have all tags)
      * @param layer - Optional layer filter
      * @param options - Pagination and filtering options
      * @returns ListResult with TagIndexItem preview data (not full MemoryToolItemData)
      */
     async searchByTags(
-        tags: string[],
+        tags: Set<string>,
         layer?: LayerName,
         options?: ListOptions
     ): Promise<ListResult<TagIndexItem>> {
         if(!this.tagIndex) {
             throw new Error('Tag index not configured');
         }
-        // Cast layer to string for tagIndex call
-        return this.tagIndex.queryByTags(tags, layer as string | undefined, options);
+        // queryByTags still takes string[], so spread the Set
+        return this.tagIndex.queryByTags([...tags], layer as string | undefined, options);
     }
 
     async listByLayer(
@@ -218,10 +219,11 @@ export class MemoryToolBackendQuery {
     }
 
     async getAutoLoadItems(
-        options?: { maxIdentityItems?: number, maxStateItems?: number }
+        options?: { maxIdentityItems?: number, maxStateItems?: number, now?: Date }
     ): Promise<MemoryToolItemData[]> {
         const maxIdentityItems = options?.maxIdentityItems ?? 100;
         const maxStateItems = options?.maxStateItems ?? 50;
+        const nowMs = (options?.now ?? new Date()).getTime();
 
         // Get identity items (all items from /identity layer)
         const identityResult = await this.listByLayer(createLayerName('identity'), { limit: maxIdentityItems });
@@ -231,22 +233,22 @@ export class MemoryToolBackendQuery {
         const stateResult = await this.listByLayer(createLayerName('state'), { limit: maxStateItems });
         let stateItems = stateResult.items;
 
-        // Filter for "hot" state items if metadata exists
-        // Sort by accessCount (descending), then by lastAccessed (most recent first)
-        const enrichedItems = _map(stateItems, item => ({
-            item,
+        // Score state items using sigmoid function for frequency × recency
+        const scoredItems = _map(stateItems, (item) => {
             // Stryker disable next-line LogicalOperator: ?? operator is correct, && would give wrong result
-            accessCount:  (item.metadata?.accessCount as number | undefined) ?? 0,
+            const accessCount = (item.metadata?.accessCount as number | undefined) ?? 0;
             // Stryker disable next-line LogicalOperator: ?? operator is correct, && would give wrong result
-            lastAccessed: (item.metadata?.lastAccessed as string | undefined) ?? item.updatedAt,
-        }));
+            const lastAccessed = (item.metadata?.lastAccessed as string | undefined) ?? item.updatedAt;
+            const timeSinceLastAccessMs = nowMs - new Date(lastAccessed).getTime();
+            return { item, score: sigmoidScore(accessCount, timeSinceLastAccessMs) };
+        });
 
-        stateItems = _chain(enrichedItems)
+        stateItems = _chain(scoredItems)
             .orderBy(
-                // Stryker disable next-line all: These string literals define sort fields and order
-                ['accessCount', 'lastAccessed'],
-                // Stryker disable next-line all: These string literals define sort order (descending)
-                ['desc', 'desc']
+                // Stryker disable next-line all: Sort field and order for sigmoid scoring
+                ['score'],
+                // Stryker disable next-line all: Descending sort order
+                ['desc']
             )
             .take(maxStateItems)
             .map(({ item }) => item)

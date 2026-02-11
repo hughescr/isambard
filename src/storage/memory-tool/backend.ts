@@ -58,7 +58,7 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
 
         // Create tag index items (best-effort) - counts handled internally by createTagIndexItems
         // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator: Optimization - tag index operations are best-effort and short-circuit on empty arrays
-        if(input.tags && input.tags.length > 0) {
+        if(input.tags && input.tags.size > 0) {
             const normalizedTags = normalizeTags(input.tags);
             const layer = extractLayerFromPath(input.path);
             // Stryker disable next-line StringLiteral: 'unknown' vs '' are equivalent fallback values for non-layer paths
@@ -102,7 +102,7 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
 
         // Update tag index items on any memory edit (counts handled internally)
         // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator: Tag index updates are best-effort; condition is optimization guard
-        if(normalizedNewTags.length > 0 || (oldTags && oldTags.length > 0)) {
+        if(normalizedNewTags.size > 0 || (oldTags && oldTags.size > 0)) {
             const normalizedOldTags = normalizeTags(oldTags);
             // Stryker disable BlockStatement: Tag index catch block has internal error handling
             try {
@@ -132,7 +132,7 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
 
         // Delete tag index items if item had tags (counts handled internally)
         // Stryker disable next-line all: Tag length check is optimization - tag index functions short-circuit on empty arrays
-        if(existing?.tags && existing.tags.length > 0) {
+        if(existing?.tags && existing.tags.size > 0) {
             const normalizedTags = normalizeTags(existing.tags);
 
             // Delete tag index items (best-effort)
@@ -155,7 +155,7 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
     }
 
     async searchByTags(
-        tags: string[],
+        tags: Set<string>,
         layer?: LayerName,
         options?: ListOptions
     ): Promise<ListResult<TagIndexItem>> {
@@ -179,7 +179,7 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
     }
 
     async getAutoLoadItems(
-        options?: { maxIdentityItems?: number, maxStateItems?: number }
+        options?: { maxIdentityItems?: number, maxStateItems?: number, now?: Date }
     ): Promise<MemoryToolItemData[]> {
         return this.queryOps.getAutoLoadItems(options);
     }
