@@ -76,7 +76,7 @@ export interface PresenceManagerDeps {
  * ```
  */
 export class PresenceManager {
-    private currentPhase: PresencePhase | null = null; // Start uninitialized
+    private currentPhase:        PresencePhase | null = null; // Start uninitialized
     private idleRefreshInterval: NodeJS.Timeout | null = null;
     private presenceDisplayMode: PresenceDisplayMode = 'none'; // Track presence display mode for status prefixes
 

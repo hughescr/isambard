@@ -223,7 +223,7 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mockUpdatePhase,
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
+            spies.push(spyOn(presenceModule, 'PresenceManager').mockReturnValue(mockPresenceManager));
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
                 generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
@@ -323,7 +323,7 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mockUpdatePhase,
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
+            spies.push(spyOn(presenceModule, 'PresenceManager').mockReturnValue(mockPresenceManager));
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
                 generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
@@ -397,7 +397,7 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mockUpdatePhase,
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
+            spies.push(spyOn(presenceModule, 'PresenceManager').mockReturnValue(mockPresenceManager));
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
                 generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
@@ -518,7 +518,7 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mockUpdatePhase,
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
+            spies.push(spyOn(presenceModule, 'PresenceManager').mockReturnValue(mockPresenceManager));
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
                 generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
@@ -616,7 +616,7 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mockUpdatePhase,
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
+            spies.push(spyOn(presenceModule, 'PresenceManager').mockReturnValue(mockPresenceManager));
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
                 generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
@@ -895,7 +895,7 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mock(async () => undefined),
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            const presenceManagerSpy = spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager);
+            const presenceManagerSpy = spyOn(presenceModule, 'PresenceManager').mockReturnValue(mockPresenceManager);
             spies.push(presenceManagerSpy);
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
@@ -929,7 +929,7 @@ describe('createDiscordBot', () => {
 
         test('should NOT create presence manager when identityContext is missing', () => {
             // Spy on createPresenceManager FIRST and clear any stale calls
-            const presenceManagerSpy = spyOn(presenceModule, 'createPresenceManager');
+            const presenceManagerSpy = spyOn(presenceModule, 'PresenceManager');
             presenceManagerSpy.mockClear();
             spies.push(presenceManagerSpy);
 
@@ -1000,7 +1000,7 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mock(async () => undefined),
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
+            spies.push(spyOn(presenceModule, 'PresenceManager').mockReturnValue(mockPresenceManager));
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
                 generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
@@ -1063,7 +1063,7 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mock(async () => undefined),
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            spies.push(spyOn(presenceModule, 'createPresenceManager').mockReturnValue(mockPresenceManager));
+            spies.push(spyOn(presenceModule, 'PresenceManager').mockReturnValue(mockPresenceManager));
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
                 generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
@@ -1733,7 +1733,7 @@ describe('createDiscordBot', () => {
                 removeGuildChannels: mock(() => undefined),
                 stop:                mock(() => undefined),
             };
-            spies.push(spyOn(messageCoordinatorModule, 'createMessageCoordinator').mockReturnValue(mockCoordinator));
+            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockReturnValue(mockCoordinator));
 
             // Mock channel registry functions
             spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
@@ -1857,7 +1857,7 @@ describe('createDiscordBot', () => {
                 removeGuildChannels: mockRemoveGuildChannels,
                 stop:                mock(() => undefined),
             };
-            spies.push(spyOn(messageCoordinatorModule, 'createMessageCoordinator').mockReturnValue(mockCoordinator));
+            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockReturnValue(mockCoordinator));
 
             // Mock channel registry to return guild's channels
             const guildId = createGuildId('guild-123');
@@ -1947,7 +1947,7 @@ describe('createDiscordBot', () => {
                 removeGuildChannels: mockRemoveGuildChannels,
                 stop:                mock(() => undefined),
             };
-            spies.push(spyOn(messageCoordinatorModule, 'createMessageCoordinator').mockReturnValue(mockCoordinator));
+            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockReturnValue(mockCoordinator));
 
             // Mock channel registry to return empty channels array
             const guildId = createGuildId('guild-123');
@@ -2082,7 +2082,7 @@ describe('createDiscordBot', () => {
                 removeGuildChannels: mock(() => undefined),
                 stop:                mock(() => undefined),
             };
-            spies.push(spyOn(messageCoordinatorModule, 'createMessageCoordinator').mockReturnValue(mockCoordinator));
+            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockReturnValue(mockCoordinator));
 
             // Mock channel registry functions
             spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
@@ -2183,7 +2183,7 @@ describe('createDiscordBot', () => {
                 removeGuildChannels: mock(() => undefined),
                 stop:                mock(() => undefined),
             };
-            spies.push(spyOn(messageCoordinatorModule, 'createMessageCoordinator').mockReturnValue(mockCoordinator));
+            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockReturnValue(mockCoordinator));
 
             // Mock channel registry functions
             spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
@@ -2284,7 +2284,7 @@ describe('createDiscordBot', () => {
                 removeGuildChannels: mock(() => undefined),
                 stop:                mock(() => undefined),
             };
-            spies.push(spyOn(messageCoordinatorModule, 'createMessageCoordinator').mockReturnValue(mockCoordinator));
+            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockReturnValue(mockCoordinator));
 
             // Mock channel registry functions
             spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({

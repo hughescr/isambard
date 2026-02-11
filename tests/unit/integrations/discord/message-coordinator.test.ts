@@ -5,7 +5,7 @@ import { MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import type { ProcessResult, MessageProcessor } from '@/integrations/discord/message-coordinator';
 import type { DiscordMessageContext } from '@/integrations/discord/types';
 import { createChannelId, createGuildId, createUserId } from '@/integrations/discord/types';
-import { createStreamTracker } from '@/agent/stream-tracker';
+import { StreamTracker } from '@/agent/stream-tracker';
 import type { ResumeContext } from '@/agent/resume-prompt-builder';
 import { logger } from '@hughescr/logger';
 
@@ -43,7 +43,7 @@ describe('MessageCoordinator', () => {
             response:       'Test response',
             sessionId:      'session-123',
             wasInterrupted: false,
-            streamTracker:  createStreamTracker(),
+            streamTracker:  new StreamTracker(),
         }));
     });
 
@@ -110,7 +110,7 @@ describe('MessageCoordinator', () => {
                 response:       null,
                 sessionId:      'session-abc',
                 wasInterrupted: true,
-                streamTracker:  createStreamTracker(),
+                streamTracker:  new StreamTracker(),
             });
 
             coordinator.handleMessage(mockContext, mockMessage);
@@ -148,7 +148,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Slow response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(slowProcessor);
@@ -179,7 +179,7 @@ describe('MessageCoordinator', () => {
 
         it('should capture partial work from stream tracker on interrupt', async () => {
             // Create a tracker that will have some progress
-            const trackerWithProgress = createStreamTracker();
+            const trackerWithProgress = new StreamTracker();
             trackerWithProgress.update({
                 type:    'assistant',
                 message: {
@@ -209,7 +209,7 @@ describe('MessageCoordinator', () => {
                     return {
                         response:       'Resumed response',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 }
             };
@@ -242,7 +242,7 @@ describe('MessageCoordinator', () => {
                     return {
                         response:       'Fast response',
                         wasInterrupted: abortSignal.aborted,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 } else {
                     // Second call - should NOT have resume context (no interruption)
@@ -250,7 +250,7 @@ describe('MessageCoordinator', () => {
                     return {
                         response:       'Second response',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 }
             };
@@ -290,7 +290,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(slowBatchProcessor);
@@ -335,7 +335,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(slowDebounceProcessor);
@@ -380,7 +380,7 @@ describe('MessageCoordinator', () => {
         });
 
         it('should include original messages and new messages in resume context', async () => {
-            const trackerWithProgress = createStreamTracker();
+            const trackerWithProgress = new StreamTracker();
             trackerWithProgress.update({
                 type:    'assistant',
                 message: {
@@ -429,7 +429,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: false,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(channelProcessor);
@@ -489,7 +489,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Batch response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(slowProcessor);
@@ -528,7 +528,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(slowProcessor);
@@ -576,7 +576,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(slowProcessor);
@@ -613,7 +613,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(cleanupProcessor);
@@ -652,7 +652,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       null,
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(abortTestProcessor);
@@ -675,7 +675,7 @@ describe('MessageCoordinator', () => {
         });
 
         it('should NOT capture partial work when wasInterrupted is false (startProcessing)', async () => {
-            const tracker = createStreamTracker();
+            const tracker = new StreamTracker();
             tracker.update({
                 type:    'assistant',
                 message: { content: [{ type: 'text', text: 'Some text' }] }
@@ -701,7 +701,7 @@ describe('MessageCoordinator', () => {
                     return {
                         response:       'Second response',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 }
             };
@@ -727,7 +727,7 @@ describe('MessageCoordinator', () => {
         });
 
         it('should capture partial work ONLY when wasInterrupted is true (startProcessing)', async () => {
-            const trackerWithProgress = createStreamTracker();
+            const trackerWithProgress = new StreamTracker();
             trackerWithProgress.update({
                 type:    'assistant',
                 message: { content: [{ type: 'text', text: 'Partial text' }] }
@@ -753,7 +753,7 @@ describe('MessageCoordinator', () => {
                     return {
                         response:       'Resumed response',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 }
             };
@@ -792,14 +792,14 @@ describe('MessageCoordinator', () => {
                         response:       null,
                         sessionId:      'session-interrupted',
                         wasInterrupted: true,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 } else {
                     // Second call - SHOULD have the sessionId from interrupted call (for resume)
                     return {
                         response:       'Response',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 }
             };
@@ -840,14 +840,14 @@ describe('MessageCoordinator', () => {
                         response:       'Response',
                         sessionId:      'session-complete',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 } else {
                     // Second call - should NOT have sessionId (first call completed, session cleaned up)
                     return {
                         response:       'Response',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 }
             };
@@ -888,13 +888,13 @@ describe('MessageCoordinator', () => {
             // partialWork because second call completed successfully.
             // KEY: Message 3 must arrive DURING call 2 so call 3 goes through processWithResume, not startProcessing.
 
-            const firstCallTracker = createStreamTracker();
+            const firstCallTracker = new StreamTracker();
             firstCallTracker.update({
                 type:    'assistant',
                 message: { content: [{ type: 'text', text: 'First call partial work' }] }
             });
 
-            const secondCallTracker = createStreamTracker();
+            const secondCallTracker = new StreamTracker();
             secondCallTracker.update({
                 type:    'assistant',
                 message: { content: [{ type: 'text', text: 'Second call tracker that should NOT be captured' }] }
@@ -936,7 +936,7 @@ describe('MessageCoordinator', () => {
                     return {
                         response:       'Third response',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 }
             };
@@ -984,7 +984,7 @@ describe('MessageCoordinator', () => {
         });
 
         it('should capture partial work ONLY when wasInterrupted is true (processWithResume)', async () => {
-            const trackerWithProgress = createStreamTracker();
+            const trackerWithProgress = new StreamTracker();
             trackerWithProgress.update({
                 type:    'assistant',
                 message: { content: [{ type: 'text', text: 'Resume partial' }] }
@@ -1002,7 +1002,7 @@ describe('MessageCoordinator', () => {
                     return {
                         response:       null,
                         wasInterrupted: abortSignal.aborted,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 } else if(callCount === 2) {
                     // Second call (resume) - also interrupted after debounce (make it run long enough)
@@ -1018,7 +1018,7 @@ describe('MessageCoordinator', () => {
                     return {
                         response:       'Final response',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 }
             };
@@ -1072,7 +1072,7 @@ describe('MessageCoordinator', () => {
                     return {
                         response:       null,
                         wasInterrupted: abortSignal.aborted,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 } else if(callCount === 2) {
                     // Second call (resume) - interrupted with sessionId (run long enough)
@@ -1081,14 +1081,14 @@ describe('MessageCoordinator', () => {
                         response:       null,
                         sessionId:      'session-interrupted-resume',
                         wasInterrupted: abortSignal.aborted,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 } else {
                     // Third call - SHOULD have sessionId from interrupted second call (for resume)
                     return {
                         response:       'Response',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 }
             };
@@ -1139,7 +1139,7 @@ describe('MessageCoordinator', () => {
                     return {
                         response:       null,
                         wasInterrupted: abortSignal.aborted,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 } else if(callCount === 2) {
                     // Second call (resume) - completes with sessionId
@@ -1147,14 +1147,14 @@ describe('MessageCoordinator', () => {
                         response:       'Resume response',
                         sessionId:      'session-resume-complete',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 } else {
                     // Third call - should NOT have sessionId (second completed, session cleaned up)
                     return {
                         response:       'Response',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 }
             };
@@ -1208,7 +1208,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(filteringProcessor);
@@ -1249,7 +1249,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(mapTestProcessor);
@@ -1293,7 +1293,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: false,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(emptyOriginalsProcessor);
@@ -1365,7 +1365,7 @@ describe('MessageCoordinator', () => {
                         response:       null,
                         sessionId:      'previously-set-session',  // KEY: Sets state.sessionId
                         wasInterrupted: true,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 } else if(callCount === 2) {
                     // Second call - interrupted with undefined sessionId (should NOT overwrite)
@@ -1373,14 +1373,14 @@ describe('MessageCoordinator', () => {
                         response:       null,
                         sessionId:      undefined,  // Should NOT update state.sessionId
                         wasInterrupted: true,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 } else {
                     // Third call - should still have the sessionId from first call
                     return {
                         response:       'Response 3',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 }
             };
@@ -1442,7 +1442,7 @@ describe('MessageCoordinator', () => {
                         response:       null,
                         sessionId:      'previously-set-session',  // KEY: Sets state.sessionId
                         wasInterrupted: true,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 } else if(callCount === 2) {
                     // Second call (processWithResume) - interrupted with undefined sessionId
@@ -1452,14 +1452,14 @@ describe('MessageCoordinator', () => {
                         response:       null,
                         sessionId:      undefined,  // Should NOT update state.sessionId
                         wasInterrupted: true,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 } else {
                     // Third call - should still have sessionId from first call
                     return {
                         response:       'Third response',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 }
             };
@@ -1521,7 +1521,7 @@ describe('MessageCoordinator', () => {
                         response:       null,
                         sessionId:      'original-session-id',
                         wasInterrupted: abortSignal.aborted,  // Will be true
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 } else if(callCount === 2) {
                     // Second call (processWithResume) - runs long enough to be interrupted
@@ -1531,14 +1531,14 @@ describe('MessageCoordinator', () => {
                         response:       null,
                         sessionId:      undefined,  // KEY: Should NOT overwrite state.sessionId
                         wasInterrupted: abortSignal.aborted,  // Will be true
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 } else {
                     // Third call - should still have 'original-session-id'
                     return {
                         response:       'Final response',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 }
             };
@@ -1603,14 +1603,14 @@ describe('MessageCoordinator', () => {
                     return {
                         response:       null,
                         wasInterrupted: abortSignal.aborted,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 } else {
                     // Second call (resume) - should not crash even if newMessages[0] is accessed
                     return {
                         response:       'Resume response',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 }
             };
@@ -1652,7 +1652,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(verifyNewEventsProcessor);
@@ -1718,7 +1718,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
 
@@ -1755,7 +1755,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
 
@@ -1832,7 +1832,7 @@ describe('MessageCoordinator', () => {
                 response:       'Test response',
                 sessionId:      'session-123',
                 wasInterrupted: false,
-                streamTracker:  createStreamTracker(),
+                streamTracker:  new StreamTracker(),
             }));
 
             coordinator.setProcessor(processorCallSpy);
@@ -1872,7 +1872,7 @@ describe('MessageCoordinator', () => {
             const processorSpy = mock(async (): Promise<ProcessResult> => ({
                 response:       'Response',
                 wasInterrupted: false,
-                streamTracker:  createStreamTracker(),
+                streamTracker:  new StreamTracker(),
             }));
 
             coordinator.setProcessor(processorSpy);
@@ -1906,7 +1906,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(slowProcessor);
@@ -1945,7 +1945,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(slowProcessor);
@@ -1998,7 +1998,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(slowProcessor);
@@ -2040,7 +2040,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: false,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(fastProcessor);
@@ -2091,7 +2091,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(slowProcessor);
@@ -2149,7 +2149,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: false,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(slowProcessor);
@@ -2222,7 +2222,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(slowProcessor);
@@ -2277,7 +2277,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(slowProcessor);
@@ -2310,7 +2310,7 @@ describe('MessageCoordinator', () => {
                     response:       'Response',
                     sessionId:      'session-123',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(slowProcessor);
@@ -2366,7 +2366,7 @@ describe('MessageCoordinator', () => {
                     return {
                         response:       'Done',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 };
                 processorMock.mockImplementation(slowProcessor);
@@ -2416,7 +2416,7 @@ describe('MessageCoordinator', () => {
                 processorMock.mockImplementation(async () => ({
                     response:       'Done',
                     wasInterrupted: false,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 }));
                 coordinator.setProcessor(processorMock);
 
@@ -2453,7 +2453,7 @@ describe('MessageCoordinator', () => {
                 processorMock.mockImplementation(async () => ({
                     response:       'Done',
                     wasInterrupted: false,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 }));
                 coordinator.setProcessor(processorMock);
 
@@ -2485,7 +2485,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       `Response ${callCount}`,
                     wasInterrupted: false,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             });
             coordinator.setProcessor(processorMock);
@@ -2547,7 +2547,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response 1',
                     wasInterrupted: false,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             });
             coordinator.setProcessor(processorMock);
@@ -2577,7 +2577,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response 2',
                     wasInterrupted: false,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             });
 
@@ -2610,7 +2610,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: false,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             });
             coordinator.setProcessor(processorMock);
@@ -2661,7 +2661,7 @@ describe('MessageCoordinator', () => {
                     response:       'Response',
                     sessionId:      'session-123',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             });
             coordinator.setProcessor(processorMock);
@@ -2719,7 +2719,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: false,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             });
             coordinator.setProcessor(processorMock);
@@ -2774,7 +2774,7 @@ describe('MessageCoordinator', () => {
                         response:       null,
                         sessionId:      'session-123',
                         wasInterrupted: abortSignal.aborted,  // Will be true
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 } else {
                     // Second call (resume): run for 18 seconds
@@ -2783,7 +2783,7 @@ describe('MessageCoordinator', () => {
                         response:       'Complete',
                         sessionId:      'session-123',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 }
             });
@@ -2861,7 +2861,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: false,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             });
             coordinator.setProcessor(processorMock);
@@ -2904,7 +2904,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: false,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             });
             coordinator.setProcessor(processorMock);
@@ -3069,7 +3069,7 @@ describe('MessageCoordinator', () => {
                     return {
                         response:       'Response',
                         wasInterrupted: false,
-                        streamTracker:  createStreamTracker(),
+                        streamTracker:  new StreamTracker(),
                     };
                 };
                 processorMock.mockImplementation(slowProcessor);
@@ -3116,7 +3116,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(slowProcessor);
@@ -3150,7 +3150,7 @@ describe('MessageCoordinator', () => {
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
-                    streamTracker:  createStreamTracker(),
+                    streamTracker:  new StreamTracker(),
                 };
             };
             processorMock.mockImplementation(slowProcessor);

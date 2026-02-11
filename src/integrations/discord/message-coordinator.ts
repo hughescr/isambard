@@ -109,11 +109,11 @@ interface ChannelState {
  * ```
  */
 export class MessageCoordinator {
-    private readonly debounceMs: number;
-    private readonly onResponse?: (result: ProcessResult, discordMessage: Message | null) => Promise<void>;
+    private readonly debounceMs:         number;
+    private readonly onResponse?:        (result: ProcessResult, discordMessage: Message | null) => Promise<void>;
     private readonly eventDeltaTracker?: EventDeltaTracker;
     private readonly channelStates = new Map<ChannelId, ChannelState>();
-    private processor: MessageProcessor | null = null;
+    private processor:                   MessageProcessor | null = null;
 
     constructor(config?: MessageCoordinatorConfig) {
         this.debounceMs = config?.debounceMs ?? 2000;

@@ -43,14 +43,11 @@ export interface BotStateManagerDeps {
 const DEFAULT_UPDATE_THROTTLE_MS = 12000;
 
 /**
- * Create a BotStateManager instance.
- *
- * @param deps - Dependencies including logger and optional throttle configuration
- * @returns BotStateManager instance
+ * BotStateManager implementation class.
  *
  * @example
  * ```typescript
- * const manager = createBotStateManager({ logger });
+ * const manager = new BotStateManagerImpl({ logger });
  * manager.start();
  *
  * manager.subscribe((change) => {
@@ -62,20 +59,22 @@ const DEFAULT_UPDATE_THROTTLE_MS = 12000;
  * manager.stop();
  * ```
  */
-export function createBotStateManager(deps: BotStateManagerDeps): BotStateManager {
-    const { logger, updateThrottleMs = DEFAULT_UPDATE_THROTTLE_MS } = deps;
+export class BotStateManagerImpl implements BotStateManager {
+    private currentState:              BotState = createDefaultBotState();
+    private readonly subscribers = new Set<(change: StateChange) => void>();
+    private lastPresenceUpdateTime = 0;
+    private isStopped = false;
+    private readonly updateThrottleMs: number;
 
-    // Internal mutable state
-    let currentState: BotState = createDefaultBotState();
-    const subscribers = new Set<(change: StateChange) => void>();
-    let lastPresenceUpdateTime = 0;
-    let isStopped = false;
+    constructor(private readonly deps: BotStateManagerDeps) {
+        this.updateThrottleMs = deps.updateThrottleMs ?? DEFAULT_UPDATE_THROTTLE_MS;
+    }
 
     /**
      * Throw an error if the manager has been stopped.
      */
-    function assertNotStopped(): void {
-        if(isStopped) {
+    private assertNotStopped(): void {
+        if(this.isStopped) {
             throw new Error('BotStateManager has been stopped');
         }
     }
@@ -84,13 +83,13 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
      * Deep clone a state object.
      * Handles Sets and Dates properly.
      */
-    function cloneState(state: BotState): BotState {
+    private cloneState(state: BotState): BotState {
         const cloned: BotState = {
             mode:          state.mode,
             interrupted:   state.interrupted,
             activityPhase: state.activityPhase ? { ...state.activityPhase } : null,
             modeEnteredAt: new Date(state.modeEnteredAt),
-            modeContext:   cloneModeContext(state.modeContext),
+            modeContext:   this.cloneModeContext(state.modeContext),
         };
         return cloned;
     }
@@ -100,7 +99,7 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
      * Handles catching_up context with Set<ChannelId>.
      */
     // Stryker disable StringLiteral,ConditionalExpression,BlockStatement: Type discrimination and object cloning - tested via behavior
-    function cloneModeContext(context: ModeContext): ModeContext {
+    private cloneModeContext(context: ModeContext): ModeContext {
         if('unreadCount' in context) {
             // CatchingUpModeContext - identified by unique property
             return {
@@ -117,7 +116,7 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
      * Deep freeze a state object to prevent external mutation.
      */
     // Stryker disable ConditionalExpression,BlockStatement: Freezing nested objects when present
-    function deepFreeze(state: BotState): Readonly<BotState> {
+    private deepFreeze(state: BotState): Readonly<BotState> {
         Object.freeze(state);
         if(state.activityPhase) {
             Object.freeze(state.activityPhase);
@@ -131,23 +130,23 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
      * Notify all subscribers of a state change.
      */
     // Stryker disable ConditionalExpression,BlockStatement: Guard clause - no subscribers means no work
-    function notifySubscribers(previousState: BotState, changeType: StateChange['changeType']): void {
-        if(subscribers.size === 0) {
+    private notifySubscribers(previousState: BotState, changeType: StateChange['changeType']): void {
+        if(this.subscribers.size === 0) {
             return;
         }
 
         const change: StateChange = {
-            previousState: cloneState(previousState),
-            newState:      cloneState(currentState),
+            previousState: this.cloneState(previousState),
+            newState:      this.cloneState(this.currentState),
             changeType,
         };
 
-        for(const listener of subscribers) {
+        for(const listener of this.subscribers) {
             try {
                 listener(change);
             } catch (error) {
                 // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-                logger.error({ error }, 'Error in state change subscriber');
+                this.deps.logger.error({ error }, 'Error in state change subscriber');
                 // Stryker restore ObjectLiteral,StringLiteral
             }
         }
@@ -158,26 +157,26 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
     // Read Operations
     // ========================================================================
 
-    function getState(): Readonly<BotState> {
-        return deepFreeze(cloneState(currentState));
+    getState(): Readonly<BotState> {
+        return this.deepFreeze(this.cloneState(this.currentState));
     }
 
-    function getMode(): OperationalMode {
-        return currentState.mode;
+    getMode(): OperationalMode {
+        return this.currentState.mode;
     }
 
-    function isInterrupted(): boolean {
-        return currentState.interrupted;
+    isInterrupted(): boolean {
+        return this.currentState.interrupted;
     }
 
-    function shouldUpdatePresence(): boolean {
+    shouldUpdatePresence(): boolean {
         const now = Date.now();
         // Stryker disable next-line EqualityOperator: Boundary condition >= vs > makes no practical difference
-        return (now - lastPresenceUpdateTime) >= updateThrottleMs;
+        return (now - this.lastPresenceUpdateTime) >= this.updateThrottleMs;
     }
 
-    function getSessionType(isDMChannel?: boolean): SessionType {
-        const mode = currentState.mode;
+    getSessionType(isDMChannel?: boolean): SessionType {
+        const mode = this.currentState.mode;
         if(mode === 'catching_up') {
             return 'catching_up';
         }
@@ -194,15 +193,15 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
     // Mode Transitions
     // ========================================================================
 
-    function startCatchUp(context: CatchingUpModeContext): void {
-        assertNotStopped();
-        const previousState = cloneState(currentState);
+    startCatchUp(context: CatchingUpModeContext): void {
+        this.assertNotStopped();
+        const previousState = this.cloneState(this.currentState);
 
-        if(!isValidTransition(currentState.mode, 'catching_up')) {
-            throw new TransitionError(currentState.mode, 'catching_up');
+        if(!isValidTransition(this.currentState.mode, 'catching_up')) {
+            throw new TransitionError(this.currentState.mode, 'catching_up');
         }
 
-        currentState = {
+        this.currentState = {
             mode:          'catching_up',
             interrupted:   false,
             activityPhase: null,
@@ -214,17 +213,17 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
         };
 
         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-        logger.info({ mode: 'catching_up' }, 'Transitioned to catching_up mode');
+        this.deps.logger.info({ mode: 'catching_up' }, 'Transitioned to catching_up mode');
         // Stryker restore ObjectLiteral,StringLiteral
-        notifySubscribers(previousState, 'mode_transition');
+        this.notifySubscribers(previousState, 'mode_transition');
     }
 
-    function startProcessingMessage(channelId: ChannelId, userMessage: string): void {
-        assertNotStopped();
-        const previousState = cloneState(currentState);
+    startProcessingMessage(channelId: ChannelId, userMessage: string): void {
+        this.assertNotStopped();
+        const previousState = this.cloneState(this.currentState);
 
-        if(!isValidTransition(currentState.mode, 'processing_message')) {
-            throw new TransitionError(currentState.mode, 'processing_message');
+        if(!isValidTransition(this.currentState.mode, 'processing_message')) {
+            throw new TransitionError(this.currentState.mode, 'processing_message');
         }
 
         const context: ProcessingMessageModeContext = {
@@ -234,7 +233,7 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
         };
 
         // Stryker disable BooleanLiteral: Initial state values - tested via behavior
-        currentState = {
+        this.currentState = {
             mode:          'processing_message',
             interrupted:   false,
             activityPhase: null,
@@ -244,17 +243,17 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
         // Stryker restore BooleanLiteral
 
         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-        logger.info({ mode: 'processing_message', channelId }, 'Transitioned to processing_message mode');
+        this.deps.logger.info({ mode: 'processing_message', channelId }, 'Transitioned to processing_message mode');
         // Stryker restore ObjectLiteral,StringLiteral
-        notifySubscribers(previousState, 'mode_transition');
+        this.notifySubscribers(previousState, 'mode_transition');
     }
 
-    function startPerching(activityType: string): void {
-        assertNotStopped();
-        const previousState = cloneState(currentState);
+    startPerching(activityType: string): void {
+        this.assertNotStopped();
+        const previousState = this.cloneState(this.currentState);
 
-        if(!isValidTransition(currentState.mode, 'perching')) {
-            throw new TransitionError(currentState.mode, 'perching');
+        if(!isValidTransition(this.currentState.mode, 'perching')) {
+            throw new TransitionError(this.currentState.mode, 'perching');
         }
 
         const context: PerchingModeContext = {
@@ -263,7 +262,7 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
         };
 
         // Stryker disable BooleanLiteral: Initial state values - tested via behavior
-        currentState = {
+        this.currentState = {
             mode:          'perching',
             interrupted:   false,
             activityPhase: null,
@@ -273,93 +272,93 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
         // Stryker restore BooleanLiteral
 
         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-        logger.info({ mode: 'perching', activityType }, 'Transitioned to perching mode');
+        this.deps.logger.info({ mode: 'perching', activityType }, 'Transitioned to perching mode');
         // Stryker restore ObjectLiteral,StringLiteral
-        notifySubscribers(previousState, 'mode_transition');
+        this.notifySubscribers(previousState, 'mode_transition');
     }
 
-    function goIdle(): void {
+    goIdle(): void {
         // Idempotent: if already idle, do nothing
         // Stryker disable next-line ConditionalExpression,BlockStatement: Idempotent check - already idle means no work
-        if(currentState.mode === 'idle') {
+        if(this.currentState.mode === 'idle') {
             return;
         }
 
-        assertNotStopped();
-        const previousState = cloneState(currentState);
+        this.assertNotStopped();
+        const previousState = this.cloneState(this.currentState);
 
-        currentState = createDefaultBotState();
+        this.currentState = createDefaultBotState();
 
         // Stryker disable StringLiteral: Logging for observability
-        logger.info('Transitioned to idle mode');
+        this.deps.logger.info('Transitioned to idle mode');
         // Stryker restore StringLiteral
-        notifySubscribers(previousState, 'mode_transition');
+        this.notifySubscribers(previousState, 'mode_transition');
     }
 
     // ========================================================================
     // Within-Mode Operations
     // ========================================================================
 
-    function interrupt(message?: InterruptingMessageDetails): void {
-        assertNotStopped();
-        const previousState = cloneState(currentState);
+    interrupt(message?: InterruptingMessageDetails): void {
+        this.assertNotStopped();
+        const previousState = this.cloneState(this.currentState);
 
         // Can only interrupt non-idle modes
-        if(!canInterrupt(currentState.mode)) {
+        if(!canInterrupt(this.currentState.mode)) {
             return;
         }
 
         // Stryker disable BlockStatement: Guard clause - already interrupted
         // Stryker disable next-line ConditionalExpression: Guard clause - already interrupted
-        if(currentState.interrupted) {
+        if(this.currentState.interrupted) {
             return; // Already interrupted
         }
         // Stryker restore BlockStatement
 
         // If in catching_up or perching mode and message provided, store it in the context
-        let modeContext = currentState.modeContext;
-        if(message && currentState.mode === 'catching_up') {
-            const catchUpContext = currentState.modeContext as CatchingUpModeContext;
+        let modeContext = this.currentState.modeContext;
+        if(message && this.currentState.mode === 'catching_up') {
+            const catchUpContext = this.currentState.modeContext as CatchingUpModeContext;
             modeContext = {
                 ...catchUpContext,
                 interruptingMessage: message,
             };
-        } else if(message && currentState.mode === 'perching') {
-            const perchContext = currentState.modeContext as PerchingModeContext;
+        } else if(message && this.currentState.mode === 'perching') {
+            const perchContext = this.currentState.modeContext as PerchingModeContext;
             modeContext = {
                 ...perchContext,
                 interruptingMessage: message,
             };
         }
 
-        currentState = {
-            ...currentState,
+        this.currentState = {
+            ...this.currentState,
             interrupted: true,
             modeContext,
         };
 
         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-        logger.info({ mode: currentState.mode }, 'Bot interrupted');
+        this.deps.logger.info({ mode: this.currentState.mode }, 'Bot interrupted');
         // Stryker restore ObjectLiteral,StringLiteral
-        notifySubscribers(previousState, 'interrupted');
+        this.notifySubscribers(previousState, 'interrupted');
     }
 
-    function updateInterruptingMessage(message: InterruptingMessageDetails): void {
-        assertNotStopped();
-        if(!currentState.interrupted) {
+    updateInterruptingMessage(message: InterruptingMessageDetails): void {
+        this.assertNotStopped();
+        if(!this.currentState.interrupted) {
             return;
         }
 
-        if(currentState.mode === 'perching') {
-            const perchContext = currentState.modeContext as PerchingModeContext;
-            currentState = {
-                ...currentState,
+        if(this.currentState.mode === 'perching') {
+            const perchContext = this.currentState.modeContext as PerchingModeContext;
+            this.currentState = {
+                ...this.currentState,
                 modeContext: { ...perchContext, interruptingMessage: message },
             };
-        } else if(currentState.mode === 'catching_up') {
-            const catchUpContext = currentState.modeContext as CatchingUpModeContext;
-            currentState = {
-                ...currentState,
+        } else if(this.currentState.mode === 'catching_up') {
+            const catchUpContext = this.currentState.modeContext as CatchingUpModeContext;
+            this.currentState = {
+                ...this.currentState,
                 modeContext: { ...catchUpContext, interruptingMessage: message },
             };
         }
@@ -368,88 +367,88 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
         // and the session runner handles re-interrupt logic internally.
     }
 
-    function resume(): void {
-        assertNotStopped();
-        const previousState = cloneState(currentState);
+    resume(): void {
+        this.assertNotStopped();
+        const previousState = this.cloneState(this.currentState);
 
         // Stryker disable BlockStatement: Guard clause - not interrupted means no work
         // Stryker disable next-line ConditionalExpression: Guard clause - not interrupted means no work
-        if(!currentState.interrupted) {
+        if(!this.currentState.interrupted) {
             return; // Not interrupted
         }
         // Stryker restore BlockStatement
 
-        currentState = {
-            ...currentState,
+        this.currentState = {
+            ...this.currentState,
             interrupted: false,
         };
 
         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-        logger.info({ mode: currentState.mode }, 'Bot resumed');
+        this.deps.logger.info({ mode: this.currentState.mode }, 'Bot resumed');
         // Stryker restore ObjectLiteral,StringLiteral
-        notifySubscribers(previousState, 'interrupted');
+        this.notifySubscribers(previousState, 'interrupted');
     }
 
-    function updateActivityPhase(phase: ActivityPhase): void {
-        assertNotStopped();
-        const previousState = cloneState(currentState);
+    updateActivityPhase(phase: ActivityPhase): void {
+        this.assertNotStopped();
+        const previousState = this.cloneState(this.currentState);
 
-        currentState = {
-            ...currentState,
+        this.currentState = {
+            ...this.currentState,
             activityPhase: phase,
         };
 
         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-        logger.debug({ phase: phase.type }, 'Activity phase updated');
+        this.deps.logger.debug({ phase: phase.type }, 'Activity phase updated');
         // Stryker restore ObjectLiteral,StringLiteral
-        notifySubscribers(previousState, 'activity_phase');
+        this.notifySubscribers(previousState, 'activity_phase');
     }
 
-    function recordPresenceUpdate(): void {
-        assertNotStopped();
-        lastPresenceUpdateTime = Date.now();
+    recordPresenceUpdate(): void {
+        this.assertNotStopped();
+        this.lastPresenceUpdateTime = Date.now();
         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-        logger.debug('Presence update timestamp recorded');
+        this.deps.logger.debug('Presence update timestamp recorded');
         // Stryker restore ObjectLiteral,StringLiteral
     }
 
-    function clearActivityPhase(): void {
-        assertNotStopped();
-        const previousState = cloneState(currentState);
+    clearActivityPhase(): void {
+        this.assertNotStopped();
+        const previousState = this.cloneState(this.currentState);
 
         // Stryker disable BlockStatement: Guard clause - already cleared
         // Stryker disable next-line ConditionalExpression: Guard clause - already cleared
-        if(currentState.activityPhase === null) {
+        if(this.currentState.activityPhase === null) {
             return; // Already cleared
         }
         // Stryker restore BlockStatement
 
-        currentState = {
-            ...currentState,
+        this.currentState = {
+            ...this.currentState,
             activityPhase: null,
         };
 
         // Stryker disable StringLiteral: Logging for observability
-        logger.debug('Activity phase cleared');
+        this.deps.logger.debug('Activity phase cleared');
         // Stryker restore StringLiteral
-        notifySubscribers(previousState, 'activity_phase');
+        this.notifySubscribers(previousState, 'activity_phase');
     }
 
-    function markChannelViewed(channelId: ChannelId): void {
-        assertNotStopped();
-        const previousState = cloneState(currentState);
+    markChannelViewed(channelId: ChannelId): void {
+        this.assertNotStopped();
+        const previousState = this.cloneState(this.currentState);
 
-        if(currentState.mode !== 'catching_up') {
+        if(this.currentState.mode !== 'catching_up') {
             // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-            logger.warn({ mode: currentState.mode }, 'Cannot mark channel viewed: not in catching_up mode');
+            this.deps.logger.warn({ mode: this.currentState.mode }, 'Cannot mark channel viewed: not in catching_up mode');
             // Stryker restore ObjectLiteral,StringLiteral
             return;
         }
 
-        const context = currentState.modeContext as CatchingUpModeContext;
+        const context = this.currentState.modeContext as CatchingUpModeContext;
         // Create new state with new Set containing the channel (immutable)
-        currentState = {
-            ...currentState,
+        this.currentState = {
+            ...this.currentState,
             modeContext: {
                 ...context,
                 viewedChannels: new Set([...context.viewedChannels, channelId])
@@ -457,47 +456,47 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
         };
 
         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-        logger.debug({ channelId }, 'Channel marked as viewed');
+        this.deps.logger.debug({ channelId }, 'Channel marked as viewed');
         // Stryker restore ObjectLiteral,StringLiteral
-        notifySubscribers(previousState, 'context_update');
+        this.notifySubscribers(previousState, 'context_update');
     }
 
-    function setSessionId(sessionId: string): void {
-        assertNotStopped();
-        const previousState = cloneState(currentState);
+    setSessionId(sessionId: string): void {
+        this.assertNotStopped();
+        const previousState = this.cloneState(this.currentState);
 
-        if(currentState.mode === 'idle') {
+        if(this.currentState.mode === 'idle') {
             return; // Idle mode has no session
         }
 
         type SessionContext = CatchingUpModeContext | ProcessingMessageModeContext | PerchingModeContext;
-        const context = currentState.modeContext as SessionContext;
+        const context = this.currentState.modeContext as SessionContext;
 
         // Create new state with updated sessionId (immutable)
-        currentState = {
-            ...currentState,
+        this.currentState = {
+            ...this.currentState,
             modeContext: {
                 ...context,
                 sessionId,
-            } as typeof currentState.modeContext,
+            } as typeof this.currentState.modeContext,
         };
 
         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-        logger.debug({ sessionId, mode: currentState.mode }, 'Session ID set');
+        this.deps.logger.debug({ sessionId, mode: this.currentState.mode }, 'Session ID set');
         // Stryker restore ObjectLiteral,StringLiteral
-        notifySubscribers(previousState, 'context_update');
+        this.notifySubscribers(previousState, 'context_update');
     }
 
     // ========================================================================
     // Subscriptions
     // ========================================================================
 
-    function subscribe(listener: (change: StateChange) => void): () => void {
-        assertNotStopped();
-        subscribers.add(listener);
+    subscribe(listener: (change: StateChange) => void): () => void {
+        this.assertNotStopped();
+        this.subscribers.add(listener);
 
         return () => {
-            subscribers.delete(listener);
+            this.subscribers.delete(listener);
         };
     }
 
@@ -506,52 +505,27 @@ export function createBotStateManager(deps: BotStateManagerDeps): BotStateManage
     // ========================================================================
 
     // Stryker disable BlockStatement,StringLiteral: Lifecycle logging - behavior verified by integration
-    function start(): void {
-        logger.info('BotStateManager started');
+    start(): void {
+        this.deps.logger.info('BotStateManager started');
     }
     // Stryker restore BlockStatement,StringLiteral
 
     // Stryker disable BlockStatement,StringLiteral: Cleanup function - behavior verified by other tests
-    function stop(): void {
-        isStopped = true;
-        subscribers.clear();
-        logger.info('BotStateManager stopped');
+    stop(): void {
+        this.isStopped = true;
+        this.subscribers.clear();
+        this.deps.logger.info('BotStateManager stopped');
     }
     // Stryker restore BlockStatement,StringLiteral
+}
 
-    // ========================================================================
-    // Return Interface
-    // ========================================================================
-
-    return {
-        // Read operations
-        getState,
-        getMode,
-        isInterrupted,
-        shouldUpdatePresence,
-        getSessionType,
-
-        // Mode transitions
-        startCatchUp,
-        startProcessingMessage,
-        startPerching,
-        goIdle,
-
-        // Within-mode operations
-        interrupt,
-        updateInterruptingMessage,
-        resume,
-        updateActivityPhase,
-        clearActivityPhase,
-        markChannelViewed,
-        setSessionId,
-        recordPresenceUpdate,
-
-        // Subscriptions
-        subscribe,
-
-        // Lifecycle
-        start,
-        stop,
-    };
+/**
+ * Create a BotStateManager instance.
+ * Convenience factory function for backward compatibility.
+ *
+ * @param deps - Dependencies including logger and optional throttle configuration
+ * @returns BotStateManager instance
+ */
+export function createBotStateManager(deps: BotStateManagerDeps): BotStateManager {
+    return new BotStateManagerImpl(deps);
 }

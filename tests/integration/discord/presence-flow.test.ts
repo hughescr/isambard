@@ -11,7 +11,7 @@ import { ActivityType } from 'discord.js';
 import type { Client, TextChannel } from 'discord.js';
 import { createActiveStatusGenerator } from '@/integrations/discord/presence/status-generator-active';
 import { createIdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
-import { createPresenceManager } from '@/integrations/discord/presence/manager';
+import { PresenceManager } from '@/integrations/discord/presence/manager';
 import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
 import type { ClaudeAgent } from '@/agent/agent';
 import type { MessageContext, AgentStreamEvent } from '@/agent/types';
@@ -74,7 +74,7 @@ describe('Discord Presence Flow (Integration)', () => {
         });
 
         // Create presence manager
-        const presenceManager = createPresenceManager({
+        const presenceManager = new PresenceManager({
             discordClient: mockDiscordClient,
             config:        {
                 updateThrottleMs:      100,
@@ -160,7 +160,7 @@ describe('Discord Presence Flow (Integration)', () => {
         });
 
         // Create presence manager with SHORT idle timeout for testing
-        const presenceManager = createPresenceManager({
+        const presenceManager = new PresenceManager({
             discordClient: mockDiscordClient,
             config:        {
                 updateThrottleMs:      50,

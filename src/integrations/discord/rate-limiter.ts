@@ -52,11 +52,11 @@ export interface DiscordRateLimiterOptions {
  */
 export class DiscordRateLimiter {
     // Global concurrency limiter - use injectable limit or default to p-limit
-    private readonly limit:         LimitFunction;
+    private readonly limit:   LimitFunction;
     // Per-channel promise chains for sequential sends
     private readonly channelQueues = new Map<string, Promise<unknown>>();
     // Optional logger for debugging
-    private readonly logger?:       { debug: (obj: Record<string, unknown>) => void };
+    private readonly logger?: { debug: (obj: Record<string, unknown>) => void };
 
     constructor(options: DiscordRateLimiterOptions = {}) {
         const { globalConcurrency = 5, logger, limitFn } = options;

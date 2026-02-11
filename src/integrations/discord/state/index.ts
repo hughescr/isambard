@@ -91,7 +91,7 @@ export {
 // ============================================================================
 
 export type { BotStateManagerDeps } from './manager';
-export { createBotStateManager } from './manager';
+export { createBotStateManager, BotStateManagerImpl } from './manager';
 
 // ============================================================================
 // StatusContextBuilder from status-context-builder.ts
