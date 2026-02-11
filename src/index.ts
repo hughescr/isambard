@@ -85,6 +85,7 @@ export async function createApp(): Promise<App> {
         inboxManager:         discordInfra.inboxManager,
         botStateManager:      discordInfra.botStateManager,
         timezone:             resolveTimezone(),
+        recordAccess:         contextLayer.contextBuilder.recordAccess,
     });
 
     // Load plugins and create agent

@@ -24,7 +24,7 @@ const createMockTagIndexItem = (overrides: Partial<TagIndexItem> = {}): TagIndex
     memoryPath:     '/mock/path',
     layer:          'identity',
     updatedAt:      '2025-01-01T00:00:00.000Z',
-    tags:           [],
+    tags:           new Set<string>(),
     contentPreview: 'mock preview',
     ...overrides,
 });
@@ -206,6 +206,109 @@ describe.concurrent('createMemoryMCPServer', () => {
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBe(true);
         });
+
+        test('should call recordAccess for state-layer paths', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path:    '/state/test' as MemoryPath,
+                content: 'Test content',
+            }));
+
+            const recordAccess = mock(async () => { /* intentionally empty */ });
+            const server = createMemoryMCPServer(mockBackend, { recordAccess });
+            const handler = getToolHandler(server, 'view');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({ path: '/state/test' });
+
+            // Give async fire-and-forget time to complete
+            await new Promise(resolve => { setTimeout(resolve, 10); });
+
+            expect(recordAccess).toHaveBeenCalledTimes(1);
+            expect(recordAccess).toHaveBeenCalledWith(['/state/test']);
+        });
+
+        test('should not call recordAccess for identity-layer paths', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path:    '/identity/test' as MemoryPath,
+                content: 'Test content',
+            }));
+
+            const recordAccess = mock(async () => { /* intentionally empty */ });
+            const server = createMemoryMCPServer(mockBackend, { recordAccess });
+            const handler = getToolHandler(server, 'view');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({ path: '/identity/test' });
+
+            // Give async fire-and-forget time to complete
+            await new Promise(resolve => { setTimeout(resolve, 10); });
+
+            expect(recordAccess).not.toHaveBeenCalled();
+        });
+
+        test('should not call recordAccess for events-layer paths', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path:    '/events/test/timestamp' as MemoryPath,
+                content: 'Test content',
+            }));
+
+            const recordAccess = mock(async () => { /* intentionally empty */ });
+            const server = createMemoryMCPServer(mockBackend, { recordAccess });
+            const handler = getToolHandler(server, 'view');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({ path: '/events/test/timestamp' });
+
+            // Give async fire-and-forget time to complete
+            await new Promise(resolve => { setTimeout(resolve, 10); });
+
+            expect(recordAccess).not.toHaveBeenCalled();
+        });
+
+        test('should not call recordAccess when option is undefined', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path:    '/state/test' as MemoryPath,
+                content: 'Test content',
+            }));
+
+            const server = createMemoryMCPServer(mockBackend); // No options
+            const handler = getToolHandler(server, 'view');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/state/test' });
+
+            // Should still return content successfully
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Test content');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBeUndefined();
+        });
+
+        test('should return content even when recordAccess rejects', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path:    '/state/test' as MemoryPath,
+                content: 'Test content',
+            }));
+
+            const recordAccess = mock(async () => {
+                throw new Error('recordAccess failed');
+            });
+            const server = createMemoryMCPServer(mockBackend, { recordAccess });
+            const handler = getToolHandler(server, 'view');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/state/test' });
+
+            // Give async fire-and-forget time to complete
+            await new Promise(resolve => { setTimeout(resolve, 10); });
+
+            // Should still return content successfully (fire-and-forget)
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Test content');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBeUndefined();
+            expect(recordAccess).toHaveBeenCalledTimes(1);
+        });
     });
 
     describe('storeSelf tool', () => {
@@ -259,7 +362,7 @@ describe.concurrent('createMemoryMCPServer', () => {
                 path:        '/identity/values',
                 content:     'Values',
                 contentType: 'text/plain',
-                tags:        ['core', 'important'],
+                tags:        new Set(['core', 'important']),
             });
         });
 
@@ -324,7 +427,7 @@ describe.concurrent('createMemoryMCPServer', () => {
                 // Should call update, not create
                 expect(mockBackend.update).toHaveBeenCalledWith('/identity/core-values', {
                     content: 'Updated values',
-                    tags:    ['core'],
+                    tags:    new Set(['core']),
                 });
                 expect(mockBackend.create).not.toHaveBeenCalled();
 
@@ -441,7 +544,7 @@ describe.concurrent('createMemoryMCPServer', () => {
                 path:        '/users/bob/notes',
                 content:     'Notes',
                 contentType: 'text/plain',
-                tags:        ['personal', 'work'],
+                tags:        new Set(['personal', 'work']),
             });
         });
 
@@ -506,7 +609,7 @@ describe.concurrent('createMemoryMCPServer', () => {
                 // Should call update, not create
                 expect(mockBackend.update).toHaveBeenCalledWith('/users/alice/preferences', {
                     content: 'Updated preferences',
-                    tags:    ['personal'],
+                    tags:    new Set(['personal']),
                 });
                 expect(mockBackend.create).not.toHaveBeenCalled();
 
@@ -614,7 +717,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             expect(mockBackend.create).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    tags: ['critical', 'bug'],
+                    tags: new Set(['critical', 'bug']),
                 })
             );
         });
@@ -761,7 +864,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             mockBackend.delete = mock(async () => createMockItem({
                 path:      '/state/old-goals' as MemoryPath,
                 content:   'Old goals content',
-                tags:      ['goals', 'outdated'],
+                tags:      new Set(['goals', 'outdated']),
                 updatedAt: '2025-06-01T12:00:00.000Z',
             }));
 
@@ -807,7 +910,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             mockBackend.delete = mock(async () => createMockItem({
                 path:    '/identity/test' as MemoryPath,
                 content: 'Test content',
-                tags:    [],
+                tags:    new Set<string>(),
             }));
 
             const server = createMemoryMCPServer(mockBackend);
@@ -880,7 +983,7 @@ describe.concurrent('createMemoryMCPServer', () => {
                 PK:             'TAG#test',
                 SK:             'PATH#/identity/test.md',
                 contentPreview: undefined, // No preview
-                tags:           ['test'],
+                tags:           new Set(['test']),
             });
 
             mockBackend.searchByTags = mock(async () => ({
@@ -906,7 +1009,7 @@ describe.concurrent('createMemoryMCPServer', () => {
                 PK:             'TAG#test',
                 SK:             'PATH#/identity/test.md',
                 contentPreview: 'Test preview content',
-                tags:           ['test'],
+                tags:           new Set(['test']),
             });
 
             mockBackend.searchByTags = mock(async () => ({

@@ -4,6 +4,7 @@ import { createMemoryMCPServer } from '../agent/memory-mcp-server';
 import { createDiscordMCPServer } from '../agent/discord-mcp-server';
 import { createInboxMCPServer } from '../agent/inbox-mcp-server';
 import type { MemoryToolBackend } from '../storage/memory-tool';
+import type { MemoryPath } from '../storage/memory-tool/types';
 import type { MessageSearchService } from '../integrations/discord/message-history/search';
 import type { QuestionRegistry } from '../agent/question-registry';
 import type { ChannelRegistryManager } from '../integrations/discord/channel-registry';
@@ -56,6 +57,11 @@ export interface MCPServersOptions {
      * The agent's prompts and message formatting use per-user timezone where available.
      */
     timezone: string
+
+    /**
+     * Optional callback to record memory access for scoring.
+     */
+    recordAccess?: (paths: MemoryPath[]) => Promise<void>
 }
 
 /**
@@ -90,7 +96,9 @@ export interface MCPServers {
  * @returns Object containing all three MCP server configurations
  */
 export function createMCPServers(options: MCPServersOptions): MCPServers {
-    const memoryMcpServer = createMemoryMCPServer(options.memoryBackend);
+    const memoryMcpServer = createMemoryMCPServer(options.memoryBackend, {
+        recordAccess: options.recordAccess,
+    });
 
     const discordMcpServer = createDiscordMCPServer(
         options.messageSearchService,

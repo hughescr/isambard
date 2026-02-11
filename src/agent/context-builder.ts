@@ -145,7 +145,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             logger.debug({ userId }, 'Loading user context');
 
             // Load recent state/events for this user via tag search
-            const result = await backend.searchByTags([`user:${userId}`], undefined, { limit });
+            const result = await backend.searchByTags(new Set([`user:${userId}`]), undefined, { limit });
 
             // Format each item with path, age, and content preview
             // TagIndexItem has memoryPath (not path) and no content field

@@ -389,7 +389,7 @@ describe('createContextBuilder loading methods', () => {
                         memoryPath:     '/state/recent1.md',
                         layer:          'state',
                         updatedAt:      '2025-01-01T00:00:00Z',
-                        tags:           ['user:user123'],
+                        tags:           new Set(['user:user123']),
                         contentPreview: 'Recent memory 1',
                     },
                 ],
@@ -398,7 +398,7 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             const context = await contextBuilder.loadRecentContext('user123', 3, now);
 
-            expect(backend.searchByTags).toHaveBeenCalledWith(['user:user123'], undefined, { limit: 3 });
+            expect(backend.searchByTags).toHaveBeenCalledWith(new Set(['user:user123']), undefined, { limit: 3 });
             expect(context).toEqual(['- /state/recent1.md (2w ago): [preview] Recent memory 1... (memory view /state/recent1.md for full)']);
             // Verify logger was called with correct messages
             expect(mockLogger.debug).toHaveBeenCalledWith({ userId: 'user123' }, 'Loading user context');
@@ -414,7 +414,7 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             await contextBuilder.loadRecentContext('user123', limit);
 
-            expect(backend.searchByTags).toHaveBeenCalledWith(['user:user123'], undefined, { limit: expectedLimit });
+            expect(backend.searchByTags).toHaveBeenCalledWith(new Set(['user:user123']), undefined, { limit: expectedLimit });
         });
 
         test('should return empty array when no items found', async () => {
@@ -437,7 +437,7 @@ describe('createContextBuilder loading methods', () => {
                         memoryPath:     '/state/item1.md',
                         layer:          'state',
                         updatedAt:      '2025-01-01T00:00:00Z',
-                        tags:           ['user:user-multi'],
+                        tags:           new Set(['user:user-multi']),
                         contentPreview: 'Memory 1',
                     },
                     {
@@ -446,7 +446,7 @@ describe('createContextBuilder loading methods', () => {
                         memoryPath:     '/state/item2.md',
                         layer:          'state',
                         updatedAt:      '2025-01-01T00:00:00Z',
-                        tags:           ['user:user-multi'],
+                        tags:           new Set(['user:user-multi']),
                         contentPreview: 'Memory 2',
                     },
                 ],
@@ -811,7 +811,7 @@ describe('createContextBuilder loading methods', () => {
                         memoryPath:     '/state/test.md',
                         layer:          'state',
                         updatedAt:      '2025-01-15T10:00:00.000Z',
-                        tags:           ['user:user123'],
+                        tags:           new Set(['user:user123']),
                         contentPreview: content.slice(0, 100),
                     },
                 ],
@@ -836,7 +836,7 @@ describe('createContextBuilder loading methods', () => {
                         memoryPath:     '/state/gsi2-item.md',
                         layer:          'state',
                         updatedAt:      '2025-01-15T10:00:00.000Z',
-                        tags:           ['user:user123'],
+                        tags:           new Set(['user:user123']),
                         contentPreview: 'This is a preview from tag index...',
                     },
                 ],
@@ -861,7 +861,7 @@ describe('createContextBuilder loading methods', () => {
                         memoryPath:     '/state/no-content.md',
                         layer:          'state',
                         updatedAt:      '2025-01-15T10:00:00.000Z',
-                        tags:           ['user:user123'],
+                        tags:           new Set(['user:user123']),
                         contentPreview: undefined,
                     },
                 ],
@@ -885,7 +885,7 @@ describe('createContextBuilder loading methods', () => {
                         memoryPath:     '/state/full-content.md',
                         layer:          'state',
                         updatedAt:      '2025-01-15T10:00:00.000Z',
-                        tags:           ['user:user123'],
+                        tags:           new Set(['user:user123']),
                         contentPreview: 'This is just a preview',
                     },
                 ],
@@ -910,7 +910,7 @@ describe('createContextBuilder loading methods', () => {
                         memoryPath:     '/state/task1.md',
                         layer:          'state',
                         updatedAt:      '2025-01-15T11:00:00.000Z',
-                        tags:           ['user:user123'],
+                        tags:           new Set(['user:user123']),
                         contentPreview: 'First task',
                     },
                     {
@@ -919,7 +919,7 @@ describe('createContextBuilder loading methods', () => {
                         memoryPath:     '/state/task2.md',
                         layer:          'state',
                         updatedAt:      '2025-01-14T12:00:00.000Z',
-                        tags:           ['user:user123'],
+                        tags:           new Set(['user:user123']),
                         contentPreview: 'Second task',
                     },
                 ],
@@ -968,8 +968,8 @@ describe('createContextBuilder loading methods', () => {
 
     describe('buildUserMessagePrefix', () => {
         test('should include user memories section when user has memories', async () => {
-            backend.searchByTags = mock(async (tags: string[]) => {
-                if(tags[0] === 'user:user123') {
+            backend.searchByTags = mock(async (tags: Set<string>) => {
+                if(tags.has('user:user123')) {
                     return {
                         items: [
                             {
@@ -978,7 +978,7 @@ describe('createContextBuilder loading methods', () => {
                                 memoryPath:     '/state/item1.md',
                                 layer:          'state',
                                 updatedAt:      new Date().toISOString(),
-                                tags:           ['user:user123'],
+                                tags:           new Set(['user:user123']),
                                 contentPreview: 'User memory 1',
                             },
                         ],
@@ -1007,8 +1007,8 @@ describe('createContextBuilder loading methods', () => {
         });
 
         test('should include bot activities when botUserId provided and has memories', async () => {
-            backend.searchByTags = mock(async (tags: string[]) => {
-                if(tags[0] === 'user:bot123') {
+            backend.searchByTags = mock(async (tags: Set<string>) => {
+                if(tags.has('user:bot123')) {
                     return {
                         items: [
                             {
@@ -1017,7 +1017,7 @@ describe('createContextBuilder loading methods', () => {
                                 memoryPath:     '/state/bot-activity.md',
                                 layer:          'state',
                                 updatedAt:      new Date().toISOString(),
-                                tags:           ['user:bot123'],
+                                tags:           new Set(['user:bot123']),
                                 contentPreview: 'Bot activity',
                             },
                         ],
@@ -1067,8 +1067,8 @@ describe('createContextBuilder loading methods', () => {
 
         test('should join sections with double newlines and add trailing newlines', async () => {
             // Return memories for user AND events
-            backend.searchByTags = mock(async (tags: string[]) => {
-                if(tags[0] === 'user:user123') {
+            backend.searchByTags = mock(async (tags: Set<string>) => {
+                if(tags.has('user:user123')) {
                     return {
                         items: [{
                             PK:             'TAG#user:user123',
@@ -1076,7 +1076,7 @@ describe('createContextBuilder loading methods', () => {
                             memoryPath:     '/state/item1.md',
                             layer:          'state',
                             updatedAt:      new Date().toISOString(),
-                            tags:           ['user:user123'],
+                            tags:           new Set(['user:user123']),
                             contentPreview: 'Memory',
                         }],
                     };
@@ -1106,8 +1106,8 @@ describe('createContextBuilder loading methods', () => {
         });
 
         test('should format user memories with "- " prefix and full content', async () => {
-            backend.searchByTags = mock(async (tags: string[]) => {
-                if(tags[0] === 'user:user123') {
+            backend.searchByTags = mock(async (tags: Set<string>) => {
+                if(tags.has('user:user123')) {
                     return {
                         items: [
                             {
@@ -1116,7 +1116,7 @@ describe('createContextBuilder loading methods', () => {
                                 memoryPath:     '/state/item1.md',
                                 layer:          'state',
                                 updatedAt:      new Date().toISOString(),
-                                tags:           ['user:user123'],
+                                tags:           new Set(['user:user123']),
                                 contentPreview: 'User preference: dark mode',
                             },
                             {
@@ -1125,7 +1125,7 @@ describe('createContextBuilder loading methods', () => {
                                 memoryPath:     '/state/item2.md',
                                 layer:          'state',
                                 updatedAt:      new Date().toISOString(),
-                                tags:           ['user:user123'],
+                                tags:           new Set(['user:user123']),
                                 contentPreview: 'Favorite color: blue',
                             },
                         ],
@@ -1157,8 +1157,8 @@ describe('createContextBuilder loading methods', () => {
         });
 
         test('should format bot activities with "- " prefix and full content', async () => {
-            backend.searchByTags = mock(async (tags: string[]) => {
-                if(tags[0] === 'user:bot123') {
+            backend.searchByTags = mock(async (tags: Set<string>) => {
+                if(tags.has('user:bot123')) {
                     return {
                         items: [
                             {
@@ -1167,7 +1167,7 @@ describe('createContextBuilder loading methods', () => {
                                 memoryPath:     '/state/task1.md',
                                 layer:          'state',
                                 updatedAt:      new Date().toISOString(),
-                                tags:           ['user:bot123'],
+                                tags:           new Set(['user:bot123']),
                                 contentPreview: 'Completed database migration',
                             },
                             {
@@ -1176,7 +1176,7 @@ describe('createContextBuilder loading methods', () => {
                                 memoryPath:     '/state/task2.md',
                                 layer:          'state',
                                 updatedAt:      new Date().toISOString(),
-                                tags:           ['user:bot123'],
+                                tags:           new Set(['user:bot123']),
                                 contentPreview: 'Updated API documentation',
                             },
                         ],

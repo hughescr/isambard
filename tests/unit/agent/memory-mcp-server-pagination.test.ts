@@ -23,7 +23,7 @@ const createMockTagIndexItem = (overrides: Partial<TagIndexItem> = {}): TagIndex
     memoryPath:     '/mock/path',
     layer:          'state',
     updatedAt:      '2025-01-01T00:00:00.000Z',
-    tags:           ['mock'],
+    tags:           new Set(['mock']),
     contentPreview: 'mock content',
     ...overrides,
 });
@@ -207,10 +207,10 @@ describe.concurrent('Memory MCP Server Pagination', () => {
 
         describe('backend calls with cursor', () => {
             test.each([
-                ['cursor only', { tags: ['important'], cursor: 'Y3Vyc29y' }, ['important'], undefined, { cursor: 'Y3Vyc29y' }],
-                ['limit and cursor', { tags: ['important'], limit: 10, cursor: 'Y3Vyc29y' }, ['important'], undefined, { limit: 10, cursor: 'Y3Vyc29y' }],
-                ['layer, limit, and cursor', { tags: ['active'], layer: 'state', limit: 5, cursor: 'c3RhdGU=' }, ['active'], 'state', { limit: 5, cursor: 'c3RhdGU=' }],
-                ['layer and cursor only', { tags: ['test'], layer: 'identity', cursor: 'aWRlbnRpdHk=' }, ['test'], 'identity', { cursor: 'aWRlbnRpdHk=' }],
+                ['cursor only', { tags: ['important'], cursor: 'Y3Vyc29y' }, new Set(['important']), undefined, { cursor: 'Y3Vyc29y' }],
+                ['limit and cursor', { tags: ['important'], limit: 10, cursor: 'Y3Vyc29y' }, new Set(['important']), undefined, { limit: 10, cursor: 'Y3Vyc29y' }],
+                ['layer, limit, and cursor', { tags: ['active'], layer: 'state', limit: 5, cursor: 'c3RhdGU=' }, new Set(['active']), 'state', { limit: 5, cursor: 'c3RhdGU=' }],
+                ['layer and cursor only', { tags: ['test'], layer: 'identity', cursor: 'aWRlbnRpdHk=' }, new Set(['test']), 'identity', { cursor: 'aWRlbnRpdHk=' }],
             ])('should pass %s to backend.searchByTags', async (_label, handlerArgs, expectedTags, expectedLayer, expectedOptions) => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'search');
@@ -232,7 +232,7 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                             SK:             'PATH#/memories/result1',
                             memoryPath:     '/memories/result1',
                             layer:          'events',
-                            tags:           ['important'],
+                            tags:           new Set(['important']),
                             contentPreview: 'First result',
                         }),
                     ],
@@ -262,7 +262,7 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                             PK:             'TAG#tag1',
                             SK:             'PATH#/memories/result1',
                             memoryPath:     '/memories/result1',
-                            tags:           ['tag1'],
+                            tags:           new Set(['tag1']),
                             contentPreview: 'Only result',
                         }),
                     ],
@@ -291,14 +291,14 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                             PK:             'TAG#tag1',
                             SK:             'PATH#/memories/result1',
                             memoryPath:     '/memories/result1',
-                            tags:           ['tag1'],
+                            tags:           new Set(['tag1']),
                             contentPreview: 'First result',
                         }),
                         createMockTagIndexItem({
                             PK:             'TAG#tag1',
                             SK:             'PATH#/memories/result2',
                             memoryPath:     '/memories/result2',
-                            tags:           ['tag1'],
+                            tags:           new Set(['tag1']),
                             contentPreview: 'Second result',
                         }),
                     ],
@@ -417,7 +417,7 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ tags, ...handlerArgs });
 
-                expect(mockBackend.searchByTags).toHaveBeenCalledWith(tags, layer, expectedOptions);
+                expect(mockBackend.searchByTags).toHaveBeenCalledWith(new Set(tags), layer, expectedOptions);
             });
         });
     });

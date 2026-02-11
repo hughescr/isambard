@@ -4,7 +4,7 @@ import { z } from 'zod';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { MemoryToolBackend } from '../storage/memory-tool';
-import { type LayerName, createMemoryPath, createLayerName, createContentType } from '../storage/memory-tool/types';
+import { type LayerName, type MemoryPath, createMemoryPath, createLayerName, createContentType } from '../storage/memory-tool/types';
 
 /**
  * Creates an MCP server for memory operations.
@@ -18,7 +18,10 @@ import { type LayerName, createMemoryPath, createLayerName, createContentType } 
  *
  * This server wraps the existing DynamoDB memory backend for use with the Claude Agent SDK.
  */
-export function createMemoryMCPServer(backend: MemoryToolBackend) {
+export function createMemoryMCPServer(
+    backend: MemoryToolBackend,
+    options?: { recordAccess?: (paths: MemoryPath[]) => Promise<void> }
+) {
     return createSdkMcpServer({
         name:    'memory',
         version: '1.0.0',
@@ -32,12 +35,21 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const result = await backend.get(createMemoryPath(args.path));
+                        const memoryPath = createMemoryPath(args.path);
+                        const result = await backend.get(memoryPath);
                         if(!result) {
                             return {
                                 content: [{ type: 'text' as const, text: 'Memory not found' }],
                                 isError: true,
                             };
+                        }
+                        // Fire-and-forget: record access for state-layer memories (scoring)
+                        // Stryker disable next-line ConditionalExpression: recordAccess is fire-and-forget optimization
+                        if(args.path.startsWith('/state/') && options?.recordAccess) {
+                            // Stryker disable BlockStatement: recordAccess catch is fire-and-forget
+                            options.recordAccess([memoryPath]).catch((error: unknown) => {
+                                logger.warn({ error, path: args.path, msg: 'Failed to record memory access' });
+                            });
                         }
                         return {
                             content: [{ type: 'text' as const, text: result.content }],
@@ -70,13 +82,13 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                         const path = createMemoryPath(`/${args.layer}/${args.name}`);
                         const existing = await backend.get(path);
                         if(existing) {
-                            await backend.update(path, { content: args.content, tags: args.tags });
+                            await backend.update(path, { content: args.content, tags: args.tags ? new Set(args.tags) : undefined });
                         } else {
                             await backend.create({
                                 path,
                                 content:     args.content,
                                 contentType: createContentType('text/plain'),
-                                tags:        args.tags,
+                                tags:        args.tags ? new Set(args.tags) : undefined,
                             });
                         }
                         return {
@@ -110,13 +122,13 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                         const path = createMemoryPath(`/users/${args.userId}/${args.name}`);
                         const existing = await backend.get(path);
                         if(existing) {
-                            await backend.update(path, { content: args.content, tags: args.tags });
+                            await backend.update(path, { content: args.content, tags: args.tags ? new Set(args.tags) : undefined });
                         } else {
                             await backend.create({
                                 path,
                                 content:     args.content,
                                 contentType: createContentType('text/plain'),
-                                tags:        args.tags,
+                                tags:        args.tags ? new Set(args.tags) : undefined,
                             });
                         }
                         return {
@@ -156,7 +168,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                             path,
                             content,
                             contentType: createContentType('text/plain'),
-                            tags:        args.tags,
+                            tags:        args.tags ? new Set(args.tags) : undefined,
                         });
                         return {
                             content: [{ type: 'text' as const, text: `Event logged at ${path}` }],
@@ -195,7 +207,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                             ? { limit: args.limit, cursor: args.cursor, startDate: args.startDate, endDate: args.endDate }
                             : undefined;
                         const results = await backend.searchByTags(
-                            args.tags,
+                            new Set(args.tags),
                             args.layer ? createLayerName(args.layer) : undefined,
                             options
                         );
@@ -338,7 +350,7 @@ export function createMemoryMCPServer(backend: MemoryToolBackend) {
                                 isError: true,
                             };
                         }
-                        const tags = result.tags && result.tags.length > 0 ? result.tags.join(', ') : 'none';
+                        const tags = result.tags && result.tags.size > 0 ? [...result.tags].join(', ') : 'none';
                         return {
                             content: [{ type: 'text' as const, text: `Deleted memory at ${result.path}\nTags: ${tags}\nLast updated: ${result.updatedAt}\n\n${result.content}` }],
                         };
