@@ -6,7 +6,7 @@
 /* eslint-disable @typescript-eslint/no-empty-function, lodash/prefer-noop -- test mocks use empty functions to avoid unbound-method errors */
 import { describe, it, expect, beforeEach } from 'bun:test';
 import _ from 'lodash';
-import { createBotStateManager, type BotStateManager, type BotStateManagerDeps } from '@/integrations/discord/state/manager';
+import { BotStateManagerImpl, type BotStateManager, type BotStateManagerDeps } from '@/integrations/discord/state/manager';
 import { type StateChange, type CatchingUpModeContext, type InterruptingMessageDetails } from '@/integrations/discord/state/types';
 import { type ChannelId, createChannelId } from '@/integrations/discord/types';
 import { TransitionError } from '@/integrations/discord/state/transitions';
@@ -23,7 +23,7 @@ describe('BotStateManager', () => {
             error: () => {},
             debug: () => {},
         } as unknown as BotStateManagerDeps['logger'];
-        manager = createBotStateManager({ logger: mockLogger });
+        manager = new BotStateManagerImpl({ logger: mockLogger });
         manager.start();
     });
 
@@ -677,7 +677,7 @@ describe('BotStateManager', () => {
 
     describe('Throttle Logic', () => {
         it('should return true when enough time has passed after recordPresenceUpdate', (done) => {
-            manager = createBotStateManager({ logger: mockLogger, updateThrottleMs: 50 });
+            manager = new BotStateManagerImpl({ logger: mockLogger, updateThrottleMs: 50 });
             manager.start();
 
             manager.recordPresenceUpdate();
@@ -828,7 +828,7 @@ describe('BotStateManager', () => {
 
     describe('Lifecycle', () => {
         it('should start successfully', () => {
-            const newManager = createBotStateManager({ logger: mockLogger });
+            const newManager = new BotStateManagerImpl({ logger: mockLogger });
 
             expect(() => newManager.start()).not.toThrow();
         });

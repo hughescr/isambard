@@ -423,7 +423,7 @@ export type SessionType = 'processing_message' | 'catching_up' | 'perching' | 'd
  *
  * @example
  * ```typescript
- * const manager = createBotStateManager();
+ * const manager = new BotStateManagerImpl({ logger });
  * const unsubscribe = manager.subscribe((change) => {
  *   console.log('State changed:', change.changeType);
  * });

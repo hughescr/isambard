@@ -16,7 +16,7 @@ import * as channelRegistryModule from '@/integrations/discord/channel-registry'
 import * as presenceModule from '@/integrations/discord/presence';
 import * as messageCoordinatorModule from '@/integrations/discord/message-coordinator';
 import type { MessageProcessor } from '@/integrations/discord/message-coordinator';
-import { createBotStateManager } from '@/integrations/discord/state';
+import { BotStateManagerImpl } from '@/integrations/discord/state';
 import type { Logger } from '@hughescr/logger';
 import * as loggerModule from '@hughescr/logger';
 
@@ -236,7 +236,7 @@ describe('createDiscordBot', () => {
             }));
 
             // Create a bot state manager with a mock shouldUpdatePresence that always returns false
-            const mockBotStateManager = createBotStateManager({
+            const mockBotStateManager = new BotStateManagerImpl({
                 logger:           mockLogger,
                 updateThrottleMs: 2000,
             });
@@ -253,7 +253,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up subscriptions
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
@@ -337,7 +337,7 @@ describe('createDiscordBot', () => {
 
             // Track subscription calls
             let subscribeCallCount = 0;
-            const realBotStateManager = createBotStateManager({
+            const realBotStateManager = new BotStateManagerImpl({
                 logger:           mockLogger,
                 updateThrottleMs: 2000,
             });
@@ -357,7 +357,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up subscriptions
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
@@ -410,7 +410,7 @@ describe('createDiscordBot', () => {
             }));
 
             // Create a real bot state manager to test the subscription mechanism
-            const mockBotStateManager = createBotStateManager({
+            const mockBotStateManager = new BotStateManagerImpl({
                 logger:           mockLogger,
                 updateThrottleMs: 2000,
             });
@@ -425,7 +425,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up subscriptions
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
@@ -530,7 +530,7 @@ describe('createDiscordBot', () => {
                 generate: mock(async () => ({ name: 'Idle', type: 4 })),
             }));
 
-            const mockBotStateManager = createBotStateManager({
+            const mockBotStateManager = new BotStateManagerImpl({
                 logger:           mockLogger,
                 updateThrottleMs: 100, // Short throttle for testing
             });
@@ -545,7 +545,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up subscriptions
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
@@ -629,7 +629,7 @@ describe('createDiscordBot', () => {
             }));
 
             // Create a real bot state manager
-            const mockBotStateManager = createBotStateManager({
+            const mockBotStateManager = new BotStateManagerImpl({
                 logger:           mockLogger,
                 updateThrottleMs: 2000,
             });
@@ -644,7 +644,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up subscriptions
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
@@ -701,7 +701,7 @@ describe('createDiscordBot', () => {
             });
 
             // Verify client.once() was called with 'clientReady' (not client.on())
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const onceCalls = (mockClient.once as any).mock.calls as [string, (...args: unknown[]) => void][];
             const clientReadyCalls = _filter(onceCalls, ([event]) => event === 'clientReady');
 
@@ -776,7 +776,7 @@ describe('createDiscordBot', () => {
             });
 
             // Verify that clientReady was registered with once()
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const onceCalls = (mockClient.once as any).mock.calls as [string, (...args: unknown[]) => void][];
             const clientReadyOnceCalls = _filter(onceCalls, ([event]) => event === 'clientReady');
             expect(clientReadyOnceCalls.length).toBeGreaterThan(0);
@@ -850,7 +850,7 @@ describe('createDiscordBot', () => {
             expect(interactionCreateRegistered).toBe(false);
 
             // Get and fire the clientReady handler
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
@@ -916,7 +916,7 @@ describe('createDiscordBot', () => {
             });
 
             // Simulate clientReady event
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
@@ -963,7 +963,7 @@ describe('createDiscordBot', () => {
             });
 
             // Simulate clientReady event - call ALL handlers to avoid order dependency
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             for(const [, handler] of readyHandlers) {
@@ -1020,7 +1020,7 @@ describe('createDiscordBot', () => {
             });
 
             // Simulate clientReady event to create presenceManager
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
@@ -1083,7 +1083,7 @@ describe('createDiscordBot', () => {
             });
 
             // Simulate clientReady event to create presenceManager
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
@@ -1344,7 +1344,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady event
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const clientReadyHandler = readyHandlers[0]?.[1];
@@ -1408,7 +1408,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady event
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const clientReadyHandler = readyHandlers[0]?.[1];
@@ -1418,7 +1418,7 @@ describe('createDiscordBot', () => {
 
             // Verify notification was sent
             expect(mockSendToChannel).toHaveBeenCalled();
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const sentMessage = (mockSendToChannel as any).mock.calls[0]?.[0] as string;
             expect(sentMessage).toContain('⚠️ **Channel Registry Error**');
             expect(sentMessage).toContain('DynamoDB connection failed');
@@ -1471,7 +1471,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady event
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const clientReadyHandler = readyHandlers[0]?.[1];
@@ -1527,7 +1527,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady event
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const clientReadyHandler = readyHandlers[0]?.[1];
@@ -1592,7 +1592,7 @@ describe('createDiscordBot', () => {
             loggerErrorSpy.mockClear();
 
             // Trigger clientReady event
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const clientReadyHandler = readyHandlers[0]?.[1];
@@ -1634,7 +1634,7 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
             // Mock botStateManager with stop method that tracks call order
-            const mockBotStateManager = createBotStateManager({
+            const mockBotStateManager = new BotStateManagerImpl({
                 logger: mockLogger,
             });
             const originalStop = mockBotStateManager.stop;
@@ -1673,7 +1673,7 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
             // Create a real botStateManager so we can verify state transitions
-            const realBotStateManager = createBotStateManager({
+            const realBotStateManager = new BotStateManagerImpl({
                 logger: mockLogger,
             });
 
@@ -1812,7 +1812,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to register event handlers
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
@@ -2033,7 +2033,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to complete setup
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
+
             const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
@@ -2091,7 +2091,7 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
 
             // Create bot state manager in idle mode
-            const realBotStateManager = createBotStateManager({
+            const realBotStateManager = new BotStateManagerImpl({
                 logger: mockLogger,
             });
 
@@ -2191,7 +2191,7 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
 
             // Create bot state manager already in processing_message mode
-            const realBotStateManager = createBotStateManager({
+            const realBotStateManager = new BotStateManagerImpl({
                 logger: mockLogger,
             });
 
@@ -2291,7 +2291,7 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
 
             // Create bot state manager in idle mode
-            const realBotStateManager = createBotStateManager({
+            const realBotStateManager = new BotStateManagerImpl({
                 logger: mockLogger,
             });
 

@@ -18,7 +18,7 @@
  * @example
  * ```typescript
  * // Create state manager
- * const manager = createBotStateManager({ logger });
+ * const manager = new BotStateManagerImpl({ logger });
  * manager.start();
  *
  * // Subscribe to state changes
@@ -91,7 +91,7 @@ export {
 // ============================================================================
 
 export type { BotStateManagerDeps } from './manager';
-export { createBotStateManager, BotStateManagerImpl } from './manager';
+export { BotStateManagerImpl } from './manager';
 
 // ============================================================================
 // StatusContextBuilder from status-context-builder.ts

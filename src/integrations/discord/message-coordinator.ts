@@ -100,7 +100,7 @@ interface ChannelState {
  *     response: 'Response text',
  *     sessionId: 'session-123',
  *     wasInterrupted: false,
- *     streamTracker: createStreamTracker()
+ *     streamTracker: new StreamTracker()
  *   };
  * });
  *

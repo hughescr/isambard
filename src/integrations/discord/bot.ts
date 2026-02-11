@@ -21,7 +21,7 @@ import {
     type CatchUpInProgressSignal
 } from './catchup';
 import {
-    createBotStateManager,
+    BotStateManagerImpl,
     type BotStateManager
 } from './state';
 import {
@@ -230,7 +230,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     let unsubscribeActivityPhase: (() => void) | undefined;
 
     // Use provided bot state manager or create a new one
-    const botStateManager: BotStateManager = providedBotStateManager ?? createBotStateManager({
+    const botStateManager: BotStateManager = providedBotStateManager ?? new BotStateManagerImpl({
         logger,
         updateThrottleMs: config.presence?.updateThrottleMs,
     });

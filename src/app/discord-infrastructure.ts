@@ -29,7 +29,7 @@ import { createMessageSearchService } from '@/integrations/discord/message-histo
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
 import { CheckpointManager, InboxManager } from '@/integrations/discord/inbox';
 import type { InboxManager as InboxManagerType } from '@/integrations/discord/inbox';
-import { createBotStateManager } from '@/integrations/discord/state';
+import { BotStateManagerImpl } from '@/integrations/discord/state';
 import type { BotStateManager } from '@/integrations/discord/state';
 
 /**
@@ -132,7 +132,7 @@ export function createDiscordInfrastructure(options: DiscordInfrastructureOption
     });
 
     // Create bot state manager (shared between inbox MCP server and bot)
-    const botStateManager: BotStateManager = createBotStateManager({
+    const botStateManager: BotStateManager = new BotStateManagerImpl({
         logger,
         updateThrottleMs: discordConfig.presence?.updateThrottleMs,
     });

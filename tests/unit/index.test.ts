@@ -251,7 +251,8 @@ describe('createApp', () => {
             spies.push(InboxManagerSpy);
 
             const stateModule = await import('@/integrations/discord/state');
-            const createBotStateManagerSpy = spyOn(stateModule, 'createBotStateManager').mockReturnValue({} as any);
+            // @ts-expect-error - Mocking constructor
+            const createBotStateManagerSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any));
             spies.push(createBotStateManagerSpy);
 
             const taskSessionModule = await import('@/storage/task-session');
@@ -416,7 +417,8 @@ describe('createApp', () => {
             spies.push(InboxManagerSpy);
 
             const stateModule = await import('@/integrations/discord/state');
-            const createBotStateManagerSpy = spyOn(stateModule, 'createBotStateManager').mockReturnValue({} as any);
+            // @ts-expect-error - Mocking constructor
+            const createBotStateManagerSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any));
             spies.push(createBotStateManagerSpy);
 
             const taskSessionModule = await import('@/storage/task-session');
@@ -1299,7 +1301,8 @@ describe('createApp', () => {
             spies.push(InboxManagerSpy);
 
             const stateModule = await import('@/integrations/discord/state');
-            const createBotStateManagerSpy = spyOn(stateModule, 'createBotStateManager').mockReturnValue({} as any);
+            // @ts-expect-error - Mocking constructor
+            const createBotStateManagerSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any));
             spies.push(createBotStateManagerSpy);
 
             const taskSessionModule = await import('@/storage/task-session');

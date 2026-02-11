@@ -170,7 +170,7 @@ export interface MessageHandlerOptions {
  * @example
  * ```typescript
  * const client = new Client({ intents: [...] });
- * const coordinator = createMessageCoordinator({ agent, onResponse: ... });
+ * const coordinator = new MessageCoordinator({ agent, onResponse: ... });
  *
  * client.on('messageCreate', createMessageHandler({
  *   botUserId: myBotUserId,

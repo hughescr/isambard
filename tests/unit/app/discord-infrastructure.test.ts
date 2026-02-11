@@ -106,7 +106,8 @@ describe('createDiscordInfrastructure', () => {
         } as any);
         spies.push(inboxSpy);
 
-        const stateSpy = spyOn(stateModule, 'createBotStateManager').mockReturnValue(mockBotStateManager);
+        // @ts-expect-error - Mocking constructor
+        const stateSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => mockBotStateManager);
         spies.push(stateSpy);
 
         // Import after mocks are set up
@@ -150,7 +151,8 @@ describe('createDiscordInfrastructure', () => {
         spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({}) as any));
         // @ts-expect-error - Mocking constructor
         spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}) as any));
-        spies.push(spyOn(stateModule, 'createBotStateManager').mockReturnValue({} as any));
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any)));
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
 
@@ -188,7 +190,8 @@ describe('createDiscordInfrastructure', () => {
         spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({}) as any));
         // @ts-expect-error - Mocking constructor
         spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}) as any));
-        spies.push(spyOn(stateModule, 'createBotStateManager').mockReturnValue({} as any));
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any)));
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
 
@@ -229,7 +232,8 @@ describe('createDiscordInfrastructure', () => {
         spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({}) as any));
         // @ts-expect-error - Mocking constructor
         spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}) as any));
-        spies.push(spyOn(stateModule, 'createBotStateManager').mockReturnValue({} as any));
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any)));
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
 
@@ -275,7 +279,8 @@ describe('createDiscordInfrastructure', () => {
         spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({}) as any));
         // @ts-expect-error - Mocking constructor
         spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}) as any));
-        spies.push(spyOn(stateModule, 'createBotStateManager').mockReturnValue({} as any));
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any)));
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
 
@@ -318,7 +323,8 @@ describe('createDiscordInfrastructure', () => {
         spies.push(checkpointSpy);
         // @ts-expect-error - Mocking constructor
         spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}) as any));
-        spies.push(spyOn(stateModule, 'createBotStateManager').mockReturnValue({} as any));
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any)));
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
 
@@ -360,7 +366,8 @@ describe('createDiscordInfrastructure', () => {
             return {};
         } as any);
         spies.push(inboxSpy);
-        spies.push(spyOn(stateModule, 'createBotStateManager').mockReturnValue({} as any));
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any)));
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
 
@@ -400,7 +407,8 @@ describe('createDiscordInfrastructure', () => {
         spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({}) as any));
         // @ts-expect-error - Mocking constructor
         spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}) as any));
-        const stateSpy = spyOn(stateModule, 'createBotStateManager').mockReturnValue({} as any);
+        // @ts-expect-error - Mocking constructor
+        const stateSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any));
         spies.push(stateSpy);
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
@@ -481,7 +489,8 @@ describe('createDiscordInfrastructure', () => {
         spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({}) as any));
         // @ts-expect-error - Mocking constructor
         spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}) as any));
-        const stateSpy = spyOn(stateModule, 'createBotStateManager').mockReturnValue({} as any);
+        // @ts-expect-error - Mocking constructor
+        const stateSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any));
         spies.push(stateSpy);
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
@@ -530,7 +539,8 @@ describe('createDiscordInfrastructure', () => {
         // @ts-expect-error - Mocking constructor
         const inboxSpy = spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}) as any);
         spies.push(inboxSpy);
-        spies.push(spyOn(stateModule, 'createBotStateManager').mockReturnValue({} as any));
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any)));
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
 

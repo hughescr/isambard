@@ -518,14 +518,3 @@ export class BotStateManagerImpl implements BotStateManager {
     }
     // Stryker restore BlockStatement,StringLiteral
 }
-
-/**
- * Create a BotStateManager instance.
- * Convenience factory function for backward compatibility.
- *
- * @param deps - Dependencies including logger and optional throttle configuration
- * @returns BotStateManager instance
- */
-export function createBotStateManager(deps: BotStateManagerDeps): BotStateManager {
-    return new BotStateManagerImpl(deps);
-}
