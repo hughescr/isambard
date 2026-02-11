@@ -45,7 +45,7 @@ export function createMemoryMCPServer(
                         }
                         // Fire-and-forget: record access for state-layer memories (scoring)
                         // Stryker disable next-line ConditionalExpression: recordAccess is fire-and-forget optimization
-                        if(args.path.startsWith('/state/') && options?.recordAccess) {
+                        if(_.startsWith(args.path, '/state/') && options?.recordAccess) {
                             // Stryker disable BlockStatement: recordAccess catch is fire-and-forget
                             options.recordAccess([memoryPath]).catch((error: unknown) => {
                                 logger.warn({ error, path: args.path, msg: 'Failed to record memory access' });

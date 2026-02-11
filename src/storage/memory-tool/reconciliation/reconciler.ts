@@ -8,7 +8,7 @@
  */
 
 import { DynamoDBDocumentClient, QueryCommand, ScanCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
-import { map as _map, includes as _includes, isEqual as _isEqual, isObject as _isObject, isString as _isString, startsWith as _startsWith } from 'lodash';
+import { map as _map, isObject as _isObject, isString as _isString, startsWith as _startsWith } from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { MemoryToolBackendTagIndex } from '../backend-tag-index';
 import type { MemoryPath, MemoryToolItemData, MemoryToolItem, TagIndexItem } from '../types';
@@ -48,6 +48,22 @@ export interface ReconcilerOptions {
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/**
+ * Compare two Sets for equality (same size and same elements)
+ */
+function setsEqual(a: Set<string>, b: Set<string>): boolean {
+    // Stryker disable next-line EqualityOperator: Size check is optimization before element comparison
+    if(a.size !== b.size) {
+        return false;
+    }
+    for(const item of a) {
+        if(!b.has(item)) {
+            return false;
+        }
+    }
+    return true;
+}
 
 /**
  * Delay that respects abort signal
@@ -179,7 +195,7 @@ function isTagIndexStale(
     return (
         indexItem.contentPreview !== memoryItem.contentPreview
         || indexItem.updatedAt !== memoryItem.updatedAt
-        || !_isEqual(indexItem.tags, normalizeTags(memoryItem.tags ?? /* Stryker disable ArrayDeclaration: Default empty array for normalizeTags */ [] /* Stryker restore ArrayDeclaration */))
+        || !setsEqual(indexItem.tags, normalizeTags(memoryItem.tags))
     );
 }
 
@@ -191,7 +207,7 @@ async function processMemoryItemTags(
     memoryItem: MemoryToolItem
 ): Promise<void> {
     // Stryker disable next-line ConditionalExpression,BlockStatement: Early return optimization - normalizeTags handles undefined/empty gracefully
-    if(!memoryItem.tags || memoryItem.tags.length === 0) {
+    if(!memoryItem.tags || memoryItem.tags.size === 0) {
         return;
     }
 
@@ -207,8 +223,7 @@ async function processMemoryItemTags(
                 // Create missing index item
                 await ctx.deps.tagIndex.createTagIndexItems(
                     memoryItem.path,
-                    /* Stryker disable next-line ArrayDeclaration: Tag argument tested in backend-tag-index.test.ts */
-                    [tag],
+                    new Set([tag]),
                     memoryItem.updatedAt,
                     // Stryker disable next-line StringLiteral: Default preview value
                     memoryItem.contentPreview ?? '',
@@ -219,8 +234,7 @@ async function processMemoryItemTags(
                 // Refresh stale index item (count-neutral)
                 await ctx.deps.tagIndex.refreshTagIndexItems(
                     memoryItem.path,
-                    /* Stryker disable next-line ArrayDeclaration: Tag argument tested in backend-tag-index.test.ts */
-                    [tag],
+                    new Set([tag]),
                     memoryItem.updatedAt,
                     // Stryker disable next-line StringLiteral: Default preview value
                     memoryItem.contentPreview ?? '',
@@ -450,22 +464,19 @@ async function processTagIndexItem(
 
         if(!memory) {
             // Memory doesn't exist - delete orphaned index
-            await ctx.deps.tagIndex.deleteTagIndexItems(createMemoryPath(memoryPath), /* Stryker disable next-line ArrayDeclaration: Tag argument tested in backend-tag-index.test.ts */
-                [tag]);
+            await ctx.deps.tagIndex.deleteTagIndexItems(createMemoryPath(memoryPath), new Set([tag]));
             ctx.progress.indexItemsDeleted++;
             /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
             logger.debug({ path: memoryPath, tag, msg: 'Deleted orphaned tag index' });
             /* Stryker restore StringLiteral,ObjectLiteral */
         } else {
             // Memory exists - check if tag is still present
-            // Stryker disable next-line ArrayDeclaration: Default value not exercised in tests
-            const normalizedTags = normalizeTags(memory.tags ?? []);
+            const normalizedTags = normalizeTags(memory.tags);
 
             // Stryker disable next-line ConditionalExpression,BlockStatement: Tag check
-            if(!_includes(normalizedTags, tag)) {
+            if(!normalizedTags.has(tag)) {
                 // Tag removed - delete stale index
-                await ctx.deps.tagIndex.deleteTagIndexItems(memory.path, /* Stryker disable next-line ArrayDeclaration: Tag argument tested in backend-tag-index.test.ts */
-                    [tag]);
+                await ctx.deps.tagIndex.deleteTagIndexItems(memory.path, new Set([tag]));
                 ctx.progress.indexItemsDeleted++;
                 /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
                 logger.debug({ path: memory.path, tag, msg: 'Deleted stale tag index' });

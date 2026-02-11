@@ -186,7 +186,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: undefined, // undefined contentPreview
             };
 
@@ -202,7 +202,7 @@ describe('runReconciliation', () => {
             ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
 
             // Spy on createTagIndexItems to verify the empty string fallback is used
-            const createSpy = mock(async (path: string, tags: string[], updatedAt: string, contentPreview: string) => {
+            const createSpy = mock(async (path: string, tags: Set<string>, updatedAt: string, contentPreview: string) => {
                 // Verify contentPreview is empty string (not 'No content' or some other value)
                 expect(contentPreview).toBe('');
                 return Promise.resolve();
@@ -214,7 +214,7 @@ describe('runReconciliation', () => {
             expect(result.phaseA.indexItemsCreated).toBe(1);
             expect(createSpy).toHaveBeenCalledWith(
                 '/identity/no-preview.md',
-                ['test'],
+                new Set(['test']),
                 '2024-01-01T00:00:00.000Z',
                 '', // Empty string fallback
                 'identity'
@@ -234,7 +234,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['important', 'core'],
+                tags:           new Set(['important', 'core']),
                 contentPreview: 'test content',
             };
 
@@ -282,7 +282,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: 'new content',
             };
 
@@ -292,7 +292,7 @@ describe('runReconciliation', () => {
                 memoryPath:     '/identity/core.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: 'old content', // Different
             };
 
@@ -321,7 +321,7 @@ describe('runReconciliation', () => {
             // Should call refreshTagIndexItems, not createTagIndexItems
             expect(refreshSpy).toHaveBeenCalledWith(
                 '/identity/core.md',
-                ['test'],
+                new Set(['test']),
                 '2024-01-01T00:00:00.000Z',
                 'new content',
                 'identity'
@@ -342,7 +342,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-02T00:00:00.000Z', // Updated
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: 'test content',
             };
 
@@ -352,7 +352,7 @@ describe('runReconciliation', () => {
                 memoryPath:     '/identity/core.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z', // Old timestamp
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: 'test content',
             };
 
@@ -386,7 +386,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test', 'important'], // Updated tags
+                tags:           new Set(['test', 'important']), // Updated tags
                 contentPreview: 'test content',
             };
 
@@ -396,7 +396,7 @@ describe('runReconciliation', () => {
                 memoryPath:     '/identity/core.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test'], // Old tags
+                tags:           new Set(['test']), // Old tags
                 contentPreview: 'test content',
             };
 
@@ -461,7 +461,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['important', 'test'], // Both tags
+                tags:           new Set(['important', 'test']), // Both tags
                 contentPreview: 'test content',
             };
 
@@ -471,7 +471,7 @@ describe('runReconciliation', () => {
                 memoryPath:     '/identity/core.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['important', 'test'],
+                tags:           new Set(['important', 'test']),
                 contentPreview: 'test content',
             };
 
@@ -481,7 +481,7 @@ describe('runReconciliation', () => {
                 memoryPath:     '/identity/core.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['important', 'test'],
+                tags:           new Set(['important', 'test']),
                 contentPreview: 'test content',
             };
 
@@ -560,7 +560,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           [], // Empty array
+                tags:           new Set(), // Empty Set
                 contentPreview: 'test content',
             };
 
@@ -601,7 +601,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: 'test content',
             };
 
@@ -652,7 +652,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: 'test content',
             };
 
@@ -814,7 +814,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['new'],
+                tags:           new Set(['new']),
                 contentPreview: 'new',
             };
 
@@ -830,7 +830,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-02T00:00:00.000Z',
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: 'updated',
             };
 
@@ -840,7 +840,7 @@ describe('runReconciliation', () => {
                 memoryPath:     '/identity/stale.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: 'old',
             };
 
@@ -882,7 +882,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: 'test',
             };
 
@@ -924,7 +924,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: 'new content',
             };
 
@@ -963,7 +963,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: 'test',
             };
 
@@ -1005,7 +1005,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: 'test content',
             };
 
@@ -1060,7 +1060,7 @@ describe('runReconciliation', () => {
                 memoryPath:     '/identity/deleted.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['orphan'],
+                tags:           new Set(['orphan']),
                 contentPreview: 'deleted content',
             };
 
@@ -1084,7 +1084,7 @@ describe('runReconciliation', () => {
                 memoryPath:     '/identity/updated.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['removed'],
+                tags:           new Set(['removed']),
                 contentPreview: 'content',
             };
 
@@ -1096,7 +1096,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-02T00:00:00.000Z',
-                tags:           ['different'], // No longer has 'removed' tag
+                tags:           new Set(['different']), // No longer has 'removed' tag
                 contentPreview: 'updated content',
             };
 
@@ -1120,7 +1120,7 @@ describe('runReconciliation', () => {
                 memoryPath:     '/identity/file.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['valid'],
+                tags:           new Set(['valid']),
                 contentPreview: 'content',
             };
 
@@ -1132,7 +1132,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['valid'], // Still has the tag
+                tags:           new Set(['valid']), // Still has the tag
                 contentPreview: 'content',
             };
 
@@ -1156,7 +1156,7 @@ describe('runReconciliation', () => {
                 memoryPath:     '/identity/file1.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test1'],
+                tags:           new Set(['test1']),
                 contentPreview: 'content',
             }];
 
@@ -1166,7 +1166,7 @@ describe('runReconciliation', () => {
                 memoryPath:     '/identity/file2.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test2'],
+                tags:           new Set(['test2']),
                 contentPreview: 'content',
             }];
 
@@ -1189,7 +1189,7 @@ describe('runReconciliation', () => {
 
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test1'],
+                tags:           new Set(['test1']),
                 contentPreview: 'content',
             });
 
@@ -1236,7 +1236,7 @@ describe('runReconciliation', () => {
                 memoryPath:     '/identity/deleted.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['orphan'],
+                tags:           new Set(['orphan']),
                 contentPreview: 'content',
             };
 
@@ -1246,7 +1246,7 @@ describe('runReconciliation', () => {
                 memoryPath:     '/identity/file.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['valid'],
+                tags:           new Set(['valid']),
                 contentPreview: 'content',
             };
 
@@ -1266,7 +1266,7 @@ describe('runReconciliation', () => {
 
                     createdAt:      '2024-01-01T00:00:00.000Z',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
-                    tags:           ['valid'],
+                    tags:           new Set(['valid']),
                     contentPreview: 'content',
                 });
 
@@ -1283,7 +1283,7 @@ describe('runReconciliation', () => {
                 memoryPath:     '/identity/file.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: 'content',
             };
 
@@ -1307,7 +1307,7 @@ describe('runReconciliation', () => {
                 memoryPath:     '/identity/file.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: 'content',
             };
 
@@ -1326,7 +1326,7 @@ describe('runReconciliation', () => {
                 metadata:       {},
                 createdAt:      '2024-01-01T00:00:00.000Z',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: 'content',
             });
 
@@ -1353,7 +1353,7 @@ describe('runReconciliation', () => {
                     memoryPath:     '/identity/file1.md',
                     layer:          'identity',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
-                    tags:           ['important'],
+                    tags:           new Set(['important']),
                     contentPreview: 'content',
                 },
                 {
@@ -1362,7 +1362,7 @@ describe('runReconciliation', () => {
                     memoryPath:     '/identity/file2.md',
                     layer:          'identity',
                     updatedAt:      '2024-01-01T00:00:00.000Z',
-                    tags:           ['important'],
+                    tags:           new Set(['important']),
                     contentPreview: 'content',
                 },
             ];
@@ -1593,7 +1593,7 @@ describe('runReconciliation', () => {
                 memoryPath:     '/identity/file.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           ['test'],
+                tags:           new Set(['test']),
                 contentPreview: 'content',
             };
 

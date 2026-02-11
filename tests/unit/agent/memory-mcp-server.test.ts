@@ -221,7 +221,9 @@ describe.concurrent('createMemoryMCPServer', () => {
             await handler({ path: '/state/test' });
 
             // Give async fire-and-forget time to complete
-            await new Promise(resolve => { setTimeout(resolve, 10); });
+            await new Promise((resolve) => {
+                setTimeout(resolve, 10);
+            });
 
             expect(recordAccess).toHaveBeenCalledTimes(1);
             expect(recordAccess).toHaveBeenCalledWith(['/state/test']);
@@ -241,7 +243,9 @@ describe.concurrent('createMemoryMCPServer', () => {
             await handler({ path: '/identity/test' });
 
             // Give async fire-and-forget time to complete
-            await new Promise(resolve => { setTimeout(resolve, 10); });
+            await new Promise((resolve) => {
+                setTimeout(resolve, 10);
+            });
 
             expect(recordAccess).not.toHaveBeenCalled();
         });
@@ -260,7 +264,9 @@ describe.concurrent('createMemoryMCPServer', () => {
             await handler({ path: '/events/test/timestamp' });
 
             // Give async fire-and-forget time to complete
-            await new Promise(resolve => { setTimeout(resolve, 10); });
+            await new Promise((resolve) => {
+                setTimeout(resolve, 10);
+            });
 
             expect(recordAccess).not.toHaveBeenCalled();
         });
@@ -300,7 +306,9 @@ describe.concurrent('createMemoryMCPServer', () => {
             const result = await handler({ path: '/state/test' });
 
             // Give async fire-and-forget time to complete
-            await new Promise(resolve => { setTimeout(resolve, 10); });
+            await new Promise((resolve) => {
+                setTimeout(resolve, 10);
+            });
 
             // Should still return content successfully (fire-and-forget)
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
