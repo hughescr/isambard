@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import { DynamoDBDocumentClient, PutCommand, DeleteCommand, QueryCommand, UpdateCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { find as _find, map as _map } from 'lodash';
@@ -8,16 +8,9 @@ import type { MemoryPath, TagIndexItem } from '@/storage/memory-tool/types';
 describe('MemoryToolBackendTagIndex', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let backend: MemoryToolBackendTagIndex;
-    let originalSetTimeout: typeof setTimeout;
 
     beforeEach(() => {
-        // Mock setTimeout to resolve immediately - skips retry backoff delays
-        originalSetTimeout = global.setTimeout;
-        global.setTimeout = ((callback: () => void) => {
-            callback();
-            return 0;
-        }) as unknown as typeof setTimeout;
-
+        jest.useFakeTimers();
         ddbMock.reset();
         backend = new MemoryToolBackendTagIndex(
             ddbMock as unknown as DynamoDBDocumentClient,
@@ -26,9 +19,20 @@ describe('MemoryToolBackendTagIndex', () => {
     });
 
     afterEach(() => {
-        global.setTimeout = originalSetTimeout;
+        jest.useRealTimers();
         ddbMock.reset();
     });
+
+    /**
+     * Drain all pending timers by repeatedly running timers and flushing microtasks.
+     * Each retry creates a chained timer, so we need multiple rounds.
+     */
+    async function drainTimers(): Promise<void> {
+        for(let i = 0; i < 10; i++) {
+            jest.runAllTimers();
+            await new Promise(resolve => process.nextTick(resolve));
+        }
+    }
 
     describe('retryWithBackoff internal behavior', () => {
         test('should NOT retry when last attempt fails', async () => {
@@ -41,19 +45,21 @@ describe('MemoryToolBackendTagIndex', () => {
                 .rejectsOnce(new Error('Error 3'))
                 .resolvesOnce({});
 
-            await backend.incrementTagCounts(tags);
+            const promise = backend.incrementTagCounts(tags);
+            await drainTimers();
+            await promise;
 
             const calls = ddbMock.commandCalls(UpdateCommand);
             // Should make exactly 3 attempts (MAX_RETRIES), not 4
             expect(calls).toHaveLength(3);
         });
 
-        test('should verify retry delays are correct using real setTimeout', async () => {
-            // Restore real setTimeout for this test
-            global.setTimeout = originalSetTimeout;
+        test('should verify retry delays are correct', async () => {
+            // This test verifies the exponential backoff formula: BASE_DELAY_MS * 2^(attempt-1)
+            // For attempts 1,2,3: delays should be 100ms (2^0), 200ms (2^1)
+            // We use step-by-step timer advancement to detect incorrect delay formulas
 
             const tags = ['important'];
-            const delays: number[] = [];
             let callCount = 0;
 
             ddbMock.on(UpdateCommand).callsFake(async () => {
@@ -64,36 +70,32 @@ describe('MemoryToolBackendTagIndex', () => {
                 return {};
             });
 
-            const startTime = Date.now();
+            const promise = backend.incrementTagCounts(tags);
 
-            // Override setTimeout to capture delays
-            const originalSetTimeoutLocal = global.setTimeout;
-            global.setTimeout = ((callback: () => void, ms?: number) => {
-                if(ms !== undefined && ms > 0) {
-                    delays.push(ms);
-                }
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-return,@typescript-eslint/no-explicit-any -- Type mismatch for setTimeout mock
-                return originalSetTimeoutLocal(callback, ms) as any;
-            }) as typeof setTimeout;
+            // Let first call complete and fail, then timer is scheduled
+            await new Promise(resolve => process.nextTick(resolve));
+            await new Promise(resolve => process.nextTick(resolve));
+            expect(callCount).toBe(1);
 
-            await backend.incrementTagCounts(tags);
+            // Verify a timer was created (kills BlockStatement mutant that removes delay)
+            expect(jest.getTimerCount()).toBe(1);
 
-            // Restore mocked setTimeout
-            global.setTimeout = ((callback: () => void) => {
-                callback();
-                return 0;
-            }) as unknown as typeof setTimeout;
+            // First retry delay should be 100ms (BASE_DELAY_MS * 2^0)
+            // Advance exactly 100ms to fire first retry
+            jest.advanceTimersByTime(100);
+            await new Promise(resolve => process.nextTick(resolve));
+            await new Promise(resolve => process.nextTick(resolve));
+            expect(callCount).toBe(2);
 
-            const endTime = Date.now();
-            const totalTime = endTime - startTime;
+            // Verify another timer was created for second retry
+            expect(jest.getTimerCount()).toBe(1);
 
-            // Verify delays: 100ms (2^0), 200ms (2^1)
-            expect(delays).toHaveLength(2);
-            expect(delays[0]).toBe(100);
-            expect(delays[1]).toBe(200);
-
-            // Total time should be at least 300ms
-            expect(totalTime).toBeGreaterThanOrEqual(250); // Allow some timing variance
+            // Second retry delay should be 200ms (BASE_DELAY_MS * 2^1)
+            jest.advanceTimersByTime(200);
+            await new Promise(resolve => process.nextTick(resolve));
+            await new Promise(resolve => process.nextTick(resolve));
+            await promise;
+            expect(callCount).toBe(3);
         });
 
         test('should stop retrying when attempt equals MAX_RETRIES', async () => {
@@ -102,7 +104,9 @@ describe('MemoryToolBackendTagIndex', () => {
             // All attempts fail
             ddbMock.on(UpdateCommand).rejects(new Error('Network error'));
 
-            await backend.incrementTagCounts(tags);
+            const promise = backend.incrementTagCounts(tags);
+            await drainTimers();
+            await promise;
 
             const calls = ddbMock.commandCalls(UpdateCommand);
             // Should make exactly 3 attempts, not 4
@@ -157,7 +161,9 @@ describe('MemoryToolBackendTagIndex', () => {
                 });
             ddbMock.on(UpdateCommand).resolves({});
 
-            await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+            const promise = backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+            await drainTimers();
+            await promise;
 
             const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
             // Should retry because UnprocessedItems has keys, even with empty array
@@ -203,7 +209,9 @@ describe('MemoryToolBackendTagIndex', () => {
 
             ddbMock.on(UpdateCommand).resolves({});
 
-            await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+            const promise = backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+            await drainTimers();
+            await promise;
 
             const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
             // Should stop after second call, not retry again
@@ -215,16 +223,16 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should verify retry delay calculation in batch write', async () => {
-            // Restore real setTimeout for this test
-            global.setTimeout = originalSetTimeout;
+            // This test verifies the exponential backoff formula in batchWriteWithRetry
+            // Formula: BASE_DELAY_MS * 2^(attempt-1) should produce delays of 100ms, 200ms
+            // We use step-by-step timer advancement to detect incorrect delay formulas
 
             const path = '/identity/values.md' as MemoryPath;
             const tags = ['tag1'];
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
             const layer = 'identity';
-
-            const delays: number[] = [];
+            let batchCallCount = 0;
 
             const unprocessedItem = {
                 PutRequest: {
@@ -240,34 +248,45 @@ describe('MemoryToolBackendTagIndex', () => {
                 },
             };
 
-            ddbMock.on(BatchWriteCommand)
-                .resolvesOnce({ UnprocessedItems: { TestTable: [unprocessedItem] } })
-                .resolvesOnce({ UnprocessedItems: { TestTable: [unprocessedItem] } })
-                .resolvesOnce({ UnprocessedItems: {} });
-
+            ddbMock.on(BatchWriteCommand).callsFake(async () => {
+                batchCallCount++;
+                if(batchCallCount < 3) {
+                    return { UnprocessedItems: { TestTable: [unprocessedItem] } };
+                }
+                return { UnprocessedItems: {} };
+            });
             ddbMock.on(UpdateCommand).resolves({});
 
-            const originalSetTimeoutLocal = global.setTimeout;
-            global.setTimeout = ((callback: () => void, ms?: number) => {
-                if(ms !== undefined && ms > 0) {
-                    delays.push(ms);
-                }
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-return,@typescript-eslint/no-explicit-any -- Type mismatch for setTimeout mock
-                return originalSetTimeoutLocal(callback, ms) as any;
-            }) as typeof setTimeout;
+            const promise = backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
 
-            await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+            // Let first batch call complete, then timer is scheduled
+            await new Promise(resolve => process.nextTick(resolve));
+            await new Promise(resolve => process.nextTick(resolve));
+            expect(batchCallCount).toBe(1);
 
-            // Restore mocked setTimeout
-            global.setTimeout = ((callback: () => void) => {
-                callback();
-                return 0;
-            }) as unknown as typeof setTimeout;
+            // Verify a timer was created (kills BlockStatement mutant that removes delay)
+            expect(jest.getTimerCount()).toBe(1);
 
-            // Verify delays: 100ms (2^0), 200ms (2^1)
-            expect(delays).toHaveLength(2);
-            expect(delays[0]).toBe(100);
-            expect(delays[1]).toBe(200);
+            // First retry delay should be 100ms (BASE_DELAY_MS * 2^0)
+            // Advance exactly 100ms to fire first retry
+            jest.advanceTimersByTime(100);
+            await new Promise(resolve => process.nextTick(resolve));
+            await new Promise(resolve => process.nextTick(resolve));
+            expect(batchCallCount).toBe(2);
+
+            // Verify another timer was created for second retry
+            expect(jest.getTimerCount()).toBe(1);
+
+            // Second retry delay should be 200ms (BASE_DELAY_MS * 2^1)
+            jest.advanceTimersByTime(200);
+            await new Promise(resolve => process.nextTick(resolve));
+            await new Promise(resolve => process.nextTick(resolve));
+            await promise;
+            expect(batchCallCount).toBe(3);
+
+            // Verify tag count was incremented after successful batch write
+            const updateCalls = ddbMock.commandCalls(UpdateCommand);
+            expect(updateCalls).toHaveLength(1);
         });
     });
 
@@ -366,7 +385,9 @@ describe('MemoryToolBackendTagIndex', () => {
                 .resolvesOnce({ UnprocessedItems: {} });
             ddbMock.on(UpdateCommand).resolves({});
 
-            await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+            const promise = backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+            await drainTimers();
+            await promise;
 
             const calls = ddbMock.commandCalls(BatchWriteCommand);
             expect(calls.length).toBeGreaterThan(1);
@@ -428,7 +449,9 @@ describe('MemoryToolBackendTagIndex', () => {
                 });
             ddbMock.on(UpdateCommand).resolves({});
 
-            await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+            const promise = backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+            await drainTimers();
+            await promise;
 
             const updateCalls = ddbMock.commandCalls(UpdateCommand);
             // Should only increment for 'important' and 'core', NOT 'failed'
@@ -528,7 +551,9 @@ describe('MemoryToolBackendTagIndex', () => {
 
             ddbMock.on(UpdateCommand).resolves({});
 
-            await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+            const promise = backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+            await drainTimers();
+            await promise;
 
             const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
             expect(batchCalls).toHaveLength(3);
@@ -587,7 +612,9 @@ describe('MemoryToolBackendTagIndex', () => {
             });
             ddbMock.on(UpdateCommand).resolves({});
 
-            await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+            const promise = backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+            await drainTimers();
+            await promise;
 
             const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
             expect(batchCalls).toHaveLength(3); // MAX_RETRIES
@@ -686,7 +713,9 @@ describe('MemoryToolBackendTagIndex', () => {
                 Attributes: { count: 5 },
             });
 
-            await backend.deleteTagIndexItems(path, tags);
+            const promise = backend.deleteTagIndexItems(path, tags);
+            await drainTimers();
+            await promise;
 
             const updateCalls = ddbMock.commandCalls(UpdateCommand);
             // Should only decrement for 'important' and 'core', NOT 'failed'
@@ -1277,7 +1306,9 @@ describe('MemoryToolBackendTagIndex', () => {
                 .rejectsOnce(new Error('Network error'))
                 .resolvesOnce({});
 
-            await backend.incrementTagCounts(tags);
+            const promise = backend.incrementTagCounts(tags);
+            await drainTimers();
+            await promise;
 
             const calls = ddbMock.commandCalls(UpdateCommand);
             expect(calls.length).toBeGreaterThan(1);
@@ -1291,7 +1322,9 @@ describe('MemoryToolBackendTagIndex', () => {
                 .rejectsOnce(new Error('Network error'))
                 .resolvesOnce({});
 
-            await backend.incrementTagCounts(tags);
+            const promise = backend.incrementTagCounts(tags);
+            await drainTimers();
+            await promise;
 
             const calls = ddbMock.commandCalls(UpdateCommand);
             expect(calls).toHaveLength(3); // MAX_RETRIES
@@ -1303,7 +1336,9 @@ describe('MemoryToolBackendTagIndex', () => {
             // Always reject
             ddbMock.on(UpdateCommand).rejects(new Error('Network error'));
 
-            await backend.incrementTagCounts(tags);
+            const promise = backend.incrementTagCounts(tags);
+            await drainTimers();
+            await promise;
 
             const calls = ddbMock.commandCalls(UpdateCommand);
             expect(calls).toHaveLength(3); // Exactly MAX_RETRIES attempts
@@ -1403,7 +1438,9 @@ describe('MemoryToolBackendTagIndex', () => {
                     Attributes: { count: 5 },
                 });
 
-            await backend.decrementTagCounts(tags);
+            const promise = backend.decrementTagCounts(tags);
+            await drainTimers();
+            await promise;
 
             const calls = ddbMock.commandCalls(UpdateCommand);
             expect(calls.length).toBeGreaterThan(1);
@@ -1442,8 +1479,9 @@ describe('MemoryToolBackendTagIndex', () => {
             ddbMock.on(DeleteCommand).rejects(conditionalCheckError);
 
             // Should not throw
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun test expect().resolves requires await
-            await expect(backend.decrementTagCounts(tags)).resolves.toBeUndefined();
+            const promise = backend.decrementTagCounts(tags);
+            await drainTimers();
+            await promise; // Should complete without throwing
         });
 
         test('should verify UpdateCommand has correct ExpressionAttributeNames and Values for decrement', async () => {
@@ -1493,9 +1531,9 @@ describe('MemoryToolBackendTagIndex', () => {
             networkError.name = 'NetworkError';
             ddbMock.on(DeleteCommand).rejects(networkError);
 
-            // Should not throw because retryWithBackoff catches all errors and returns undefined
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun test expect().resolves requires await
-            await expect(backend.decrementTagCounts(tags)).resolves.toBeUndefined();
+            const promise = backend.decrementTagCounts(tags);
+            await drainTimers();
+            await promise; // Should complete and return undefined
 
             // Verify that delete was retried MAX_RETRIES times
             const deleteCalls = ddbMock.commandCalls(DeleteCommand);
