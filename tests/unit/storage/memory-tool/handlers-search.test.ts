@@ -46,7 +46,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             memoryPath:     '/state/note.md' as MemoryPath,
                             layer:          'state' as const,
                             updatedAt:      '2025-01-01T00:00:00.000Z',
-                            tags:           ['tag1'],
+                            tags:           new Set(['tag1']),
                             contentPreview: 'This is a note with some content that is longer than 100 characters to test preview truncation behavior',
                         },
                     ],
@@ -57,7 +57,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
                 expect(result).toContain('/state/note.md');
                 expect(result).toContain('This is a note with some content');
-                expect(mockBackend.searchByTags).toHaveBeenCalledWith(['tag1'], undefined, { limit: undefined });
+                expect(mockBackend.searchByTags).toHaveBeenCalledWith(new Set(['tag1']), undefined, { limit: undefined });
             });
 
             it('should search by time range', async () => {
@@ -132,7 +132,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             memoryPath:     '/state/note1.md' as MemoryPath,
                             layer:          'state' as const,
                             updatedAt:      '2025-01-01T00:00:00.000Z',
-                            tags:           ['tag1'],
+                            tags:           new Set(['tag1']),
                             contentPreview: 'Note 1',
                         },
                     ],
@@ -142,7 +142,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 const result = await searchHandler(mockBackend, { tags: ['tag1'], limit: 5 });
 
                 expect(result).toContain('/state/note1.md');
-                expect(mockBackend.searchByTags).toHaveBeenCalledWith(['tag1'], undefined, { limit: 5 });
+                expect(mockBackend.searchByTags).toHaveBeenCalledWith(new Set(['tag1']), undefined, { limit: 5 });
             });
 
             it('should pass undefined limit to searchByTimeRange when limit not specified', async () => {
@@ -173,7 +173,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             memoryPath:     '/state/long.md' as MemoryPath,
                             layer:          'state' as const,
                             updatedAt:      '2025-01-01T00:00:00.000Z',
-                            tags:           ['tag1'],
+                            tags:           new Set(['tag1']),
                             contentPreview: longContent,
                         },
                     ],
@@ -229,7 +229,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             memoryPath:     '/state/exact.md' as MemoryPath,
                             layer:          'state' as const,
                             updatedAt:      '2025-01-01T00:00:00.000Z',
-                            tags:           ['tag1'],
+                            tags:           new Set(['tag1']),
                             contentPreview: exactContent,
                         },
                     ],
@@ -252,7 +252,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             memoryPath:     '/state/note1.md' as MemoryPath,
                             layer:          'state' as const,
                             updatedAt:      '2025-01-01T00:00:00.000Z',
-                            tags:           ['tag1'],
+                            tags:           new Set(['tag1']),
                             contentPreview: 'Content 1',
                         },
                         {
@@ -261,7 +261,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             memoryPath:     '/state/note2.md' as MemoryPath,
                             layer:          'state' as const,
                             updatedAt:      '2025-01-01T00:00:00.000Z',
-                            tags:           ['tag1'],
+                            tags:           new Set(['tag1']),
                             contentPreview: 'Content 2',
                         },
                     ],
@@ -290,7 +290,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             memoryPath:     '/state/note.md' as MemoryPath,
                             layer:          'state' as const,
                             updatedAt:      updatedAt,
-                            tags:           ['tag1'],
+                            tags:           new Set(['tag1']),
                             contentPreview: 'Note content',
                         },
                     ],
@@ -319,7 +319,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             memoryPath:     '/state/recent.md' as MemoryPath,
                             layer:          'state' as const,
                             updatedAt:      updatedAt,
-                            tags:           ['tag1'],
+                            tags:           new Set(['tag1']),
                             contentPreview: 'Recent content',
                         },
                     ],
@@ -860,7 +860,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         memoryPath:     '/state/note.md' as MemoryPath,
                         layer:          'state' as const,
                         updatedAt:      '2025-01-01T00:00:00.000Z',
-                        tags:           ['tag1', 'tag2'],
+                        tags:           new Set(['tag1', 'tag2']),
                         contentPreview: 'Note content',
                     },
                 ],
@@ -1074,7 +1074,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         memoryPath:     '/state/note1.md' as MemoryPath,
                         layer:          'state' as const,
                         updatedAt:      '2025-01-01T00:00:00.000Z',
-                        tags:           ['tag1'],
+                        tags:           new Set(['tag1']),
                         contentPreview: 'Note 1',
                     },
                     {
@@ -1083,7 +1083,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         memoryPath:     '/state/note2.md' as MemoryPath,
                         layer:          'state' as const,
                         updatedAt:      '2025-01-01T00:00:00.000Z',
-                        tags:           ['tag1'],
+                        tags:           new Set(['tag1']),
                         contentPreview: 'Note 2',
                     },
                     {
@@ -1092,7 +1092,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         memoryPath:     '/state/note3.md' as MemoryPath,
                         layer:          'state' as const,
                         updatedAt:      '2025-01-01T00:00:00.000Z',
-                        tags:           ['tag1'],
+                        tags:           new Set(['tag1']),
                         contentPreview: 'Note 3',
                     },
                 ],

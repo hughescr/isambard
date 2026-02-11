@@ -55,7 +55,6 @@ export { MemoryToolBackendTagIndex } from './backend-tag-index';
 // Handlers
 export {
     create,
-    view,
     insert,
     str_replace,
     rename,

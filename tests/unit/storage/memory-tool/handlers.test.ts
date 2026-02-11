@@ -17,7 +17,6 @@ import {
 } from '@/errors';
 import {
     create,
-    view,
     insert,
     str_replace as strReplace,
     rename
@@ -158,239 +157,6 @@ describe('Memory Tool Handlers', () => {
                 path:      '/test/file.md',
                 file_text: 'content',
             })).rejects.toThrow(PathAlreadyExistsError);
-        });
-    });
-
-    describe('view', () => {
-        it('should return content with line numbers for a file', async () => {
-            mockBackend.get = mock(async () => ({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Line 1\nLine 2\nLine 3',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-
-                createdAt: '2025-01-01T00:00:00.000Z',
-                updatedAt: '2025-01-01T00:00:00.000Z',
-            }));
-
-            const result = await view(mockBackend, { path: '/test/file.md' });
-
-            expect(result).toContain('1:Line 1');
-            expect(result).toContain('2:Line 2');
-            expect(result).toContain('3:Line 3');
-            expect(result).toContain('\n');
-            // Critical: verify lines are properly separated by newlines (kills StringLiteral mutant on join)
-            expect(result).toMatch(/1:Line 1\n2:Line 2\n3:Line 3/);
-        });
-
-        it('should return content with line range when view_range is provided', async () => {
-            mockBackend.get = mock(async () => ({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Line 1\nLine 2\nLine 3\nLine 4',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-
-                createdAt: '2025-01-01T00:00:00.000Z',
-                updatedAt: '2025-01-01T00:00:00.000Z',
-            }));
-
-            const result = await view(mockBackend, {
-                path:       '/test/file.md',
-                view_range: [2, 3],
-            });
-
-            expect(result).toContain('2:Line 2');
-            expect(result).toContain('3:Line 3');
-            expect(result).not.toContain('1:Line 1');
-            expect(result).not.toContain('4:Line 4');
-        });
-
-        it('should handle range extending beyond file length', async () => {
-            mockBackend.get = mock(async () => ({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Line 1\nLine 2\nLine 3\nLine 4',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-
-                createdAt: '2025-01-01T00:00:00.000Z',
-                updatedAt: '2025-01-01T00:00:00.000Z',
-            }));
-
-            const result = await view(mockBackend, {
-                path:       '/test/file.md',
-                view_range: [2, 100],
-            });
-
-            expect(result).toContain('2:Line 2');
-            expect(result).toContain('3:Line 3');
-            expect(result).toContain('4:Line 4');
-            expect(result).not.toContain('1:Line 1');
-        });
-
-        it('should list directory contents when path is a directory', async () => {
-            mockBackend.get = mock(async () => undefined);
-            mockBackend.list = mock(async () => ({
-                items: [
-                    {
-                        path:        '/test/dir/file1.md' as MemoryPath,
-                        content:     'content1',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-
-                        createdAt: '2025-01-01T00:00:00.000Z',
-                        updatedAt: '2025-01-01T00:00:00.000Z',
-                    },
-                    {
-                        path:        '/test/dir/file2.txt' as MemoryPath,
-                        content:     'content2',
-                        contentType: 'text/plain' as ContentType,
-                        metadata:    {},
-
-                        createdAt: '2025-01-01T00:00:00.000Z',
-                        updatedAt: '2025-01-01T00:00:00.000Z',
-                    },
-                ],
-                nextCursor: undefined,
-            }));
-
-            const result = await view(mockBackend, { path: '/test/dir' });
-
-            expect(result).toContain('file1.md');
-            expect(result).toContain('file2.txt');
-            expect(result).toContain('text/markdown');
-            expect(result).toContain('text/plain');
-            // Critical: verify items are joined with newline, not empty string
-            expect(result).toContain('\n');
-            // Verify the actual structure: file1 line, newline, file2 line
-            const lines = _split(result, '\n');
-            expect(lines.length).toBeGreaterThan(2); // "Directory contents:" + at least 2 files
-            expect(_some(lines, line => _includes(line, 'file1.md'))).toBe(true);
-            expect(_some(lines, line => _includes(line, 'file2.txt'))).toBe(true);
-            // Verify file entries are on separate lines with proper format (file on one line, content type nearby)
-            expect(result).toMatch(/file1\.md[^\n]*\n[^\n]*file2\.txt/);
-        });
-
-        it('should handle root path "/" by listing with empty parent path', async () => {
-            mockBackend.get = mock(async () => undefined);
-            mockBackend.list = mock(async () => ({
-                items: [
-                    {
-                        path:        '/file1.md' as MemoryPath,
-                        content:     'content1',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-
-                        createdAt: '2025-01-01T00:00:00.000Z',
-                        updatedAt: '2025-01-01T00:00:00.000Z',
-                    },
-                ],
-                nextCursor: undefined,
-            }));
-
-            const result = await view(mockBackend, { path: '/' });
-
-            expect(result).toContain('file1.md');
-            expect(mockBackend.list).toHaveBeenCalledWith('');
-        });
-
-        it('should use non-root path as parentPath when listing directory', async () => {
-            mockBackend.get = mock(async () => undefined);
-            mockBackend.list = mock(async () => ({
-                items: [
-                    {
-                        path:        '/memories/test/file1.md' as MemoryPath,
-                        content:     'content1',
-                        contentType: 'text/markdown' as ContentType,
-                        metadata:    {},
-
-                        createdAt: '2025-01-01T00:00:00.000Z',
-                        updatedAt: '2025-01-01T00:00:00.000Z',
-                    },
-                ],
-                nextCursor: undefined,
-            }));
-
-            const result = await view(mockBackend, { path: '/memories/test' });
-
-            expect(result).toContain('file1.md');
-            // Critical: verify the path itself is used, not empty string
-            expect(mockBackend.list).toHaveBeenCalledWith('/memories/test');
-        });
-
-        it('should throw PathNotFoundError when path does not exist', async () => {
-            mockBackend.get = mock(async () => undefined);
-            mockBackend.list = mock(async () => ({ items: [], nextCursor: undefined }));
-
-            expect(view(mockBackend, { path: '/nonexistent' }))
-                .rejects.toThrow(PathNotFoundError);
-        });
-
-        it('should throw InvalidPathError for invalid paths', async () => {
-            expect(view(mockBackend, { path: 'bad-path' }))
-                .rejects.toThrow(InvalidPathError);
-        });
-
-        it('should include file header with path and timestamp', async () => {
-            mockBackend.get = mock(async () => ({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Line 1\nLine 2',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-
-                createdAt: '2025-01-13T10:00:00.000Z',
-                updatedAt: '2025-01-13T10:00:00.000Z',
-            }));
-
-            const result = await view(mockBackend, { path: '/test/file.md' });
-
-            // Should include file header with path and timestamp
-            expect(result).toContain('File: /test/file.md');
-            expect(result).toContain('2025-01-13T10:00:00.000Z');
-            // Should still have line-numbered content
-            expect(result).toContain('1:Line 1');
-            expect(result).toContain('2:Line 2');
-        });
-
-        it('should show relative time in file header', async () => {
-            // Use a date that's 2 days before now
-            const twoDaysAgo = new Date();
-            twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
-            const updatedAt = twoDaysAgo.toISOString();
-
-            mockBackend.get = mock(async () => ({
-                path:        '/test/recent.md' as MemoryPath,
-                content:     'Recent content',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-
-                createdAt: updatedAt,
-                updatedAt: updatedAt,
-            }));
-
-            const result = await view(mockBackend, { path: '/test/recent.md' });
-
-            // Should include relative time indicator
-            expect(result).toContain('2 days ago');
-            expect(result).toContain('File: /test/recent.md');
-        });
-
-        it('should show UTC timestamp in header', async () => {
-            mockBackend.get = mock(async () => ({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'Test content',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-
-                createdAt: '2025-01-15T12:00:00.000Z',
-                updatedAt: '2025-01-15T14:30:00.000Z',
-            }));
-
-            const result = await view(mockBackend, { path: '/test/file.md' });
-
-            // Should only include UTC timestamp without dual format (backward compat format)
-            expect(result).toContain('2025-01-15T14:30:00.000Z)');
-            expect(result).not.toContain('America/Los_Angeles');
-            expect(result).not.toContain('| UTC:');
         });
     });
 
@@ -604,7 +370,7 @@ describe('Memory Tool Handlers', () => {
 
                         createdAt: '2025-01-01T00:00:00.000Z',
                         updatedAt: '2025-01-01T00:00:00.000Z',
-                        tags:      ['tag1'],
+                        tags:      new Set(['tag1']),
                     };
                 }
                 return undefined;
@@ -617,7 +383,7 @@ describe('Memory Tool Handlers', () => {
 
                 createdAt: '2025-01-01T00:00:01.000Z',
                 updatedAt: '2025-01-01T00:00:01.000Z',
-                tags:      ['tag1'],
+                tags:      new Set(['tag1']),
             }));
             mockBackend.delete = mock(async () => undefined);
 
@@ -634,7 +400,7 @@ describe('Memory Tool Handlers', () => {
                 content:     'Content',
                 contentType: 'text/markdown',
                 metadata:    { key: 'value', previouslyKnownAs: '/test/old.md' },
-                tags:        ['tag1'],
+                tags:        new Set(['tag1']),
             });
             expect(mockBackend.delete).toHaveBeenCalledWith('/test/old.md');
         });

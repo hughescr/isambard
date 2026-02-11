@@ -32,7 +32,7 @@ import {
     TextNotFoundError,
     TextNotUniqueError
 } from '@/errors';
-import { formatMemoryTimestamp, formatShortRelativeTime } from '@/utils/time';
+import { formatShortRelativeTime } from '@/utils/time';
 
 // === Utility Functions ===
 
@@ -102,45 +102,6 @@ export async function create(
     });
 
     return `Memory successfully created at ${params.path}`;
-}
-
-/**
- * Views a memory or lists directory contents
- */
-export async function view(
-    backend: MemoryToolBackend,
-    params: { path: string, view_range?: [number, number] }
-): Promise<string> {
-    const { path } = params;
-    logger.debug({ path, msg: `Memory view: ${path}` });
-    const memoryPath = validatePath(params.path);
-
-    // Try to get as a file first
-    const item = await backend.get(memoryPath);
-
-    if(item) {
-        // It's a file - return formatted content with header
-        const timestamp = formatMemoryTimestamp(item.updatedAt);
-        const header = `File: ${params.path} ${timestamp}`;
-        const content = formatLineNumbers(item.content, params.view_range);
-        return `${header}\n${content}`;
-    }
-
-    // Try as a directory
-    const parentPath = memoryPath === '/' ? '' : memoryPath;
-    const listResult = await backend.list(parentPath);
-
-    if(listResult.items.length > 0) {
-        // It's a directory - return listing
-        const listing = _map(
-            listResult.items,
-            item => `${item.path} (${item.contentType})`
-        ).join('\n');
-        return `Directory contents:\n${listing}`;
-    }
-
-    // Neither file nor directory
-    throw new PathNotFoundError(params.path);
 }
 
 /**
@@ -270,7 +231,7 @@ export async function search(
 
     if(params.tags && params.tags.length > 0) {
         // Tag-based search with optional layer filter — uses tag index
-        const result = await backend.searchByTags(params.tags, params.layer, { limit: params.limit });
+        const result = await backend.searchByTags(new Set(params.tags), params.layer, { limit: params.limit });
         // Tag index items have preview data directly — format from TagIndexItem fields
         const query = params.tags.join(',');
         logger.debug({ query, resultCount: result.items.length, msg: `Memory search: "${query}" (${result.items.length} results)` });

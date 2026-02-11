@@ -11,7 +11,6 @@ import {
 } from '@/errors';
 import {
     create,
-    view,
     insert,
     str_replace as strReplace
 } from '@/storage/memory-tool/handlers';
@@ -306,28 +305,6 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
                     path: '/test/file.md',
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg:  expect.stringContaining('Memory create:'),
-                })
-            );
-        });
-
-        it('should log memory view with path', async () => {
-            mockBackend.get = mock(async () => ({
-                path:        '/test/file.md' as MemoryPath,
-                content:     'content',
-                contentType: 'text/markdown' as ContentType,
-                metadata:    {},
-
-                createdAt: '2025-01-01T00:00:00.000Z',
-                updatedAt: '2025-01-01T00:00:00.000Z',
-            }));
-
-            await view(mockBackend, { path: '/test/file.md' });
-
-            expect(mockLogger.debug).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    path: '/test/file.md',
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
-                    msg:  expect.stringContaining('Memory view:'),
                 })
             );
         });
