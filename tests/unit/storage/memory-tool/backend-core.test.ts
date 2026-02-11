@@ -90,7 +90,7 @@ describe('MemoryToolBackendCore', () => {
 
             // Update only tags, NOT content
             await backend.update('/state/preview-conditional' as MemoryPath, {
-                tags: ['new-tag'],
+                tags: new Set(['new-tag']),
             });
 
             const putCalls = ddbMock.commandCalls(PutCommand);
@@ -199,6 +199,58 @@ describe('MemoryToolBackendCore', () => {
 
             const calls = ddbMock.commandCalls(DeleteCommand);
             expect(calls).toHaveLength(1);
+        });
+
+        test('should omit tags when creating with empty Set', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            const result = await backend.create({
+                path:        '/test/empty-tags.md' as MemoryPath,
+                content:     'Test content',
+                contentType: 'text/plain',
+                tags:        new Set<string>(),
+            });
+
+            expect(result.tags).toBeUndefined();
+        });
+
+        test('should create item with Set<string> tags', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            const result = await backend.create({
+                path:        '/test/with-tags.md' as MemoryPath,
+                content:     'Test content',
+                contentType: 'text/plain',
+                tags:        new Set(['tag1', 'tag2']),
+            });
+
+            expect(result.tags).toBeInstanceOf(Set);
+            expect(result.tags).toEqual(new Set(['tag1', 'tag2']));
+        });
+
+        test('should clear tags when updating with empty Set', async () => {
+            const existingItem = {
+                PK:             'DIR#/state',
+                SK:             'FILE#clear-tags',
+                GSI1PK:         'LAYER#state',
+                GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
+                path:           '/state/clear-tags' as MemoryPath,
+                content:        'Content',
+                contentType:    'text/plain',
+                metadata:       {},
+                tags:           new Set(['old-tag']),
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                contentPreview: 'Content',
+            };
+            ddbMock.on(GetCommand).resolves({ Item: existingItem });
+            ddbMock.on(PutCommand).resolves({});
+
+            const result = await backend.update('/state/clear-tags' as MemoryPath, {
+                tags: new Set<string>(),
+            });
+
+            expect(result.tags).toBeUndefined();
         });
     });
 });

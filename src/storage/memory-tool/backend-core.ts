@@ -16,13 +16,13 @@ export interface CreateMemoryToolItemInput {
     content:     string
     contentType: ContentType
     metadata?:   Record<string, unknown>
-    tags?:       string[]
+    tags?:       Set<string>
 }
 
 export interface UpdateMemoryToolItemInput {
     content?:  string
     metadata?: Record<string, unknown>
-    tags?:     string[]
+    tags?:     Set<string>
 }
 
 /**
@@ -57,7 +57,7 @@ export class MemoryToolBackendCore {
             contentType:    input.contentType,
             // Stryker disable next-line LogicalOperator: ?? operator provides default empty object
             metadata:       input.metadata ?? {},
-            tags:           input.tags,
+            tags:           input.tags && input.tags.size > 0 ? input.tags : undefined,
             createdAt:      now,
             updatedAt:      now,
             contentPreview: generateContentPreview(input.content),
@@ -112,7 +112,7 @@ export class MemoryToolBackendCore {
             ...existing,
             ...(input.content !== undefined && { content: input.content }),
             ...(input.metadata !== undefined && { metadata: input.metadata }),
-            ...(input.tags !== undefined && { tags: input.tags }),
+            ...(input.tags !== undefined && { tags: input.tags.size > 0 ? input.tags : undefined }),
             // Stryker disable next-line ConditionalExpression: Spread operator conditional - undefined values should not override existing contentPreview
             ...(newContentPreview !== undefined && { contentPreview: newContentPreview }),
             updatedAt: DateTime.utc().toISO(),
