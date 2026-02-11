@@ -73,6 +73,13 @@ export {
     type LayerConfig
 } from './layer-config';
 
+// Sigmoid Scoring
+export {
+    sigmoidScore,
+    DEFAULT_SIGMOID_PARAMS,
+    type SigmoidParams
+} from './sigmoid';
+
 // Reconciliation
 export {
     reconciliationConfigSchema,
