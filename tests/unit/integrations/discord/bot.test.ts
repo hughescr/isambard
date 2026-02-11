@@ -1757,7 +1757,6 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
             const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
@@ -1897,7 +1896,6 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
             const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
@@ -1978,7 +1976,6 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
             const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
@@ -2116,7 +2113,6 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
             const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
@@ -2220,7 +2216,6 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
             const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
@@ -2318,7 +2313,6 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock call inspection
             const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
