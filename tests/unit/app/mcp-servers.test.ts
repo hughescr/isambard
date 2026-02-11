@@ -86,7 +86,9 @@ describe('createMCPServers', () => {
 
         // Verify createMemoryMCPServer was called with correct args
         expect(createMemoryMcpServerSpy).toHaveBeenCalledTimes(1);
-        expect(createMemoryMcpServerSpy).toHaveBeenCalledWith(mockOptions.memoryBackend);
+        expect(createMemoryMcpServerSpy).toHaveBeenCalledWith(mockOptions.memoryBackend, {
+            recordAccess: undefined,
+        });
     });
 
     test('should pass correct args to createDiscordMCPServer', async () => {

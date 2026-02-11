@@ -220,10 +220,9 @@ describe.concurrent('createMemoryMCPServer', () => {
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             await handler({ path: '/state/test' });
 
-            // Give async fire-and-forget time to complete
-            await new Promise((resolve) => {
-                setTimeout(resolve, 10);
-            });
+            // Flush microtask queue to let fire-and-forget promise settle
+            await Promise.resolve();
+            await Promise.resolve();
 
             expect(recordAccess).toHaveBeenCalledTimes(1);
             expect(recordAccess).toHaveBeenCalledWith(['/state/test']);
@@ -242,10 +241,9 @@ describe.concurrent('createMemoryMCPServer', () => {
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             await handler({ path: '/identity/test' });
 
-            // Give async fire-and-forget time to complete
-            await new Promise((resolve) => {
-                setTimeout(resolve, 10);
-            });
+            // Flush microtask queue to let fire-and-forget promise settle
+            await Promise.resolve();
+            await Promise.resolve();
 
             expect(recordAccess).not.toHaveBeenCalled();
         });
@@ -263,10 +261,9 @@ describe.concurrent('createMemoryMCPServer', () => {
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             await handler({ path: '/events/test/timestamp' });
 
-            // Give async fire-and-forget time to complete
-            await new Promise((resolve) => {
-                setTimeout(resolve, 10);
-            });
+            // Flush microtask queue to let fire-and-forget promise settle
+            await Promise.resolve();
+            await Promise.resolve();
 
             expect(recordAccess).not.toHaveBeenCalled();
         });
@@ -305,10 +302,9 @@ describe.concurrent('createMemoryMCPServer', () => {
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             const result = await handler({ path: '/state/test' });
 
-            // Give async fire-and-forget time to complete
-            await new Promise((resolve) => {
-                setTimeout(resolve, 10);
-            });
+            // Flush microtask queue to let fire-and-forget promise settle
+            await Promise.resolve();
+            await Promise.resolve();
 
             // Should still return content successfully (fire-and-forget)
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
