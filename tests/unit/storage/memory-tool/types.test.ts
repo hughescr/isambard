@@ -4,8 +4,14 @@ import {
     contentTypeSchema,
     createMemoryPath,
     isMemoryPath,
+    createLayerName,
+    isLayerName,
+    createContentType,
+    isContentType,
     layerNameSchema,
-    type MemoryPath
+    type MemoryPath,
+    type LayerName,
+    type ContentType
 } from '@/storage/memory-tool/types';
 
 describe.concurrent('memoryPathSchema', () => {
@@ -169,5 +175,109 @@ describe.concurrent('layerNameSchema', () => {
     test('should reject undefined', () => {
         const result = layerNameSchema.safeParse(undefined);
         expect(result.success).toBe(false);
+    });
+});
+
+describe.concurrent('createLayerName', () => {
+    test('should create LayerName from "identity"', () => {
+        const layer = createLayerName('identity');
+        expect(layer).toBe('identity' as LayerName);
+    });
+
+    test('should create LayerName from "state"', () => {
+        const layer = createLayerName('state');
+        expect(layer).toBe('state' as LayerName);
+    });
+
+    test('should create LayerName from "events"', () => {
+        const layer = createLayerName('events');
+        expect(layer).toBe('events' as LayerName);
+    });
+
+    test('should throw error for invalid layer name', () => {
+        expect(() => createLayerName('invalid')).toThrow();
+    });
+
+    test('should throw error for empty string', () => {
+        expect(() => createLayerName('')).toThrow();
+    });
+
+    test('should throw error for non-string values', () => {
+        expect(() => createLayerName(123 as unknown as string)).toThrow();
+    });
+});
+
+describe.concurrent('isLayerName', () => {
+    test('should return true for valid layer names', () => {
+        expect(isLayerName('identity')).toBe(true);
+        expect(isLayerName('state')).toBe(true);
+        expect(isLayerName('events')).toBe(true);
+    });
+
+    test('should return false for invalid string', () => {
+        expect(isLayerName('invalid')).toBe(false);
+    });
+
+    test('should return false for empty string', () => {
+        expect(isLayerName('')).toBe(false);
+    });
+
+    test('should return false for non-string values', () => {
+        expect(isLayerName(123)).toBe(false);
+        expect(isLayerName(null)).toBe(false);
+        expect(isLayerName(undefined)).toBe(false);
+        expect(isLayerName({})).toBe(false);
+    });
+});
+
+describe.concurrent('createContentType', () => {
+    test('should create ContentType from "text/plain"', () => {
+        const type = createContentType('text/plain');
+        expect(type).toBe('text/plain' as ContentType);
+    });
+
+    test('should create ContentType from "text/markdown"', () => {
+        const type = createContentType('text/markdown');
+        expect(type).toBe('text/markdown' as ContentType);
+    });
+
+    test('should create ContentType from "application/json"', () => {
+        const type = createContentType('application/json');
+        expect(type).toBe('application/json' as ContentType);
+    });
+
+    test('should throw error for invalid content type', () => {
+        expect(() => createContentType('text/html')).toThrow();
+    });
+
+    test('should throw error for empty string', () => {
+        expect(() => createContentType('')).toThrow();
+    });
+
+    test('should throw error for non-string values', () => {
+        expect(() => createContentType(123 as unknown as string)).toThrow();
+    });
+});
+
+describe.concurrent('isContentType', () => {
+    test('should return true for valid content types', () => {
+        expect(isContentType('text/plain')).toBe(true);
+        expect(isContentType('text/markdown')).toBe(true);
+        expect(isContentType('application/json')).toBe(true);
+    });
+
+    test('should return false for invalid string', () => {
+        expect(isContentType('text/html')).toBe(false);
+    });
+
+    test('should return false for empty string', () => {
+        expect(isContentType('')).toBe(false);
+    });
+
+    test('should return false for non-string values', () => {
+        expect(isContentType(123)).toBe(false);
+        expect(isContentType(null)).toBe(false);
+        expect(isContentType(undefined)).toBe(false);
+        expect(isContentType({})).toBe(false);
     });
 });

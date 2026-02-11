@@ -32,6 +32,22 @@ export const contentTypeSchema = z.enum(['text/plain', 'text/markdown', 'applica
 export type ContentType = z.infer<typeof contentTypeSchema>;
 
 /**
+ * Creates a validated ContentType from a string.
+ * @throws {z.ZodError} If the type is not a valid content type
+ */
+export function createContentType(type: string): ContentType {
+    return contentTypeSchema.parse(type);
+}
+
+/**
+ * Type guard to check if a value is a valid ContentType.
+ */
+export function isContentType(value: unknown): value is ContentType {
+    const result = contentTypeSchema.safeParse(value);
+    return result.success;
+}
+
+/**
  * Memory tool item schema with Zod validation.
  * Represents a stored piece of content in the agent's memory system.
  */
@@ -99,6 +115,22 @@ export const layerNameSchema = z
     .brand<'LayerName'>();
 
 export type LayerName = z.infer<typeof layerNameSchema>;
+
+/**
+ * Creates a validated LayerName from a string.
+ * @throws {z.ZodError} If the name is not a valid layer
+ */
+export function createLayerName(name: string): LayerName {
+    return layerNameSchema.parse(name);
+}
+
+/**
+ * Type guard to check if a value is a valid LayerName.
+ */
+export function isLayerName(value: unknown): value is LayerName {
+    const result = layerNameSchema.safeParse(value);
+    return result.success;
+}
 
 /**
  * Extracts the layer name from a memory path if the path starts with a valid layer.
