@@ -417,6 +417,50 @@ describe('runReconciliation', () => {
             expect(result.phaseA.indexItemsRefreshed).toBeGreaterThanOrEqual(1);
         });
 
+        test('should refresh stale tag index items (same tag count, different values)', async () => {
+            const memoryItem = {
+                PK:          'DIR#/identity',
+                SK:          'FILE#values.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/values.md',
+                content:     'test content',
+                contentType: 'text/markdown',
+                metadata:    {},
+
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           new Set(['alpha', 'beta']), // 2 tags
+                contentPreview: 'test content',
+            };
+
+            const existingIndexItem = {
+                PK:             'TAG#alpha',
+                SK:             'PATH#/identity/values.md',
+                memoryPath:     '/identity/values.md',
+                layer:          'identity',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           new Set(['alpha', 'gamma']), // 2 tags (same SIZE, different VALUES)
+                contentPreview: 'test content',
+            };
+
+            mockLayerQuery('identity', [memoryItem]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression: 'PK = :pk AND SK = :sk',
+            }).resolves({
+                Items: [existingIndexItem],
+            });
+
+            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+
+            const result = await runReconciliation(deps, options);
+
+            expect(result.phaseA.indexItemsRefreshed).toBeGreaterThanOrEqual(1);
+        });
+
         test('should handle memory item with undefined tags in staleness check', async () => {
             const memoryItemWithUndefinedTags = {
                 PK:          'DIR#/identity',

@@ -55,17 +55,10 @@ export function validatePath(path: string): MemoryPath {
 /**
  * Formats content with line numbers
  * @param content The content to format
- * @param range Optional [start, end] line range (1-indexed, inclusive)
  */
-export function formatLineNumbers(content: string, range?: [number, number]): string {
+export function formatLineNumbers(content: string): string {
     const lines = _split(content, '\n');
-    const start = range ? range[0] - 1 : 0;
-    const end = range ? range[1] : lines.length;
-
-    return _map(
-        lines.slice(start, end),
-        (line, index) => `${start + index + 1}:${line}`
-    ).join('\n');
+    return _map(lines, (line, index) => `${index + 1}:${line}`).join('\n');
 }
 
 /**

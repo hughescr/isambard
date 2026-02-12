@@ -12,7 +12,8 @@ import {
 import {
     create,
     insert,
-    str_replace as strReplace
+    str_replace as strReplace,
+    formatLineNumbers
 } from '@/storage/memory-tool/handlers';
 
 describe('Memory Tool Handlers - Consolidate and Logging', () => {
@@ -369,6 +370,13 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
                     msg:  expect.stringContaining('Memory str_replace:'),
                 })
             );
+        });
+    });
+
+    describe('formatLineNumbers', () => {
+        test('should format multi-line content with line numbers separated by newlines', () => {
+            const result = formatLineNumbers('line one\nline two\nline three');
+            expect(result).toBe('1:line one\n2:line two\n3:line three');
         });
     });
 });

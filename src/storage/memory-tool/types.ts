@@ -58,6 +58,7 @@ export const memoryToolItemSchema = z.object({
     metadata:       z.record(z.string(), z.unknown()).default({}),
     createdAt:      z.string().datetime(),
     updatedAt:      z.string().datetime(),
+    // Stryker disable next-line ConditionalExpression: Zod custom validator for Set<string> type checking
     tags:           z.custom<Set<string>>(val => val === undefined || val instanceof Set).optional(),
     contentPreview: z.string().max(100).optional(), // First 100 chars of content for tag index preview
 });

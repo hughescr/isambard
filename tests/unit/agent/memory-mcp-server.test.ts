@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- Handler return values are typed as any in tests */
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { mockLogger } from '../../setup';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { MemoryPath, ContentType, MemoryToolItemData, TagIndexItem } from '../../../src/storage/memory-tool/types';
@@ -33,6 +34,11 @@ describe.concurrent('createMemoryMCPServer', () => {
     let mockBackend: MemoryToolBackend;
 
     beforeEach(() => {
+        mockLogger.warn.mockClear();
+        mockLogger.info.mockClear();
+        mockLogger.error.mockClear();
+        mockLogger.debug.mockClear();
+
         mockBackend = {
             create:        mock(async () => createMockItem()),
             get:           mock(async () => undefined),
@@ -312,6 +318,16 @@ describe.concurrent('createMemoryMCPServer', () => {
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBeUndefined();
             expect(recordAccess).toHaveBeenCalledTimes(1);
+
+            // Verify warning was logged for the recordAccess failure
+            expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    error: expect.any(Error),
+                    path:  '/state/test',
+                    msg:   'Failed to record memory access',
+                })
+            );
         });
     });
 

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- Test mocks */
-import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import { mockLogger } from '../../setup';
 import type { MCPServersOptions } from '@/app/mcp-servers';
 
@@ -88,6 +88,29 @@ describe('createMCPServers', () => {
         expect(createMemoryMcpServerSpy).toHaveBeenCalledTimes(1);
         expect(createMemoryMcpServerSpy).toHaveBeenCalledWith(mockOptions.memoryBackend, {
             recordAccess: undefined,
+        });
+    });
+
+    test('should pass recordAccess callback to createMemoryMCPServer', async () => {
+        // Set up a mock recordAccess callback
+        const mockRecordAccess = mock(async () => { /* intentionally empty */ });
+        const optionsWithRecordAccess = { ...mockOptions, recordAccess: mockRecordAccess };
+
+        const memoryMcpModule = await import('@/agent/memory-mcp-server');
+        const createMemoryMcpServerSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as any);
+        spies.push(createMemoryMcpServerSpy);
+
+        const discordMcpModule = await import('@/agent/discord-mcp-server');
+        spies.push(spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as any));
+
+        const inboxMcpModule = await import('@/agent/inbox-mcp-server');
+        spies.push(spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as any));
+
+        const { createMCPServers } = await import('@/app/mcp-servers');
+        createMCPServers(optionsWithRecordAccess);
+
+        expect(createMemoryMcpServerSpy).toHaveBeenCalledWith(mockOptions.memoryBackend, {
+            recordAccess: mockRecordAccess,
         });
     });
 

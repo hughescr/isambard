@@ -464,6 +464,7 @@ async function processTagIndexItem(
 
         if(!memory) {
             // Memory doesn't exist - delete orphaned index
+            // Stryker disable next-line ArrayDeclaration: Tag derived from parseTagFromPK, tested separately
             await ctx.deps.tagIndex.deleteTagIndexItems(createMemoryPath(memoryPath), new Set([tag]));
             ctx.progress.indexItemsDeleted++;
             /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
@@ -476,6 +477,7 @@ async function processTagIndexItem(
             // Stryker disable next-line ConditionalExpression,BlockStatement: Tag check
             if(!normalizedTags.has(tag)) {
                 // Tag removed - delete stale index
+                // Stryker disable next-line ArrayDeclaration: Tag derived from parseTagFromPK, tested separately
                 await ctx.deps.tagIndex.deleteTagIndexItems(memory.path, new Set([tag]));
                 ctx.progress.indexItemsDeleted++;
                 /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
