@@ -114,6 +114,7 @@ export async function createApp(): Promise<App> {
         botStateManager:   discordInfra.botStateManager,
         channelRegistry:   discordInfra.channelRegistry,
         eventDeltaTracker: contextLayer.eventDeltaTracker,
+        contextBuilder:    contextLayer.contextBuilder,
         memoryBackend:     createCatchUpSignalAdapter(storage.memoryBackend),
     });
 

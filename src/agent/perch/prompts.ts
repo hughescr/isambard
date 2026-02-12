@@ -40,6 +40,7 @@ Sessions are ephemeral, but TaskList persists across them. Think of it as notes 
  * Combines the base prompt with slot-specific hints.
  *
  * @param slot - The current time slot
+ * @param perchContext - Optional context from memory (time, recent focus)
  * @returns Complete prompt string
  *
  * @example
@@ -51,16 +52,21 @@ Sessions are ephemeral, but TaskList persists across them. Think of it as notes 
  * // Returns base prompt only (no hint)
  * ```
  */
-export function buildPerchPrompt(slot: PerchSlot): string {
+export function buildPerchPrompt(slot: PerchSlot, perchContext?: string): string {
     const config = getSlotConfig(slot);
+
+    // Build the base prompt with optional context
+    const baseWithContext = perchContext
+        ? `${perchContext}---\n\n${BASE_PROMPT}`
+        : BASE_PROMPT;
 
     if(!config) {
         // Unscheduled slot - base prompt only
-        return BASE_PROMPT;
+        return baseWithContext;
     }
 
     // Combine base prompt with slot-specific hint
-    return `${BASE_PROMPT}
+    return `${baseWithContext}
 
 ---
 
@@ -74,6 +80,7 @@ ${config.hint}`;
  * Wraps buildPerchPrompt with a test mode disclaimer.
  *
  * @param slot - The current time slot
+ * @param perchContext - Optional context from memory (time, recent focus)
  * @returns Complete test prompt string
  *
  * @example
@@ -82,9 +89,9 @@ ${config.hint}`;
  * // Returns test disclaimer + base prompt + pre-dawn hint
  * ```
  */
-export function buildTestPerchPrompt(slot: PerchSlot): string {
+export function buildTestPerchPrompt(slot: PerchSlot, perchContext?: string): string {
     const slotName = formatSlotName(slot);
-    const basePrompt = buildPerchPrompt(slot);
+    const basePrompt = buildPerchPrompt(slot, perchContext);
 
     return `--- TEST MODE ---
 This perch time is being triggered for testing purposes, not at its normal scheduled time.

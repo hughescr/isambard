@@ -5,7 +5,9 @@
  * context about what happened during an interrupted processing session.
  */
 
+import _ from 'lodash';
 import type { ContextBuilder } from './context-builder';
+import { formatMemoryPreview } from './context-builder';
 
 /**
  * Event delta tracker for tracking new events during message processing.
@@ -23,20 +25,24 @@ export class EventDeltaTracker {
      */
     async markStart(): Promise<void> {
         // Load recent events and store the count
-        const events = await this.contextBuilder.loadRecentEvents(50);
-        this.startEventCount = events.length;
+        const result = await this.contextBuilder.loadRecentEvents(50);
+        this.startEventCount = result.items.length;
     }
 
     /**
      * Get events that occurred after the start marker.
-     * @returns Array of formatted event strings (from context-builder format)
+     * @returns Array of formatted event strings (preview format)
      */
     async getNewEvents(): Promise<string[]> {
+        const now = new Date();
         // Load recent events
-        const events = await this.contextBuilder.loadRecentEvents(50);
+        const result = await this.contextBuilder.loadRecentEvents(50);
 
         // Return only events that occurred after the start marker
         // Events are sorted oldest-first, so new events are at the end
-        return events.slice(this.startEventCount);
+        const newItems = result.items.slice(this.startEventCount);
+        return _.map(newItems, item =>
+            formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, now)
+        );
     }
 }

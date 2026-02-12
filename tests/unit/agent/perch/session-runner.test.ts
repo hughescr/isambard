@@ -13,6 +13,7 @@ import {
 import type { BotStateManager, BotState, PerchingModeContext, InterruptingMessageDetails } from '@/integrations/discord/state';
 import type { PerchConfig } from '@/agent/perch/types';
 import { type ChannelId } from '@/integrations/discord/types';
+import type { ContextBuilder } from '@/agent/context-builder';
 
 // Mock logger
 function createMockLogger(): Logger {
@@ -22,6 +23,21 @@ function createMockLogger(): Logger {
         warn:  mock(() => {}),
         error: mock(() => {}),
     } as unknown as Logger;
+}
+
+// Mock context builder
+function createMockContextBuilder(overrides?: Partial<ContextBuilder>): ContextBuilder {
+    return {
+        loadCoreIdentity:       mock(_.constant(Promise.resolve(''))),
+        loadHotState:           mock(_.constant(Promise.resolve(''))),
+        loadUserMemories:       mock(_.constant(Promise.resolve(''))),
+        recordAccess:           mock(_.constant(Promise.resolve())),
+        loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),
+        loadUserTimezone:       mock(_.constant(Promise.resolve(undefined))),
+        buildUserMessagePrefix: mock(_.constant(Promise.resolve(''))),
+        buildPerchContext:      mock(_.constant(Promise.resolve(''))),
+        ...overrides,
+    };
 }
 
 // Mock state manager
@@ -732,6 +748,79 @@ describe('PerchSessionRunner - Error Handling', () => {
 
         // Verify session was called once (startPerch starts session when mode is 'idle')
         expect(sessionMock).toHaveBeenCalledTimes(1);
+    });
+
+    test('should transition to idle when context builder throws', async () => {
+        const mockContextBuilder = createMockContextBuilder({
+            buildPerchContext: mock(async (): Promise<string> => {
+                throw new Error('DynamoDB timeout');
+            }),
+        });
+
+        const sessionMock = mock(async (): Promise<AgentSessionResult> => {
+            return { completed: true };
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config,
+            runAgentSession: sessionMock,
+            contextBuilder:  mockContextBuilder,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+        await runner.startPerch('pre-dawn');
+
+        // Verify error was logged
+        expect(mockLogger.error).toHaveBeenCalledWith(
+            expect.objectContaining({
+                error: expect.any(Error) as Error,
+                slot:  'pre-dawn',
+            }),
+            'Failed to start perch session'
+        );
+
+        // Verify bot transitioned back to idle
+        expect(mockStateManager.goIdle).toHaveBeenCalled();
+
+        // Verify session was never called
+        expect(sessionMock).not.toHaveBeenCalled();
+    });
+
+    test('should clear timeout when context builder throws', async () => {
+        const mockContextBuilder = createMockContextBuilder({
+            buildPerchContext: mock(async (): Promise<string> => {
+                throw new Error('DynamoDB timeout');
+            }),
+        });
+
+        const sessionMock = mock(async (): Promise<AgentSessionResult> => {
+            return { completed: true };
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config,
+            runAgentSession: sessionMock,
+            contextBuilder:  mockContextBuilder,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+        await runner.startPerch('pre-dawn');
+
+        // Verify timeout was set but then cleared
+        // We can't directly verify the timeout was cleared, but we can verify
+        // that advancing timers doesn't cause any timeout handling
+        jest.advanceTimersByTime(config.maxSessionMinutes * 60 * 1000 + 1000);
+
+        // Verify no timeout handling occurred (no abort, no wrap-up)
+        expect(sessionMock).not.toHaveBeenCalled();
+        expect(mockLogger.info).not.toHaveBeenCalledWith(
+            expect.anything(),
+            expect.stringContaining('timeout')
+        );
     });
 });
 

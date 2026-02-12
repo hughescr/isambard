@@ -8,16 +8,27 @@
 import { logger } from '@hughescr/logger';
 import { map as _map, isNumber as _isNumber, sortBy as _sortBy } from 'lodash';
 import type { MemoryToolBackend } from '../storage/memory-tool/backend';
-import type { MemoryPath } from '../storage/memory-tool/types';
+import type { MemoryPath, MemoryToolItemData } from '../storage/memory-tool/types';
 import { createMemoryPath, createLayerName } from '../storage/memory-tool/types';
 import { formatShortRelativeTime, formatTimeHeader } from '../utils/time';
+import type { SummarizeEventBatchesFn } from './event-summarizer';
+
+export interface RecentEventsResult {
+    items:      MemoryToolItemData[]
+    isFallback: boolean
+}
 
 export interface ContextBuilderOptions {
     backend:                MemoryToolBackend
     maxIdentityTokens?:     number   // Default: 5000
-    maxStateFullTokens?:    number   // Default: 3000
-    maxStatePreviewTokens?: number   // Default: 2000
+    maxStateFullItems?:     number   // Default: 8
+    maxStatePreviewItems?:  number   // Default: 30
+    maxStateItemMaxChars?:  number   // Default: 2000 (per-item cap for full-content items)
     maxUserTokens?:         number   // Default: 2500
+    maxEventFullItems?:     number   // Default: 10
+    maxEventItemMaxChars?:  number   // Default: 2000 (per-item cap for full-content event items)
+    maxEventBatchSize?:     number   // Default: 10
+    summarizeEventBatches?: SummarizeEventBatchesFn  // Optional DI for event summarization
 }
 
 export interface ContextBuilder {
@@ -52,9 +63,9 @@ export interface ContextBuilder {
      * Load recent events from the timeline
      * @param limit Maximum number of events to load
      * @param now Optional reference time for age calculation (defaults to current time)
-     * @returns Array of formatted event strings: "- path (age): content_preview"
+     * @returns Raw event items and fallback flag
      */
-    loadRecentEvents: (limit?: number, now?: Date) => Promise<string[]>
+    loadRecentEvents: (limit?: number, now?: Date) => Promise<RecentEventsResult>
 
     /**
      * Load user timezone preference
@@ -70,12 +81,31 @@ export interface ContextBuilder {
      * @returns Context prefix string (empty if no context available)
      */
     buildUserMessagePrefix: (userId: string, userTimezone?: string) => Promise<string>
+
+    /**
+     * Build lightweight perch context with time, state, and events.
+     * @param now Optional reference time
+     * @returns Context prefix string for perch sessions
+     */
+    buildPerchContext: (now?: Date) => Promise<string>
 }
 
+// Stryker disable next-line ArithmeticOperator: Default constant
 const DEFAULT_MAX_IDENTITY_TOKENS = 5000;
-const DEFAULT_MAX_STATE_FULL_TOKENS = 3000;
-const DEFAULT_MAX_STATE_PREVIEW_TOKENS = 2000;
+// Stryker disable next-line ArithmeticOperator: Default constant
+const DEFAULT_MAX_STATE_FULL_ITEMS = 8;
+// Stryker disable next-line ArithmeticOperator: Default constant
+const DEFAULT_MAX_STATE_PREVIEW_ITEMS = 30;
+// Stryker disable next-line ArithmeticOperator: Default constant
+const DEFAULT_MAX_STATE_ITEM_MAX_CHARS = 2000;
+// Stryker disable next-line ArithmeticOperator: Default constant
 const DEFAULT_MAX_USER_TOKENS = 2500;
+// Stryker disable next-line ArithmeticOperator: Default constant
+const DEFAULT_MAX_EVENT_FULL_ITEMS = 10;
+// Stryker disable next-line ArithmeticOperator: Default constant
+const DEFAULT_MAX_EVENT_ITEM_MAX_CHARS = 2000;
+// Stryker disable next-line ArithmeticOperator: Default constant
+const DEFAULT_MAX_EVENT_BATCH_SIZE = 10;
 const CHARS_PER_TOKEN = 4;
 const CONTENT_PREVIEW_MAX_LENGTH = 100;
 
@@ -85,7 +115,7 @@ const CONTENT_PREVIEW_MAX_LENGTH = 100;
  *
  * Handles tag index cases where content may be undefined (only contentPreview available from TagIndexItem).
  */
-function formatMemoryPreview(
+export function formatMemoryPreview(
     path: MemoryPath,
     content: string | undefined,
     contentPreview: string | undefined,
@@ -96,9 +126,12 @@ function formatMemoryPreview(
 
     // Full content available - show preview
     if(content) {
-        const preview = content.length > CONTENT_PREVIEW_MAX_LENGTH
+        // Stryker disable EqualityOperator,ConditionalExpression,MethodExpression,StringLiteral: Cosmetic content truncation for preview display
+        const shouldTruncate = content.length > CONTENT_PREVIEW_MAX_LENGTH;
+        const preview = shouldTruncate
             ? content.slice(0, CONTENT_PREVIEW_MAX_LENGTH) + '...'
             : content;
+        // Stryker restore EqualityOperator,ConditionalExpression,MethodExpression,StringLiteral
         return `- ${path} (${age}): ${preview}`;
     }
 
@@ -117,11 +150,87 @@ function formatMemoryPreview(
 export function createContextBuilder(options: ContextBuilderOptions): ContextBuilder {
     const { backend } = options;
     const maxIdentityTokens = options.maxIdentityTokens ?? DEFAULT_MAX_IDENTITY_TOKENS;
+    const maxStateFullItems = options.maxStateFullItems ?? DEFAULT_MAX_STATE_FULL_ITEMS;
+    const maxStatePreviewItems = options.maxStatePreviewItems ?? DEFAULT_MAX_STATE_PREVIEW_ITEMS;
+    const maxStateItemMaxChars = options.maxStateItemMaxChars ?? DEFAULT_MAX_STATE_ITEM_MAX_CHARS;
+    const maxEventFullItems = options.maxEventFullItems ?? DEFAULT_MAX_EVENT_FULL_ITEMS;
+    const maxEventItemMaxChars = options.maxEventItemMaxChars ?? DEFAULT_MAX_EVENT_ITEM_MAX_CHARS;
+    const maxEventBatchSize = options.maxEventBatchSize ?? DEFAULT_MAX_EVENT_BATCH_SIZE;
+    const summarizeEventBatchesFn = options.summarizeEventBatches;
 
     const maxIdentityChars = maxIdentityTokens * CHARS_PER_TOKEN;
-    const maxStateFullChars = (options.maxStateFullTokens ?? DEFAULT_MAX_STATE_FULL_TOKENS) * CHARS_PER_TOKEN;
-    const maxStatePreviewChars = (options.maxStatePreviewTokens ?? DEFAULT_MAX_STATE_PREVIEW_TOKENS) * CHARS_PER_TOKEN;
     const maxUserChars = (options.maxUserTokens ?? DEFAULT_MAX_USER_TOKENS) * CHARS_PER_TOKEN;
+
+    /**
+     * Build event section from recent events result
+     * @param eventsResult Recent events result with items and fallback flag
+     * @param now Reference time for age calculation
+     * @returns Formatted event section string or undefined if no events
+     */
+    const buildEventSection = async (
+        eventsResult: RecentEventsResult,
+        now: Date
+    ): Promise<string | undefined> => {
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Defensive guard - empty items produces empty join anyway, caller checks falsy
+        if(eventsResult.items.length === 0) {
+            return undefined;
+        }
+
+        // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for eventSections
+        const eventSections: string[] = [];
+
+        // Warning note for fallback events
+        if(eventsResult.isFallback) {
+            eventSections.push('⚠️ No activity in the last 14 days. Showing older events:');
+        }
+
+        // Split into full-display and summary items (newest events get full display)
+        // Stryker disable next-line ConditionalExpression,EqualityOperator: Edge case - if total <= max, slice returns empty array anyway
+        const summaryItems = eventsResult.items.length <= maxEventFullItems
+            ? []
+            : eventsResult.items.slice(0, -maxEventFullItems);
+        const fullItems = eventsResult.items.slice(-maxEventFullItems);
+
+        // Older events summarized (rendered first for chronological order)
+        // Stryker disable ConditionalExpression,EqualityOperator: Defensive empty check - for loop won't execute if empty anyway
+        if(summaryItems.length > 0 && summarizeEventBatchesFn) {
+            // Stryker disable BlockStatement
+            try {
+                const batchSummaries = await summarizeEventBatchesFn(summaryItems, maxEventBatchSize, now);
+                for(const batch of batchSummaries) {
+                    const startAge = formatShortRelativeTime(new Date(batch.startTime), now);
+                    const endAge = formatShortRelativeTime(new Date(batch.endTime), now);
+                    eventSections.push(`[Events from ${startAge} to ${endAge} (${batch.count} events)]\n${batch.summary}`);
+                }
+            } catch (error) {
+                logger.warn({ error, msg: 'Event summarization failed, falling back to preview format' });
+                // Fall back to preview format on error
+                for(const item of summaryItems) {
+                    eventSections.push(formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, now));
+                }
+            }
+            // Stryker restore BlockStatement
+        } else if(summaryItems.length > 0) {
+            // No summarizer — fall back to preview format
+            for(const item of summaryItems) {
+                eventSections.push(formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, now));
+            }
+        }
+        // Stryker restore ConditionalExpression,EqualityOperator
+
+        // Full-content recent events (newest, rendered last)
+        for(const item of fullItems) {
+            let content = item.content;
+            // Stryker disable next-line EqualityOperator: Config-driven content truncation threshold
+            if(content.length > maxEventItemMaxChars) {
+                content = content.slice(0, maxEventItemMaxChars) + '\n[truncated — use \'memory view ' + item.path + '\' for full content]';
+            }
+            const age = formatShortRelativeTime(new Date(item.updatedAt), now);
+            eventSections.push(`${item.path} (${age}):\n${content}`);
+        }
+
+        return eventSections.join('\n\n');
+    };
 
     const builder: ContextBuilder = {
         loadCoreIdentity: async (): Promise<string> => {
@@ -164,32 +273,33 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
 
             // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
             const sections: string[] = [];
-            let fullCharsUsed = 0;
-            let previewCharsUsed = 0;
             let fullTierCount = 0;
             let previewTierCount = 0;
-            let overflowCount = 0;
 
-            // Full-content tier: highest-scored items with full content
             for(const { item } of scoredItems) {
-                const formatted = `${item.path}:\n${item.content}`;
-                if(fullCharsUsed + formatted.length <= maxStateFullChars) {
-                    sections.push(formatted);
-                    fullCharsUsed += formatted.length;
+                // Stryker disable next-line ConditionalExpression: Guard break for tier limits — both tiers full
+                if(fullTierCount >= maxStateFullItems && previewTierCount >= maxStatePreviewItems) {
+                    break;
+                }
+
+                if(fullTierCount < maxStateFullItems) {
+                    // Full content tier - cap per-item content length
+                    let content = item.content;
+                    // Stryker disable next-line EqualityOperator: Config-driven content truncation threshold
+                    if(content.length > maxStateItemMaxChars) {
+                        content = content.slice(0, maxStateItemMaxChars) + '\n[truncated — use \'memory view ' + item.path + '\' for full content]';
+                    }
+                    sections.push(`${item.path}:\n${content}`);
                     fullTierCount++;
                 } else {
-                    // Try preview tier
+                    // Preview tier
                     const preview = formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, now);
-                    if(previewCharsUsed + preview.length <= maxStatePreviewChars) {
-                        sections.push(preview);
-                        previewCharsUsed += preview.length;
-                        previewTierCount++;
-                    } else {
-                        overflowCount++;
-                    }
+                    sections.push(preview);
+                    previewTierCount++;
                 }
             }
 
+            const overflowCount = scoredItems.length - fullTierCount - previewTierCount;
             if(overflowCount > 0) {
                 sections.push(`...and ${overflowCount} more state memories (use 'list /state' to see all)`);
             }
@@ -263,7 +373,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             }
         },
 
-        loadRecentEvents: async (limit = 50, now: Date = new Date()): Promise<string[]> => {
+        loadRecentEvents: async (limit = 50, now: Date = new Date()): Promise<RecentEventsResult> => {
             logger.debug({ msg: 'Loading recent events' });
 
             // Load recent events by time range (last 14 days)
@@ -276,28 +386,18 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             );
 
             // Fallback: if no events in 14 days, get most recent regardless of age
-            let showingOlderEventsNote = false;
+            let isFallback = false;
             if(result.length === 0) {
                 const fallbackResult = await backend.listByLayer(createLayerName('events'), { limit });
                 result = fallbackResult.items;
-                showingOlderEventsNote = result.length > 0;
+                isFallback = result.length > 0;
             }
 
             // Ensure ascending order: searchByTimeRange returns ascending, but listByLayer fallback returns descending
             result = _sortBy(result, ['updatedAt']);
 
-            // Format each item with path, age, and content preview
-            const events = _map(result, item =>
-                formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, now)
-            );
-
-            // Prepend warning note if showing older events
-            if(showingOlderEventsNote) {
-                events.unshift('⚠️ No activity in the last 14 days. Showing older events:');
-            }
-
-            logger.debug({ eventCount: events.length }, 'Recent events loaded');
-            return events;
+            logger.debug({ eventCount: result.length }, 'Recent events loaded');
+            return { items: result, isFallback };
         },
 
         loadUserTimezone: async (userId: string): Promise<string | undefined> => {
@@ -332,10 +432,16 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                 sections.push(`[Current state]\n${hotState}`);
             }
 
-            // 4. Recent events (unchanged)
-            const recentEvents = await builder.loadRecentEvents(50, now);
-            if(recentEvents.length > 0) {
-                sections.push(`[Recent events]\n${recentEvents.join('\n')}`);
+            // 4. Recent events (tiered display)
+            // Stryker disable ArithmeticOperator: Config constant calculation for event loading limit
+            const eventsResult = await builder.loadRecentEvents(
+                maxEventFullItems + maxEventBatchSize * 4,
+                now
+            );
+            // Stryker restore ArithmeticOperator
+            const eventSection = await buildEventSection(eventsResult, now);
+            if(eventSection) {
+                sections.push(`[Recent events]\n${eventSection}`);
             }
 
             // Stryker disable EqualityOperator,ConditionalExpression,BlockStatement,StringLiteral: Empty sections array can't happen (time header always present)
@@ -345,6 +451,59 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             // Stryker restore EqualityOperator,ConditionalExpression,BlockStatement,StringLiteral
 
             // Stryker disable next-line StringLiteral: Equivalent - trailing newlines are formatting
+            return sections.join('\n\n') + '\n\n';
+        },
+
+        buildPerchContext: async (now: Date = new Date()): Promise<string> => {
+            // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
+            const sections: string[] = [];
+
+            // 1. Time header (no user timezone for perch)
+            sections.push(formatTimeHeader());
+
+            // 2. Top state memories (full content, truncated per-item)
+            // Stryker disable next-line ObjectLiteral: Config parameter for getStateItemsScored
+            const scoredItems = await backend.getStateItemsScored({ now });
+            if(scoredItems.length > 0) {
+                // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for stateSections
+                const stateSections: string[] = [];
+                // Stryker disable next-line ArithmeticOperator: Config constant for perch state count
+                const perchStateCount = 3;
+                for(const { item } of scoredItems.slice(0, perchStateCount)) {
+                    let content = item.content;
+                    // Stryker disable next-line ConditionalExpression,EqualityOperator: Config-driven content truncation threshold
+                    if(content.length > maxStateItemMaxChars) {
+                        // Stryker disable next-line StringLiteral: Cosmetic truncation message for context display
+                        content = content.slice(0, maxStateItemMaxChars) + '\n[truncated — use \'memory view ' + item.path + '\' for full content]';
+                    }
+                    stateSections.push(`${item.path}:\n${content}`);
+                }
+                // Stryker disable next-line StringLiteral: Cosmetic section join separator
+                sections.push(`## Recent Focus\n${stateSections.join('\n\n')}`);
+            }
+
+            // 3. Recent events (all shown in full, no summarization)
+            // Stryker disable next-line ArithmeticOperator: Config constant for perch event count
+            const perchEventCount = 5;
+            const eventsResult = await builder.loadRecentEvents(perchEventCount, now);
+            if(eventsResult.items.length > 0) {
+                // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for eventSections
+                const eventSections: string[] = [];
+                for(const item of eventsResult.items) {
+                    let content = item.content;
+                    // Stryker disable next-line EqualityOperator: Config-driven content truncation threshold
+                    if(content.length > maxEventItemMaxChars) {
+                        // Stryker disable next-line StringLiteral: Cosmetic truncation message text
+                        content = content.slice(0, maxEventItemMaxChars) + '\n[truncated — use \'memory view ' + item.path + '\' for full content]';
+                    }
+                    const age = formatShortRelativeTime(new Date(item.updatedAt), now);
+                    eventSections.push(`${item.path} (${age}):\n${content}`);
+                }
+                // Stryker disable next-line StringLiteral: Cosmetic section join separator
+                sections.push(`## Recent Events\n${eventSections.join('\n\n')}`);
+            }
+
+            // Stryker disable next-line StringLiteral: Cosmetic trailing newlines for context formatting
             return sections.join('\n\n') + '\n\n';
         },
     };

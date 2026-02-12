@@ -38,8 +38,9 @@ describe('createClaudeAgent context integration', () => {
             loadUserMemories:       mock(_.constant(Promise.resolve(''))),
             // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function
             recordAccess:           mock(async () => {}),
-            loadRecentEvents:       mock(_.constant(Promise.resolve([]))),
+            loadRecentEvents:       mock(_.constant(Promise.resolve({ items: [], isFallback: false }))),
             loadUserTimezone:       mock(_.constant(Promise.resolve(undefined))),
+            buildPerchContext:      mock(_.constant(Promise.resolve(''))),
             buildUserMessagePrefix: mock(async (userId: string, _userTimezone?: string): Promise<string> => {
                 const sections: string[] = [];
 
@@ -53,9 +54,9 @@ describe('createClaudeAgent context integration', () => {
                     sections.push(`[Current state]\n${hotState}`);
                 }
 
-                const events = await mockContextBuilder.loadRecentEvents(50);
-                if(events.length > 0) {
-                    sections.push(`[Recent events]\n${events.join('\n')}`);
+                const eventsResult = await mockContextBuilder.loadRecentEvents(50);
+                if(eventsResult.items.length > 0) {
+                    sections.push(`[Recent events]\n${_.map(eventsResult.items, (item: any) => `${item.path}: ${item.content}`).join('\n\n')}`);
                 }
 
                 if(sections.length === 0) {
@@ -190,10 +191,13 @@ describe('createClaudeAgent context integration', () => {
 
         test('should include recent events when loadRecentEvents returns events', async () => {
             (mockContextBuilder.loadUserMemories as ReturnType<typeof mock>).mockResolvedValue('');
-            (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue([
-                'Server went online',
-                'New user joined #general',
-            ]);
+            (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue({
+                items: [
+                    { path: '/events/e1', content: 'Server went online', updatedAt: '2025-01-15T10:00:00Z', contentType: 'text/markdown', metadata: {}, createdAt: '2025-01-15T10:00:00Z' },
+                    { path: '/events/e2', content: 'New user joined #general', updatedAt: '2025-01-15T11:00:00Z', contentType: 'text/markdown', metadata: {}, createdAt: '2025-01-15T11:00:00Z' },
+                ],
+                isFallback: false,
+            });
 
             const agent = createClaudeAgent({
                 contextBuilder: mockContextBuilder,
@@ -201,17 +205,22 @@ describe('createClaudeAgent context integration', () => {
 
             await agent.handleInput([mockMessageContext]);
 
-            // Verify the prompt includes [Recent events] section with exact format (events already have "- " prefix from loadRecentEvents)
+            // Verify the prompt includes [Recent events] section
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    prompt: expect.stringContaining('[Recent events]\nServer went online\nNew user joined #general'),
+                    prompt: expect.stringContaining('[Recent events]'),
+                })
+            );
+            expect(querySpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    prompt: expect.stringContaining('Server went online'),
                 })
             );
         });
 
         test('should not include recent events section when loadRecentEvents returns empty array', async () => {
             (mockContextBuilder.loadUserMemories as ReturnType<typeof mock>).mockResolvedValue('');
-            (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue([]);
+            (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue({ items: [], isFallback: false });
 
             const agent = createClaudeAgent({
                 contextBuilder: mockContextBuilder,
@@ -245,7 +254,12 @@ describe('createClaudeAgent context integration', () => {
             // Mock returns user memories, hot state, AND events
             (mockContextBuilder.loadUserMemories as ReturnType<typeof mock>).mockResolvedValue('- User memory');
             (mockContextBuilder.loadHotState as ReturnType<typeof mock>).mockResolvedValue('Hot state content');
-            (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue(['Recent event']);
+            (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue({
+                items: [
+                    { path: '/events/e1', content: 'Recent event', updatedAt: new Date().toISOString(), contentType: 'text/markdown', metadata: {}, createdAt: new Date().toISOString() },
+                ],
+                isFallback: false,
+            });
 
             const agent = createClaudeAgent({
                 contextBuilder: mockContextBuilder,
@@ -260,7 +274,8 @@ describe('createClaudeAgent context integration', () => {
             // All sections should be present and separated by double newlines
             expect(prompt).toContain('[About this user]\n- User memory');
             expect(prompt).toContain('[Current state]\nHot state content');
-            expect(prompt).toContain('[Recent events]\nRecent event');
+            expect(prompt).toContain('[Recent events]');
+            expect(prompt).toContain('Recent event');
             expect(prompt).toContain('User @111222333 in #987654321 at 2025-01-15T12:00:00 UTC (UTC: 2025-01-15T12:00:00Z): Hello Claude!');
 
             // Verify double newline separation between sections

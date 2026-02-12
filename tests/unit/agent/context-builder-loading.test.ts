@@ -483,36 +483,36 @@ describe('createContextBuilder loading methods', () => {
 
         test('should use preview format for items that overflow full tier', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const longContent = _.repeat('x', 15000); // Way over default limit
-
-            backend.getStateItemsScored = mock(async () => [
-                {
-                    item: {
-                        path:           createMemoryPath('/state/task1.md'),
-                        content:        longContent,
-                        contentPreview: 'This is a preview',
-                        contentType:    'text/markdown' as const,
-                        metadata:       {},
-                        version:        1,
-                        createdAt:      '2025-01-15T10:00:00.000Z',
-                        updatedAt:      '2025-01-15T10:00:00.000Z',
-                    },
-                    score: 0.95,
+            // Create 9 items to exceed maxStateFullItems (default 8)
+            const items = _.times(9, i => ({
+                item: {
+                    path:           createMemoryPath(`/state/task${i}.md`),
+                    content:        'Content ' + i,
+                    contentPreview: 'Preview ' + i,
+                    contentType:    'text/markdown' as const,
+                    metadata:       {},
+                    version:        1,
+                    createdAt:      '2025-01-15T10:00:00.000Z',
+                    updatedAt:      '2025-01-15T10:00:00.000Z',
                 },
-            ]);
+                score: 1 - i * 0.1,
+            }));
+
+            backend.getStateItemsScored = mock(async () => items);
 
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.loadHotState(now);
 
-            // Should use preview format with content truncated to 100 chars
-            // formatMemoryPreview uses content (when available) truncated to 100 chars + '...'
-            expect(result).toContain(`- /state/task1.md (2h ago): ${_.repeat('x', 100)}...`);
-            expect(result).not.toContain(longContent);
+            // First 8 should be full content format
+            expect(result).toContain('/state/task0.md:\nContent 0');
+            expect(result).toContain('/state/task7.md:\nContent 7');
+            // 9th should be preview format
+            expect(result).toContain('- /state/task8.md (2h ago): Content 8');
         });
 
         test('should show overflow indicator when items exceed both tiers', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const items = _.times(100, i => ({
+            const items = _.times(50, i => ({
                 item: {
                     path:        createMemoryPath(`/state/task${i}.md`),
                     content:     _.repeat('x', 200),
@@ -529,18 +529,17 @@ describe('createContextBuilder loading methods', () => {
 
             const contextBuilder = createContextBuilder({
                 backend,
-                maxStateFullTokens:    100,  // Very small to force overflow
-                maxStatePreviewTokens: 100,
+                maxStateFullItems:    2,
+                maxStatePreviewItems: 2,
             });
             const result = await contextBuilder.loadHotState(now);
 
-            expect(result).toContain('...and ');
-            expect(result).toContain('more state memories (use \'list /state\' to see all)');
+            expect(result).toContain('...and 46 more state memories (use \'list /state\' to see all)');
         });
 
-        test('should respect maxStateFullTokens budget', async () => {
+        test('should respect maxStateFullItems count', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const items = _.times(10, i => ({
+            const items = _.times(3, i => ({
                 item: {
                     path:        createMemoryPath(`/state/task${i}.md`),
                     content:     _.repeat('x', 500),
@@ -557,18 +556,19 @@ describe('createContextBuilder loading methods', () => {
 
             const contextBuilder = createContextBuilder({
                 backend,
-                maxStateFullTokens: 200, // 800 chars
+                maxStateFullItems: 2,
             });
             const result = await contextBuilder.loadHotState(now);
 
-            // At 500 chars per item, should fit 1 item in full tier (with path overhead)
+            // Should have 2 full content items + 1 preview
             const fullTierItems = (result.match(/\/state\/task\d+\.md:\n/g) ?? []).length;
-            expect(fullTierItems).toBeLessThanOrEqual(2);
+            expect(fullTierItems).toBe(2);
+            expect(result).toContain('- /state/task2.md (2h ago):');
         });
 
-        test('should respect maxStatePreviewTokens budget', async () => {
+        test('should respect maxStatePreviewItems count', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const items = _.times(100, i => ({
+            const items = _.times(40, i => ({
                 item: {
                     path:           createMemoryPath(`/state/task${i}.md`),
                     content:        _.repeat('x', 5000),
@@ -586,15 +586,140 @@ describe('createContextBuilder loading methods', () => {
 
             const contextBuilder = createContextBuilder({
                 backend,
-                maxStateFullTokens:    0, // Force all to preview tier
-                maxStatePreviewTokens: 100, // 400 chars total for previews
+                maxStateFullItems:    0, // Force all to preview tier
+                maxStatePreviewItems: 5,
             });
             const result = await contextBuilder.loadHotState(now);
 
-            // Should have preview tier items
-            const previewItems = (result.match(/- \/state\/task\d+\.md \(\d+h ago\):/g) ?? []).length;
-            expect(previewItems).toBeGreaterThan(0);
-            expect(previewItems).toBeLessThan(100); // Not all items fit
+            // Should have 5 preview items
+            const previewItems = (result.match(/- \/state\/task\d+\.md \(2h ago\):/g) ?? []).length;
+            expect(previewItems).toBe(5);
+            // And overflow indicator
+            expect(result).toContain('...and 35 more state memories');
+        });
+
+        test('should truncate items exceeding maxStateItemMaxChars', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            const longContent = _.repeat('x', 3000);
+
+            backend.getStateItemsScored = mock(async () => [
+                {
+                    item: {
+                        path:        createMemoryPath('/state/long.md'),
+                        content:     longContent,
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-15T10:00:00.000Z',
+                        updatedAt:   '2025-01-15T10:00:00.000Z',
+                    },
+                    score: 0.95,
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({
+                backend,
+                maxStateItemMaxChars: 2000,
+            });
+            const result = await contextBuilder.loadHotState(now);
+
+            // Should be truncated to 2000 chars with truncation message
+            expect(result).toContain(_.repeat('x', 2000));
+            expect(result).toContain('[truncated — use \'memory view /state/long.md\' for full content]');
+            expect(result).not.toContain(_.repeat('x', 2001));
+        });
+
+        test('should not truncate items within maxStateItemMaxChars', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            const content = _.repeat('x', 500);
+
+            backend.getStateItemsScored = mock(async () => [
+                {
+                    item: {
+                        path:        createMemoryPath('/state/short.md'),
+                        content,
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-15T10:00:00.000Z',
+                        updatedAt:   '2025-01-15T10:00:00.000Z',
+                    },
+                    score: 0.95,
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({
+                backend,
+                maxStateItemMaxChars: 2000,
+            });
+            const result = await contextBuilder.loadHotState(now);
+
+            // Should NOT be truncated
+            expect(result).toBe(`/state/short.md:\n${content}`);
+            expect(result).not.toContain('[truncated');
+        });
+
+        test('should break early when both tiers are full', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            const items = _.times(20, i => ({
+                item: {
+                    path:        createMemoryPath(`/state/task${i}.md`),
+                    content:     'Content ' + i,
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z',
+                },
+                score: 1 - i * 0.05,
+            }));
+
+            backend.getStateItemsScored = mock(async () => items);
+
+            const contextBuilder = createContextBuilder({
+                backend,
+                maxStateFullItems:    2,
+                maxStatePreviewItems: 3,
+            });
+            const result = await contextBuilder.loadHotState(now);
+
+            // Should have 2 full + 3 preview = 5 shown, 15 overflow
+            expect(result).toContain('/state/task0.md:\nContent 0');
+            expect(result).toContain('/state/task1.md:\nContent 1');
+            expect(result).toContain('- /state/task2.md (2h ago): Content 2');
+            expect(result).toContain('- /state/task3.md (2h ago): Content 3');
+            expect(result).toContain('- /state/task4.md (2h ago): Content 4');
+            expect(result).toContain('...and 15 more state memories');
+        });
+
+        test('should include all items when count exactly equals maxStateFullItems', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            const items = _.times(8, i => ({
+                item: {
+                    path:        createMemoryPath(`/state/task${i}.md`),
+                    content:     'Content ' + i,
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z',
+                },
+                score: 1 - i * 0.1,
+            }));
+
+            backend.getStateItemsScored = mock(async () => items);
+
+            const contextBuilder = createContextBuilder({
+                backend,
+                maxStateFullItems: 8,
+            });
+            const result = await contextBuilder.loadHotState(now);
+
+            // All 8 should be in full tier, 0 preview, 0 overflow
+            const fullTierItems = (result.match(/\/state\/task\d+\.md:\n/g) ?? []).length;
+            expect(fullTierItems).toBe(8);
+            expect(result).not.toContain('- /state/task');
+            expect(result).not.toContain('...and');
         });
 
         test('should order items by sigmoid score (highest first)', async () => {
@@ -676,13 +801,13 @@ describe('createContextBuilder loading methods', () => {
 
         test('should track preview tier count correctly', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            // Item with very long content that won't fit in full tier
+            // Item with very long content that will be truncated in full tier
             const longContent = _.repeat('x', 15000);
 
             backend.getStateItemsScored = mock(async () => [
                 {
                     item: {
-                        path:        createMemoryPath('/state/preview.md'),
+                        path:        createMemoryPath('/state/truncated.md'),
                         content:     longContent,
                         contentType: 'text/markdown' as const,
                         metadata:    {},
@@ -692,13 +817,30 @@ describe('createContextBuilder loading methods', () => {
                     },
                     score: 0.95,
                 },
+                // 9 more items to push first one beyond full tier
+                ..._.times(9, i => ({
+                    item: {
+                        path:        createMemoryPath(`/state/item${i}.md`),
+                        content:     'Content',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-15T10:00:00.000Z',
+                        updatedAt:   '2025-01-15T10:00:00.000Z',
+                    },
+                    score: 0.9 - i * 0.05,
+                })),
             ]);
 
-            const contextBuilder = createContextBuilder({ backend });
+            const contextBuilder = createContextBuilder({
+                backend,
+                maxStateFullItems: 8,
+            });
             const result = await contextBuilder.loadHotState(now);
 
+            // First 8 in full tier, last 2 in preview tier
             expect(mockLogger.debug).toHaveBeenCalledWith(
-                { fullTierCount: 0, previewTierCount: 1, overflowCount: 0, stateLength: result.length },
+                { fullTierCount: 8, previewTierCount: 2, overflowCount: 0, stateLength: result.length },
                 'Hot state loaded'
             );
         });
@@ -740,80 +882,6 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toBe('/state/item1.md:\nItem 1\n/state/item2.md:\nItem 2');
         });
 
-        test('should include item in full tier when it exactly fills the budget (boundary test for <=)', async () => {
-            const now = new Date('2025-01-15T12:00:00.000Z');
-            // Item formatted as "/state/x.md:\ny" = 14 chars
-            // Set maxStateFullTokens so budget = exactly 14 chars (14/4 = 3.5, use 4 -> 16 chars, too much)
-            // Actually: item = "/state/x.md:\ny" = 14 chars. We need budget = 14 -> 14/4 = 3.5 tokens.
-            // With integer tokens, let's compute: path="/state/exact.md", content="z" -> "/state/exact.md:\nz" = 19 chars
-            // Need budget of exactly 19: 19/4 = 4.75. Not integer.
-            // Better approach: use a content length that gives exact multiple of 4.
-            // Path "/state/x.md" = 11 chars. ":\n" = 2 chars. Content = "y" = 1 char. Total = 14 chars.
-            // maxStateFullTokens=4 -> 16 chars budget. 14 <= 16, fits.
-            // maxStateFullTokens=3 -> 12 chars budget. 14 > 12, doesn't fit.
-            // For exact boundary: we need formatted.length == budget.
-            // Let's use content that makes it exactly 16 chars: "/state/x.md:\nyyy" = 16 chars. Content = "yyy"
-            // Then maxStateFullTokens=4 -> 16 chars. 16 <= 16 = true (included in full tier)
-            // With mutation to <: 16 < 16 = false (falls to preview tier)
-
-            backend.getStateItemsScored = mock(async () => [
-                {
-                    item: {
-                        path:        createMemoryPath('/state/x.md'),
-                        content:     'yyy',
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-15T10:00:00.000Z',
-                        updatedAt:   '2025-01-15T10:00:00.000Z',
-                    },
-                    score: 0.95,
-                },
-            ]);
-
-            const contextBuilder = createContextBuilder({
-                backend,
-                maxStateFullTokens: 4, // 16 chars = exactly "/state/x.md:\nyyy".length
-            });
-            const result = await contextBuilder.loadHotState(now);
-
-            // Should be in full tier (full content format), not preview tier
-            expect(result).toBe('/state/x.md:\nyyy');
-        });
-
-        test('should include item in preview tier when it exactly fills the preview budget (boundary test for <=)', async () => {
-            const now = new Date('2025-01-15T12:00:00.000Z');
-            const longContent = _.repeat('x', 15000);
-            // Preview for /state/xx.md: "- /state/xx.md (2h ago): " (25) + 100 x's + "..." (3) = 128 chars
-            // 128 chars / 4 = 32 tokens exactly
-
-            backend.getStateItemsScored = mock(async () => [
-                {
-                    item: {
-                        path:        createMemoryPath('/state/xx.md'),
-                        content:     longContent,
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-15T10:00:00.000Z',
-                        updatedAt:   '2025-01-15T10:00:00.000Z',
-                    },
-                    score: 0.95,
-                },
-            ]);
-
-            const contextBuilder = createContextBuilder({
-                backend,
-                maxStateFullTokens:    0,  // Force everything to preview tier
-                maxStatePreviewTokens: 32, // 128 chars = exactly preview string length
-            });
-            const result = await contextBuilder.loadHotState(now);
-
-            // Should be in preview tier (not overflow)
-            expect(result).toContain('- /state/xx.md (2h ago):');
-            expect(result).not.toContain('...and');
-        });
-
         test('should include item in user memories when it exactly fills the budget (boundary test for <=)', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
             // Format: "- /users/u/p (2h ago): Content"
@@ -844,102 +912,6 @@ describe('createContextBuilder loading methods', () => {
             // Should include the item (exactly fits)
             expect(result).toBe('- /users/u/p (2h ago): c');
             expect(result).not.toContain('...and');
-        });
-
-        test('should multiply maxStateFullTokens by CHARS_PER_TOKEN (4) for budget', async () => {
-            const now = new Date('2025-01-15T12:00:00.000Z');
-            // maxStateFullTokens=50 -> should be 200 chars (50*4)
-            // If mutation changes * to /, it would be 50/4=12.5 chars
-            // Item formatted as "/state/item.md:\nContent" = ~22 chars
-
-            backend.getStateItemsScored = mock(async () => [
-                {
-                    item: {
-                        path:        createMemoryPath('/state/item.md'),
-                        content:     'Content',
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-15T10:00:00.000Z',
-                        updatedAt:   '2025-01-15T10:00:00.000Z',
-                    },
-                    score: 0.95,
-                },
-            ]);
-
-            const contextBuilder = createContextBuilder({
-                backend,
-                maxStateFullTokens: 50, // 200 chars (or 12.5 if mutated to /)
-            });
-            const result = await contextBuilder.loadHotState(now);
-
-            // With 200 char budget, the ~22-char item should fit in full tier
-            expect(result).toBe('/state/item.md:\nContent');
-        });
-
-        test('should fill exactly up to maxStateFullTokens budget boundary', async () => {
-            const now = new Date('2025-01-15T12:00:00.000Z');
-            // maxStateFullTokens=2 -> maxStateFullChars=8. Item "p:\nc" = "/state/a.md:\nc" = 14 chars > 8
-            // So even a small item won't fit in a tiny budget
-
-            backend.getStateItemsScored = mock(async () => [
-                {
-                    item: {
-                        path:        createMemoryPath('/state/a.md'),
-                        content:     'c',
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-15T10:00:00.000Z',
-                        updatedAt:   '2025-01-15T10:00:00.000Z',
-                    },
-                    score: 0.95,
-                },
-            ]);
-
-            const contextBuilder = createContextBuilder({
-                backend,
-                maxStateFullTokens: 2, // 8 chars - too small for full tier
-            });
-            const result = await contextBuilder.loadHotState(now);
-
-            // Should fall through to preview tier since full content doesn't fit
-            expect(result).toContain('- /state/a.md');
-            expect(result).not.toContain('/state/a.md:\nc');
-        });
-
-        test('should track overflow when items exceed both full and preview tiers', async () => {
-            const now = new Date('2025-01-15T12:00:00.000Z');
-            const longContent = _.repeat('x', 5000);
-
-            backend.getStateItemsScored = mock(async () => [
-                {
-                    item: {
-                        path:        createMemoryPath('/state/overflow.md'),
-                        content:     longContent,
-                        contentType: 'text/markdown' as const,
-                        metadata:    {},
-                        version:     1,
-                        createdAt:   '2025-01-15T10:00:00.000Z',
-                        updatedAt:   '2025-01-15T10:00:00.000Z',
-                    },
-                    score: 0.95,
-                },
-            ]);
-
-            const contextBuilder = createContextBuilder({
-                backend,
-                maxStateFullTokens:    0,  // No full tier budget
-                maxStatePreviewTokens: 0,  // No preview tier budget
-            });
-            const result = await contextBuilder.loadHotState(now);
-
-            // Should show overflow indicator
-            expect(result).toContain('...and 1 more state memories');
-            expect(mockLogger.debug).toHaveBeenCalledWith(
-                expect.objectContaining({ fullTierCount: 0, previewTierCount: 0, overflowCount: 1 }),
-                'Hot state loaded'
-            );
         });
     });
 
@@ -1226,7 +1198,7 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
 
             const beforeCall = Date.now();
-            await contextBuilder.loadRecentEvents();
+            const result = await contextBuilder.loadRecentEvents();
             const afterCall = Date.now();
 
             expect(backend.searchByTimeRange).toHaveBeenCalledTimes(1);
@@ -1244,6 +1216,10 @@ describe('createContextBuilder loading methods', () => {
             // Verify endTime is approximately "now" (within test execution window)
             expect(endTime.getTime()).toBeGreaterThanOrEqual(beforeCall);
             expect(endTime.getTime()).toBeLessThanOrEqual(afterCall + 1000); // Allow 1s tolerance
+
+            // Verify result structure
+            expect(result.items).toEqual([]);
+            expect(result.isFallback).toBe(false);
 
             // Verify logger was called
             expect(mockLogger.debug).toHaveBeenCalledWith({ msg: 'Loading recent events' });
@@ -1290,7 +1266,7 @@ describe('createContextBuilder loading methods', () => {
             expect(optionsArg).toEqual({ limit: expectedLimit });
         });
 
-        test('should extract content from results and format with path and age', async () => {
+        test('should return raw items with metadata', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
             backend.searchByTimeRange = mock(async () => [
@@ -1317,52 +1293,23 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.loadRecentEvents(5, now);
 
-            expect(result).toEqual([
-                '- /events/event1.md (2h ago): Event 1',
-                '- /events/event2.md (1h ago): Event 2',
-            ]);
+            expect(result.items).toHaveLength(2);
+            expect(result.items[0].path).toBe(createMemoryPath('/events/event1.md'));
+            expect(result.items[0].content).toBe('Event 1');
+            expect(result.items[1].path).toBe(createMemoryPath('/events/event2.md'));
+            expect(result.items[1].content).toBe('Event 2');
+            expect(result.isFallback).toBe(false);
         });
 
-        test('should return empty array when no events found', async () => {
+        test('should return empty result when no events found', async () => {
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.loadRecentEvents();
 
-            expect(result).toEqual([]);
-        });
-
-        test.each([
-            { contentLength: 150, description: 'over 100 chars', shouldTruncate: true },
-            { contentLength: 100, description: 'exactly 100 chars', shouldTruncate: false },
-        ])('should handle event content truncation when $description', async ({ contentLength, shouldTruncate }) => {
-            const now = new Date('2025-01-15T12:00:00.000Z');
-            const content = _.repeat('x', contentLength);
-
-            backend.searchByTimeRange = mock(async () => [
-                {
-                    path:        createMemoryPath('/events/test.md'),
-                    content,
-                    contentType: 'text/markdown' as const,
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2025-01-15T10:00:00.000Z',
-                    updatedAt:   '2025-01-15T10:00:00.000Z',
-                },
-            ]);
-
-            const contextBuilder = createContextBuilder({ backend });
-            const result = await contextBuilder.loadRecentEvents(5, now);
-
-            expect(result).toHaveLength(1);
-            if(shouldTruncate) {
-                expect(result[0]).toContain(_.repeat('x', 100) + '...');
-                expect(result[0]).not.toContain(_.repeat('x', 101));
-            } else {
-                expect(result[0]).toBe(`- /events/test.md (2h ago): ${content}`);
-                expect(result[0]).not.toContain('...');
-            }
+            expect(result.items).toEqual([]);
+            expect(result.isFallback).toBe(false);
         });
 
         test('should fallback to listByLayer when no events in 14-day window', async () => {
@@ -1392,14 +1339,14 @@ describe('createContextBuilder loading methods', () => {
             // Should have called listByLayer as fallback
             expect(backend.listByLayer).toHaveBeenCalledWith('events', { limit: 50 });
 
-            // Result should include warning note as first element
-            expect(result[0]).toBe('⚠️ No activity in the last 14 days. Showing older events:');
-            expect(result[1]).toContain('/events/old-event.md');
-            expect(result[1]).toContain('Old event from last month');
-            expect(result).toHaveLength(2);
+            // Result should have isFallback = true and raw items
+            expect(result.isFallback).toBe(true);
+            expect(result.items).toHaveLength(1);
+            expect(result.items[0].path).toBe(createMemoryPath('/events/old-event.md'));
+            expect(result.items[0].content).toBe('Old event from last month');
         });
 
-        test('should not add warning note when events found within 14-day window', async () => {
+        test('should have isFallback=false when events found within 14-day window', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
             backend.searchByTimeRange = mock(async () => [
@@ -1417,10 +1364,10 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.loadRecentEvents(50, now);
 
-            // Should NOT contain warning note
-            expect(result[0]).not.toContain('⚠️');
-            expect(result[0]).toContain('/events/recent.md');
-            expect(result).toHaveLength(1);
+            // Should have isFallback = false
+            expect(result.isFallback).toBe(false);
+            expect(result.items).toHaveLength(1);
+            expect(result.items[0].path).toBe(createMemoryPath('/events/recent.md'));
         });
 
         test('should not call listByLayer when events found within 14-day window', async () => {
@@ -1445,15 +1392,16 @@ describe('createContextBuilder loading methods', () => {
             expect(backend.listByLayer).not.toHaveBeenCalled();
         });
 
-        test('should not add warning note when fallback also returns empty', async () => {
+        test('should have isFallback=false when fallback also returns empty', async () => {
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.loadRecentEvents();
 
-            // Result should be empty with no warning note
-            expect(result).toEqual([]);
+            // Result should be empty with isFallback = false
+            expect(result.items).toEqual([]);
+            expect(result.isFallback).toBe(false);
         });
 
         test('should pass limit to listByLayer in fallback', async () => {
@@ -1503,11 +1451,14 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.loadRecentEvents(50, now);
 
-            expect(result).toHaveLength(3);
+            expect(result.items).toHaveLength(3);
             // Verify ascending order: oldest first, newest last
-            expect(result[0]).toBe('- /events/oldest.md (4h ago): Oldest event');
-            expect(result[1]).toBe('- /events/middle.md (2h ago): Middle event');
-            expect(result[2]).toBe('- /events/newest.md (1h ago): Newest event');
+            expect(result.items[0].path).toBe(createMemoryPath('/events/oldest.md'));
+            expect(result.items[0].updatedAt).toBe('2025-01-15T08:00:00.000Z');
+            expect(result.items[1].path).toBe(createMemoryPath('/events/middle.md'));
+            expect(result.items[1].updatedAt).toBe('2025-01-15T10:00:00.000Z');
+            expect(result.items[2].path).toBe(createMemoryPath('/events/newest.md'));
+            expect(result.items[2].updatedAt).toBe('2025-01-15T11:00:00.000Z');
         });
 
         test('should sort fallback results by updatedAt ascending', async () => {
@@ -1543,11 +1494,11 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.loadRecentEvents(50, now);
 
-            expect(result).toHaveLength(3); // Warning note + 2 events
-            expect(result[0]).toBe('⚠️ No activity in the last 14 days. Showing older events:');
+            expect(result.items).toHaveLength(2);
+            expect(result.isFallback).toBe(true);
             // After sorting: oldest first
-            expect(result[1]).toContain('/events/oldest.md');
-            expect(result[2]).toContain('/events/newest.md');
+            expect(result.items[0].path).toBe(createMemoryPath('/events/oldest.md'));
+            expect(result.items[1].path).toBe(createMemoryPath('/events/newest.md'));
         });
     });
 
@@ -1742,8 +1693,8 @@ describe('createContextBuilder loading methods', () => {
                     contentType: 'text/markdown' as const,
                     metadata:    {},
                     version:     1,
-                    createdAt:   new Date().toISOString(),
-                    updatedAt:   new Date().toISOString(),
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z',
                 },
             ]);
 
@@ -1751,6 +1702,8 @@ describe('createContextBuilder loading methods', () => {
             const result = await contextBuilder.buildUserMessagePrefix('user123');
 
             expect(result).toContain('[Recent events]');
+            // Should have full content format with path, age, and content
+            expect(result).toContain('/events/event1.md');
             expect(result).toContain('Event content');
         });
 
@@ -1779,7 +1732,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toContain('Likes cats');
         });
 
-        test('should format events with dash prefix and newline separator', async () => {
+        test('should format events with full content and double-newline separator', async () => {
             backend.list = mock(async () => ({ items: [] }));
             backend.getStateItemsScored = mock(async () => []);
             backend.searchByTimeRange = mock(async () => [
@@ -1806,14 +1759,16 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.buildUserMessagePrefix('user123');
 
-            // Events from loadRecentEvents are already prefixed with "- ", joined by newlines
-            const eventsSection = /\[Recent events\]\n([\s\S]*?)(?:\n\n|$)/.exec(result);
+            // Events should have full content format with path and content
+            const eventsSection = /\[Recent events\]\n([\s\S]*?)(?:\n\n## |$)/.exec(result);
             expect(eventsSection).toBeTruthy();
-            const eventLines = _.split(eventsSection![1], '\n');
-            expect(eventLines).toHaveLength(2);
-            expect(_.every(eventLines, line => _.startsWith(line, '- '))).toBe(true);
-            // Should NOT have double-dash (events are already formatted with "- " prefix)
-            expect(_.some(eventLines, line => _.startsWith(line, '- - '))).toBe(false);
+            // Events separated by double newlines
+            expect(eventsSection![1]).toContain('/events/e1.md');
+            expect(eventsSection![1]).toContain('First event');
+            expect(eventsSection![1]).toContain('/events/e2.md');
+            expect(eventsSection![1]).toContain('Second event');
+            // Check double-newline separator exists between events
+            expect(eventsSection![1]).toMatch(/First event\n\n\/events\/e2\.md[\s\S]*Second event/);
         });
 
         test('should join all sections with double newlines and add trailing newlines', async () => {
@@ -1888,6 +1843,708 @@ describe('createContextBuilder loading methods', () => {
 
             // Should contain user timezone in the header
             expect(result).toContain('America/Los_Angeles');
+        });
+
+        test('should include fallback warning when isFallback is true', async () => {
+            backend.list = mock(async () => ({ items: [] }));
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []); // No recent events
+            backend.listByLayer = mock(async () => ({
+                items: [{
+                    path:        createMemoryPath('/events/old-event'),
+                    content:     'Old fallback event',
+                    contentType: 'text/plain' as const,
+                    tags:        new Set<string>(),
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2024-12-01T10:00:00.000Z',
+                    updatedAt:   '2024-12-01T10:00:00.000Z',
+                }],
+            })); // Fallback to old events
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            // Should contain fallback warning
+            expect(result).toContain('⚠️ No activity in the last 14 days. Showing older events:');
+            expect(result).toContain('Old fallback event');
+        });
+
+        test('should NOT include fallback warning when isFallback is false', async () => {
+            backend.list = mock(async () => ({ items: [] }));
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => [{
+                path:        createMemoryPath('/events/recent-event'),
+                content:     'Recent event within 14 days',
+                contentType: 'text/plain' as const,
+                tags:        new Set<string>(),
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-14T10:00:00.000Z',
+                updatedAt:   '2025-01-14T10:00:00.000Z',
+            }]); // Recent events - not a fallback
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            // Should NOT contain fallback warning
+            expect(result).not.toContain('⚠️ No activity in the last 14 days');
+            expect(result).toContain('Recent event within 14 days');
+        });
+
+        test('should call summarizer when provided and remaining events exist', async () => {
+            const mockSummarizer = mock(async () => [{
+                startTime: '2025-01-15T10:00:00.000Z',
+                endTime:   '2025-01-15T11:00:00.000Z',
+                count:     5,
+                summary:   'Batch summary from summarizer',
+            }]);
+
+            backend.list = mock(async () => ({ items: [] }));
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () =>
+                // Return more events than maxEventFullItems (default 10)
+                Array.from({ length: 15 }, (_, i) => ({
+                    path:        createMemoryPath(`/events/event${i}`),
+                    content:     `Event ${i} content`,
+                    contentType: 'text/plain' as const,
+                    tags:        new Set<string>(),
+                    metadata:    {},
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   new Date(Date.UTC(2025, 0, 15, 10 + i)).toISOString(),
+                }))
+            );
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({
+                backend,
+                summarizeEventBatches: mockSummarizer,
+            });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            // Should call summarizer for remaining events
+            expect(mockSummarizer).toHaveBeenCalled();
+            expect(result).toContain('Batch summary from summarizer');
+            // Should NOT use preview format when summarizer is provided
+            expect(result).not.toContain('- /events/event10');
+        });
+
+        test('should fall back to preview format when summarizer throws error', async () => {
+            const mockSummarizer = mock(async () => {
+                throw new Error('LLM failure');
+            });
+
+            backend.list = mock(async () => ({ items: [] }));
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () =>
+                // Return more events than maxEventFullItems (default 10)
+                Array.from({ length: 15 }, (_, i) => ({
+                    path:        createMemoryPath(`/events/event${i}`),
+                    content:     `Event ${i} content`,
+                    contentType: 'text/plain' as const,
+                    tags:        new Set<string>(),
+                    metadata:    {},
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   new Date(Date.UTC(2025, 0, 15, 10 + i)).toISOString(),
+                }))
+            );
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({
+                backend,
+                summarizeEventBatches: mockSummarizer,
+            });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            // Should call summarizer (which throws error)
+            expect(mockSummarizer).toHaveBeenCalled();
+            // Should log warning
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    msg: 'Event summarization failed, falling back to preview format',
+                })
+            );
+            // Should fall back to preview format for older events instead of crashing
+            expect(result).toContain('- /events/event0');
+            expect(result).toContain('- /events/event4');
+            // Should NOT contain batch summary (summarizer failed)
+            expect(result).not.toContain('Batch summary from summarizer');
+            // Should still contain newest 10 full-content events (event5-event14)
+            expect(result).toContain('Event 5 content');
+            expect(result).toContain('Event 14 content');
+        });
+
+        test('should NOT call summarizer when provided but no remaining events exist', async () => {
+            const mockSummarizer = mock(async () => [{
+                startTime: '2025-01-15T10:00:00.000Z',
+                endTime:   '2025-01-15T11:00:00.000Z',
+                count:     5,
+                summary:   'Batch summary from summarizer',
+            }]);
+
+            backend.list = mock(async () => ({ items: [] }));
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () =>
+                // Return exactly maxEventFullItems (default 10) - no remaining
+                Array.from({ length: 10 }, (_, i) => ({
+                    path:        createMemoryPath(`/events/event${i}`),
+                    content:     `Event ${i} content`,
+                    contentType: 'text/plain' as const,
+                    tags:        new Set<string>(),
+                    metadata:    {},
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   new Date(Date.UTC(2025, 0, 15, 10 + i)).toISOString(),
+                }))
+            );
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({
+                backend,
+                summarizeEventBatches: mockSummarizer,
+            });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            // Should NOT call summarizer when no remaining events
+            expect(mockSummarizer).not.toHaveBeenCalled();
+            expect(result).not.toContain('Batch summary from summarizer');
+        });
+
+        test('should use preview format when summarizer not provided and remaining events exist', async () => {
+            backend.list = mock(async () => ({ items: [] }));
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () =>
+                // Return more events than maxEventFullItems (default 10)
+                Array.from({ length: 15 }, (_, i) => ({
+                    path:        createMemoryPath(`/events/event${i}`),
+                    content:     `Event ${i} content`,
+                    contentType: 'text/plain' as const,
+                    tags:        new Set<string>(),
+                    metadata:    {},
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   new Date(Date.UTC(2025, 0, 15, 10 + i)).toISOString(),
+                }))
+            );
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            // NO summarizer provided
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            // Should show older events in preview format, newest in full
+            // Newest 10 should be full content (event5-event14)
+            expect(result).toContain('Event 5 content');
+            expect(result).toContain('Event 14 content');
+            // Oldest 5 should be in preview format (event0-event4)
+            expect(result).toContain('- /events/event0');
+            expect(result).toContain('- /events/event4');
+        });
+
+        test('should correctly split events into full and remaining items', async () => {
+            backend.list = mock(async () => ({ items: [] }));
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () =>
+                Array.from({ length: 12 }, (_, i) => ({
+                    path:        createMemoryPath(`/events/event${i}`),
+                    content:     `Event ${i} content`,
+                    contentType: 'text/plain' as const,
+                    tags:        new Set<string>(),
+                    metadata:    {},
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   new Date(Date.UTC(2025, 0, 15, 10 + i)).toISOString(),
+                }))
+            );
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend, maxEventFullItems: 5 });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            // Newest 5 should be full display (event7-event11, since array is ascending)
+            expect(result).toContain('/events/event7');
+            expect(result).toContain('Event 7 content');
+            expect(result).toContain('/events/event11');
+            expect(result).toContain('Event 11 content');
+
+            // Older events should be in preview format (event0-event6)
+            expect(result).toContain('- /events/event0');
+            expect(result).toContain('- /events/event6');
+
+            // Verify event11 (newest) is NOT in preview format (should be full display)
+            const event11Lines = _.filter(_.split(result, '\n'), line => _.includes(line, '/events/event11'));
+            expect(_.some(event11Lines, line => _.startsWith(line, '- '))).toBe(false);
+
+            // Verify the split is correct by checking full display format for event11
+            expect(result).toMatch(/\/events\/event11 \([^)]+\):\nEvent 11 content/);
+            // And preview format for event6 (older)
+            expect(result).toMatch(/^- \/events\/event6/m);
+        });
+
+        test('should handle exactly maxEventFullItems events without remaining items', async () => {
+            backend.list = mock(async () => ({ items: [] }));
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () =>
+                Array.from({ length: 5 }, (_, i) => ({
+                    path:        createMemoryPath(`/events/event${i}`),
+                    content:     `Event ${i} content`,
+                    contentType: 'text/plain' as const,
+                    tags:        new Set<string>(),
+                    metadata:    {},
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   new Date(Date.UTC(2025, 0, 15, 10 + i)).toISOString(),
+                }))
+            );
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend, maxEventFullItems: 5 });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            // All 5 should be full display
+            expect(result).toContain('Event 0 content');
+            expect(result).toContain('Event 4 content');
+
+            // Should NOT have any preview format items (no lines starting with "- /events/")
+            const previewLines = _.filter(_.split(result, '\n'), line => _.startsWith(_.trim(line), '- /events/'));
+            expect(previewLines).toHaveLength(0);
+        });
+
+        test('should correctly slice events array at maxEventFullItems boundary', async () => {
+            backend.list = mock(async () => ({ items: [] }));
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () =>
+                // Return 11 events (maxEventFullItems=10, so 10 full + 1 remaining)
+                Array.from({ length: 11 }, (_, i) => ({
+                    path:        createMemoryPath(`/events/event${i}`),
+                    content:     `Event ${i}`,
+                    contentType: 'text/plain' as const,
+                    tags:        new Set<string>(),
+                    metadata:    {},
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   new Date(Date.UTC(2025, 0, 15, 10 + i)).toISOString(),
+                }))
+            );
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            // Newest 10 events should be full display (event1-event10)
+            expect(result).toContain('/events/event1 (');
+            expect(result).toContain('Event 1');
+            expect(result).toContain('/events/event10 (');
+            expect(result).toContain('Event 10');
+
+            // Event 0 (oldest) should be preview format only
+            expect(result).toContain('- /events/event0');
+            // Verify event 0 is NOT in full display format
+            expect(result).not.toMatch(/\/events\/event0 \([^)]+\):\nEvent 0/);
+        });
+
+        test('should handle empty remainingItems (no else-if branch execution)', async () => {
+            backend.list = mock(async () => ({ items: [] }));
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () =>
+                // Return exactly 10 events (maxEventFullItems=10, no remaining)
+                Array.from({ length: 10 }, (_, i) => ({
+                    path:        createMemoryPath(`/events/event${i}`),
+                    content:     `Event ${i}`,
+                    contentType: 'text/plain' as const,
+                    tags:        new Set<string>(),
+                    metadata:    {},
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   new Date(Date.UTC(2025, 0, 15, 10 + i)).toISOString(),
+                }))
+            );
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            // All 10 events should be full display
+            expect(result).toContain('Event 0');
+            expect(result).toContain('Event 9');
+            // No preview format lines
+            expect(result).not.toMatch(/^- \/events\//m);
+        });
+
+        test('should truncate event content when it exceeds maxEventItemMaxChars', async () => {
+            const longContent = _.repeat('A', 3000); // Longer than default 2000
+            backend.list = mock(async () => ({ items: [] }));
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/long-event'),
+                    content:     longContent,
+                    contentType: 'text/markdown' as const,
+                    tags:        new Set<string>(),
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z',
+                },
+            ]);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            // Should contain truncation message
+            expect(result).toContain('[truncated — use \'memory view /events/long-event\' for full content]');
+            // Content should be truncated to ~2000 chars (plus truncation message)
+            const eventSectionMatch = /\/events\/long-event[\s\S]*?\n\n/.exec(result);
+            const eventSection = eventSectionMatch?.[0] ?? '';
+            // Should be significantly shorter than 3000 chars
+            expect(eventSection.length).toBeLessThan(2200);
+        });
+
+        test('should respect custom maxEventItemMaxChars option', async () => {
+            const longContent = _.repeat('B', 1500);
+            backend.list = mock(async () => ({ items: [] }));
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/custom-event'),
+                    content:     longContent,
+                    contentType: 'text/markdown' as const,
+                    tags:        new Set<string>(),
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z',
+                },
+            ]);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend, maxEventItemMaxChars: 1000 });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            // Should be truncated at custom limit
+            expect(result).toContain('[truncated — use \'memory view /events/custom-event\' for full content]');
+        });
+    });
+
+    describe('buildPerchContext', () => {
+        test('should include time header', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).toContain('## Current Time');
+        });
+
+        test('should include top 3 state memories under Recent Focus', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
+            backend.getStateItemsScored = mock(async () => [
+                {
+                    item: {
+                        path:        createMemoryPath('/state/project.md'),
+                        content:     'Working on memory system redesign',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-15T10:00:00.000Z',
+                        updatedAt:   '2025-01-15T10:00:00.000Z',
+                    },
+                    score: 0.95,
+                },
+                {
+                    item: {
+                        path:        createMemoryPath('/state/mood.md'),
+                        content:     'Focused and curious',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-15T09:00:00.000Z',
+                        updatedAt:   '2025-01-15T09:00:00.000Z',
+                    },
+                    score: 0.85,
+                },
+                {
+                    item: {
+                        path:        createMemoryPath('/state/creative.md'),
+                        content:     'Exploring consciousness-as-process thesis',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-15T08:00:00.000Z',
+                        updatedAt:   '2025-01-15T08:00:00.000Z',
+                    },
+                    score: 0.75,
+                },
+                {
+                    item: {
+                        path:        createMemoryPath('/state/fourth.md'),
+                        content:     'This should NOT appear',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-15T07:00:00.000Z',
+                        updatedAt:   '2025-01-15T07:00:00.000Z',
+                    },
+                    score: 0.65,
+                },
+            ]);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildPerchContext(now);
+
+            expect(result).toContain('## Recent Focus');
+            expect(result).toContain('/state/project.md');
+            expect(result).toContain('Working on memory system redesign');
+            expect(result).toContain('/state/mood.md');
+            expect(result).toContain('Focused and curious');
+            expect(result).toContain('/state/creative.md');
+            expect(result).toContain('Exploring consciousness-as-process thesis');
+            // Fourth item should NOT be included (only top 3)
+            expect(result).not.toContain('/state/fourth.md');
+            expect(result).not.toContain('This should NOT appear');
+        });
+
+        test('should include up to 5 recent events under Recent Events', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/e1.md'),
+                    content:     'Event 1 content',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z',
+                },
+                {
+                    path:        createMemoryPath('/events/e2.md'),
+                    content:     'Event 2 content',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T11:00:00.000Z',
+                    updatedAt:   '2025-01-15T11:00:00.000Z',
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildPerchContext(now);
+
+            expect(result).toContain('## Recent Events');
+            expect(result).toContain('/events/e1.md');
+            expect(result).toContain('Event 1 content');
+            expect(result).toContain('/events/e2.md');
+            expect(result).toContain('Event 2 content');
+        });
+
+        test('should not include Recent Focus when no state items exist', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).not.toContain('## Recent Focus');
+        });
+
+        test('should not include Recent Events when no events exist', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).not.toContain('## Recent Events');
+        });
+
+        test('should truncate state items exceeding maxStateItemMaxChars', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            const longContent = _.repeat('x', 3000);
+
+            backend.getStateItemsScored = mock(async () => [
+                {
+                    item: {
+                        path:        createMemoryPath('/state/long.md'),
+                        content:     longContent,
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        version:     1,
+                        createdAt:   '2025-01-15T10:00:00.000Z',
+                        updatedAt:   '2025-01-15T10:00:00.000Z',
+                    },
+                    score: 0.95,
+                },
+            ]);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildPerchContext(now);
+
+            expect(result).toContain('[truncated');
+            expect(result).not.toContain(_.repeat('x', 3000));
+        });
+
+        test('should include all state items when exactly at perchStateCount boundary', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
+            backend.getStateItemsScored = mock(async () => [
+                {
+                    item: {
+                        path:        createMemoryPath('/state/item1.md'),
+                        content:     'State item 1 content',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        createdAt:   '2025-01-15T10:00:00.000Z',
+                        updatedAt:   '2025-01-15T10:00:00.000Z',
+                    },
+                    score: 0.95,
+                },
+                {
+                    item: {
+                        path:        createMemoryPath('/state/item2.md'),
+                        content:     'State item 2 content',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        createdAt:   '2025-01-15T10:00:00.000Z',
+                        updatedAt:   '2025-01-15T10:00:00.000Z',
+                    },
+                    score: 0.90,
+                },
+                {
+                    item: {
+                        path:        createMemoryPath('/state/item3.md'),
+                        content:     'State item 3 content',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        createdAt:   '2025-01-15T10:00:00.000Z',
+                        updatedAt:   '2025-01-15T10:00:00.000Z',
+                    },
+                    score: 0.85,
+                },
+            ]);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildPerchContext(now);
+
+            // All 3 items should appear (perchStateCount boundary)
+            expect(result).toContain('State item 1 content');
+            expect(result).toContain('State item 2 content');
+            expect(result).toContain('State item 3 content');
+            // Should have Recent Focus section
+            expect(result).toContain('## Recent Focus');
+        });
+
+        test('should NOT truncate content exactly at maxStateItemMaxChars boundary', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            const exactContent = _.repeat('x', 2000); // Exactly 2000 chars
+
+            backend.getStateItemsScored = mock(async () => [
+                {
+                    item: {
+                        path:        createMemoryPath('/state/exact.md'),
+                        content:     exactContent,
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        createdAt:   '2025-01-15T10:00:00.000Z',
+                        updatedAt:   '2025-01-15T10:00:00.000Z',
+                    },
+                    score: 0.95,
+                },
+            ]);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildPerchContext(now);
+
+            // Should NOT be truncated (test the > vs >= boundary)
+            expect(result).not.toContain('[truncated');
+            expect(result).toContain(exactContent);
+        });
+
+        test('should end with trailing double newline', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).toMatch(/\n\n$/);
+        });
+
+        test('should call loadRecentEvents with limit of 5', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.buildPerchContext();
+
+            // loadRecentEvents should be called with limit=5
+            expect(backend.searchByTimeRange).toHaveBeenCalledTimes(1);
+            // The limit parameter is passed through to searchByTimeRange as options.limit
+            const call = (backend.searchByTimeRange as ReturnType<typeof mock>).mock.calls[0] as unknown[];
+            const options = call[3] as { limit: number };
+            expect(options.limit).toBe(5);
+        });
+
+        test('should truncate event content exceeding maxEventItemMaxChars', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            const longContent = _.repeat('y', 3000);
+
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/long-event.md'),
+                    content:     longContent,
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z',
+                },
+            ]);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildPerchContext(now);
+
+            expect(result).toContain('[truncated');
+            expect(result).not.toContain(_.repeat('y', 3000));
+        });
+
+        test('should NOT truncate event content within maxEventItemMaxChars', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            const shortContent = 'Short event content that fits';
+
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => [
+                {
+                    path:        createMemoryPath('/events/short-event.md'),
+                    content:     shortContent,
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z',
+                },
+            ]);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildPerchContext(now);
+
+            expect(result).not.toContain('[truncated');
+            expect(result).toContain(shortContent);
         });
     });
 });

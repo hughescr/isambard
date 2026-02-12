@@ -792,10 +792,12 @@ describe('createClaudeAgent', () => {
                 loadHotState:           mock(async () => ''),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserMemories:       mock(async () => ''),
-                loadRecentEvents:       mock(async () => []),
+                loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),
                 recordAccess:           mock(async () => undefined),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildUserMessagePrefix: mock(async () => ''),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildPerchContext:      mock(async () => ''),
             };
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
@@ -831,10 +833,12 @@ describe('createClaudeAgent', () => {
                 loadHotState:           mock(async () => ''),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserMemories:       mock(async () => ''),
-                loadRecentEvents:       mock(async () => []),
+                loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),
                 recordAccess:           mock(async () => undefined),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildUserMessagePrefix: mock(async () => '[About this user]\n- User fact 1\n\n'),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildPerchContext:      mock(async () => ''),
             };
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
@@ -868,10 +872,12 @@ describe('createClaudeAgent', () => {
                 loadHotState:           mock(async () => ''),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserMemories:       mock(async () => ''),
-                loadRecentEvents:       mock(async () => []),
+                loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),
                 recordAccess:           mock(async () => undefined),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildUserMessagePrefix: mock(async () => ''),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildPerchContext:      mock(async () => ''),
             };
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
@@ -894,10 +900,12 @@ describe('createClaudeAgent', () => {
                 loadHotState:           mock(async () => ''),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserMemories:       mock(async () => ''),
-                loadRecentEvents:       mock(async () => []),
+                loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),
                 recordAccess:           mock(async () => undefined),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildUserMessagePrefix: mock(async () => ''),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildPerchContext:      mock(async () => ''),
             };
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
@@ -920,10 +928,12 @@ describe('createClaudeAgent', () => {
                 loadHotState:           mock(async () => ''),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserMemories:       mock(async () => ''),
-                loadRecentEvents:       mock(async () => []),
+                loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),
                 recordAccess:           mock(async () => undefined),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildUserMessagePrefix: mock(async () => ''),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildPerchContext:      mock(async () => ''),
             };
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
@@ -957,10 +967,12 @@ describe('createClaudeAgent', () => {
                 loadHotState:           mock(async () => ''),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserMemories:       mock(async () => ''),
-                loadRecentEvents:       mock(async () => []),
+                loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),
                 recordAccess:           mock(async () => undefined),
                 // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildUserMessagePrefix: mock(async () => ''),
+                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
+                buildPerchContext:      mock(async () => ''),
             };
 
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing

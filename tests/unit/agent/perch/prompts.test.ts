@@ -862,3 +862,39 @@ describe.concurrent('buildPerchTimeoutPrompt', () => {
         expect(prompt).toContain('[You were about to use "create_task"]');
     });
 });
+
+describe.concurrent('perch context injection', () => {
+    test('should prepend perchContext before BASE_PROMPT when provided', () => {
+        const context = '## Current Time\n- UTC: 2026-02-12\n\n## Recent Focus\n/state/project.md:\nWorking on redesign';
+        const prompt = buildPerchPrompt('unscheduled', context);
+
+        // Context should appear before BASE_PROMPT
+        const contextIndex = prompt.indexOf('## Current Time');
+        const baseIndex = prompt.indexOf('This is perch time');
+        expect(contextIndex).toBeLessThan(baseIndex);
+        expect(prompt).toContain('---');
+    });
+
+    test('should work without perchContext (backward compatible)', () => {
+        const prompt = buildPerchPrompt('unscheduled');
+        expect(prompt).toBe(BASE_PROMPT);
+    });
+
+    test('should include perchContext with scheduled slot', () => {
+        const context = '## Current Time\n- UTC: 2026-02-12';
+        const prompt = buildPerchPrompt('pre-dawn', context);
+
+        expect(prompt).toContain('## Current Time');
+        expect(prompt).toContain('Pre-Dawn (5-7am Pacific)');
+        expect(prompt).toContain(BASE_PROMPT);
+    });
+
+    test('should pass perchContext through buildTestPerchPrompt', () => {
+        const context = '## Recent Focus\nTest context';
+        const prompt = buildTestPerchPrompt('pre-dawn', context);
+
+        expect(prompt).toContain('TEST MODE');
+        expect(prompt).toContain('## Recent Focus');
+        expect(prompt).toContain(BASE_PROMPT);
+    });
+});

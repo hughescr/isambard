@@ -15,6 +15,7 @@ import type { ResponseRouter } from '../channel-registry';
 import type { DiscordRateLimiter } from '../rate-limiter';
 import { sendResponseToWellKnownChannel } from '../response-sender';
 import { createPresenceStreamHandler } from './presence-stream-handler';
+import type { ContextBuilder } from '@/agent/context-builder';
 
 /**
  * Parameters for setting up perch scheduler and runner.
@@ -28,6 +29,7 @@ export interface SetupPerchParams {
     responseRouter:         ResponseRouter
     rateLimiter:            DiscordRateLimiter
     client:                 Client
+    contextBuilder?:        ContextBuilder
 }
 
 /**
@@ -50,12 +52,14 @@ export function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
         responseRouter,
         rateLimiter,
         client,
+        contextBuilder,
     } = params;
 
     const runner = createPerchSessionRunner({
         stateManager:    botStateManager,
         logger,
         config:          perchConfig,
+        contextBuilder,
         runAgentSession: async (runOptions) => {
             // Create abort controller from signal
             const abortController = new AbortController();

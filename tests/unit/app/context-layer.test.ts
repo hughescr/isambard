@@ -50,7 +50,7 @@ describe('createContextLayer', () => {
         expect(result.eventDeltaTracker).toBe(mockEventDeltaTracker);
     });
 
-    test('should pass memoryBackend to createContextBuilder', async () => {
+    test('should pass memoryBackend and summarizeEventBatches to createContextBuilder', async () => {
         // Mock createContextBuilder
         const contextBuilderModule = await import('@/agent/context-builder');
         const createContextBuilderSpy = spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue({} as any);
@@ -61,12 +61,16 @@ describe('createContextLayer', () => {
 
         spies.push(spyOn(eventDeltaTrackerModule as any, 'EventDeltaTracker').mockImplementation(((): any => ({})) as any));
 
+        // Import summarizeEventBatches
+        const eventSummarizerModule = await import('@/agent/event-summarizer');
+        const { summarizeEventBatches } = eventSummarizerModule;
+
         // Import and call createContextLayer
         const { createContextLayer } = await import('@/app/context-layer');
         createContextLayer(mockMemoryBackend);
 
         // Verify createContextBuilder was called with correct args
-        expect(createContextBuilderSpy).toHaveBeenCalledWith({ backend: mockMemoryBackend });
+        expect(createContextBuilderSpy).toHaveBeenCalledWith({ backend: mockMemoryBackend, summarizeEventBatches });
     });
 
     test('should pass contextBuilder to EventDeltaTracker', async () => {

@@ -1,5 +1,6 @@
 import { createContextBuilder, type ContextBuilder } from '@/agent/context-builder';
 import { EventDeltaTracker } from '@/agent/event-delta-tracker';
+import { summarizeEventBatches } from '@/agent/event-summarizer';
 import type { MemoryToolBackend } from '@/storage/memory-tool';
 
 /**
@@ -17,7 +18,7 @@ export interface ContextLayer {
  * @returns Context layer components
  */
 export function createContextLayer(memoryBackend: MemoryToolBackend): ContextLayer {
-    const contextBuilder = createContextBuilder({ backend: memoryBackend });
+    const contextBuilder = createContextBuilder({ backend: memoryBackend, summarizeEventBatches });
     const eventDeltaTracker = new EventDeltaTracker(contextBuilder);
 
     return { contextBuilder, eventDeltaTracker };

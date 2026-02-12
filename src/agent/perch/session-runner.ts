@@ -14,6 +14,7 @@ import type { BotStateManager, PerchingModeContext, InterruptingMessageDetails }
 import { type PerchSlot, type PerchConfig } from './types';
 import { buildPerchPrompt, buildTestPerchPrompt, buildPerchInterruptedPrompt, buildPerchTimeoutPrompt, getSuggestionLevelDescription } from './prompts';
 import type { StreamProgress } from '@/agent/stream-tracker';
+import type { ContextBuilder } from '@/agent/context-builder';
 import _ from 'lodash';
 
 /**
@@ -54,6 +55,8 @@ export interface PerchSessionRunnerDeps {
     config:          PerchConfig
     /** Function to run a perch agent session */
     runAgentSession: (options: RunAgentSessionOptions) => Promise<AgentSessionResult>
+    /** Context builder for perch context (optional for backward compatibility) */
+    contextBuilder?: ContextBuilder
 }
 
 /**
@@ -114,7 +117,7 @@ export interface PerchSessionRunner {
  * ```
  */
 export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSessionRunner {
-    const { stateManager, logger, config, runAgentSession } = deps;
+    const { stateManager, logger, config, runAgentSession, contextBuilder } = deps;
 
     // Only operational handles - NO state flags. BotStateManager is the single source of truth.
     let currentAbortController: AbortController | null = null;
@@ -454,16 +457,40 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 msg:             'Starting perch session with timeout',
             });
 
-            // Build prompt for this slot (use test prompt if test mode enabled)
-            const prompt = isTestMode
-                ? buildTestPerchPrompt(slot)
-                : buildPerchPrompt(slot);
+            // Stryker disable BlockStatement: Defensive error handling for context/prompt build failures
+            try {
+                // Build perch context (if context builder available)
+                let perchContext: string | undefined;
+                if(contextBuilder) {
+                    perchContext = await contextBuilder.buildPerchContext();
+                }
 
-            // Run agent session with error handling
-            await runSessionAndFinalize({
-                prompt,
-                slot,
-            });
+                // Build prompt for this slot (use test prompt if test mode enabled)
+                const prompt = isTestMode
+                    ? buildTestPerchPrompt(slot, perchContext)
+                    : buildPerchPrompt(slot, perchContext);
+
+                // Run agent session with error handling
+                await runSessionAndFinalize({
+                    prompt,
+                    slot,
+                });
+            } catch (error) {
+                logger.error({ error, slot }, 'Failed to start perch session');
+                if(stateManager.getMode() === 'perching') {
+                    stateManager.goIdle();
+                }
+                currentSessionId = undefined;
+                partialWork = null;
+                currentSlot = null;
+                if(sessionTimeout) {
+                    clearTimeout(sessionTimeout);
+                    sessionTimeout = null;
+                    sessionStartTime = null;
+                }
+                currentAbortController = null;
+            }
+            // Stryker restore BlockStatement
         },
 
         interrupt(message: InterruptingMessage): void {

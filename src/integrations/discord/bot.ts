@@ -2,6 +2,7 @@ import type { Client } from 'discord.js';
 import { logger } from '@hughescr/logger';
 import type { DiscordConfig } from '@/config/schemas';
 import type { ClaudeAgent } from '@/agent/agent';
+import type { ContextBuilder } from '@/agent/context-builder';
 import { createDiscordClient } from './client';
 import { createReadyHandler, createErrorHandler } from './handlers';
 import {
@@ -126,6 +127,12 @@ export interface DiscordBotOptions {
      * Optional event delta tracker for capturing events during message processing interruptions
      */
     eventDeltaTracker?: import('../../agent/event-delta-tracker').EventDeltaTracker
+
+    /**
+     * Optional context builder for loading memory context into perch prompts.
+     * If provided, enables perch context feature (time header + recent focus + recent events).
+     */
+    contextBuilder?: ContextBuilder
 }
 
 /**
@@ -194,7 +201,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker } = options;
+    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder } = options;
 
     // Hot reload protection: Reuse existing client if available in global state
     // During Bun hot reload, the module is re-executed but global state persists.
@@ -363,6 +370,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 responseRouter,
                 rateLimiter,
                 client:      readyClient,
+                contextBuilder,
             });
             perchSessionRunner = perchSetup.runner;
             perchScheduler = perchSetup.scheduler;
