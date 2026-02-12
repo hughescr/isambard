@@ -230,6 +230,8 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                     : 0;
 
                 // Update metadata with incremented access count and timestamp
+                // This metadata-only update bumps updatedAt (keeps item visible in GSI1) but skips tag index.
+                // The reconciler handles eventual tag index consistency, avoiding O(num_tags) write amplification.
                 await backend.update(path, {
                     metadata: {
                         ...item.metadata,

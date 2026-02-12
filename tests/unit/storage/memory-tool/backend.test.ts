@@ -541,6 +541,27 @@ describe('MemoryToolBackend', () => {
                 expect(putRequests?.length).toBeGreaterThanOrEqual(1);
             });
 
+            test('should NOT update tag index items for metadata-only updates (even when item has tags)', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+                ddbMock.on(PutCommand).resolves({});
+
+                await backend.update(testPath, {
+                    metadata: { accessCount: 5, lastAccessed: '2024-06-01T00:00:00.000Z' },
+                });
+
+                // Should have: 1) main item only - no tag index operations
+                const putCalls = ddbMock.commandCalls(PutCommand);
+                expect(putCalls.length).toBe(1);
+
+                // Should NOT have any BatchWriteCommand (tag index writes)
+                const batchWriteCalls = ddbMock.commandCalls(BatchWriteCommand);
+                expect(batchWriteCalls.length).toBe(0);
+
+                // Should NOT have any UpdateCommand (tag count changes)
+                const updateCalls = ddbMock.commandCalls(UpdateCommand);
+                expect(updateCalls.length).toBe(0);
+            });
+
             test('should log warning but not fail if tag index update fails', async () => {
                 const originalSetTimeout = global.setTimeout;
                 global.setTimeout = ((callback: () => void) => {

@@ -88,36 +88,44 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
     }
 
     async update(path: MemoryPath, input: UpdateMemoryToolItemInput): Promise<MemoryToolItemData> {
-        // Fetch existing item to compare tags
-        const existing = await this.coreOps.get(path);
-        const oldTags = existing?.tags;
+        // Skip tag index updates for metadata-only changes (e.g. recordAccess).
+        // The reconciler handles eventual consistency of tag index updatedAt/contentPreview.
+        // Stryker disable next-line ConditionalExpression: contentOrTagsChanged guard is optimization; false-positive on removal
+        const contentOrTagsChanged = input.content !== undefined || input.tags !== undefined;
+
+        // Only fetch existing item for tag comparison when content/tags are changing
+        const oldTags = contentOrTagsChanged
+            ? (await this.coreOps.get(path))?.tags
+            : undefined;
 
         const result = await this.coreOps.update(path, input);
 
-        const layer = extractLayerFromPath(path);
-        // Stryker disable next-line StringLiteral: 'unknown' vs '' are equivalent fallback values for non-layer paths
-        const layerStr = layer ?? 'unknown';
-        const contentPreview = generateContentPreview(result.content);
-        const normalizedNewTags = normalizeTags(result.tags);
+        if(contentOrTagsChanged) {
+            const layer = extractLayerFromPath(path);
+            // Stryker disable next-line StringLiteral: 'unknown' vs '' are equivalent fallback values for non-layer paths
+            const layerStr = layer ?? 'unknown';
+            const contentPreview = generateContentPreview(result.content);
+            const normalizedNewTags = normalizeTags(result.tags);
 
-        // Update tag index items on any memory edit (counts handled internally)
-        // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator: Tag index updates are best-effort; condition is optimization guard
-        if(normalizedNewTags.size > 0 || (oldTags && oldTags.size > 0)) {
-            const normalizedOldTags = normalizeTags(oldTags);
-            // Stryker disable BlockStatement: Tag index catch block has internal error handling
-            try {
-                await this.tagIndexOps.updateTagIndexItems(
-                    path,
-                    normalizedOldTags,
-                    normalizedNewTags,
-                    result.updatedAt,
-                    contentPreview,
-                    layerStr
-                );
-            } catch (error) {
-                /* Stryker disable all: Defensive error handling */
-                logger.warn({ error, path, msg: 'Failed to update tag index items' });
-                /* Stryker restore all */
+            // Update tag index items when content or tags change (counts handled internally)
+            // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator: Tag index updates are best-effort; condition is optimization guard
+            if(normalizedNewTags.size > 0 || (oldTags && oldTags.size > 0)) {
+                const normalizedOldTags = normalizeTags(oldTags);
+                // Stryker disable BlockStatement: Tag index catch block has internal error handling
+                try {
+                    await this.tagIndexOps.updateTagIndexItems(
+                        path,
+                        normalizedOldTags,
+                        normalizedNewTags,
+                        result.updatedAt,
+                        contentPreview,
+                        layerStr
+                    );
+                } catch (error) {
+                    /* Stryker disable all: Defensive error handling */
+                    logger.warn({ error, path, msg: 'Failed to update tag index items' });
+                    /* Stryker restore all */
+                }
             }
         }
 

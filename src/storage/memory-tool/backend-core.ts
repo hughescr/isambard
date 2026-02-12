@@ -115,6 +115,8 @@ export class MemoryToolBackendCore {
             ...(input.tags !== undefined && { tags: input.tags.size > 0 ? input.tags : undefined }),
             // Stryker disable next-line ConditionalExpression: Spread operator conditional - undefined values should not override existing contentPreview
             ...(newContentPreview !== undefined && { contentPreview: newContentPreview }),
+            // updatedAt reflects "last touched" (content edit OR deliberate access via recordAccess),
+            // not just content modification. This keeps accessed items visible in GSI1 time-ordered queries.
             updatedAt: DateTime.utc().toISO(),
         };
 

@@ -57,6 +57,7 @@ export const memoryToolItemSchema = z.object({
     contentType:    contentTypeSchema,
     metadata:       z.record(z.string(), z.unknown()).default({}),
     createdAt:      z.string().datetime(),
+    // "Last touched" — updated on both content edits and deliberate memory access (recordAccess)
     updatedAt:      z.string().datetime(),
     // Stryker disable next-line ConditionalExpression: Zod custom validator for Set<string> type checking
     tags:           z.custom<Set<string>>(val => val === undefined || val instanceof Set).optional(),
