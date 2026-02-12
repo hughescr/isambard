@@ -113,5 +113,17 @@ describe.concurrent('sigmoidScore', () => {
             const score = sigmoidScore(5, 0, { steepness: DEFAULT_SIGMOID_PARAMS.steepness });
             expect(score).toBeCloseTo(0.5, 2);
         });
+
+        test('clamps negative accessCount to 0', () => {
+            const scoreNegative = sigmoidScore(-5, 0);
+            const scoreZero = sigmoidScore(0, 0);
+            expect(scoreNegative).toBe(scoreZero);
+        });
+
+        test('clamps negative timeSinceLastAccessMs to 0', () => {
+            const scoreNegative = sigmoidScore(5, -1000);
+            const scoreZero = sigmoidScore(5, 0);
+            expect(scoreNegative).toBe(scoreZero);
+        });
     });
 });

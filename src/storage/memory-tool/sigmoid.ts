@@ -67,13 +67,17 @@ export function sigmoidScore(
 ): number {
     const { steepness, midpoint, lambda } = { ...DEFAULT_SIGMOID_PARAMS, ...params };
 
+    // Clamp inputs to prevent nonsensical scores from negative values or clock skew
+    const clampedCount = Math.max(0, accessCount);
+    const clampedTime = Math.max(0, timeSinceLastAccessMs);
+
     // Frequency component: sigmoid activation
-    // 1 / (1 + e^(-steepness * (accessCount - midpoint)))
-    const frequencyScore = 1 / (1 + Math.exp(-steepness * (accessCount - midpoint)));
+    // 1 / (1 + e^(-steepness * (clampedCount - midpoint)))
+    const frequencyScore = 1 / (1 + Math.exp(-steepness * (clampedCount - midpoint)));
 
     // Recency component: exponential decay
-    // e^(-lambda * timeSinceLastAccessMs)
-    const recencyDecay = Math.exp(-lambda * timeSinceLastAccessMs);
+    // e^(-lambda * clampedTime)
+    const recencyDecay = Math.exp(-lambda * clampedTime);
 
     // Combined score
     return frequencyScore * recencyDecay;
