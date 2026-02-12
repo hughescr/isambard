@@ -637,7 +637,7 @@ async function buildUserMessageTextForBatch(
 
     // Build context prefix from memories and events
     const contextPrefix = contextBuilder
-        ? await contextBuilder.buildUserMessagePrefix(contexts[0].userId, contexts[0].botUserId)
+        ? await contextBuilder.buildUserMessagePrefix(contexts[0].userId, timezone)
         : '';
 
     // Format multiple messages with timezone fallback
@@ -1018,12 +1018,12 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
             let capturedSessionId: string | undefined;
 
             try {
-                // 1. Load user timezone for prompt localization
+                // 1. Load user timezone for user message localization
                 const userTimezone = await loadUserTimezoneForFlow(contextBuilder, options, contexts);
 
-                // 2. Build system prompt with core identity, channel list, and user timezone
+                // 2. Build system prompt with core identity and channel list
                 const channelList = options?.channelList;
-                const systemPrompt = await buildSystemPrompt({ contextBuilder, channelList, userTimezone });
+                const systemPrompt = await buildSystemPrompt({ contextBuilder, channelList });
 
                 // 3. Build user message text
                 const userMessageText = await buildUserMessageTextForBatch(

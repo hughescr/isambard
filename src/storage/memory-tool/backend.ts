@@ -16,7 +16,7 @@ import { normalizeTags, generateContentPreview } from './key-generator';
 
 // Re-export types for public API
 export type { CreateMemoryToolItemInput, UpdateMemoryToolItemInput } from './backend-core';
-export type { ListOptions, ListResult } from './backend-query';
+export type { ListOptions, ListResult, ScoredMemoryItem } from './backend-query';
 
 /**
  * Memory tool backend facade that delegates to specialized modules.
@@ -190,6 +190,12 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         options?: { maxIdentityItems?: number, maxStateItems?: number, now?: Date }
     ): Promise<MemoryToolItemData[]> {
         return this.queryOps.getAutoLoadItems(options);
+    }
+
+    async getStateItemsScored(
+        options?: { maxItems?: number, now?: Date }
+    ): Promise<import('./backend-query').ScoredMemoryItem[]> {
+        return this.queryOps.getStateItemsScored(options);
     }
 
     /**

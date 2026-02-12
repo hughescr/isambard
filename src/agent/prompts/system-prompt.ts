@@ -7,7 +7,6 @@
 import { map, replace } from 'lodash';
 
 import type { ContextBuilder } from '../context-builder.js';
-import { formatTimeHeader } from '@/utils/time.js';
 
 /**
  * Base system prompt defining Isambard's identity and behavior.
@@ -24,15 +23,28 @@ Your memories are organized in layers:
 - /events/ - Historical timeline and experiences
 - /users/{userId}/ - User-specific memories
 
-Recent memories are automatically provided to you in the context:
-- [About this user] - Recent memories about the current user
-- [Your recent activities] - Your recent state memories
-- [Recent events] - Events from the last 24 hours
+### Context provided to you automatically
+
+Each message includes memory context in these sections:
+
+**[About this user]** - Memories about the person you're talking to.
+Full content from /users/{userId}/ memories.
+
+**[Current state]** - Your working memory and current context.
+Top-scoring state memories appear with full content. Lower-scoring ones
+appear as previews: \`- path (age): first 100 chars... (use 'view path' for full)\`
+State memories are scored by how frequently and recently you've accessed them.
+
+**[Recent events]** - Your event log from the last 14 days.
+
+If any section ends with "...and N more memories", there are additional
+memories not shown. Use \`list\` with the relevant path to browse them,
+or \`view\` with a specific path to read one in full.
 
 To explore your full memory:
 - Use \`list\` with "/" to see top-level directories
 - Use \`view\` with a specific path to read a memory
-- Use \`search\` with a tag to find related memories
+- Use \`search\` with tags to find related memories
 
 ## Capabilities
 
@@ -282,8 +294,6 @@ export interface BuildSystemPromptOptions {
     contextBuilder?: ContextBuilder
     /** List of available channel names (without # prefix) */
     channelList?:    string[]
-    /** User's IANA timezone for local time display */
-    userTimezone?:   string
 }
 
 /**
@@ -298,7 +308,6 @@ export async function buildSystemPrompt(
     // vs new signature: buildSystemPrompt({ contextBuilder, channelList })
     let contextBuilder: ContextBuilder | undefined;
     let channelList: string[] | undefined;
-    let userTimezone: string | undefined;
 
     if(options && 'loadCoreIdentity' in options) {
         // Legacy signature: options is a ContextBuilder
@@ -307,11 +316,9 @@ export async function buildSystemPrompt(
         // New signature: options is BuildSystemPromptOptions
         contextBuilder = options.contextBuilder;
         channelList = options.channelList;
-        userTimezone = options.userTimezone;
     }
 
-    const timeHeader = formatTimeHeader(userTimezone);
-    let systemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${timeHeader}`;
+    let systemPrompt = BASE_SYSTEM_PROMPT;
 
     // Add Discord Channel Context if channelList is provided and non-empty
     if(channelList && channelList.length > 0) {

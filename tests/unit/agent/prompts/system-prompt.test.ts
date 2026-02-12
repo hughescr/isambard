@@ -13,6 +13,8 @@ describe.concurrent('system-prompt', () => {
             expect(BASE_SYSTEM_PROMPT.length).toBeGreaterThan(0);
             expect(BASE_SYSTEM_PROMPT).toContain('Isambard');
             expect(BASE_SYSTEM_PROMPT).toContain('Memory System');
+            expect(BASE_SYSTEM_PROMPT).toContain('Context provided to you automatically');
+            expect(BASE_SYSTEM_PROMPT).toContain('[Current state]');
         });
 
         test('DISCORD_CHANNEL_CONTEXT should be defined and non-empty', () => {
@@ -48,7 +50,7 @@ describe.concurrent('system-prompt', () => {
             test('should work with no arguments', async () => {
                 const prompt = await buildSystemPrompt();
                 expect(prompt).toContain(BASE_SYSTEM_PROMPT);
-                expect(prompt).toContain('Current Time');
+                expect(prompt).not.toContain('Current Time');
                 expect(prompt).not.toContain('Who You Are');
                 expect(prompt).not.toContain('Discord Channel Context');
             });
@@ -56,7 +58,7 @@ describe.concurrent('system-prompt', () => {
             test('should work with undefined', async () => {
                 const prompt = await buildSystemPrompt(undefined);
                 expect(prompt).toContain(BASE_SYSTEM_PROMPT);
-                expect(prompt).toContain('Current Time');
+                expect(prompt).not.toContain('Current Time');
                 expect(prompt).not.toContain('Who You Are');
                 expect(prompt).not.toContain('Discord Channel Context');
             });
@@ -91,7 +93,7 @@ describe.concurrent('system-prompt', () => {
             test('should work with empty options object', async () => {
                 const prompt = await buildSystemPrompt({});
                 expect(prompt).toContain(BASE_SYSTEM_PROMPT);
-                expect(prompt).toContain('Current Time');
+                expect(prompt).not.toContain('Current Time');
                 expect(prompt).not.toContain('Who You Are');
                 expect(prompt).not.toContain('Discord Channel Context');
             });
@@ -181,27 +183,6 @@ describe.concurrent('system-prompt', () => {
             });
         });
 
-        describe('time context', () => {
-            test('should always include time context', async () => {
-                const prompt = await buildSystemPrompt();
-                expect(prompt).toContain('Current Time');
-            });
-
-            test('should include time context with all options', async () => {
-                const mockContextBuilder = {
-                    // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
-                    loadCoreIdentity: mock(async () => 'I am a test identity'),
-                } as unknown as ContextBuilder;
-
-                const prompt = await buildSystemPrompt({
-                    contextBuilder: mockContextBuilder,
-                    channelList:    ['general'],
-                });
-
-                expect(prompt).toContain('Current Time');
-            });
-        });
-
         describe('section ordering', () => {
             test('should order sections correctly when all options provided', async () => {
                 const mockContextBuilder = {
@@ -214,15 +195,13 @@ describe.concurrent('system-prompt', () => {
                     channelList:    ['general'],
                 });
 
-                // Check order: BASE_SYSTEM_PROMPT, Time Context, Discord Context, Who You Are
+                // Check order: BASE_SYSTEM_PROMPT, Discord Context, Who You Are
                 const basePromptIndex = prompt.indexOf('Isambard');
-                const timeIndex = prompt.indexOf('Current Time');
                 const discordIndex = prompt.indexOf('Discord Channel Context');
                 const identityIndex = prompt.indexOf('Who You Are');
 
                 expect(basePromptIndex).toBeGreaterThan(-1);
-                expect(timeIndex).toBeGreaterThan(basePromptIndex);
-                expect(discordIndex).toBeGreaterThan(timeIndex);
+                expect(discordIndex).toBeGreaterThan(basePromptIndex);
                 expect(identityIndex).toBeGreaterThan(discordIndex);
             });
         });

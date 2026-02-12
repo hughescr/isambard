@@ -6,25 +6,21 @@
  */
 
 import { logger } from '@hughescr/logger';
-import { map as _map, groupBy as _groupBy, isNumber as _isNumber, sortBy as _sortBy } from 'lodash';
+import { map as _map, isNumber as _isNumber, sortBy as _sortBy } from 'lodash';
 import type { MemoryToolBackend } from '../storage/memory-tool/backend';
 import type { MemoryPath } from '../storage/memory-tool/types';
-import { extractLayerFromPath, createMemoryPath, createLayerName } from '../storage/memory-tool/types';
-import { formatShortRelativeTime } from '../utils/time';
+import { createMemoryPath, createLayerName } from '../storage/memory-tool/types';
+import { formatShortRelativeTime, formatTimeHeader } from '../utils/time';
 
 export interface ContextBuilderOptions {
-    backend:            MemoryToolBackend
-    maxIdentityTokens?: number   // Default: 500
-    maxStateTokens?:    number   // Default: 300
+    backend:                MemoryToolBackend
+    maxIdentityTokens?:     number   // Default: 5000
+    maxStateFullTokens?:    number   // Default: 3000
+    maxStatePreviewTokens?: number   // Default: 2000
+    maxUserTokens?:         number   // Default: 2500
 }
 
 export interface ContextBuilder {
-    /**
-     * Build system context from memories (identity + hot state)
-     * @returns Formatted context string ready for inclusion in system prompt
-     */
-    buildSystemContext: () => Promise<string>
-
     /**
      * Load core identity (permanent, essential memories)
      * @returns Formatted identity string for system prompt
@@ -32,13 +28,19 @@ export interface ContextBuilder {
     loadCoreIdentity: () => Promise<string>
 
     /**
-     * Load recent context for a specific user
-     * @param userId User ID to load context for
-     * @param limit Maximum number of recent memories to load
-     * @param now Optional reference time for age calculation (defaults to current time)
-     * @returns Array of formatted memory strings: "- path (age): content_preview"
+     * Load sigmoid-scored state memories with tiered display (full content + previews)
+     * @param now Optional reference time for age calculation
+     * @returns Formatted state context string with full content tier and preview tier
      */
-    loadRecentContext: (userId: string, limit?: number, now?: Date) => Promise<string[]>
+    loadHotState: (now?: Date) => Promise<string>
+
+    /**
+     * Load user-specific memories via path-based query
+     * @param userId User ID to load memories for
+     * @param now Optional reference time for age calculation
+     * @returns Formatted user memories string
+     */
+    loadUserMemories: (userId: string, now?: Date) => Promise<string>
 
     /**
      * Update access stats when memories are used
@@ -62,16 +64,18 @@ export interface ContextBuilder {
     loadUserTimezone: (userId: string) => Promise<string | undefined>
 
     /**
-     * Build user message prefix from user memories, bot memories, and recent events.
+     * Build user message prefix with time header, user memories, hot state, and recent events.
      * @param userId The user who sent the message
-     * @param botUserId Optional bot user ID for loading bot's own memories
+     * @param userTimezone Optional user timezone for time header
      * @returns Context prefix string (empty if no context available)
      */
-    buildUserMessagePrefix: (userId: string, botUserId?: string) => Promise<string>
+    buildUserMessagePrefix: (userId: string, userTimezone?: string) => Promise<string>
 }
 
-const DEFAULT_MAX_IDENTITY_TOKENS = 500;
-const DEFAULT_MAX_STATE_TOKENS = 300;
+const DEFAULT_MAX_IDENTITY_TOKENS = 5000;
+const DEFAULT_MAX_STATE_FULL_TOKENS = 3000;
+const DEFAULT_MAX_STATE_PREVIEW_TOKENS = 2000;
+const DEFAULT_MAX_USER_TOKENS = 2500;
 const CHARS_PER_TOKEN = 4;
 const CONTENT_PREVIEW_MAX_LENGTH = 100;
 
@@ -113,10 +117,11 @@ function formatMemoryPreview(
 export function createContextBuilder(options: ContextBuilderOptions): ContextBuilder {
     const { backend } = options;
     const maxIdentityTokens = options.maxIdentityTokens ?? DEFAULT_MAX_IDENTITY_TOKENS;
-    const maxStateTokens = options.maxStateTokens ?? DEFAULT_MAX_STATE_TOKENS;
 
     const maxIdentityChars = maxIdentityTokens * CHARS_PER_TOKEN;
-    const maxStateChars = maxStateTokens * CHARS_PER_TOKEN;
+    const maxStateFullChars = (options.maxStateFullTokens ?? DEFAULT_MAX_STATE_FULL_TOKENS) * CHARS_PER_TOKEN;
+    const maxStatePreviewChars = (options.maxStatePreviewTokens ?? DEFAULT_MAX_STATE_PREVIEW_TOKENS) * CHARS_PER_TOKEN;
+    const maxUserChars = (options.maxUserTokens ?? DEFAULT_MAX_USER_TOKENS) * CHARS_PER_TOKEN;
 
     const builder: ContextBuilder = {
         loadCoreIdentity: async (): Promise<string> => {
@@ -133,84 +138,100 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
 
             // Format and truncate if needed
             const content = _map(result.items, 'content').join('\n\n');
-            const identity = content.length > maxIdentityChars
-                ? content.slice(0, maxIdentityChars - 3) + '...'
-                : content;
-
-            logger.debug({ identityLength: identity.length }, 'Core identity loaded');
-            return identity;
+            if(content.length > maxIdentityChars) {
+                const truncated = content.slice(0, maxIdentityChars - 3) + '...';
+                const overflowNote = `\n\n...and ${result.items.length} total identity memories (use 'list /identity' to see all)`;
+                const identity = truncated + overflowNote;
+                logger.debug({ identityLength: identity.length }, 'Core identity loaded');
+                return identity;
+            } else {
+                const identity = content;
+                logger.debug({ identityLength: identity.length }, 'Core identity loaded');
+                return identity;
+            }
         },
 
-        loadRecentContext: async (userId: string, limit = 3, now: Date = new Date()): Promise<string[]> => {
-            logger.debug({ userId }, 'Loading user context');
+        loadHotState: async (now: Date = new Date()): Promise<string> => {
+            logger.debug({ msg: 'Loading hot state...' });
 
-            // Load recent state/events for this user via tag search
-            const result = await backend.searchByTags(new Set([`user:${userId}`]), undefined, { limit });
+            const scoredItems = await backend.getStateItemsScored({ now });
 
-            // Format each item with path, age, and content preview
-            // TagIndexItem has memoryPath (not path) and no content field
-            const memories = _map(result.items, item =>
-                formatMemoryPreview(createMemoryPath(item.memoryPath), undefined, item.contentPreview, item.updatedAt, now)
-            );
-
-            logger.debug({ userId, memoryCount: memories.length }, 'User context loaded');
-            return memories;
-        },
-
-        buildSystemContext: async (): Promise<string> => {
-            // Get auto-load items from backend
-            const items = await backend.getAutoLoadItems();
-
-            if(items.length === 0) {
-                return '=== MEMORY CONTEXT ===\n\n(No memories loaded)';
+            // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant - empty loop produces same result
+            if(scoredItems.length === 0) {
+                logger.debug({ fullTierCount: 0, previewTierCount: 0, overflowCount: 0, stateLength: 0 }, 'Hot state loaded');
+                return '';
             }
 
-            // Group items by layer
-            const grouped = _groupBy(items, (item) => {
-                const layer = extractLayerFromPath(item.path);
-                // Stryker disable next-line StringLiteral: 'other' vs "" are equivalent since neither is rendered
-                return layer ?? 'other';
-            });
+            // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
+            const sections: string[] = [];
+            let fullCharsUsed = 0;
+            let previewCharsUsed = 0;
+            let fullTierCount = 0;
+            let previewTierCount = 0;
+            let overflowCount = 0;
 
-            const sections: string[] = ['=== MEMORY CONTEXT ===\n'];
-
-            // Format identity layer
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: lodash groupBy never creates empty arrays
-            if(grouped.identity && grouped.identity.length > 0) {
-                sections.push('## Identity');
-
-                const identityContent = _map(
-                    grouped.identity,
-                    item => `${item.path}:\n${item.content}`
-                ).join('\n\n');
-
-                // Truncate if necessary
-                if(identityContent.length > maxIdentityChars) {
-                    sections.push(identityContent.slice(0, maxIdentityChars - 3) + '...');
+            // Full-content tier: highest-scored items with full content
+            for(const { item } of scoredItems) {
+                const formatted = `${item.path}:\n${item.content}`;
+                if(fullCharsUsed + formatted.length <= maxStateFullChars) {
+                    sections.push(formatted);
+                    fullCharsUsed += formatted.length;
+                    fullTierCount++;
                 } else {
-                    sections.push(identityContent);
+                    // Try preview tier
+                    const preview = formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, now);
+                    if(previewCharsUsed + preview.length <= maxStatePreviewChars) {
+                        sections.push(preview);
+                        previewCharsUsed += preview.length;
+                        previewTierCount++;
+                    } else {
+                        overflowCount++;
+                    }
                 }
             }
 
-            // Format state layer as "Current State"
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: lodash groupBy never creates empty arrays
-            if(grouped.state && grouped.state.length > 0) {
-                sections.push('## Current State');
+            if(overflowCount > 0) {
+                sections.push(`...and ${overflowCount} more state memories (use 'list /state' to see all)`);
+            }
 
-                const stateContent = _map(
-                    grouped.state,
-                    item => `${item.path}:\n${item.content}`
-                ).join('\n\n');
+            const result = sections.join('\n');
+            logger.debug({ fullTierCount, previewTierCount, overflowCount, stateLength: result.length }, 'Hot state loaded');
+            return result;
+        },
 
-                // Truncate if necessary
-                if(stateContent.length > maxStateChars) {
-                    sections.push(stateContent.slice(0, maxStateChars - 3) + '...');
+        loadUserMemories: async (userId: string, now: Date = new Date()): Promise<string> => {
+            logger.debug({ userId }, 'Loading user memories');
+
+            const result = await backend.list(`/users/${userId}`);
+
+            // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant - empty loop produces same result
+            if(result.items.length === 0) {
+                logger.debug({ userId, memoryCount: 0, overflowCount: 0 }, 'User memories loaded');
+                return '';
+            }
+
+            // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
+            const sections: string[] = [];
+            let charsUsed = 0;
+            let overflowCount = 0;
+
+            for(const item of result.items) {
+                const formatted = formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, now);
+                if(charsUsed + formatted.length <= maxUserChars) {
+                    sections.push(formatted);
+                    charsUsed += formatted.length;
                 } else {
-                    sections.push(stateContent);
+                    overflowCount++;
                 }
             }
 
-            return sections.join('\n\n');
+            if(overflowCount > 0) {
+                sections.push(`...and ${overflowCount} more user memories (use 'list /users/${userId}' to see all)`);
+            }
+
+            const memoryResult = sections.join('\n');
+            logger.debug({ userId, memoryCount: result.items.length - overflowCount, overflowCount }, 'User memories loaded');
+            return memoryResult;
         },
 
         recordAccess: async (paths: MemoryPath[]): Promise<void> => {
@@ -291,37 +312,39 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             return item.content;
         },
 
-        buildUserMessagePrefix: async (userId: string, botUserId?: string): Promise<string> => {
+        buildUserMessagePrefix: async (userId: string, userTimezone?: string): Promise<string> => {
             // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
             const sections: string[] = [];
+            const now = new Date();
 
-            // User-specific memories
-            const userMemories = await builder.loadRecentContext(userId, 3);
-            if(userMemories.length > 0) {
-                sections.push(`[About this user]\n${_map(userMemories, m => `- ${m}`).join('\n')}`);
+            // 1. Time header (always first, refreshed per-message)
+            sections.push(formatTimeHeader(userTimezone));
+
+            // 2. User-specific memories (path-based)
+            const userMemories = await builder.loadUserMemories(userId, now);
+            if(userMemories) {
+                sections.push(`[About this user]\n${userMemories}`);
             }
 
-            // Bot's own memories
-            // Stryker disable next-line ConditionalExpression: botUserId null check is defensive, tested via integration
-            if(botUserId) {
-                const isambardMemories = await builder.loadRecentContext(botUserId, 2);
-                if(isambardMemories.length > 0) {
-                    sections.push(`[Your recent activities]\n${_map(isambardMemories, m => `- ${m}`).join('\n')}`);
-                }
+            // 3. Hot state (sigmoid-scored, tiered)
+            const hotState = await builder.loadHotState(now);
+            if(hotState) {
+                sections.push(`[Current state]\n${hotState}`);
             }
 
-            // Recent events
-            const recentEvents = await builder.loadRecentEvents(50);
-            // Stryker disable next-line ConditionalExpression: Empty array check prevents unnecessary section, tested via integration
+            // 4. Recent events (unchanged)
+            const recentEvents = await builder.loadRecentEvents(50, now);
             if(recentEvents.length > 0) {
-                sections.push(`[Recent events]\n${_map(recentEvents, m => `- ${m}`).join('\n')}`);
+                sections.push(`[Recent events]\n${recentEvents.join('\n')}`);
             }
 
+            // Stryker disable EqualityOperator,ConditionalExpression,BlockStatement,StringLiteral: Empty sections array can't happen (time header always present)
             if(sections.length === 0) {
                 return '';
             }
+            // Stryker restore EqualityOperator,ConditionalExpression,BlockStatement,StringLiteral
 
-            // Stryker disable next-line StringLiteral: Equivalent - trailing newlines are formatting, tests verify content not whitespace
+            // Stryker disable next-line StringLiteral: Equivalent - trailing newlines are formatting
             return sections.join('\n\n') + '\n\n';
         },
     };

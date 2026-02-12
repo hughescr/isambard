@@ -4,7 +4,7 @@ import {
     DynamoDBDocumentClient,
     QueryCommand
 } from '@aws-sdk/lib-dynamodb';
-import { forEach as _forEach, map as _map } from 'lodash';
+import { forEach as _forEach, map as _map, padStart as _padStart } from 'lodash';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryToolItem, MemoryPath, LayerName } from '@/storage/memory-tool/types';
 
@@ -929,6 +929,296 @@ describe('MemoryToolBackend - Date Filtering', () => {
             expect(result[0]).not.toHaveProperty('SK');
             expect(result[0]).not.toHaveProperty('GSI1PK');
             expect(result[0]).not.toHaveProperty('GSI1SK');
+        });
+    });
+
+    describe('getStateItemsScored', () => {
+        test('should query state layer only', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await backend.getStateItemsScored();
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls).toHaveLength(1);
+            const queryInput = calls[0].args[0].input;
+            expect(queryInput.IndexName).toBe('GSI1');
+            expect(queryInput.ExpressionAttributeValues?.[':pk']).toBe('LAYER#state');
+        });
+
+        test('should use default maxItems of 50 when not provided', async () => {
+            const stateItems: MemoryToolItem[] = Array.from({ length: 100 }, (_, i) => ({
+                PK:          'DIR#/state',
+                SK:          `FILE#item${i}.md`,
+                GSI1PK:      'LAYER#state',
+                GSI1SK:      `UPDATED#2024-01-${_padStart(String(i + 1), 2, '0')}T00:00:00.000Z`,
+                path:        `/state/item${i}.md` as MemoryPath,
+                content:     `Item ${i}`,
+                contentType: 'text/markdown',
+                metadata:    { accessCount: i },
+                createdAt:   `2024-01-${_padStart(String(i + 1), 2, '0')}T00:00:00.000Z`,
+                updatedAt:   `2024-01-${_padStart(String(i + 1), 2, '0')}T00:00:00.000Z`,
+            }));
+
+            ddbMock.on(QueryCommand).resolves({ Items: stateItems });
+
+            const result = await backend.getStateItemsScored();
+
+            // Should return at most 50 items
+            expect(result.length).toBeLessThanOrEqual(50);
+        });
+
+        test('should use custom maxItems when provided', async () => {
+            const stateItems: MemoryToolItem[] = Array.from({ length: 100 }, (_, i) => ({
+                PK:          'DIR#/state',
+                SK:          `FILE#item${i}.md`,
+                GSI1PK:      'LAYER#state',
+                GSI1SK:      `UPDATED#2024-01-${_padStart(String(i + 1), 2, '0')}T00:00:00.000Z`,
+                path:        `/state/item${i}.md` as MemoryPath,
+                content:     `Item ${i}`,
+                contentType: 'text/markdown',
+                metadata:    { accessCount: i },
+                createdAt:   `2024-01-${_padStart(String(i + 1), 2, '0')}T00:00:00.000Z`,
+                updatedAt:   `2024-01-${_padStart(String(i + 1), 2, '0')}T00:00:00.000Z`,
+            }));
+
+            ddbMock.on(QueryCommand).resolves({ Items: stateItems });
+
+            const result = await backend.getStateItemsScored({ maxItems: 10 });
+
+            // Should return at most 10 items
+            expect(result.length).toBeLessThanOrEqual(10);
+        });
+
+        test('should score items using sigmoid scoring', async () => {
+            const stateItems: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#low-score.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/state/low-score.md' as MemoryPath,
+                    content:     'Low score',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 1, lastAccessed: '2024-01-01T00:00:00.000Z' },
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#high-score.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-02T00:00:00.000Z',
+                    path:        '/state/high-score.md' as MemoryPath,
+                    content:     'High score',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 10, lastAccessed: '2024-01-02T00:00:00.000Z' },
+                    createdAt:   '2024-01-02T00:00:00.000Z',
+                    updatedAt:   '2024-01-02T00:00:00.000Z',
+                },
+            ];
+
+            ddbMock.on(QueryCommand).resolves({ Items: stateItems });
+
+            const result = await backend.getStateItemsScored({
+                now: new Date('2024-02-01T00:00:00.000Z'),
+            });
+
+            // High access + recent should score higher
+            expect(result[0].item.path).toBe('/state/high-score.md' as MemoryPath);
+            expect(result[1].item.path).toBe('/state/low-score.md' as MemoryPath);
+            expect(result[0].score).toBeGreaterThan(result[1].score);
+        });
+
+        test('should sort by score descending', async () => {
+            const stateItems: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#mid.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-02T00:00:00.000Z',
+                    path:        '/state/mid.md' as MemoryPath,
+                    content:     'Mid',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 5, lastAccessed: '2024-01-02T00:00:00.000Z' },
+                    createdAt:   '2024-01-02T00:00:00.000Z',
+                    updatedAt:   '2024-01-02T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#low.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/state/low.md' as MemoryPath,
+                    content:     'Low',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 1, lastAccessed: '2024-01-01T00:00:00.000Z' },
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#high.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-03T00:00:00.000Z',
+                    path:        '/state/high.md' as MemoryPath,
+                    content:     'High',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 10, lastAccessed: '2024-01-03T00:00:00.000Z' },
+                    createdAt:   '2024-01-03T00:00:00.000Z',
+                    updatedAt:   '2024-01-03T00:00:00.000Z',
+                },
+            ];
+
+            ddbMock.on(QueryCommand).resolves({ Items: stateItems });
+
+            const result = await backend.getStateItemsScored({
+                now: new Date('2024-02-01T00:00:00.000Z'),
+            });
+
+            expect(result).toHaveLength(3);
+            expect(result[0].item.path).toBe('/state/high.md' as MemoryPath);
+            expect(result[1].item.path).toBe('/state/mid.md' as MemoryPath);
+            expect(result[2].item.path).toBe('/state/low.md' as MemoryPath);
+            // Verify descending order
+            expect(result[0].score).toBeGreaterThanOrEqual(result[1].score);
+            expect(result[1].score).toBeGreaterThanOrEqual(result[2].score);
+        });
+
+        test('should return items with scores attached', async () => {
+            const stateItems: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#test.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/state/test.md' as MemoryPath,
+                    content:     'Test',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 5 },
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                },
+            ];
+
+            ddbMock.on(QueryCommand).resolves({ Items: stateItems });
+
+            const result = await backend.getStateItemsScored();
+
+            expect(result).toHaveLength(1);
+            expect(result[0]).toHaveProperty('item');
+            expect(result[0]).toHaveProperty('score');
+            expect(typeof result[0].score).toBe('number');
+            expect(result[0].item.path).toBe('/state/test.md' as MemoryPath);
+        });
+
+        test('should use default accessCount of 0 when metadata is missing', async () => {
+            const stateItems: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#no-metadata.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/state/no-metadata.md' as MemoryPath,
+                    content:     'No metadata',
+                    contentType: 'text/markdown',
+                    metadata:    {},
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#with-access.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-02T00:00:00.000Z',
+                    path:        '/state/with-access.md' as MemoryPath,
+                    content:     'With access',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 5 },
+                    createdAt:   '2024-01-02T00:00:00.000Z',
+                    updatedAt:   '2024-01-02T00:00:00.000Z',
+                },
+            ];
+
+            ddbMock.on(QueryCommand).resolves({ Items: stateItems });
+
+            const result = await backend.getStateItemsScored();
+
+            // Item with accessCount should rank higher
+            expect(result[0].item.path).toBe('/state/with-access.md' as MemoryPath);
+            expect(result[1].item.path).toBe('/state/no-metadata.md' as MemoryPath);
+        });
+
+        test('should use updatedAt as fallback when lastAccessed is missing', async () => {
+            const stateItems: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#old.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/state/old.md' as MemoryPath,
+                    content:     'Old',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 5 }, // No lastAccessed
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#recent.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-06-01T00:00:00.000Z',
+                    path:        '/state/recent.md' as MemoryPath,
+                    content:     'Recent',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 5 }, // No lastAccessed
+                    createdAt:   '2024-06-01T00:00:00.000Z',
+                    updatedAt:   '2024-06-01T00:00:00.000Z',
+                },
+            ];
+
+            ddbMock.on(QueryCommand).resolves({ Items: stateItems });
+
+            const result = await backend.getStateItemsScored({
+                now: new Date('2024-07-01T00:00:00.000Z'),
+            });
+
+            // More recent updatedAt should score higher when accessCounts are equal
+            expect(result[0].item.path).toBe('/state/recent.md' as MemoryPath);
+            expect(result[1].item.path).toBe('/state/old.md' as MemoryPath);
+        });
+
+        test('should respect maxItems limit', async () => {
+            const stateItems: MemoryToolItem[] = Array.from({ length: 100 }, (_, i) => ({
+                PK:          'DIR#/state',
+                SK:          `FILE#item${i}.md`,
+                GSI1PK:      'LAYER#state',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        `/state/item${i}.md` as MemoryPath,
+                content:     `Item ${i}`,
+                contentType: 'text/markdown',
+                metadata:    { accessCount: 100 - i, lastAccessed: '2024-01-01T00:00:00.000Z' }, // Descending access counts, same recency
+                createdAt:   '2024-01-01T00:00:00.000Z',
+                updatedAt:   '2024-01-01T00:00:00.000Z',
+            }));
+
+            ddbMock.on(QueryCommand).resolves({ Items: stateItems });
+
+            const result = await backend.getStateItemsScored({
+                maxItems: 10,
+                now:      new Date('2024-02-01T00:00:00.000Z'),
+            });
+
+            expect(result).toHaveLength(10);
+            // Should return top 10 by score (highest accessCount items)
+            expect(result[0].item.path).toBe('/state/item0.md' as MemoryPath);
+        });
+
+        test('should handle empty state layer', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            const result = await backend.getStateItemsScored();
+
+            expect(result).toEqual([]);
         });
     });
 });

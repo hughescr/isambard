@@ -22,6 +22,11 @@ export interface ListResult<T> {
     nextCursor?: string
 }
 
+export interface ScoredMemoryItem {
+    item:  MemoryToolItemData
+    score: number
+}
+
 // Default date bounds for open-ended queries
 const MIN_DATE = '1970-01-01T00:00:00.000Z';
 const MAX_DATE = '9999-12-31T23:59:59.999Z';
@@ -255,5 +260,39 @@ export class MemoryToolBackendQuery {
             .value();
 
         return [...identityItems, ...stateItems];
+    }
+
+    async getStateItemsScored(
+        options?: { maxItems?: number, now?: Date }
+    ): Promise<ScoredMemoryItem[]> {
+        // Stryker disable next-line LogicalOperator,OptionalChaining: ?? operator is correct for default values
+        const maxItems = options?.maxItems ?? 50;
+        // Stryker disable next-line LogicalOperator,OptionalChaining: ?? operator is correct for default values
+        const nowMs = (options?.now ?? new Date()).getTime();
+
+        // Get all state items
+        const stateResult = await this.listByLayer(createLayerName('state'));
+        const stateItems = stateResult.items;
+
+        // Score items using sigmoid function for frequency × recency
+        const scoredItems = _map(stateItems, (item) => {
+            // Stryker disable next-line LogicalOperator: ?? operator is correct, && would give wrong result
+            const accessCount = (item.metadata?.accessCount as number | undefined) ?? 0;
+            // Stryker disable next-line LogicalOperator: ?? operator is correct, && would give wrong result
+            const lastAccessed = (item.metadata?.lastAccessed as string | undefined) ?? item.updatedAt;
+            const timeSinceLastAccessMs = nowMs - new Date(lastAccessed).getTime();
+            return { item, score: sigmoidScore(accessCount, timeSinceLastAccessMs) };
+        });
+
+        // Sort by score descending and take top N
+        return _chain(scoredItems)
+            .orderBy(
+                // Stryker disable next-line all: Sort field for sigmoid scoring
+                ['score'],
+                // Stryker disable next-line all: Descending sort order
+                ['desc']
+            )
+            .take(maxItems)
+            .value();
     }
 }

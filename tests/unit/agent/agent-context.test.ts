@@ -34,30 +34,28 @@ describe('createClaudeAgent context integration', () => {
         // Create mock context builder
         mockContextBuilder = {
             loadCoreIdentity:       mock(_.constant(Promise.resolve(''))),
-            loadRecentContext:      mock(_.constant(Promise.resolve([]))),
-            buildSystemContext:     mock(_.constant(Promise.resolve(''))),
+            loadHotState:           mock(_.constant(Promise.resolve(''))),
+            loadUserMemories:       mock(_.constant(Promise.resolve(''))),
             // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function
             recordAccess:           mock(async () => {}),
             loadRecentEvents:       mock(_.constant(Promise.resolve([]))),
             loadUserTimezone:       mock(_.constant(Promise.resolve(undefined))),
-            buildUserMessagePrefix: mock(async (userId: string, botUserId?: string): Promise<string> => {
+            buildUserMessagePrefix: mock(async (userId: string, _userTimezone?: string): Promise<string> => {
                 const sections: string[] = [];
 
-                const userMemories = await mockContextBuilder.loadRecentContext(userId, 3);
-                if(userMemories.length > 0) {
-                    sections.push(`[About this user]\n${_.map(userMemories, m => `- ${m}`).join('\n')}`);
+                const userMemories = await mockContextBuilder.loadUserMemories(userId);
+                if(userMemories) {
+                    sections.push(`[About this user]\n${userMemories}`);
                 }
 
-                if(botUserId) {
-                    const botMemories = await mockContextBuilder.loadRecentContext(botUserId, 2);
-                    if(botMemories.length > 0) {
-                        sections.push(`[Your recent activities]\n${_.map(botMemories, m => `- ${m}`).join('\n')}`);
-                    }
+                const hotState = await mockContextBuilder.loadHotState();
+                if(hotState) {
+                    sections.push(`[Current state]\n${hotState}`);
                 }
 
                 const events = await mockContextBuilder.loadRecentEvents(50);
                 if(events.length > 0) {
-                    sections.push(`[Recent events]\n${_.map(events, m => `- ${m}`).join('\n')}`);
+                    sections.push(`[Recent events]\n${events.join('\n')}`);
                 }
 
                 if(sections.length === 0) {
@@ -111,10 +109,9 @@ describe('createClaudeAgent context integration', () => {
         });
 
         test('should load recent context when contextBuilder provided', async () => {
-            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockResolvedValue([
-                'User likes coffee',
-                'User is working on TypeScript',
-            ]);
+            (mockContextBuilder.loadUserMemories as ReturnType<typeof mock>).mockResolvedValue(
+                '- /users/111222333/pref1 (1h ago): User likes coffee\n- /users/111222333/pref2 (2h ago): User is working on TypeScript'
+            );
 
             const agent = createClaudeAgent({
                 contextBuilder: mockContextBuilder,
@@ -156,7 +153,7 @@ describe('createClaudeAgent context integration', () => {
         });
 
         test('should handle empty recent context', async () => {
-            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockResolvedValue([]);
+            (mockContextBuilder.loadUserMemories as ReturnType<typeof mock>).mockResolvedValue('');
 
             const agent = createClaudeAgent({
                 contextBuilder: mockContextBuilder,
@@ -172,39 +169,10 @@ describe('createClaudeAgent context integration', () => {
         });
 
         test('should format multiple recent memories with newline-separated bullets', async () => {
-            // Mock returns memories only for user, empty for bot
-            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockImplementation((userId: string) => {
-                if(userId === '111222333') {
-                    return Promise.resolve(['First memory', 'Second memory', 'Third memory']);
-                }
-                return Promise.resolve([]);
-            });
-
-            const agent = createClaudeAgent({
-                contextBuilder: mockContextBuilder,
-            });
-
-            await agent.handleInput([mockMessageContext]);
-
-            // Verify the user memories section format (time section will precede it)
-            expect(querySpy).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    prompt: expect.stringContaining('[About this user]\n- First memory\n- Second memory\n- Third memory'),
-                })
+            // Mock returns user memories as formatted string
+            (mockContextBuilder.loadUserMemories as ReturnType<typeof mock>).mockResolvedValue(
+                '- /users/111222333/m1 (1h ago): First memory\n- /users/111222333/m2 (1h ago): Second memory\n- /users/111222333/m3 (1h ago): Third memory'
             );
-        });
-
-        test('should include bot recent activities when botUserId is present and returns memories', async () => {
-            // Mock returns memories for BOTH user and bot
-            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockImplementation((userId: string) => {
-                if(userId === '111222333') {
-                    return Promise.resolve(['User likes TypeScript']);
-                }
-                if(userId === 'bot_444555666') {
-                    return Promise.resolve(['Helped user debug code', 'Answered question about React']);
-                }
-                return Promise.resolve([]);
-            });
 
             const agent = createClaudeAgent({
                 contextBuilder: mockContextBuilder,
@@ -212,62 +180,16 @@ describe('createClaudeAgent context integration', () => {
 
             await agent.handleInput([mockMessageContext]);
 
-            // Verify the prompt includes the [Your recent activities] section with exact format
+            // Verify the user memories section format
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    prompt: expect.stringContaining('[Your recent activities]\n- Helped user debug code\n- Answered question about React'),
-                })
-            );
-        });
-
-        test('should not include bot activities section when botUserId returns empty memories', async () => {
-            // Mock returns memories for user only, empty for bot
-            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockImplementation((userId: string) => {
-                if(userId === '111222333') {
-                    return Promise.resolve(['User preference']);
-                }
-                return Promise.resolve([]);
-            });
-
-            const agent = createClaudeAgent({
-                contextBuilder: mockContextBuilder,
-            });
-
-            await agent.handleInput([mockMessageContext]);
-
-            // Verify the prompt does NOT include [Your recent activities]
-            const callArgs = querySpy.mock.calls[0][0];
-            expect(callArgs.prompt).not.toContain('[Your recent activities]');
-        });
-
-        test('should not include bot activities section when botUserId is undefined', async () => {
-            // Mock returns memories for user only
-            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockImplementation((userId: string) => {
-                if(userId === '111222333') {
-                    return Promise.resolve(['User preference']);
-                }
-                return Promise.resolve([]);
-            });
-
-            const agent = createClaudeAgent({
-                contextBuilder: mockContextBuilder,
-            });
-
-            // Create context without botUserId - omit the property entirely
-            const { botUserId: _removed, ...contextWithoutBot } = mockMessageContext;
-
-            await agent.handleInput([contextWithoutBot as typeof mockMessageContext]);
-
-            // Verify the prompt does NOT include [Your recent activities] section
-            expect(querySpy).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    prompt: expect.not.stringContaining('[Your recent activities]'),
+                    prompt: expect.stringContaining('[About this user]\n- /users/111222333/m1 (1h ago): First memory'),
                 })
             );
         });
 
         test('should include recent events when loadRecentEvents returns events', async () => {
-            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockResolvedValue([]);
+            (mockContextBuilder.loadUserMemories as ReturnType<typeof mock>).mockResolvedValue('');
             (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue([
                 'Server went online',
                 'New user joined #general',
@@ -279,16 +201,16 @@ describe('createClaudeAgent context integration', () => {
 
             await agent.handleInput([mockMessageContext]);
 
-            // Verify the prompt includes [Recent events] section with exact format
+            // Verify the prompt includes [Recent events] section with exact format (events already have "- " prefix from loadRecentEvents)
             expect(querySpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    prompt: expect.stringContaining('[Recent events]\n- Server went online\n- New user joined #general'),
+                    prompt: expect.stringContaining('[Recent events]\nServer went online\nNew user joined #general'),
                 })
             );
         });
 
         test('should not include recent events section when loadRecentEvents returns empty array', async () => {
-            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockResolvedValue([]);
+            (mockContextBuilder.loadUserMemories as ReturnType<typeof mock>).mockResolvedValue('');
             (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue([]);
 
             const agent = createClaudeAgent({
@@ -315,21 +237,14 @@ describe('createClaudeAgent context integration', () => {
 
             // Verify no memory sections are included
             expect(callArgs.prompt).not.toContain('[About this user]');
-            expect(callArgs.prompt).not.toContain('[Your recent activities]');
+            expect(callArgs.prompt).not.toContain('[Current state]');
             expect(callArgs.prompt).not.toContain('[Recent events]');
         });
 
         test('should join all context sections with double newlines', async () => {
-            // Mock returns memories for user, bot, AND events
-            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockImplementation((userId: string) => {
-                if(userId === '111222333') {
-                    return Promise.resolve(['User memory']);
-                }
-                if(userId === 'bot_444555666') {
-                    return Promise.resolve(['Bot activity']);
-                }
-                return Promise.resolve([]);
-            });
+            // Mock returns user memories, hot state, AND events
+            (mockContextBuilder.loadUserMemories as ReturnType<typeof mock>).mockResolvedValue('- User memory');
+            (mockContextBuilder.loadHotState as ReturnType<typeof mock>).mockResolvedValue('Hot state content');
             (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue(['Recent event']);
 
             const agent = createClaudeAgent({
@@ -344,44 +259,18 @@ describe('createClaudeAgent context integration', () => {
 
             // All sections should be present and separated by double newlines
             expect(prompt).toContain('[About this user]\n- User memory');
-            expect(prompt).toContain('[Your recent activities]\n- Bot activity');
-            expect(prompt).toContain('[Recent events]\n- Recent event');
+            expect(prompt).toContain('[Current state]\nHot state content');
+            expect(prompt).toContain('[Recent events]\nRecent event');
             expect(prompt).toContain('User @111222333 in #987654321 at 2025-01-15T12:00:00 UTC (UTC: 2025-01-15T12:00:00Z): Hello Claude!');
 
             // Verify double newline separation between sections
-            expect(prompt).toContain('[About this user]\n- User memory\n\n[Your recent activities]');
-            expect(prompt).toContain('[Your recent activities]\n- Bot activity\n\n[Recent events]');
-        });
-
-        test('should format bot activities and events with dash-space prefix', async () => {
-            // Test the "- " prefix format for both bot activities and events
-            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockImplementation((userId: string) => {
-                if(userId === 'bot_444555666') {
-                    return Promise.resolve(['Activity one', 'Activity two']);
-                }
-                return Promise.resolve([]);
-            });
-            (mockContextBuilder.loadRecentEvents as ReturnType<typeof mock>).mockResolvedValue([
-                'Event one',
-                'Event two',
-            ]);
-
-            const agent = createClaudeAgent({
-                contextBuilder: mockContextBuilder,
-            });
-
-            await agent.handleInput([mockMessageContext]);
-
-            const callArgs = querySpy.mock.calls[0][0];
-            // Verify bot activities format
-            expect(callArgs.prompt).toContain('- Activity one\n- Activity two');
-            // Verify events format
-            expect(callArgs.prompt).toContain('- Event one\n- Event two');
+            expect(prompt).toContain('[About this user]\n- User memory\n\n[Current state]');
+            expect(prompt).toContain('[Current state]\nHot state content\n\n[Recent events]');
         });
     });
 
-    describe('time context removed from user prompt', () => {
-        test('should NOT include time section in user message prompt when contextBuilder is provided', async () => {
+    describe('time context in user prompt', () => {
+        test('should NOT include time section when no context available', async () => {
             const agent = createClaudeAgent({
                 contextBuilder: mockContextBuilder,
             });
@@ -391,18 +280,15 @@ describe('createClaudeAgent context integration', () => {
             const callArgs = querySpy.mock.calls[0][0];
             const prompt = callArgs.prompt as string;
 
-            // Time should NOT be in user message prompt (it's in system prompt only)
+            // Time header alone doesn't count as context, so prefix is empty
             expect(prompt).not.toContain('## Current Time');
         });
 
-        test('should start user prompt with user memories when present', async () => {
-            // Mock user memories to have a section
-            (mockContextBuilder.loadRecentContext as ReturnType<typeof mock>).mockImplementation((userId: string) => {
-                if(userId === '111222333') {
-                    return Promise.resolve(['User likes TypeScript']);
-                }
-                return Promise.resolve([]);
-            });
+        test('should start user prompt with [About this user] when user memories present', async () => {
+            // Mock user memories to have content
+            (mockContextBuilder.loadUserMemories as ReturnType<typeof mock>).mockResolvedValue(
+                '- /users/111222333/pref (1h ago): User likes TypeScript'
+            );
 
             const agent = createClaudeAgent({
                 contextBuilder: mockContextBuilder,
@@ -413,7 +299,7 @@ describe('createClaudeAgent context integration', () => {
             const callArgs = querySpy.mock.calls[0][0];
             const prompt = callArgs.prompt as string;
 
-            // User memories should be the first section now
+            // User memories section should be present
             expect(prompt).toMatch(/^\[About this user\]/);
         });
     });
