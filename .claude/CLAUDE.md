@@ -134,7 +134,7 @@ Custom memory tool implementation with DynamoDB backend and three-layer architec
   - `backend-core.ts` - Core CRUD operations (single update method, no versioning)
   - `backend-query.ts` - Query operations (list, searchByTags, listByLayer, searchByTimeRange, getAutoLoadItems)
   - `backend-tag-index.ts` - Tag index CRUD with BatchWriteItem, META_COUNT atomic counters, and listTagCounts
-  - `handlers.ts` - All memory tool handlers (view, create, insert, str_replace, rename, search, recall, list_by_layer, consolidate)
+  - `handlers.ts` - All memory tool handlers (create, insert, str_replace, rename, search, recall, list_by_layer, consolidate)
   - `reconciliation/` - Tag index reconciliation with three phases: completeness (A), orphan cleanup (B), count verification (C)
   - `index.ts` - Public exports
 
@@ -184,6 +184,8 @@ Zod-validated configuration loading with env-var for type-safe environment varia
 - **Module Boundary Enforcement** with eslint-plugin-boundaries for architectural import rules
 - **@internal JSDoc Tags** for marking implementation-only exports
 - **Per-Tag Atomic Counters** replacing centralized tag registry for race-condition-free tag counting
+- **Sigmoid Memory Scoring** — `sigmoidScore()` combines access frequency with recency decay for state memory prioritization in `getAutoLoadItems`
+- **Tags as StringSet** — DynamoDB StringSet (SS) type with `Set<string>` in TypeScript throughout; MCP boundary converts JSON arrays to Sets
 - **Type Guards and Factory Functions** for branded types — `createLayerName()`, `createContentType()`, `isLayerName()`, `isContentType()` replace unsafe `as` casts with runtime-validated factories
 - **Class-Based Components** — `EventDeltaTracker`, `AnswerClassifier`, `StreamTracker`, `QuestionRegistry`, `DiscordRateLimiter`, `PresenceManager`, `MessageCoordinator`, `BotStateManagerImpl` use proper TypeScript classes with private fields instead of closure-based factories
 

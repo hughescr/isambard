@@ -449,7 +449,7 @@ export class MemoryToolBackendTagIndex {
         layer?: string,
         options?: ListOptions
     ): Promise<ListResult<TagIndexItem>> {
-        const normalizedTag = [...normalizeTags([tag])][0];
+        const normalizedTag = [...normalizeTags(new Set([tag]))][0];
         const pk = `TAG#${normalizedTag}`;
 
         // Stryker disable StringLiteral: DynamoDB expression variable names must match KeyConditionExpression
@@ -526,7 +526,7 @@ export class MemoryToolBackendTagIndex {
         }
 
         // Stryker disable next-line MethodExpression: Normalize all tags upfront to ensure case-insensitive matching
-        const normalizedTagsSet = normalizeTags(tags);
+        const normalizedTagsSet = normalizeTags(new Set(tags));
         const normalizedTags = [...normalizedTagsSet];
 
         // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: Early return optimization

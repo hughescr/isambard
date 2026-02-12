@@ -31,16 +31,15 @@ export function generateContentPreview(content: string): string {
 /**
  * Normalizes tags by lowercasing and deduplicating.
  * Applied on all write paths before index/registry operations.
- * @param tags - Set or array of tag strings
+ * @param tags - Set of tag strings
  * @returns Normalized, deduplicated, lowercase tags as Set
  */
-export function normalizeTags(tags: Set<string> | string[] | undefined): Set<string> {
+export function normalizeTags(tags: Set<string> | undefined): Set<string> {
     // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - early return for empty/undefined
-    if(!tags || (tags instanceof Set ? tags.size === 0 : tags.length === 0)) {
+    if(!tags || tags.size === 0) {
         return new Set();
     }
-    const source = tags instanceof Set ? [...tags] : tags;
-    return new Set(_map(source, tag => _toLower(tag)));
+    return new Set(_map([...tags], tag => _toLower(tag)));
 }
 
 /**
@@ -123,7 +122,7 @@ export class MemoryToolKeyGenerator {
    * Returns one key pair per tag. Empty array if no tags.
    *
    * @param path - Full path to the memory file
-   * @param tags - Set or array of tags
+   * @param tags - Set of tags
    * @returns Array of PK/SK pairs, one per tag
    *
    * @example
@@ -140,14 +139,13 @@ export class MemoryToolKeyGenerator {
    */
     static createTagIndexKeys(
         path: MemoryPath,
-        tags: Set<string> | string[]
+        tags: Set<string>
     ): { PK: string, SK: string }[] {
-        const tagsArray = tags instanceof Set ? [...tags] : tags;
         // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - _map([]) returns [] anyway
-        if(tagsArray.length === 0) {
+        if(tags.size === 0) {
             return [];
         }
-        return _map(tagsArray, tag => ({
+        return _map([...tags], tag => ({
             PK: `TAG#${tag}`,
             SK: `PATH#${path}`,
         }));

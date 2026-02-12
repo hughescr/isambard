@@ -213,41 +213,27 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
     });
 
     describe('normalizeTags', () => {
-        test('returns empty set for undefined', () => {
+        test('returns empty Set for undefined', () => {
             expect(normalizeTags(undefined)).toEqual(new Set());
         });
 
-        test('returns empty set for empty array', () => {
-            expect(normalizeTags([])).toEqual(new Set());
-        });
-
-        test('returns empty set for empty Set', () => {
+        test('returns empty Set for empty Set', () => {
             expect(normalizeTags(new Set<string>())).toEqual(new Set());
         });
 
-        test('lowercases all tags from array', () => {
-            expect(normalizeTags(['UPPERCASE', 'MixedCase', 'lowercase'])).toEqual(
-                new Set(['uppercase', 'mixedcase', 'lowercase'])
-            );
-        });
-
-        test('lowercases all tags from Set', () => {
+        test('lowercases all tags', () => {
             expect(normalizeTags(new Set(['UPPERCASE', 'MixedCase', 'lowercase']))).toEqual(
                 new Set(['uppercase', 'mixedcase', 'lowercase'])
             );
         });
 
         test('deduplicates tags', () => {
-            expect(normalizeTags(['tag1', 'tag2', 'tag1', 'tag3'])).toEqual(
+            expect(normalizeTags(new Set(['tag1', 'tag2', 'tag1', 'tag3']))).toEqual(
                 new Set(['tag1', 'tag2', 'tag3'])
             );
         });
 
         test('handles mixed case duplicates', () => {
-            expect(normalizeTags(['Craig', 'craig', 'CRAIG'])).toEqual(new Set(['craig']));
-        });
-
-        test('handles mixed case duplicates from Set', () => {
             expect(normalizeTags(new Set(['Craig', 'craig', 'CRAIG']))).toEqual(new Set(['craig']));
         });
     });
@@ -256,7 +242,7 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
         test('returns empty array for empty tags', () => {
             const result = MemoryToolKeyGenerator.createTagIndexKeys(
                 '/identity/core.md' as MemoryPath,
-                []
+                new Set<string>()
             );
             expect(result).toEqual([]);
         });
@@ -264,7 +250,7 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
         test('returns correct PK/SK for single tag', () => {
             const result = MemoryToolKeyGenerator.createTagIndexKeys(
                 '/identity/values.md' as MemoryPath,
-                ['important']
+                new Set(['important'])
             );
             expect(result).toHaveLength(1);
             expect(result[0]).toEqual({
@@ -276,7 +262,7 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
         test('returns correct PK/SK for multiple tags', () => {
             const result = MemoryToolKeyGenerator.createTagIndexKeys(
                 '/state/current.md' as MemoryPath,
-                ['active', 'priority', 'work']
+                new Set(['active', 'priority', 'work'])
             );
             expect(result).toHaveLength(3);
             expect(result[0]).toEqual({
@@ -296,7 +282,7 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
         test('PK format is TAG#{tag}', () => {
             const result = MemoryToolKeyGenerator.createTagIndexKeys(
                 '/test/file.md' as MemoryPath,
-                ['mytag']
+                new Set(['mytag'])
             );
             expect(result[0].PK).toMatch(/^TAG#/);
             expect(result[0].PK).toBe('TAG#mytag');
@@ -305,34 +291,10 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
         test('SK format is PATH#{path}', () => {
             const result = MemoryToolKeyGenerator.createTagIndexKeys(
                 '/identity/test.md' as MemoryPath,
-                ['tag']
+                new Set(['tag'])
             );
             expect(result[0].SK).toMatch(/^PATH#/);
             expect(result[0].SK).toBe('PATH#/identity/test.md');
-        });
-
-        test('returns empty array for empty Set', () => {
-            const result = MemoryToolKeyGenerator.createTagIndexKeys(
-                '/identity/core.md' as MemoryPath,
-                new Set<string>()
-            );
-            expect(result).toEqual([]);
-        });
-
-        test('returns correct PK/SK for Set input', () => {
-            const result = MemoryToolKeyGenerator.createTagIndexKeys(
-                '/identity/values.md' as MemoryPath,
-                new Set(['important', 'core'])
-            );
-            expect(result).toHaveLength(2);
-            expect(result).toContainEqual({
-                PK: 'TAG#important',
-                SK: 'PATH#/identity/values.md',
-            });
-            expect(result).toContainEqual({
-                PK: 'TAG#core',
-                SK: 'PATH#/identity/values.md',
-            });
         });
     });
 

@@ -302,27 +302,8 @@ describe.concurrent('memoryToolItemSchema - tags field', () => {
         }
     });
 
-    test('should parse string[] input and output Set<string> (backward compat)', () => {
-        const input = { ...baseItem, tags: ['tag1', 'tag2'] };
-        const result = memoryToolItemSchema.safeParse(input);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data.tags).toBeInstanceOf(Set);
-            expect(result.data.tags).toEqual(new Set(['tag1', 'tag2']));
-        }
-    });
-
     test('should handle undefined tags', () => {
         const result = memoryToolItemSchema.safeParse(baseItem);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data.tags).toBeUndefined();
-        }
-    });
-
-    test('should handle null tags (preprocessor converts to undefined)', () => {
-        const input = { ...baseItem, tags: null };
-        const result = memoryToolItemSchema.safeParse(input);
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data.tags).toBeUndefined();
@@ -339,13 +320,15 @@ describe.concurrent('memoryToolItemSchema - tags field', () => {
         }
     });
 
-    test('should handle empty array (backward compat)', () => {
-        const input = { ...baseItem, tags: [] as string[] };
+    test('should reject null tags', () => {
+        const input = { ...baseItem, tags: null };
         const result = memoryToolItemSchema.safeParse(input);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data.tags).toBeInstanceOf(Set);
-            expect(result.data.tags!.size).toBe(0);
-        }
+        expect(result.success).toBe(false);
+    });
+
+    test('should reject array tags', () => {
+        const input = { ...baseItem, tags: ['tag1', 'tag2'] };
+        const result = memoryToolItemSchema.safeParse(input);
+        expect(result.success).toBe(false);
     });
 });

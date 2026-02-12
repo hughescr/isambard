@@ -111,6 +111,21 @@ Strengthened type safety and modernized component architecture across the codeba
 - Updated all call sites, barrel exports, and test files
 - 100% mutation score on all changed files
 
+### Memory Scoring + Tags StringSet Migration (Completed February 2026)
+Combined two improvements to the memory system: sigmoid-based scoring for state memory prioritization and migration of tags from DynamoDB List to StringSet.
+
+**What was implemented:**
+- Sigmoid scoring function (`sigmoidScore`) combining access frequency (boost) with time-since-last-access (decay) for state memory prioritization
+- `recordAccess` wired into MCP view handler — fire-and-forget for state-layer paths, incrementing access count and last-accessed timestamp
+- `getAutoLoadItems` sorts state memories by sigmoid score instead of raw access count
+- Tags migrated from `string[]`/DynamoDB List (L) to `Set<string>`/DynamoDB StringSet (SS) throughout the entire codebase
+- All internal types, backend methods, tag index operations, handlers, MCP server boundaries, and reconciler updated for `Set<string>`
+- Custom `setsEqual()` helper replacing lodash `_.isEqual()` for proper order-insensitive Set comparison in reconciler
+- Removed dead `view()` handler from handlers.ts (MCP server has its own inline implementation)
+- DynamoDB migration script converted 10,657 items from List to StringSet
+- Post-migration cleanup: removed dual-read `z.preprocess()` backward compatibility, simplified `normalizeTags` and `createTagIndexKeys` to only accept `Set<string>`
+- 100% mutation score on all changed files
+
 ### Channel Discovery and Registration (Completed February 2026)
 Dynamic channel discovery and registration system replacing hardcoded channel IDs.
 
