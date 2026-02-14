@@ -40,6 +40,8 @@ const EXPLICIT_TOOLS = [
     'Bash',
     // Agent spawning
     'Task',
+    'TaskOutput',
+    'TaskStop',
     // Task management (new task system)
     'TaskCreate',
     'TaskUpdate',
@@ -289,7 +291,7 @@ export interface HandleInputResult {
     sessionId?:     string
     /** Whether processing was interrupted */
     wasInterrupted: boolean
-    /** Stream tracker with captured progress */
+    /** Stream tracker with captured progress and background task collection state */
     streamTracker:  StreamTracker
 }
 
@@ -363,6 +365,8 @@ function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: 
         'EnterPlanMode',
         'ExitPlanMode',
         'Task',
+        'TaskOutput',
+        'TaskStop',
         // Skills
         'Skill',
         // Bash commands (specific safe commands only)
@@ -997,6 +1001,94 @@ function buildErrorHandleInputResult(
     return buildHandleInputResult('', abortedBySignal, capturedSessionId, tracker);
 }
 
+/**
+ * Result from auto-resume attempt to collect background tasks.
+ */
+interface AutoResumeResult {
+    /** Updated response text (original preserved if resume fails) */
+    lastAssistantText: string
+    /** Updated session ID (original preserved if resume fails) */
+    capturedSessionId: string | undefined
+}
+
+/**
+ * Attempt to auto-resume a session to collect uncollected background tasks.
+ *
+ * This function is called when the agent ends its turn with background tasks
+ * that were launched but not collected via TaskOutput. It attempts to resume
+ * the session with a prompt instructing the agent to collect the results.
+ *
+ * @param tracker - StreamTracker instance for monitoring the resume
+ * @param lastAssistantText - Original response text to preserve on failure
+ * @param capturedSessionId - Session ID to resume
+ * @param retryableQuery - Retryable query function for Claude API calls
+ * @param queryOptions - Query options for the agent
+ * @param options - HandleInput options (including abort controller)
+ * @param taskPersistenceCoordinator - Task persistence coordinator if available
+ * @returns Updated text and sessionId (original values preserved on failure)
+ *
+ * @remarks
+ * - Max 1 auto-resume attempt per handleInput call
+ * - Preserves initial response text on failure (try-catch wrapper)
+ * - Logs warnings for incomplete collection or errors
+ */
+async function attemptAutoResume(
+    tracker: StreamTracker,
+    lastAssistantText: string,
+    capturedSessionId: string,
+    retryableQuery: typeof import('@anthropic-ai/claude-agent-sdk').query,
+    queryOptions: ReturnType<typeof buildQueryOptions>,
+    options: HandleInputOptions | undefined,
+    taskPersistenceCoordinator: TaskPersistenceCoordinator | undefined
+): Promise<AutoResumeResult> {
+    /* Stryker disable all: Observability - logging for debugging auto-resume */
+    logger.warn({
+        sessionId: capturedSessionId,
+        msg:       'Stream ended with uncollected background tasks, resuming to collect results',
+    });
+    /* Stryker restore all */
+
+    let updatedText = lastAssistantText;
+    let updatedSessionId: string | undefined = capturedSessionId;
+
+    // Stryker disable BlockStatement: try-catch wraps resume to preserve initial response on failure
+    try {
+        const resumeResponse = retryableQuery({
+            prompt:  'You launched background tasks but ended your turn without collecting the results. Use the TaskOutput tool to collect the results from each background task you launched, then provide your final response incorporating those results.',
+            options: {
+                ...queryOptions,
+                resume: capturedSessionId,
+            },
+        });
+
+        const resumeResult = await processStreamEvents(resumeResponse, tracker, options, taskPersistenceCoordinator);
+
+        // Use resumed text if available, otherwise keep original
+        if(resumeResult.lastAssistantText) {
+            updatedText = resumeResult.lastAssistantText;
+        }
+        if(resumeResult.capturedSessionId) {
+            updatedSessionId = resumeResult.capturedSessionId;
+        }
+
+        // Log if auto-resume still didn't collect all tasks
+        /* Stryker disable all: Observability - logging for debugging incomplete collection */
+        if(tracker.hasUncollectedBackgroundTasks()) {
+            logger.warn({
+                sessionId: updatedSessionId,
+                msg:       'Auto-resume did not collect all background tasks',
+            });
+        }
+        /* Stryker restore all */
+    } catch (resumeError) {
+        const errorMessage = _.isError(resumeError) ? resumeError.message : String(resumeError);
+        logger.error({ error: resumeError, sessionId: capturedSessionId }, `Auto-resume failed: ${errorMessage}`);
+    }
+    // Stryker restore BlockStatement
+
+    return { lastAssistantText: updatedText, capturedSessionId: updatedSessionId };
+}
+
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, taskPersistenceCoordinator } = options;
 
@@ -1053,9 +1145,22 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 });
 
                 // 7. Process stream events and track progress
-                const { lastAssistantText, wasInterrupted, capturedSessionId: sessionId }
+                const { lastAssistantText: initialText, wasInterrupted: initialInterrupted, capturedSessionId: sessionId }
                     = await processStreamEvents(response, tracker, options, taskPersistenceCoordinator);
                 capturedSessionId = sessionId;
+                let lastAssistantText = initialText;
+                const wasInterrupted = initialInterrupted;
+
+                // 8. Auto-resume if background tasks were launched but not collected
+                if(tracker.hasUncollectedBackgroundTasks() && !wasInterrupted && capturedSessionId) {
+                    const queryOptions = buildQueryOptions(systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, options);
+                    const resumeResult = await attemptAutoResume(
+                        tracker, lastAssistantText, capturedSessionId,
+                        retryableQuery, queryOptions, options, taskPersistenceCoordinator
+                    );
+                    lastAssistantText = resumeResult.lastAssistantText;
+                    capturedSessionId = resumeResult.capturedSessionId;
+                }
 
                 // 9. Clean up session only on completion (not on interrupt)
                 cleanupSessionIfComplete(wasInterrupted, capturedSessionId);

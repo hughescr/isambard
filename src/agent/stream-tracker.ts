@@ -2,7 +2,8 @@
  * Stream Tracker Module
  *
  * Tracks partial work during agent streaming so that when processing is interrupted
- * by a new message, we can capture what work was in progress.
+ * by a new message, we can capture what work was in progress. Also tracks background
+ * task launches and result collections to detect uncollected background tasks.
  */
 
 import _ from 'lodash';
@@ -16,13 +17,15 @@ import { extractSessionId } from './session-cleanup';
  */
 export interface StreamProgress {
     /** Latest thinking content from the most recent assistant event */
-    thinking:       string
+    thinking:                   string
     /** Latest text content from the most recent assistant event */
-    text:           string
+    text:                       string
     /** The last tool_use block from the most recent assistant event that had tool_use blocks */
-    pendingToolUse: ToolUseBlock | null
+    pendingToolUse:             ToolUseBlock | null
     /** Session ID captured from system init event */
-    sessionId:      string | undefined
+    sessionId:                  string | undefined
+    /** Whether there are background tasks launched but not yet collected via TaskOutput */
+    uncollectedBackgroundTasks: boolean
 }
 
 /**
@@ -56,6 +59,8 @@ export class StreamTracker {
     private text = '';
     private pendingToolUse: ToolUseBlock | null = null;
     private sessionId:      string | undefined;
+    private backgroundTaskLaunches = 0;
+    private taskOutputCalls = 0;
 
     /**
      * Update the tracker with a new stream event.
@@ -93,11 +98,37 @@ export class StreamTracker {
             if(toolUses.length > 0) {
                 // Get the last tool_use block
                 this.pendingToolUse = _.last(toolUses) ?? null;
+
+                // Track background task launches and TaskOutput calls
+                this.trackBackgroundTasks(toolUses);
             } else if(message.message?.content !== undefined) {
                 // If there's content but no tool_use, clear pendingToolUse
                 this.pendingToolUse = null;
             }
         }
+    }
+
+    /**
+     * Track background task launches and TaskOutput collection calls.
+     * @param toolUses Array of tool_use blocks to inspect
+     */
+    private trackBackgroundTasks(toolUses: ToolUseBlock[]): void {
+        for(const toolUse of toolUses) {
+            if(toolUse.name === 'Task' && (toolUse.input as Record<string, unknown>)?.run_in_background === true) {
+                this.backgroundTaskLaunches++;
+            }
+            if(toolUse.name === 'TaskOutput') {
+                this.taskOutputCalls++;
+            }
+        }
+    }
+
+    /**
+     * Check if there are background tasks that have been launched but not yet collected.
+     * @returns true if there are uncollected background tasks
+     */
+    hasUncollectedBackgroundTasks(): boolean {
+        return this.backgroundTaskLaunches > this.taskOutputCalls;
     }
 
     /**
@@ -107,10 +138,11 @@ export class StreamTracker {
     getProgress(): StreamProgress {
         // Return a copy to prevent external mutation
         return {
-            thinking:       this.thinking,
-            text:           this.text,
-            pendingToolUse: this.pendingToolUse,
-            sessionId:      this.sessionId,
+            thinking:                   this.thinking,
+            text:                       this.text,
+            pendingToolUse:             this.pendingToolUse,
+            sessionId:                  this.sessionId,
+            uncollectedBackgroundTasks: this.hasUncollectedBackgroundTasks(),
         };
     }
 
@@ -122,5 +154,7 @@ export class StreamTracker {
         this.text = '';
         this.pendingToolUse = null;
         this.sessionId = undefined;
+        this.backgroundTaskLaunches = 0;
+        this.taskOutputCalls = 0;
     }
 }

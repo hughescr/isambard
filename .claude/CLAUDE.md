@@ -74,7 +74,7 @@ The agent subsystem connects Discord to Claude with persistent memory:
   - `system-prompt.ts` - Main system prompt for the agent
   - `index.ts` - Public exports
 - `src/agent/event-delta-tracker.ts` - `EventDeltaTracker` class for tracking new events between agent interactions
-- `src/agent/stream-tracker.ts` - `StreamTracker` class for tracking Claude streaming response progress
+- `src/agent/stream-tracker.ts` - `StreamTracker` class for tracking Claude streaming response progress and background task collection state
 - `src/agent/answer-classifier/` - Answer classification subsystem
   - `classifier.ts` - `AnswerClassifier` class for LLM-based answer classification
 - `src/agent/question-registry/` - Question lifecycle management
@@ -188,6 +188,7 @@ Zod-validated configuration loading with env-var for type-safe environment varia
 - **Tags as StringSet** — DynamoDB StringSet (SS) type with `Set<string>` in TypeScript throughout; MCP boundary converts JSON arrays to Sets
 - **Type Guards and Factory Functions** for branded types — `createLayerName()`, `createContentType()`, `isLayerName()`, `isContentType()` replace unsafe `as` casts with runtime-validated factories
 - **Class-Based Components** — `EventDeltaTracker`, `AnswerClassifier`, `StreamTracker`, `QuestionRegistry`, `DiscordRateLimiter`, `PresenceManager`, `MessageCoordinator`, `BotStateManagerImpl` use proper TypeScript classes with private fields instead of closure-based factories
+- **Background Task Auto-Resume** — `StreamTracker` counts background task launches vs `TaskOutput` collections; `handleInput` auto-resumes (max 1 attempt) when uncollected tasks detected, preserving initial response on failure
 
 ## Roadmaps
 - [Short-term (Weeks 1-2)](../roadmaps/short-term.md)

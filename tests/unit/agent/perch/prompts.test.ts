@@ -312,7 +312,8 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
                     name:  'test_tool',
                     input: {},
                 },
-                sessionId: undefined,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             newMessage: {
                 author:      'TestUser',
@@ -330,10 +331,11 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
     test('should include time header with UTC time', () => {
         const options: PerchInterruptedOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             newMessage: {
                 author:      'TestUser',
@@ -350,10 +352,11 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
     test('should include interrupted header', () => {
         const options: PerchInterruptedOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             newMessage: {
                 author:      'TestUser',
@@ -370,10 +373,11 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
     test('should include partial thinking if present', () => {
         const options: PerchInterruptedOptions = {
             partialWork: {
-                thinking:       'I was thinking about X',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   'I was thinking about X',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             newMessage: {
                 author:      'TestUser',
@@ -390,10 +394,11 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
     test('should not include thinking section if empty', () => {
         const options: PerchInterruptedOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             newMessage: {
                 author:      'TestUser',
@@ -409,10 +414,11 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
     test('should include partial text if present', () => {
         const options: PerchInterruptedOptions = {
             partialWork: {
-                thinking:       '',
-                text:           'I was composing a response',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       'I was composing a response',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             newMessage: {
                 author:      'TestUser',
@@ -429,10 +435,11 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
     test('should not include text section if empty', () => {
         const options: PerchInterruptedOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             newMessage: {
                 author:      'TestUser',
@@ -456,7 +463,8 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
                     name:  'search_memory',
                     input: {},
                 },
-                sessionId: undefined,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             newMessage: {
                 author:      'TestUser',
@@ -472,10 +480,11 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
     test('should not include tool use section if not present', () => {
         const options: PerchInterruptedOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             newMessage: {
                 author:      'TestUser',
@@ -491,10 +500,11 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
     test('should include new message details', () => {
         const options: PerchInterruptedOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             newMessage: {
                 author:      'Alice',
@@ -512,10 +522,11 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
     test('should include task instructions', () => {
         const options: PerchInterruptedOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             newMessage: {
                 author:      'TestUser',
@@ -535,10 +546,11 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
     test('should build correct structure with empty partial work', () => {
         const options: PerchInterruptedOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             newMessage: {
                 author:      'Alice',
@@ -576,7 +588,8 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
                     name:  'memory_search',
                     input: {},
                 },
-                sessionId: undefined,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             newMessage: {
                 author:      'Bob',
@@ -595,10 +608,11 @@ describe.concurrent('buildPerchInterruptedPrompt', () => {
     test('should mention message was already handled', () => {
         const options: PerchInterruptedOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             newMessage: {
                 author:      'TestUser',
@@ -624,7 +638,8 @@ describe.concurrent('buildPerchTimeoutPrompt', () => {
                     name:  'save_memory',
                     input: {},
                 },
-                sessionId: undefined,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             sessionDuration:   40,
             maxSessionMinutes: 45,
@@ -639,10 +654,11 @@ describe.concurrent('buildPerchTimeoutPrompt', () => {
     test('should include time header with UTC time', () => {
         const options: PerchTimeoutOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             sessionDuration:   30,
             maxSessionMinutes: 45,
@@ -656,10 +672,11 @@ describe.concurrent('buildPerchTimeoutPrompt', () => {
     test('should include timeout header', () => {
         const options: PerchTimeoutOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             sessionDuration:   30,
             maxSessionMinutes: 45,
@@ -672,10 +689,11 @@ describe.concurrent('buildPerchTimeoutPrompt', () => {
     test('should include session duration information', () => {
         const options: PerchTimeoutOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             sessionDuration:   35,
             maxSessionMinutes: 45,
@@ -689,10 +707,11 @@ describe.concurrent('buildPerchTimeoutPrompt', () => {
     test('should include wrap-up instructions', () => {
         const options: PerchTimeoutOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             sessionDuration:   30,
             maxSessionMinutes: 45,
@@ -708,10 +727,11 @@ describe.concurrent('buildPerchTimeoutPrompt', () => {
     test('should include partial thinking if present', () => {
         const options: PerchTimeoutOptions = {
             partialWork: {
-                thinking:       'I was exploring memory patterns',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   'I was exploring memory patterns',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             sessionDuration:   30,
             maxSessionMinutes: 45,
@@ -725,10 +745,11 @@ describe.concurrent('buildPerchTimeoutPrompt', () => {
     test('should not include thinking section if empty', () => {
         const options: PerchTimeoutOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             sessionDuration:   30,
             maxSessionMinutes: 45,
@@ -741,10 +762,11 @@ describe.concurrent('buildPerchTimeoutPrompt', () => {
     test('should include partial text if present', () => {
         const options: PerchTimeoutOptions = {
             partialWork: {
-                thinking:       '',
-                text:           'I was writing up findings',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       'I was writing up findings',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             sessionDuration:   30,
             maxSessionMinutes: 45,
@@ -758,10 +780,11 @@ describe.concurrent('buildPerchTimeoutPrompt', () => {
     test('should not include text section if empty', () => {
         const options: PerchTimeoutOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             sessionDuration:   30,
             maxSessionMinutes: 45,
@@ -782,7 +805,8 @@ describe.concurrent('buildPerchTimeoutPrompt', () => {
                     name:  'store_memory',
                     input: {},
                 },
-                sessionId: undefined,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             sessionDuration:   30,
             maxSessionMinutes: 45,
@@ -795,10 +819,11 @@ describe.concurrent('buildPerchTimeoutPrompt', () => {
     test('should not include tool use section if not present', () => {
         const options: PerchTimeoutOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             sessionDuration:   30,
             maxSessionMinutes: 45,
@@ -811,10 +836,11 @@ describe.concurrent('buildPerchTimeoutPrompt', () => {
     test('should build correct structure with minimal options', () => {
         const options: PerchTimeoutOptions = {
             partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: null,
-                sessionId:      undefined,
+                thinking:                   '',
+                text:                       '',
+                pendingToolUse:             null,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             sessionDuration:   25,
             maxSessionMinutes: 45,
@@ -849,7 +875,8 @@ describe.concurrent('buildPerchTimeoutPrompt', () => {
                     name:  'create_task',
                     input: {},
                 },
-                sessionId: undefined,
+                sessionId:                  undefined,
+                uncollectedBackgroundTasks: false,
             },
             sessionDuration:   40,
             maxSessionMinutes: 45,

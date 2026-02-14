@@ -383,6 +383,8 @@ describe('createClaudeAgent', () => {
                 'WebSearch',
                 'Bash',
                 'Task',
+                'TaskOutput',
+                'TaskStop',
                 'TaskCreate',
                 'TaskUpdate',
                 'TaskGet',
@@ -412,6 +414,8 @@ describe('createClaudeAgent', () => {
             expect(tools).toContain('WebSearch');
             expect(tools).toContain('Bash');
             expect(tools).toContain('Task');
+            expect(tools).toContain('TaskOutput');
+            expect(tools).toContain('TaskStop');
             expect(tools).toContain('TaskCreate');
             expect(tools).toContain('TaskUpdate');
             expect(tools).toContain('TaskGet');
@@ -601,6 +605,8 @@ describe('createClaudeAgent', () => {
                 'EnterPlanMode',
                 'ExitPlanMode',
                 'Task',
+                'TaskOutput',
+                'TaskStop',
                 // Skills
                 'Skill',
                 // Bash commands (specific safe commands only)
@@ -638,6 +644,8 @@ describe('createClaudeAgent', () => {
                 'EnterPlanMode',
                 'ExitPlanMode',
                 'Task',
+                'TaskOutput',
+                'TaskStop',
                 // Skills
                 'Skill',
                 // Bash commands (specific safe commands only)
@@ -941,10 +949,11 @@ describe('createClaudeAgent', () => {
             await agent.handleInput([mockMessageContext], {
                 resumeContext: {
                     partialWork: {
-                        thinking:       'resuming...',
-                        text:           '',
-                        pendingToolUse: null,
-                        sessionId:      undefined,
+                        thinking:                   'resuming...',
+                        text:                       '',
+                        pendingToolUse:             null,
+                        sessionId:                  undefined,
+                        uncollectedBackgroundTasks: false,
                     },
                     newEvents:   [],
                     newMessages: [],
@@ -1263,10 +1272,11 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             const resumeContext = {
                 partialWork: {
-                    thinking:       'I was thinking...',
-                    text:           'I was writing...',
-                    pendingToolUse: null,
-                    sessionId:      undefined,
+                    thinking:                   'I was thinking...',
+                    text:                       'I was writing...',
+                    pendingToolUse:             null,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents:   ['Event 1', 'Event 2'],
                 newMessages: [mockMessageContext],
@@ -2677,6 +2687,569 @@ describe('createClaudeAgent', () => {
                 return logData?.eventType === 'tool_response';
             });
             expect(toolResponseLog).toBeUndefined();
+        });
+
+        describe('Background task auto-resume', () => {
+            test('should auto-resume when background tasks are uncollected', async () => {
+                let callCount = 0;
+                querySpy.mockImplementation((_params: any): any => {
+                    callCount++;
+                    if(callCount === 1) {
+                        async function* firstCall() {
+                            yield { type: 'system' as const, subtype: 'init' as const, session_id: 'test-session-bg' };
+                            yield {
+                                type:    'assistant' as const,
+                                message: {
+                                    content: [{
+                                        type:  'tool_use' as const,
+                                        id:    'tool_bg1',
+                                        name:  'Task',
+                                        input: { description: 'test', prompt: 'do work', subagent_type: 'general-purpose', run_in_background: true },
+                                    }],
+                                },
+                            };
+                            yield {
+                                type:    'assistant' as const,
+                                message: {
+                                    content: [{ type: 'text' as const, text: 'I launched a background task' }],
+                                },
+                            };
+                        }
+                        return firstCall();
+                    }
+                    // Second call (resume)
+                    async function* resumeCall() {
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{
+                                    type:  'tool_use' as const,
+                                    id:    'tool_output1',
+                                    name:  'TaskOutput',
+                                    input: { task_id: 'bg-task-1', block: true, timeout: 30000 },
+                                }],
+                            },
+                        };
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{ type: 'text' as const, text: 'Here are the collected results' }],
+                            },
+                        };
+                    }
+                    return resumeCall();
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext]);
+
+                // Should have called query twice (initial + resume)
+                expect(querySpy).toHaveBeenCalledTimes(2);
+
+                // Second call should have resume option set
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+                const secondCallParams = querySpy.mock.calls[1][0];
+                expect(secondCallParams.options.resume).toBe('test-session-bg');
+
+                // Should use the resumed text
+                expect(result.response).toBe('Here are the collected results');
+            });
+
+            test('should use resumed text when available', async () => {
+                let callCount = 0;
+                querySpy.mockImplementation((_params: any): any => {
+                    callCount++;
+                    if(callCount === 1) {
+                        async function* firstCall() {
+                            yield { type: 'system' as const, subtype: 'init' as const, session_id: 'test-session-resume-text' };
+                            yield {
+                                type:    'assistant' as const,
+                                message: {
+                                    content: [{
+                                        type:  'tool_use' as const,
+                                        id:    'tool_bg2',
+                                        name:  'Task',
+                                        input: { description: 'test', prompt: 'do work', subagent_type: 'general-purpose', run_in_background: true },
+                                    }],
+                                },
+                            };
+                            yield {
+                                type:    'assistant' as const,
+                                message: {
+                                    content: [{ type: 'text' as const, text: 'First response' }],
+                                },
+                            };
+                        }
+                        return firstCall();
+                    }
+                    // Second call (resume) with different text
+                    async function* resumeCall() {
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{ type: 'text' as const, text: 'Resumed response with collected results' }],
+                            },
+                        };
+                    }
+                    return resumeCall();
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext]);
+
+                // Should use the resumed text, not the first
+                expect(result.response).toBe('Resumed response with collected results');
+                expect(result.response).not.toBe('First response');
+            });
+
+            test('should not auto-resume when no background tasks', async () => {
+                querySpy.mockImplementation((_params: any): any => {
+                    async function* normalResponse() {
+                        yield { type: 'system' as const, subtype: 'init' as const, session_id: 'test-session-no-bg' };
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{ type: 'text' as const, text: 'Normal response without background tasks' }],
+                            },
+                        };
+                    }
+                    return normalResponse();
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext]);
+
+                // Should only call query once
+                expect(querySpy).toHaveBeenCalledTimes(1);
+                expect(result.response).toBe('Normal response without background tasks');
+            });
+
+            test('should not auto-resume when interrupted', async () => {
+                const abortController = new AbortController();
+
+                querySpy.mockImplementation((_params: any): any => {
+                    async function* interruptedResponse() {
+                        yield { type: 'system' as const, subtype: 'init' as const, session_id: 'test-session-interrupted' };
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{
+                                    type:  'tool_use' as const,
+                                    id:    'tool_bg3',
+                                    name:  'Task',
+                                    input: { description: 'test', prompt: 'do work', subagent_type: 'general-purpose', run_in_background: true },
+                                }],
+                            },
+                        };
+                        // Simulate interruption
+                        abortController.abort();
+                        throw new Error('AbortError');
+                    }
+                    return interruptedResponse();
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext], { abortController });
+
+                // Should only call query once (no resume attempt)
+                expect(querySpy).toHaveBeenCalledTimes(1);
+                expect(result.wasInterrupted).toBe(true);
+                expect(result.response).toBeNull();
+            });
+
+            test('should not auto-resume without session ID', async () => {
+                querySpy.mockImplementation((_params: any): any => {
+                    async function* noSessionResponse() {
+                        // No system init event, no session ID
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{
+                                    type:  'tool_use' as const,
+                                    id:    'tool_bg4',
+                                    name:  'Task',
+                                    input: { description: 'test', prompt: 'do work', subagent_type: 'general-purpose', run_in_background: true },
+                                }],
+                            },
+                        };
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{ type: 'text' as const, text: 'Response without session' }],
+                            },
+                        };
+                    }
+                    return noSessionResponse();
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext]);
+
+                // Should only call query once (no resume without session ID)
+                expect(querySpy).toHaveBeenCalledTimes(1);
+                expect(result.response).toBe('Response without session');
+            });
+
+            test('should log warning when auto-resume doesn\'t collect all tasks', async () => {
+                mockLogger.warn.mockClear();
+
+                querySpy.mockImplementation((_params: any): any => {
+                    async function* bothLaunchBackgroundTasks() {
+                        yield { type: 'system' as const, subtype: 'init' as const, session_id: 'test-session-uncollected' };
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{
+                                    type:  'tool_use' as const,
+                                    id:    'tool_bg5',
+                                    name:  'Task',
+                                    input: { description: 'test', prompt: 'do work', subagent_type: 'general-purpose', run_in_background: true },
+                                }],
+                            },
+                        };
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{ type: 'text' as const, text: 'Launched task but didn\'t collect' }],
+                            },
+                        };
+                    }
+                    return bothLaunchBackgroundTasks();
+                });
+
+                const agent = createClaudeAgent({});
+                await agent.handleInput([mockMessageContext]);
+
+                // Should log warning about uncollected tasks on first call
+                const warnCalls = mockLogger.warn.mock.calls;
+                const resumeWarning = _.find(warnCalls, (call: unknown[]) => {
+                    const logData = call[0] as { msg?: string };
+                    return logData?.msg === 'Stream ended with uncollected background tasks, resuming to collect results';
+                });
+                expect(resumeWarning).toBeDefined();
+
+                // Should also log warning about incomplete collection after resume
+                const incompleteWarning = _.find(warnCalls, (call: unknown[]) => {
+                    const logData = call[0] as { msg?: string };
+                    return logData?.msg === 'Auto-resume did not collect all background tasks';
+                });
+                expect(incompleteWarning).toBeDefined();
+            });
+
+            test('should pass non-empty resume prompt containing TaskOutput instruction', async () => {
+                let callCount = 0;
+                querySpy.mockImplementation((_params: any): any => {
+                    callCount++;
+                    if(callCount === 1) {
+                        async function* firstCall() {
+                            yield { type: 'system' as const, subtype: 'init' as const, session_id: 'session-prompt-test' };
+                            yield {
+                                type:    'assistant' as const,
+                                message: {
+                                    content: [{
+                                        type:  'tool_use' as const,
+                                        id:    'bg1',
+                                        name:  'Task',
+                                        input: { description: 'test', prompt: 'work', subagent_type: 'general-purpose', run_in_background: true },
+                                    }],
+                                },
+                            };
+                            yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched' }] } };
+                        }
+                        return firstCall();
+                    }
+                    async function* resumeCall() {
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{
+                                    type:  'tool_use' as const,
+                                    id:    'to1',
+                                    name:  'TaskOutput',
+                                    input: { task_id: 'bg1', block: true, timeout: 30000 },
+                                }],
+                            },
+                        };
+                        yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Done' }] } };
+                    }
+                    return resumeCall();
+                });
+
+                const agent = createClaudeAgent({});
+                await agent.handleInput([mockMessageContext]);
+
+                expect(querySpy).toHaveBeenCalledTimes(2);
+                const resumePrompt = (querySpy.mock.calls[1] as any[])[0].prompt as string;
+                expect(resumePrompt).not.toBe('');
+                expect(resumePrompt).toContain('TaskOutput');
+            });
+
+            test('should preserve original text when resume returns no text', async () => {
+                let callCount = 0;
+                querySpy.mockImplementation((_params: any): any => {
+                    callCount++;
+                    if(callCount === 1) {
+                        async function* firstCall() {
+                            yield { type: 'system' as const, subtype: 'init' as const, session_id: 'session-preserve-text' };
+                            yield {
+                                type:    'assistant' as const,
+                                message: {
+                                    content: [{
+                                        type:  'tool_use' as const,
+                                        id:    'bg1',
+                                        name:  'Task',
+                                        input: { description: 'test', prompt: 'work', subagent_type: 'general-purpose', run_in_background: true },
+                                    }],
+                                },
+                            };
+                            yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Original response text' }] } };
+                        }
+                        return firstCall();
+                    }
+                    // Resume returns only tool_use, no text
+                    async function* resumeCall() {
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{
+                                    type:  'tool_use' as const,
+                                    id:    'to1',
+                                    name:  'TaskOutput',
+                                    input: { task_id: 'bg1', block: true, timeout: 30000 },
+                                }],
+                            },
+                        };
+                    }
+                    return resumeCall();
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext]);
+
+                // Original text should be preserved since resume returned no text
+                expect(result.response).toBe('Original response text');
+            });
+
+            test('should update session ID when resume provides a new one', async () => {
+                let callCount = 0;
+                querySpy.mockImplementation((_params: any): any => {
+                    callCount++;
+                    if(callCount === 1) {
+                        async function* firstCall() {
+                            yield { type: 'system' as const, subtype: 'init' as const, session_id: 'original-session' };
+                            yield {
+                                type:    'assistant' as const,
+                                message: {
+                                    content: [{
+                                        type:  'tool_use' as const,
+                                        id:    'bg1',
+                                        name:  'Task',
+                                        input: { description: 'test', prompt: 'work', subagent_type: 'general-purpose', run_in_background: true },
+                                    }],
+                                },
+                            };
+                            yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched' }] } };
+                        }
+                        return firstCall();
+                    }
+                    async function* resumeCall() {
+                        yield { type: 'system' as const, subtype: 'init' as const, session_id: 'resumed-session' };
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{
+                                    type:  'tool_use' as const,
+                                    id:    'to1',
+                                    name:  'TaskOutput',
+                                    input: { task_id: 'bg1', block: true, timeout: 30000 },
+                                }],
+                            },
+                        };
+                        yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Collected' }] } };
+                    }
+                    return resumeCall();
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext]);
+
+                // Session ID should be updated to the resumed session
+                expect(result.sessionId).toBe('resumed-session');
+            });
+
+            test('should preserve original session ID when resume provides none', async () => {
+                let callCount = 0;
+                querySpy.mockImplementation((_params: any): any => {
+                    callCount++;
+                    if(callCount === 1) {
+                        async function* firstCall() {
+                            yield { type: 'system' as const, subtype: 'init' as const, session_id: 'original-session-keep' };
+                            yield {
+                                type:    'assistant' as const,
+                                message: {
+                                    content: [{
+                                        type:  'tool_use' as const,
+                                        id:    'bg1',
+                                        name:  'Task',
+                                        input: { description: 'test', prompt: 'work', subagent_type: 'general-purpose', run_in_background: true },
+                                    }],
+                                },
+                            };
+                            yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched' }] } };
+                        }
+                        return firstCall();
+                    }
+                    // Resume returns no system init event (no session ID)
+                    async function* resumeCall() {
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{
+                                    type:  'tool_use' as const,
+                                    id:    'to1',
+                                    name:  'TaskOutput',
+                                    input: { task_id: 'bg1', block: true, timeout: 30000 },
+                                }],
+                            },
+                        };
+                        yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Collected' }] } };
+                    }
+                    return resumeCall();
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext]);
+
+                // Original session ID should be preserved
+                expect(result.sessionId).toBe('original-session-keep');
+            });
+
+            test('should use updated session ID for subsequent operations when resume provides new one', async () => {
+                let callCount = 0;
+                querySpy.mockImplementation((_params: any): any => {
+                    callCount++;
+                    if(callCount === 1) {
+                        async function* firstCall() {
+                            yield { type: 'system' as const, subtype: 'init' as const, session_id: 'first-session' };
+                            yield {
+                                type:    'assistant' as const,
+                                message: {
+                                    content: [{
+                                        type:  'tool_use' as const,
+                                        id:    'bg1',
+                                        name:  'Task',
+                                        input: { description: 'test', prompt: 'work', subagent_type: 'general-purpose', run_in_background: true },
+                                    }],
+                                },
+                            };
+                            yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched' }] } };
+                        }
+                        return firstCall();
+                    }
+                    async function* resumeCall() {
+                        yield { type: 'system' as const, subtype: 'init' as const, session_id: 'second-session' };
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{
+                                    type:  'tool_use' as const,
+                                    id:    'to1',
+                                    name:  'TaskOutput',
+                                    input: { task_id: 'bg1', block: true, timeout: 30000 },
+                                }],
+                            },
+                        };
+                        yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Collected' }] } };
+                    }
+                    return resumeCall();
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext]);
+
+                // Should return the second (resumed) session ID
+                expect(result.sessionId).toBe('second-session');
+            });
+
+            test('should handle abort during auto-resume gracefully', async () => {
+                const abortController = new AbortController();
+                let callCount = 0;
+                querySpy.mockImplementation((_params: any): any => {
+                    callCount++;
+                    if(callCount === 1) {
+                        async function* firstCall() {
+                            yield { type: 'system' as const, subtype: 'init' as const, session_id: 'session-abort-resume' };
+                            yield {
+                                type:    'assistant' as const,
+                                message: {
+                                    content: [{
+                                        type:  'tool_use' as const,
+                                        id:    'tool_bg_abort',
+                                        name:  'Task',
+                                        input: { description: 'test', prompt: 'work', subagent_type: 'general-purpose', run_in_background: true },
+                                    }],
+                                },
+                            };
+                            yield {
+                                type:    'assistant' as const,
+                                message: { content: [{ type: 'text' as const, text: 'Launched background task' }] },
+                            };
+                        }
+                        return firstCall();
+                    }
+                    // Resume call — abort during processing
+                    abortController.abort();
+                    const error = new Error('This operation was aborted');
+                    error.name = 'AbortError';
+                    throw error;
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext], { abortController });
+
+                // The abort during resume should be caught by try-catch
+                // Initial response preserved since resume failed
+                expect(result.response).toBe('Launched background task');
+                expect(result.wasInterrupted).toBe(false);
+            });
+
+            test('should preserve initial response when auto-resume throws error', async () => {
+                let callCount = 0;
+                querySpy.mockImplementation((_params: any): any => {
+                    callCount++;
+                    if(callCount === 1) {
+                        async function* firstCall() {
+                            yield { type: 'system' as const, subtype: 'init' as const, session_id: 'session-resume-error' };
+                            yield {
+                                type:    'assistant' as const,
+                                message: {
+                                    content: [{
+                                        type:  'tool_use' as const,
+                                        id:    'tool_bg_err',
+                                        name:  'Task',
+                                        input: { description: 'test', prompt: 'work', subagent_type: 'general-purpose', run_in_background: true },
+                                    }],
+                                },
+                            };
+                            yield {
+                                type:    'assistant' as const,
+                                message: { content: [{ type: 'text' as const, text: 'Initial response before resume' }] },
+                            };
+                        }
+                        return firstCall();
+                    }
+                    // Resume call throws a network error
+                    throw new Error('Network connection failed');
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext]);
+
+                // Initial response should be preserved despite resume failure
+                expect(result.response).toBe('Initial response before resume');
+                expect(result.wasInterrupted).toBe(false);
+                expect(result.sessionId).toBe('session-resume-error');
+            });
         });
     });
 });

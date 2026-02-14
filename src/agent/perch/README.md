@@ -98,7 +98,7 @@ graph TD
 
 If a message arrives during perch time:
 
-1. **Capture context**: StreamProgress stores thinking, text, and pending tool use
+1. **Capture context**: StreamProgress stores thinking, text, pending tool use, and background task collection state
 2. **Interrupt session**: `BotStateManager.interrupt(messageDetails)` called
 3. **Abort signal fired**: Agent stream stops gracefully
 4. **Handle message**: Bot processes user message normally
@@ -310,7 +310,7 @@ console.log(state.pendingSlot);  // 'pre-dawn', etc.
 
 - **Time slot logic**: Test `getSlotForHour()` with all edge cases (midnight, boundaries)
 - **Deferral**: Verify pending state when bot busy, correct slot on resume
-- **Interruption**: Ensure StreamProgress captured, session resumed with same ID
+- **Interruption**: Ensure StreamProgress captured (including background task state), session resumed with same ID
 - **Scheduling**: Mock cron-parser to control trigger timing
 - **Error handling**: Test abort signals, network failures, state recovery
 

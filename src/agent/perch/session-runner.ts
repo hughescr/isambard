@@ -201,7 +201,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
 
         const prompt = buildPerchInterruptedPrompt({
             // Stryker disable next-line all: Fallback default values for partial work state
-            partialWork: partialWork ?? { thinking: '', text: '', pendingToolUse: null, sessionId: undefined },
+            partialWork: partialWork ?? { thinking: '', text: '', pendingToolUse: null, sessionId: undefined, uncollectedBackgroundTasks: false },
             newMessage,
         });
 
@@ -264,7 +264,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
         // Build timeout prompt
         const prompt = buildPerchTimeoutPrompt({
             // Stryker disable next-line all: Fallback default values for partial work state
-            partialWork:       partialWork ?? { thinking: '', text: '', pendingToolUse: null, sessionId: undefined },
+            partialWork:       partialWork ?? { thinking: '', text: '', pendingToolUse: null, sessionId: undefined, uncollectedBackgroundTasks: false },
             sessionDuration:   durationMinutes,
             maxSessionMinutes: config.maxSessionMinutes,
         });

@@ -663,4 +663,562 @@ describe('StreamTracker', () => {
             expect(progress.text).toBe('Previous text');
         });
     });
+
+    describe('Background task tracking', () => {
+        describe('Initial state', () => {
+            test('hasUncollectedBackgroundTasks() should return false initially', () => {
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+            });
+
+            test('getProgress().uncollectedBackgroundTasks should be false initially', () => {
+                const progress = tracker.getProgress();
+                expect(progress.uncollectedBackgroundTasks).toBe(false);
+            });
+        });
+
+        describe('Background task launch detection', () => {
+            test('should increment count when Task tool with run_in_background: true is used', () => {
+                const event: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_123',
+                                name:  'Task',
+                                input: { description: 'test', prompt: 'do something', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                        ],
+                    },
+                };
+
+                tracker.update(event);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(true);
+            });
+
+            test('should NOT increment for Task tool WITHOUT run_in_background', () => {
+                const event: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_123',
+                                name:  'Task',
+                                input: { description: 'test', prompt: 'do something', subagent_type: 'general-purpose' },
+                            },
+                        ],
+                    },
+                };
+
+                tracker.update(event);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(false);
+            });
+
+            test('should NOT increment for Task tool with run_in_background: false', () => {
+                const event: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_123',
+                                name:  'Task',
+                                input: { description: 'test', prompt: 'do something', subagent_type: 'general-purpose', run_in_background: false },
+                            },
+                        ],
+                    },
+                };
+
+                tracker.update(event);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(false);
+            });
+
+            test('should NOT increment for non-Task tool_use blocks', () => {
+                const event: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_123',
+                                name:  'memory_view',
+                                input: { path: '/memories/test' },
+                            },
+                        ],
+                    },
+                };
+
+                tracker.update(event);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(false);
+            });
+
+            test('should not count non-Task tool_use as background task launch even with run_in_background flag', () => {
+                const event: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_read1',
+                                name:  'Read',
+                                input: { file_path: '/some/file', run_in_background: true },
+                            },
+                        ],
+                    },
+                };
+                tracker.update(event);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+            });
+
+            test('should not throw and not count when Task tool_use has null input', () => {
+                const event: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_task_null',
+                                name:  'Task',
+                                input: null,
+                            },
+                        ],
+                    },
+                };
+                expect(() => tracker.update(event)).not.toThrow();
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+            });
+
+            test('should handle multiple background task launches in same event', () => {
+                const event: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_1',
+                                name:  'Task',
+                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                            {
+                                type:  'tool_use',
+                                id:    'tool_2',
+                                name:  'Task',
+                                input: { description: 'task 2', prompt: 'do task 2', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                        ],
+                    },
+                };
+
+                tracker.update(event);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+            });
+        });
+
+        describe('TaskOutput detection', () => {
+            test('should increment count when TaskOutput tool is used', () => {
+                // First, launch a background task
+                const launchEvent: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_1',
+                                name:  'Task',
+                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                        ],
+                    },
+                };
+                tracker.update(launchEvent);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+
+                // Now collect it
+                const outputEvent: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_2',
+                                name:  'TaskOutput',
+                                input: { task_id: 'task_1' },
+                            },
+                        ],
+                    },
+                };
+                tracker.update(outputEvent);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+            });
+
+            test('should NOT increment for non-TaskOutput tools', () => {
+                const event: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_123',
+                                name:  'memory_view',
+                                input: { path: '/memories/test' },
+                            },
+                        ],
+                    },
+                };
+
+                tracker.update(event);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+            });
+        });
+
+        describe('hasUncollectedBackgroundTasks() logic', () => {
+            test('should return true when launches > outputs (1 launch, 0 outputs)', () => {
+                const event: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_1',
+                                name:  'Task',
+                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                        ],
+                    },
+                };
+
+                tracker.update(event);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+            });
+
+            test('should return false when launches == outputs (1 launch, 1 output)', () => {
+                const launchEvent: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_1',
+                                name:  'Task',
+                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                        ],
+                    },
+                };
+                const outputEvent: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_2',
+                                name:  'TaskOutput',
+                                input: { task_id: 'task_1' },
+                            },
+                        ],
+                    },
+                };
+
+                tracker.update(launchEvent);
+                tracker.update(outputEvent);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+            });
+
+            test('should return false when launches < outputs (edge case)', () => {
+                // This edge case can happen if we call TaskOutput more times than launches
+                // (e.g., after a reset, or if the stream is interrupted)
+                const outputEvent: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_1',
+                                name:  'TaskOutput',
+                                input: { task_id: 'task_1' },
+                            },
+                        ],
+                    },
+                };
+
+                tracker.update(outputEvent);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+            });
+
+            test('should return false when both are 0', () => {
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+            });
+        });
+
+        describe('getProgress() includes uncollectedBackgroundTasks', () => {
+            test('should include uncollectedBackgroundTasks in progress object', () => {
+                const progress = tracker.getProgress();
+                expect(progress).toHaveProperty('uncollectedBackgroundTasks');
+            });
+
+            test('should reflect correct state (true when tasks uncollected)', () => {
+                const event: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_1',
+                                name:  'Task',
+                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                        ],
+                    },
+                };
+
+                tracker.update(event);
+                const progress = tracker.getProgress();
+                expect(progress.uncollectedBackgroundTasks).toBe(true);
+            });
+
+            test('should reflect correct state (false when tasks collected)', () => {
+                const launchEvent: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_1',
+                                name:  'Task',
+                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                        ],
+                    },
+                };
+                const outputEvent: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_2',
+                                name:  'TaskOutput',
+                                input: { task_id: 'task_1' },
+                            },
+                        ],
+                    },
+                };
+
+                tracker.update(launchEvent);
+                tracker.update(outputEvent);
+                const progress = tracker.getProgress();
+                expect(progress.uncollectedBackgroundTasks).toBe(false);
+            });
+        });
+
+        describe('Reset behavior', () => {
+            test('should reset counters to 0', () => {
+                const launchEvent: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_1',
+                                name:  'Task',
+                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                        ],
+                    },
+                };
+
+                tracker.update(launchEvent);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+
+                tracker.reset();
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+            });
+
+            test('should return false for hasUncollectedBackgroundTasks() after reset', () => {
+                const launchEvent: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_1',
+                                name:  'Task',
+                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                        ],
+                    },
+                };
+
+                tracker.update(launchEvent);
+                tracker.reset();
+
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(false);
+            });
+        });
+
+        describe('Accumulation across events', () => {
+            test('should accumulate multiple launches across separate events', () => {
+                const event1: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_1',
+                                name:  'Task',
+                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                        ],
+                    },
+                };
+                const event2: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_2',
+                                name:  'Task',
+                                input: { description: 'task 2', prompt: 'do task 2', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                        ],
+                    },
+                };
+
+                tracker.update(event1);
+                tracker.update(event2);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+            });
+
+            test('should accumulate multiple outputs across separate events', () => {
+                const launch1: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_1',
+                                name:  'Task',
+                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                        ],
+                    },
+                };
+                const launch2: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_2',
+                                name:  'Task',
+                                input: { description: 'task 2', prompt: 'do task 2', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                        ],
+                    },
+                };
+                const output1: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_3',
+                                name:  'TaskOutput',
+                                input: { task_id: 'task_1' },
+                            },
+                        ],
+                    },
+                };
+                const output2: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_4',
+                                name:  'TaskOutput',
+                                input: { task_id: 'task_2' },
+                            },
+                        ],
+                    },
+                };
+
+                tracker.update(launch1);
+                tracker.update(launch2);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+
+                tracker.update(output1);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true); // Still 1 uncollected
+
+                tracker.update(output2);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false); // All collected
+            });
+
+            test('should handle mixed Task/TaskOutput events correctly', () => {
+                const mixedEvent: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_1',
+                                name:  'Task',
+                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                            {
+                                type:  'tool_use',
+                                id:    'tool_2',
+                                name:  'TaskOutput',
+                                input: { task_id: 'old_task' },
+                            },
+                            {
+                                type:  'tool_use',
+                                id:    'tool_3',
+                                name:  'Task',
+                                input: { description: 'task 2', prompt: 'do task 2', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                        ],
+                    },
+                };
+
+                // Initially 0 launches, 0 outputs
+                // After this event: 2 launches, 1 output
+                tracker.update(mixedEvent);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+            });
+
+            test('should handle non-background Task tools mixed with background ones', () => {
+                const event: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            {
+                                type:  'tool_use',
+                                id:    'tool_1',
+                                name:  'Task',
+                                input: { description: 'blocking task', prompt: 'do blocking task', subagent_type: 'general-purpose' },
+                            },
+                            {
+                                type:  'tool_use',
+                                id:    'tool_2',
+                                name:  'Task',
+                                input: { description: 'background task', prompt: 'do background task', subagent_type: 'general-purpose', run_in_background: true },
+                            },
+                        ],
+                    },
+                };
+
+                tracker.update(event);
+                // Should only count the background one
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+            });
+        });
+    });
 });

@@ -20,10 +20,11 @@ describe('buildResumePrompt', () => {
         test('should include context update header and new message', () => {
             const context: ResumeContext = {
                 partialWork: {
-                    thinking:       '',
-                    text:           '',
-                    pendingToolUse: null,
-                    sessionId:      undefined,
+                    thinking:                   '',
+                    text:                       '',
+                    pendingToolUse:             null,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents:   [],
                 newMessages: [createBasicMessage()],
@@ -43,10 +44,11 @@ describe('buildResumePrompt', () => {
         test('should not include partial thinking section when thinking is empty', () => {
             const context: ResumeContext = {
                 partialWork: {
-                    thinking:       '',
-                    text:           '',
-                    pendingToolUse: null,
-                    sessionId:      undefined,
+                    thinking:                   '',
+                    text:                       '',
+                    pendingToolUse:             null,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents:   [],
                 newMessages: [createBasicMessage()],
@@ -60,10 +62,11 @@ describe('buildResumePrompt', () => {
         test('should not include partial response section when text is empty', () => {
             const context: ResumeContext = {
                 partialWork: {
-                    thinking:       '',
-                    text:           '',
-                    pendingToolUse: null,
-                    sessionId:      undefined,
+                    thinking:                   '',
+                    text:                       '',
+                    pendingToolUse:             null,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents:   [],
                 newMessages: [createBasicMessage()],
@@ -77,10 +80,11 @@ describe('buildResumePrompt', () => {
         test('should not include pending tool section when pendingToolUse is null', () => {
             const context: ResumeContext = {
                 partialWork: {
-                    thinking:       '',
-                    text:           '',
-                    pendingToolUse: null,
-                    sessionId:      undefined,
+                    thinking:                   '',
+                    text:                       '',
+                    pendingToolUse:             null,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents:   [],
                 newMessages: [createBasicMessage()],
@@ -96,10 +100,11 @@ describe('buildResumePrompt', () => {
         test('should include partial thinking section when thinking is non-empty', () => {
             const context: ResumeContext = {
                 partialWork: {
-                    thinking:       'I need to analyze the user\'s request carefully...',
-                    text:           '',
-                    pendingToolUse: null,
-                    sessionId:      undefined,
+                    thinking:                   'I need to analyze the user\'s request carefully...',
+                    text:                       '',
+                    pendingToolUse:             null,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents:   [],
                 newMessages: [createBasicMessage()],
@@ -116,10 +121,11 @@ describe('buildResumePrompt', () => {
         test('should include partial response section when text is non-empty', () => {
             const context: ResumeContext = {
                 partialWork: {
-                    thinking:       '',
-                    text:           'Sure, I can help you with that. Let me',
-                    pendingToolUse: null,
-                    sessionId:      undefined,
+                    thinking:                   '',
+                    text:                       'Sure, I can help you with that. Let me',
+                    pendingToolUse:             null,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents:   [],
                 newMessages: [createBasicMessage()],
@@ -144,7 +150,8 @@ describe('buildResumePrompt', () => {
                         name:  'memory_view',
                         input: { path: '/memories/test' },
                     },
-                    sessionId: undefined,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents:   [],
                 newMessages: [createBasicMessage()],
@@ -161,10 +168,11 @@ describe('buildResumePrompt', () => {
         test('should include new events section when newEvents is non-empty', () => {
             const context: ResumeContext = {
                 partialWork: {
-                    thinking:       '',
-                    text:           '',
-                    pendingToolUse: null,
-                    sessionId:      undefined,
+                    thinking:                   '',
+                    text:                       '',
+                    pendingToolUse:             null,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents: [
                     '- User @user_123 mentioned keyword "deployment"',
@@ -183,10 +191,11 @@ describe('buildResumePrompt', () => {
         test('should not include events section when newEvents is empty', () => {
             const context: ResumeContext = {
                 partialWork: {
-                    thinking:       '',
-                    text:           '',
-                    pendingToolUse: null,
-                    sessionId:      undefined,
+                    thinking:                   '',
+                    text:                       '',
+                    pendingToolUse:             null,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents:   [],
                 newMessages: [createBasicMessage()],
@@ -202,10 +211,11 @@ describe('buildResumePrompt', () => {
         test('should include all new messages in order', () => {
             const context: ResumeContext = {
                 partialWork: {
-                    thinking:       '',
-                    text:           '',
-                    pendingToolUse: null,
-                    sessionId:      undefined,
+                    thinking:                   '',
+                    text:                       '',
+                    pendingToolUse:             null,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents:   [],
                 newMessages: [
@@ -257,7 +267,8 @@ describe('buildResumePrompt', () => {
                         name:  'memory_store',
                         input: { path: '/test', content: 'data' },
                     },
-                    sessionId: 'session_abc',
+                    sessionId:                  'session_abc',
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents: [
                     '- User @user_111 mentioned keyword "urgent"',
@@ -298,7 +309,8 @@ describe('buildResumePrompt', () => {
                         name:  'test_tool',
                         input: {},
                     },
-                    sessionId: undefined,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents:   ['- Event 1'],
                 newMessages: [createBasicMessage()],
@@ -328,10 +340,11 @@ describe('buildResumePrompt', () => {
         test('should use double newline between sections', () => {
             const context: ResumeContext = {
                 partialWork: {
-                    thinking:       'Thinking content',
-                    text:           'Response content',
-                    pendingToolUse: null,
-                    sessionId:      undefined,
+                    thinking:                   'Thinking content',
+                    text:                       'Response content',
+                    pendingToolUse:             null,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents:   ['- Event 1'],
                 newMessages: [createBasicMessage()],
@@ -349,10 +362,11 @@ describe('buildResumePrompt', () => {
         test('should preserve ISO timestamp format', () => {
             const context: ResumeContext = {
                 partialWork: {
-                    thinking:       '',
-                    text:           '',
-                    pendingToolUse: null,
-                    sessionId:      undefined,
+                    thinking:                   '',
+                    text:                       '',
+                    pendingToolUse:             null,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents:   [],
                 newMessages: [
@@ -372,10 +386,11 @@ describe('buildResumePrompt', () => {
         test('should start output with [CONTEXT UPDATE] (no prefix content)', () => {
             const context: ResumeContext = {
                 partialWork: {
-                    thinking:       '',
-                    text:           '',
-                    pendingToolUse: null,
-                    sessionId:      undefined,
+                    thinking:                   '',
+                    text:                       '',
+                    pendingToolUse:             null,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents:   [],
                 newMessages: [createBasicMessage()],
@@ -387,10 +402,11 @@ describe('buildResumePrompt', () => {
         test('should separate multiple events with single newline', () => {
             const context: ResumeContext = {
                 partialWork: {
-                    thinking:       '',
-                    text:           '',
-                    pendingToolUse: null,
-                    sessionId:      undefined,
+                    thinking:                   '',
+                    text:                       '',
+                    pendingToolUse:             null,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents:   ['- Event 1', '- Event 2'],
                 newMessages: [createBasicMessage()],
@@ -402,10 +418,11 @@ describe('buildResumePrompt', () => {
         test('should separate multiple messages with double newline', () => {
             const context: ResumeContext = {
                 partialWork: {
-                    thinking:       '',
-                    text:           '',
-                    pendingToolUse: null,
-                    sessionId:      undefined,
+                    thinking:                   '',
+                    text:                       '',
+                    pendingToolUse:             null,
+                    sessionId:                  undefined,
+                    uncollectedBackgroundTasks: false,
                 },
                 newEvents:   [],
                 newMessages: [
