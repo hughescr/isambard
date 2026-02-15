@@ -953,7 +953,7 @@ describe('createClaudeAgent', () => {
                         text:                       '',
                         pendingToolUse:             null,
                         sessionId:                  undefined,
-                        uncollectedBackgroundTasks: false,
+                        uncollectedBackgroundTasks: 0,
                     },
                     newEvents:   [],
                     newMessages: [],
@@ -1276,7 +1276,7 @@ describe('createClaudeAgent', () => {
                     text:                       'I was writing...',
                     pendingToolUse:             null,
                     sessionId:                  undefined,
-                    uncollectedBackgroundTasks: false,
+                    uncollectedBackgroundTasks: 0,
                 },
                 newEvents:   ['Event 1', 'Event 2'],
                 newMessages: [mockMessageContext],
@@ -2890,52 +2890,6 @@ describe('createClaudeAgent', () => {
                 expect(result.response).toBe('Response without session');
             });
 
-            test('should log warning when auto-resume doesn\'t collect all tasks', async () => {
-                mockLogger.warn.mockClear();
-
-                querySpy.mockImplementation((_params: any): any => {
-                    async function* bothLaunchBackgroundTasks() {
-                        yield { type: 'system' as const, subtype: 'init' as const, session_id: 'test-session-uncollected' };
-                        yield {
-                            type:    'assistant' as const,
-                            message: {
-                                content: [{
-                                    type:  'tool_use' as const,
-                                    id:    'tool_bg5',
-                                    name:  'Task',
-                                    input: { description: 'test', prompt: 'do work', subagent_type: 'general-purpose', run_in_background: true },
-                                }],
-                            },
-                        };
-                        yield {
-                            type:    'assistant' as const,
-                            message: {
-                                content: [{ type: 'text' as const, text: 'Launched task but didn\'t collect' }],
-                            },
-                        };
-                    }
-                    return bothLaunchBackgroundTasks();
-                });
-
-                const agent = createClaudeAgent({});
-                await agent.handleInput([mockMessageContext]);
-
-                // Should log warning about uncollected tasks on first call
-                const warnCalls = mockLogger.warn.mock.calls;
-                const resumeWarning = _.find(warnCalls, (call: unknown[]) => {
-                    const logData = call[0] as { msg?: string };
-                    return logData?.msg === 'Stream ended with uncollected background tasks, resuming to collect results';
-                });
-                expect(resumeWarning).toBeDefined();
-
-                // Should also log warning about incomplete collection after resume
-                const incompleteWarning = _.find(warnCalls, (call: unknown[]) => {
-                    const logData = call[0] as { msg?: string };
-                    return logData?.msg === 'Auto-resume did not collect all background tasks';
-                });
-                expect(incompleteWarning).toBeDefined();
-            });
-
             test('should pass non-empty resume prompt containing TaskOutput instruction', async () => {
                 let callCount = 0;
                 querySpy.mockImplementation((_params: any): any => {
@@ -3249,6 +3203,186 @@ describe('createClaudeAgent', () => {
                 expect(result.response).toBe('Initial response before resume');
                 expect(result.wasInterrupted).toBe(false);
                 expect(result.sessionId).toBe('session-resume-error');
+            });
+
+            test('should loop auto-resume when resumed session spawns new background task', async () => {
+                let callCount = 0;
+                querySpy.mockImplementation((_params: any): any => {
+                    callCount++;
+                    if(callCount === 1) {
+                        // Initial call: launches 2 background tasks
+                        async function* firstCall() {
+                            yield { type: 'system' as const, subtype: 'init' as const, session_id: 'session-loop-test' };
+                            yield {
+                                type:    'assistant' as const,
+                                message: {
+                                    content: [
+                                        {
+                                            type:  'tool_use' as const,
+                                            id:    'bg1',
+                                            name:  'Task',
+                                            input: { description: 'task 1', prompt: 'work 1', subagent_type: 'general-purpose', run_in_background: true },
+                                        },
+                                        {
+                                            type:  'tool_use' as const,
+                                            id:    'bg2',
+                                            name:  'Task',
+                                            input: { description: 'task 2', prompt: 'work 2', subagent_type: 'general-purpose', run_in_background: true },
+                                        },
+                                    ],
+                                },
+                            };
+                            yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched 2 tasks' }] } };
+                        }
+                        return firstCall();
+                    }
+                    if(callCount === 2) {
+                        // First resume: collects bg1 (uncollected goes 2→1)
+                        async function* resumeCall1() {
+                            yield {
+                                type:    'assistant' as const,
+                                message: {
+                                    content: [{
+                                        type:  'tool_use' as const,
+                                        id:    'to1',
+                                        name:  'TaskOutput',
+                                        input: { task_id: 'bg1', block: true, timeout: 30000 },
+                                    }],
+                                },
+                            };
+                            yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Collected task 1' }] } };
+                        }
+                        return resumeCall1();
+                    }
+                    // Second resume: collects bg2 (uncollected goes 1→0)
+                    async function* resumeCall2() {
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{
+                                    type:  'tool_use' as const,
+                                    id:    'to2',
+                                    name:  'TaskOutput',
+                                    input: { task_id: 'bg2', block: true, timeout: 30000 },
+                                }],
+                            },
+                        };
+                        yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'All tasks collected' }] } };
+                    }
+                    return resumeCall2();
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext]);
+
+                // Should have called query 3 times (initial + 2 resumes)
+                expect(querySpy).toHaveBeenCalledTimes(3);
+                expect(result.response).toBe('All tasks collected');
+            });
+
+            test('should cap auto-resume attempts at MAX_AUTO_RESUME_ATTEMPTS', async () => {
+                let callCount = 0;
+                querySpy.mockImplementation((_params: any): any => {
+                    callCount++;
+                    if(callCount === 1) {
+                        // Initial call: launches 4 background tasks
+                        async function* firstCall() {
+                            yield { type: 'system' as const, subtype: 'init' as const, session_id: 'session-cap-test' };
+                            yield {
+                                type:    'assistant' as const,
+                                message: {
+                                    content: [
+                                        {
+                                            type:  'tool_use' as const,
+                                            id:    'bg1',
+                                            name:  'Task',
+                                            input: { description: 'task 1', prompt: 'work', subagent_type: 'general-purpose', run_in_background: true },
+                                        },
+                                        {
+                                            type:  'tool_use' as const,
+                                            id:    'bg2',
+                                            name:  'Task',
+                                            input: { description: 'task 2', prompt: 'work', subagent_type: 'general-purpose', run_in_background: true },
+                                        },
+                                        {
+                                            type:  'tool_use' as const,
+                                            id:    'bg3',
+                                            name:  'Task',
+                                            input: { description: 'task 3', prompt: 'work', subagent_type: 'general-purpose', run_in_background: true },
+                                        },
+                                        {
+                                            type:  'tool_use' as const,
+                                            id:    'bg4',
+                                            name:  'Task',
+                                            input: { description: 'task 4', prompt: 'work', subagent_type: 'general-purpose', run_in_background: true },
+                                        },
+                                    ],
+                                },
+                            };
+                            yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched 4 tasks' }] } };
+                        }
+                        return firstCall();
+                    }
+                    // Each resume collects one task (making progress each time)
+                    async function* resumeCall() {
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{
+                                    type:  'tool_use' as const,
+                                    id:    `to${callCount}`,
+                                    name:  'TaskOutput',
+                                    input: { task_id: `bg${callCount - 1}`, block: true, timeout: 30000 },
+                                }],
+                            },
+                        };
+                        yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: `Resume ${callCount - 1} done` }] } };
+                    }
+                    return resumeCall();
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext]);
+
+                // Should have called query 4 times (initial + 3 resumes = MAX_AUTO_RESUME_ATTEMPTS)
+                expect(querySpy).toHaveBeenCalledTimes(4);
+                // Result should be from the last successful resume
+                expect(result.response).toBe('Resume 3 done');
+            });
+
+            test('should break auto-resume loop when no progress made (error case)', async () => {
+                let callCount = 0;
+                querySpy.mockImplementation((_params: any): any => {
+                    callCount++;
+                    if(callCount === 1) {
+                        async function* firstCall() {
+                            yield { type: 'system' as const, subtype: 'init' as const, session_id: 'session-no-progress' };
+                            yield {
+                                type:    'assistant' as const,
+                                message: {
+                                    content: [{
+                                        type:  'tool_use' as const,
+                                        id:    'bg1',
+                                        name:  'Task',
+                                        input: { description: 'task 1', prompt: 'work', subagent_type: 'general-purpose', run_in_background: true },
+                                    }],
+                                },
+                            };
+                            yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched task' }] } };
+                        }
+                        return firstCall();
+                    }
+                    // First resume fails (error caught internally by attemptAutoResume)
+                    throw new Error('Network error');
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext]);
+
+                // Should have called query 2 times (initial + 1 resume attempt that failed)
+                expect(querySpy).toHaveBeenCalledTimes(2);
+                // Initial response preserved
+                expect(result.response).toBe('Launched task');
             });
         });
     });

@@ -17,6 +17,7 @@ import { buildMultimodalContent, hasImages } from './multimodal-message-builder'
 import type { TaskPersistenceCoordinator } from './task-persistence-coordinator';
 
 const CLAUDE_MODEL = 'opus';
+const MAX_AUTO_RESUME_ATTEMPTS = 3;
 
 // Stryker disable all: Configuration constants validated by integration tests
 /**
@@ -1070,19 +1071,11 @@ async function attemptAutoResume(
         if(resumeResult.capturedSessionId) {
             updatedSessionId = resumeResult.capturedSessionId;
         }
-
-        // Log if auto-resume still didn't collect all tasks
-        /* Stryker disable all: Observability - logging for debugging incomplete collection */
-        if(tracker.hasUncollectedBackgroundTasks()) {
-            logger.warn({
-                sessionId: updatedSessionId,
-                msg:       'Auto-resume did not collect all background tasks',
-            });
-        }
-        /* Stryker restore all */
     } catch (resumeError) {
+        /* Stryker disable all: Observability - error logging for debugging auto-resume failures */
         const errorMessage = _.isError(resumeError) ? resumeError.message : String(resumeError);
         logger.error({ error: resumeError, sessionId: capturedSessionId }, `Auto-resume failed: ${errorMessage}`);
+        /* Stryker restore all */
     }
     // Stryker restore BlockStatement
 
@@ -1151,15 +1144,24 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 let lastAssistantText = initialText;
                 const wasInterrupted = initialInterrupted;
 
-                // 8. Auto-resume if background tasks were launched but not collected
-                if(tracker.hasUncollectedBackgroundTasks() && !wasInterrupted && capturedSessionId) {
-                    const queryOptions = buildQueryOptions(systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, options);
-                    const resumeResult = await attemptAutoResume(
-                        tracker, lastAssistantText, capturedSessionId,
-                        retryableQuery, queryOptions, options, taskPersistenceCoordinator
-                    );
-                    lastAssistantText = resumeResult.lastAssistantText;
-                    capturedSessionId = resumeResult.capturedSessionId;
+                // 8. Auto-resume loop: collect background tasks (max MAX_AUTO_RESUME_ATTEMPTS attempts)
+                if(!wasInterrupted && capturedSessionId) {
+                    let autoResumeAttempts = 0;
+                    while(tracker.hasUncollectedBackgroundTasks() && autoResumeAttempts < MAX_AUTO_RESUME_ATTEMPTS) {
+                        autoResumeAttempts++;
+                        const uncollectedBefore = tracker.getProgress().uncollectedBackgroundTasks;
+                        const queryOptions = buildQueryOptions(systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, options);
+                        const resumeResult = await attemptAutoResume(
+                            tracker, lastAssistantText, capturedSessionId,
+                            retryableQuery, queryOptions, options, taskPersistenceCoordinator
+                        );
+                        lastAssistantText = resumeResult.lastAssistantText;
+                        capturedSessionId = resumeResult.capturedSessionId ?? capturedSessionId;
+                        // Break if no progress was made (error or agent didn't collect anything)
+                        if(tracker.getProgress().uncollectedBackgroundTasks >= uncollectedBefore) {
+                            break;
+                        }
+                    }
                 }
 
                 // 9. Clean up session only on completion (not on interrupt)

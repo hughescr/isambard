@@ -24,8 +24,8 @@ export interface StreamProgress {
     pendingToolUse:             ToolUseBlock | null
     /** Session ID captured from system init event */
     sessionId:                  string | undefined
-    /** Whether there are background tasks launched but not yet collected via TaskOutput */
-    uncollectedBackgroundTasks: boolean
+    /** Number of background tasks launched but not yet collected via TaskOutput */
+    uncollectedBackgroundTasks: number
 }
 
 /**
@@ -142,7 +142,7 @@ export class StreamTracker {
             text:                       this.text,
             pendingToolUse:             this.pendingToolUse,
             sessionId:                  this.sessionId,
-            uncollectedBackgroundTasks: this.hasUncollectedBackgroundTasks(),
+            uncollectedBackgroundTasks: Math.max(0, this.backgroundTaskLaunches - this.taskOutputCalls),
         };
     }
 

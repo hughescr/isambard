@@ -670,9 +670,9 @@ describe('StreamTracker', () => {
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
             });
 
-            test('getProgress().uncollectedBackgroundTasks should be false initially', () => {
+            test('getProgress().uncollectedBackgroundTasks should be 0 initially', () => {
                 const progress = tracker.getProgress();
-                expect(progress.uncollectedBackgroundTasks).toBe(false);
+                expect(progress.uncollectedBackgroundTasks).toBe(0);
             });
         });
 
@@ -694,7 +694,7 @@ describe('StreamTracker', () => {
 
                 tracker.update(event);
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
-                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(true);
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(1);
             });
 
             test('should NOT increment for Task tool WITHOUT run_in_background', () => {
@@ -714,7 +714,7 @@ describe('StreamTracker', () => {
 
                 tracker.update(event);
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
-                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(false);
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(0);
             });
 
             test('should NOT increment for Task tool with run_in_background: false', () => {
@@ -734,7 +734,7 @@ describe('StreamTracker', () => {
 
                 tracker.update(event);
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
-                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(false);
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(0);
             });
 
             test('should NOT increment for non-Task tool_use blocks', () => {
@@ -754,7 +754,7 @@ describe('StreamTracker', () => {
 
                 tracker.update(event);
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
-                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(false);
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(0);
             });
 
             test('should not count non-Task tool_use as background task launch even with run_in_background flag', () => {
@@ -961,7 +961,7 @@ describe('StreamTracker', () => {
                 expect(progress).toHaveProperty('uncollectedBackgroundTasks');
             });
 
-            test('should reflect correct state (true when tasks uncollected)', () => {
+            test('should reflect correct state (1 when one task uncollected)', () => {
                 const event: AssistantEvent = {
                     type:    'assistant',
                     message: {
@@ -978,10 +978,10 @@ describe('StreamTracker', () => {
 
                 tracker.update(event);
                 const progress = tracker.getProgress();
-                expect(progress.uncollectedBackgroundTasks).toBe(true);
+                expect(progress.uncollectedBackgroundTasks).toBe(1);
             });
 
-            test('should reflect correct state (false when tasks collected)', () => {
+            test('should reflect correct state (0 when tasks collected)', () => {
                 const launchEvent: AssistantEvent = {
                     type:    'assistant',
                     message: {
@@ -1012,7 +1012,7 @@ describe('StreamTracker', () => {
                 tracker.update(launchEvent);
                 tracker.update(outputEvent);
                 const progress = tracker.getProgress();
-                expect(progress.uncollectedBackgroundTasks).toBe(false);
+                expect(progress.uncollectedBackgroundTasks).toBe(0);
             });
         });
 
@@ -1058,7 +1058,7 @@ describe('StreamTracker', () => {
                 tracker.reset();
 
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
-                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(false);
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(0);
             });
         });
 
