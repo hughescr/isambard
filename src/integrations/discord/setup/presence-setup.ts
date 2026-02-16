@@ -3,6 +3,7 @@ import type { Client } from 'discord.js';
 import type { DiscordConfig } from '@/config/schemas';
 import type { BotStateManager, StateChange } from '../state';
 import type { InboxManager } from '../inbox';
+import type { ContextBuilder } from '@/agent/context-builder';
 import {
     createActiveStatusGenerator,
     createDynamicStatusGenerator,
@@ -35,13 +36,15 @@ export interface PresenceSetupResult {
  * @returns Presence setup result with manager and unsubscribe functions, or undefined if presence config not provided
  */
 export function setupPresence(params: {
-    identityContext:        string
-    presenceConfig:         NonNullable<DiscordConfig['presence']>
-    readyClient:            Client
-    botStateManager:        BotStateManager
-    dynamicStatusGenerator: ReturnType<typeof createDynamicStatusGenerator> | undefined
-    inboxManager:           InboxManager | undefined
-    getRecentContext:       () => Promise<string | undefined>
+    identityContext:         string
+    presenceConfig:          NonNullable<DiscordConfig['presence']>
+    readyClient:             Client
+    botStateManager:         BotStateManager
+    dynamicStatusGenerator:  ReturnType<typeof createDynamicStatusGenerator> | undefined
+    inboxManager:            InboxManager | undefined
+    getRecentContext:        () => Promise<string | undefined>
+    contextBuilder?:         ContextBuilder
+    getLastThinkingContent?: () => string | undefined
 }): PresenceSetupResult {
     const {
         identityContext,
@@ -51,6 +54,8 @@ export function setupPresence(params: {
         dynamicStatusGenerator,
         inboxManager,
         getRecentContext,
+        contextBuilder,
+        getLastThinkingContent,
     } = params;
 
     const activeStatusGenerator = createActiveStatusGenerator({
@@ -58,11 +63,35 @@ export function setupPresence(params: {
         logger,
     });
 
+    // Create TTL-cached identity context callback
+    // Stryker disable next-line ArithmeticOperator: TTL constant
+    const IDENTITY_TTL_MS = 5 * 60 * 1000; // 5 minutes
+    let cachedIdentity: string | undefined;
+    let cachedAt = 0;
+
+    const getIdentityContext = async (): Promise<string> => {
+        const now = Date.now();
+        // Stryker disable next-line BlockStatement: TTL cache check - boundary logic
+        if(cachedIdentity && (now - cachedAt) < IDENTITY_TTL_MS) {
+            return cachedIdentity;
+        }
+        // Stryker disable BlockStatement: Identity loading with fallback - tested via integration
+        if(contextBuilder) {
+            cachedIdentity = await contextBuilder.loadCoreIdentity() ?? identityContext;
+        } else {
+            cachedIdentity = identityContext;
+        }
+        // Stryker restore BlockStatement
+        cachedAt = now;
+        return cachedIdentity;
+    };
+
     const idleStatusGenerator = createIdleStatusGenerator({
         logger,
-        activityType: ActivityType.Custom,
-        identityContext,
+        activityType:    ActivityType.Custom,
+        identityContext: getIdentityContext,
         getRecentContext,
+        getLastThinkingContent,
     });
 
     const presenceManager = new PresenceManager({

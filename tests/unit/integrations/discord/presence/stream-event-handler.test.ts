@@ -703,4 +703,92 @@ describe('StreamEventHandler', () => {
             expect(fallbackCalls).toHaveLength(0);
         });
     });
+
+    describe('onThinkingContentUpdate callback', () => {
+        it('should fire callback when thinking content is accumulated', async () => {
+            const capturedUpdates: string[] = [];
+            const onThinkingContentUpdate = mock((content: string) => {
+                capturedUpdates.push(content);
+            });
+
+            const { onStreamEvent } = createStreamEventHandler({
+                ...baseDeps,
+                onThinkingContentUpdate,
+            });
+
+            // Send assistant event with thinking block
+            onStreamEvent({
+                type:    'assistant',
+                message: {
+                    content: [
+                        { type: 'thinking', thinking: 'First thought' },
+                    ],
+                },
+            } as unknown as AgentStreamEvent);
+
+            await flushPromises();
+
+            expect(onThinkingContentUpdate).toHaveBeenCalled();
+            expect(capturedUpdates).toContain('First thought');
+        });
+
+        it('should receive full accumulated content including previous content', async () => {
+            const capturedUpdates: string[] = [];
+            const onThinkingContentUpdate = mock((content: string) => {
+                capturedUpdates.push(content);
+            });
+
+            const { onStreamEvent } = createStreamEventHandler({
+                ...baseDeps,
+                onThinkingContentUpdate,
+            });
+
+            // Send first thinking block
+            onStreamEvent({
+                type:    'assistant',
+                message: {
+                    content: [
+                        { type: 'thinking', thinking: 'First thought. ' },
+                    ],
+                },
+            } as unknown as AgentStreamEvent);
+
+            await flushPromises();
+
+            // Send second thinking block
+            onStreamEvent({
+                type:    'assistant',
+                message: {
+                    content: [
+                        { type: 'thinking', thinking: 'Second thought.' },
+                    ],
+                },
+            } as unknown as AgentStreamEvent);
+
+            await flushPromises();
+
+            // Last callback should have both thoughts
+            const lastUpdate = capturedUpdates[capturedUpdates.length - 1];
+            expect(lastUpdate).toContain('First thought. Second thought.');
+        });
+
+        it('should not throw error when callback is not provided', async () => {
+            const { onStreamEvent } = createStreamEventHandler({
+                ...baseDeps,
+                // No onThinkingContentUpdate provided
+            });
+
+            // This should not throw
+            expect(() => {
+                onStreamEvent({
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            { type: 'thinking', thinking: 'Some thought' },
+                        ],
+                    },
+                } as unknown as AgentStreamEvent);
+            }).not.toThrow();
+        });
+    });
 });

@@ -74,19 +74,20 @@ async function buildCatchUpContext(
 export interface SetupCatchUpRunnerParams {
     inboxManager:  InboxManager
     agent:         ClaudeAgent
-    memoryBackend:          {
+    memoryBackend:              {
         storeCompletionSignal:  (signal: CatchUpCompletionSignal) => Promise<void>
         loadCompletionSignal:   () => Promise<CatchUpCompletionSignal | null>
         storeInProgressSignal:  (signal: CatchUpInProgressSignal) => Promise<void>
         loadInProgressSignal:   () => Promise<CatchUpInProgressSignal | null>
         deleteInProgressSignal: () => Promise<void>
     }
-    botStateManager:        BotStateManager
-    presenceManager:        PresenceManager | undefined
-    dynamicStatusGenerator: ReturnType<typeof createDynamicStatusGenerator> | undefined
-    responseRouter:         ResponseRouter
-    rateLimiter:            DiscordRateLimiter
-    client:                 Client
+    botStateManager:          BotStateManager
+    presenceManager:          PresenceManager | undefined
+    dynamicStatusGenerator:   ReturnType<typeof createDynamicStatusGenerator> | undefined
+    responseRouter:           ResponseRouter
+    rateLimiter:              DiscordRateLimiter
+    client:                   Client
+    onThinkingContentUpdate?: (content: string) => void
 }
 
 /**
@@ -134,7 +135,8 @@ export function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): Cat
                 presenceManager,
                 dynamicStatusGenerator,
                 userMessage,
-                botStateManager
+                botStateManager,
+                params.onThinkingContentUpdate
             );
 
             // Call agent.handleInput with specialMode: 'catchup' and the catch-up prompt

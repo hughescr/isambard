@@ -14,13 +14,15 @@ import {
  * @param dynamicStatusGenerator - Optional generator for context-aware status messages
  * @param userMessage - User's message content for synopsis generation
  * @param botStateManager - Bot state manager for tracking activity phases
+ * @param onThinkingContentUpdate - Optional callback fired when thinking content is updated
  * @returns Stream event handler or undefined
  */
 export function createPresenceStreamHandler(
     presenceManager: PresenceManager | undefined,
     dynamicStatusGenerator: ReturnType<typeof createDynamicStatusGenerator> | undefined,
     userMessage: string,
-    botStateManager: BotStateManager
+    botStateManager: BotStateManager,
+    onThinkingContentUpdate?: (content: string) => void
 ): ReturnType<typeof createStreamEventHandler> | undefined {
     if(!presenceManager) {
         return undefined;
@@ -32,5 +34,6 @@ export function createPresenceStreamHandler(
         logger,
         userMessage,
         botStateManager,
+        onThinkingContentUpdate,
     });
 }

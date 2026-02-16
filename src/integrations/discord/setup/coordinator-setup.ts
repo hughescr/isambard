@@ -116,17 +116,18 @@ async function processAttachments(contexts: DiscordMessageContext[]): Promise<Pr
  * Parameters for setting up coordinator integration.
  */
 export interface SetupCoordinatorParams {
-    agent:                  ClaudeAgent
-    presenceManager:        PresenceManager | undefined
-    dynamicStatusGenerator: ReturnType<typeof createDynamicStatusGenerator> | undefined
-    botStateManager:        BotStateManager
-    catchUpSessionRunner:   CatchUpSessionRunner | undefined
-    perchSessionRunner:     PerchSessionRunner | undefined
-    responseRouter:         ResponseRouter
-    rateLimiter:            DiscordRateLimiter
-    readyClient:            Client
-    channelRegistry:        ChannelRegistryManager
-    eventDeltaTracker?:     import('../../../agent/event-delta-tracker').EventDeltaTracker
+    agent:                    ClaudeAgent
+    presenceManager:          PresenceManager | undefined
+    dynamicStatusGenerator:   ReturnType<typeof createDynamicStatusGenerator> | undefined
+    botStateManager:          BotStateManager
+    catchUpSessionRunner:     CatchUpSessionRunner | undefined
+    perchSessionRunner:       PerchSessionRunner | undefined
+    responseRouter:           ResponseRouter
+    rateLimiter:              DiscordRateLimiter
+    readyClient:              Client
+    channelRegistry:          ChannelRegistryManager
+    eventDeltaTracker?:       import('../../../agent/event-delta-tracker').EventDeltaTracker
+    onThinkingContentUpdate?: (content: string) => void
 }
 
 /**
@@ -295,7 +296,8 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                 presenceManager,
                 dynamicStatusGenerator,
                 userMessage,
-                botStateManager
+                botStateManager,
+                params.onThinkingContentUpdate
             );
 
             // Get unmuted channels and format for system prompt

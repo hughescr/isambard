@@ -21,15 +21,16 @@ import type { ContextBuilder } from '@/agent/context-builder';
  * Parameters for setting up perch scheduler and runner.
  */
 export interface SetupPerchParams {
-    agent:                  ClaudeAgent
-    perchConfig:            PerchConfig
-    botStateManager:        BotStateManager
-    presenceManager:        PresenceManager | undefined
-    dynamicStatusGenerator: ReturnType<typeof createDynamicStatusGenerator> | undefined
-    responseRouter:         ResponseRouter
-    rateLimiter:            DiscordRateLimiter
-    client:                 Client
-    contextBuilder?:        ContextBuilder
+    agent:                    ClaudeAgent
+    perchConfig:              PerchConfig
+    botStateManager:          BotStateManager
+    presenceManager:          PresenceManager | undefined
+    dynamicStatusGenerator:   ReturnType<typeof createDynamicStatusGenerator> | undefined
+    responseRouter:           ResponseRouter
+    rateLimiter:              DiscordRateLimiter
+    client:                   Client
+    contextBuilder?:          ContextBuilder
+    onThinkingContentUpdate?: (content: string) => void
 }
 
 /**
@@ -70,7 +71,8 @@ export function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
                 presenceManager,
                 dynamicStatusGenerator,
                 `Perch time: ${runOptions.slot}`,
-                botStateManager
+                botStateManager,
+                params.onThinkingContentUpdate
             );
 
             // Call agent.handleInput with specialMode: 'perching' and the perch prompt

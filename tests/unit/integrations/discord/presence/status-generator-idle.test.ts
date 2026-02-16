@@ -35,7 +35,7 @@ describe('IdleStatusGenerator', () => {
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
-                identityContext: 'I am a helpful assistant',
+                identityContext: _constant(Promise.resolve('I am a helpful assistant')),
             });
 
             await generator.generate();
@@ -50,7 +50,7 @@ describe('IdleStatusGenerator', () => {
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
+                identityContext: _constant(Promise.resolve('Test identity')),
             });
 
             await generator.generate();
@@ -68,7 +68,7 @@ describe('IdleStatusGenerator', () => {
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
+                identityContext: _constant(Promise.resolve('Test identity')),
             });
 
             const result = await generator.generate();
@@ -86,7 +86,7 @@ describe('IdleStatusGenerator', () => {
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
+                identityContext: _constant(Promise.resolve('Test identity')),
             });
 
             const result = await generator.generate();
@@ -107,7 +107,7 @@ describe('IdleStatusGenerator', () => {
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
+                identityContext: _constant(Promise.resolve('Test identity')),
             });
 
             const result = await generator.generate();
@@ -132,7 +132,7 @@ describe('IdleStatusGenerator', () => {
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
+                identityContext: _constant(Promise.resolve('Test identity')),
             });
 
             const result = await generator.generate();
@@ -146,7 +146,7 @@ describe('IdleStatusGenerator', () => {
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
+                identityContext: _constant(Promise.resolve('Test identity')),
             });
 
             const result = await generator.generate();
@@ -160,7 +160,7 @@ describe('IdleStatusGenerator', () => {
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
-                identityContext: testIdentityContext,
+                identityContext: async () => testIdentityContext,
             });
 
             await generator.generate();
@@ -179,7 +179,7 @@ describe('IdleStatusGenerator', () => {
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
+                identityContext: _constant(Promise.resolve('Test identity')),
             });
 
             const result = await generator.generate();
@@ -197,7 +197,7 @@ describe('IdleStatusGenerator', () => {
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
                 activityType:    ActivityType.Playing,
-                identityContext: 'Test identity',
+                identityContext: _constant(Promise.resolve('Test identity')),
             });
 
             const result = await generator.generate();
@@ -220,13 +220,13 @@ describe('IdleStatusGenerator', () => {
             const generator = createIdleStatusGenerator({
                 logger:          localMockLogger,
                 activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
+                identityContext: _constant(Promise.resolve('Test identity')),
             });
 
             await generator.generate();
 
             expect(localMockLogger.info).toHaveBeenCalledWith(
-                { statusText: '💤 Generated status text', presenceDisplayMode: 'none' },
+                { statusText: '💤 Generated status text' },
                 'Generated idle status'
             );
         });
@@ -246,7 +246,7 @@ describe('IdleStatusGenerator', () => {
             const generator = createIdleStatusGenerator({
                 logger:          localMockLogger,
                 activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
+                identityContext: _constant(Promise.resolve('Test identity')),
             });
 
             await generator.generate();
@@ -265,7 +265,7 @@ describe('IdleStatusGenerator', () => {
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
+                identityContext: _constant(Promise.resolve('Test identity')),
             });
 
             const result = await generator.generate();
@@ -283,7 +283,7 @@ describe('IdleStatusGenerator', () => {
                 const generator = createIdleStatusGenerator({
                     logger:           mockLogger,
                     activityType:     ActivityType.Custom,
-                    identityContext:  'Test identity',
+                    identityContext:  _constant(Promise.resolve('Test identity')),
                     getRecentContext: mockGetRecentContext,
                 });
 
@@ -299,7 +299,7 @@ describe('IdleStatusGenerator', () => {
                 const generator = createIdleStatusGenerator({
                     logger:           mockLogger,
                     activityType:     ActivityType.Custom,
-                    identityContext:  'Test identity',
+                    identityContext:  _constant(Promise.resolve('Test identity')),
                     getRecentContext: mockGetRecentContext,
                 });
 
@@ -307,7 +307,7 @@ describe('IdleStatusGenerator', () => {
 
                 const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
                 expect(userPromptArg).toContain(recentContext);
-                expect(userPromptArg).toContain('Recent activity:');
+                expect(userPromptArg).toContain('Recent conversation:');
             });
 
             test('should use simple user prompt when getRecentContext returns undefined', async () => {
@@ -316,7 +316,7 @@ describe('IdleStatusGenerator', () => {
                 const generator = createIdleStatusGenerator({
                     logger:           mockLogger,
                     activityType:     ActivityType.Custom,
-                    identityContext:  'Test identity',
+                    identityContext:  _constant(Promise.resolve('Test identity')),
                     getRecentContext: mockGetRecentContext,
                 });
 
@@ -324,14 +324,14 @@ describe('IdleStatusGenerator', () => {
 
                 const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
                 expect(userPromptArg).toBe('Status text (first person, max 128 chars):');
-                expect(userPromptArg).not.toContain('Recent activity');
+                expect(userPromptArg).not.toContain('Recent conversation');
             });
 
             test('should use simple user prompt when getRecentContext is not provided', async () => {
                 const generator = createIdleStatusGenerator({
                     logger:          mockLogger,
                     activityType:    ActivityType.Custom,
-                    identityContext: 'Test identity',
+                    identityContext: _constant(Promise.resolve('Test identity')),
                     // No getRecentContext provided
                 });
 
@@ -347,7 +347,7 @@ describe('IdleStatusGenerator', () => {
                 const generator = createIdleStatusGenerator({
                     logger:           mockLogger,
                     activityType:     ActivityType.Custom,
-                    identityContext:  'Test identity',
+                    identityContext:  _constant(Promise.resolve('Test identity')),
                     getRecentContext: mockGetRecentContext,
                 });
 
@@ -365,7 +365,7 @@ describe('IdleStatusGenerator', () => {
                 const generator = createIdleStatusGenerator({
                     logger:           mockLogger,
                     activityType:     ActivityType.Custom,
-                    identityContext:  'Test identity',
+                    identityContext:  _constant(Promise.resolve('Test identity')),
                     getRecentContext: mockGetRecentContext,
                 });
 
@@ -382,7 +382,7 @@ describe('IdleStatusGenerator', () => {
                 const generator = createIdleStatusGenerator({
                     logger:           mockLogger,
                     activityType:     ActivityType.Custom,
-                    identityContext:  'Test identity',
+                    identityContext:  _constant(Promise.resolve('Test identity')),
                     getRecentContext: mockGetRecentContext,
                 });
 
@@ -390,6 +390,64 @@ describe('IdleStatusGenerator', () => {
 
                 expect(result.name).toBe('💤 Idle');
                 expect(result.type).toBe(ActivityType.Custom);
+            });
+
+            test('should include thinking context in user prompt when available', async () => {
+                const thinkingContext = 'I was considering the implications of quantum mechanics...';
+                const mockGetLastThinkingContent = mock(() => thinkingContext);
+
+                const generator = createIdleStatusGenerator({
+                    logger:                 mockLogger,
+                    activityType:           ActivityType.Custom,
+                    identityContext:        _constant(Promise.resolve('Test identity')),
+                    getLastThinkingContent: mockGetLastThinkingContent,
+                });
+
+                await generator.generate();
+
+                const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(userPromptArg).toContain('Last thoughts:');
+                expect(userPromptArg).toContain(thinkingContext);
+            });
+
+            test('should omit thinking context when not available', async () => {
+                const mockGetLastThinkingContent = mock(() => undefined);
+
+                const generator = createIdleStatusGenerator({
+                    logger:                 mockLogger,
+                    activityType:           ActivityType.Custom,
+                    identityContext:        _constant(Promise.resolve('Test identity')),
+                    getLastThinkingContent: mockGetLastThinkingContent,
+                });
+
+                await generator.generate();
+
+                const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(userPromptArg).not.toContain('Last thoughts:');
+                expect(userPromptArg).toBe('Status text (first person, max 128 chars):');
+            });
+
+            test('should include both recent context and thinking context when both available', async () => {
+                const recentContext = 'User asked about weather';
+                const thinkingContext = 'Analyzing weather patterns...';
+                const mockGetRecentContext = mock(() => Promise.resolve(recentContext));
+                const mockGetLastThinkingContent = mock(() => thinkingContext);
+
+                const generator = createIdleStatusGenerator({
+                    logger:                 mockLogger,
+                    activityType:           ActivityType.Custom,
+                    identityContext:        _constant(Promise.resolve('Test identity')),
+                    getRecentContext:       mockGetRecentContext,
+                    getLastThinkingContent: mockGetLastThinkingContent,
+                });
+
+                await generator.generate();
+
+                const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(userPromptArg).toContain('Recent conversation:');
+                expect(userPromptArg).toContain(recentContext);
+                expect(userPromptArg).toContain('Last thoughts:');
+                expect(userPromptArg).toContain(thinkingContext);
             });
 
             test.each([
@@ -400,7 +458,7 @@ describe('IdleStatusGenerator', () => {
                 const generator = createIdleStatusGenerator({
                     logger:          mockLogger,
                     activityType:    ActivityType.Custom,
-                    identityContext: 'Test identity',
+                    identityContext: _constant(Promise.resolve('Test identity')),
                 });
 
                 await generator.generate();
@@ -408,6 +466,78 @@ describe('IdleStatusGenerator', () => {
                 const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0];
                 expect(systemPromptArg).toContain(marker);
                 expect(systemPromptArg).toContain(content);
+            });
+        });
+
+        // Tests for async identityContext callback
+        describe('async identityContext callback', () => {
+            test('should call identityContext callback on each generate() invocation', async () => {
+                const mockIdentityContext = mock(() => Promise.resolve('Dynamic identity'));
+
+                const generator = createIdleStatusGenerator({
+                    logger:          mockLogger,
+                    activityType:    ActivityType.Custom,
+                    identityContext: mockIdentityContext,
+                });
+
+                await generator.generate();
+                await generator.generate();
+
+                expect(mockIdentityContext).toHaveBeenCalledTimes(2);
+            });
+
+            test('should use callback result in system prompt', async () => {
+                const dynamicIdentity = 'Dynamically loaded identity context';
+                const mockIdentityContext = mock(() => Promise.resolve(dynamicIdentity));
+
+                const generator = createIdleStatusGenerator({
+                    logger:          mockLogger,
+                    activityType:    ActivityType.Custom,
+                    identityContext: mockIdentityContext,
+                });
+
+                await generator.generate();
+
+                const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0];
+                expect(systemPromptArg).toContain(dynamicIdentity);
+            });
+
+            test('should fall back to Idle when identityContext callback throws an error', async () => {
+                const mockIdentityContext = mock(() => Promise.reject(new Error('Identity fetch failed')));
+
+                const generator = createIdleStatusGenerator({
+                    logger:          mockLogger,
+                    activityType:    ActivityType.Custom,
+                    identityContext: mockIdentityContext,
+                });
+
+                const result = await generator.generate();
+
+                expect(result.name).toBe('💤 Idle');
+                expect(result.type).toBe(ActivityType.Custom);
+            });
+
+            test('should handle different identity values on successive calls', async () => {
+                let callCount = 0;
+                const mockIdentityContext = mock(() => {
+                    callCount++;
+                    return Promise.resolve(`Identity ${callCount}`);
+                });
+
+                const generator = createIdleStatusGenerator({
+                    logger:          mockLogger,
+                    activityType:    ActivityType.Custom,
+                    identityContext: mockIdentityContext,
+                });
+
+                await generator.generate();
+                const firstSystemPrompt = mockGenerateTextWithSystemPrompt.mock.calls[0][0];
+                expect(firstSystemPrompt).toContain('Identity 1');
+
+                mockGenerateTextWithSystemPrompt.mockClear();
+                await generator.generate();
+                const secondSystemPrompt = mockGenerateTextWithSystemPrompt.mock.calls[0][0];
+                expect(secondSystemPrompt).toContain('Identity 2');
             });
         });
     });
@@ -425,18 +555,17 @@ describe('IdleStatusGenerator', () => {
             const generator = createIdleStatusGenerator({
                 logger:          localMockLogger,
                 activityType:    ActivityType.Custom,
-                identityContext: 'Test identity',
+                identityContext: _constant(Promise.resolve('Test identity')),
             });
 
             await generator.generate();
 
-            // Kill StringLiteral mutant on line 113 col 46 - verify second arg is the specific string
+            // Kill StringLiteral mutant - verify the debug message
             const debugCalls = localMockLogger.debug.mock.calls;
             expect(debugCalls.length).toBeGreaterThan(0);
             const firstCall = debugCalls[0];
-            expect(firstCall[0]).toEqual({ includeIdleEmoji: true, presenceDisplayMode: 'none' });
-            expect(firstCall[1]).toBe('Generating idle status with Haiku');
-            expect(firstCall[1]).not.toBe('');
+            expect(firstCall[0]).toBe('Generating idle status with Haiku');
+            expect(firstCall[0]).not.toBe('');
         });
     });
 });

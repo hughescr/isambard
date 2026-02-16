@@ -124,8 +124,7 @@ export class PresenceManager {
         // Capture current mode at start to detect stale results
         const modeAtStart = this.presenceDisplayMode;
 
-        // Stryker disable next-line BooleanLiteral: includeEmoji parameter - always true for idle status generation
-        const activity = await this.deps.idleStatusGenerator.generate(true, this.presenceDisplayMode);
+        const activity = await this.deps.idleStatusGenerator.generate();
 
         // Check if mode changed while generating - if so, discard stale result
         // Stryker disable BlockStatement,ObjectLiteral,StringLiteral: Logging for observability and race condition guard
@@ -211,7 +210,7 @@ export class PresenceManager {
                                 await this.applyPresenceUpdate(activity);
                             } else {
                                 // Fallback to idle generator
-                                const activity = await this.deps.idleStatusGenerator.generate(true, mode);
+                                const activity = await this.deps.idleStatusGenerator.generate();
                                 await this.applyPresenceUpdate(activity);
                             }
                         } catch (error) {
@@ -249,7 +248,7 @@ export class PresenceManager {
                             await this.applyPresenceUpdate(activity);
                         } else {
                             // Fallback to idle generator
-                            const activity = await this.deps.idleStatusGenerator.generate(true, mode);
+                            const activity = await this.deps.idleStatusGenerator.generate();
                             await this.applyPresenceUpdate(activity);
                         }
                     } catch (error) {

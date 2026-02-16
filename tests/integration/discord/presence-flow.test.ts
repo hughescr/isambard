@@ -70,7 +70,7 @@ describe('Discord Presence Flow (Integration)', () => {
         const idleStatusGenerator = createIdleStatusGenerator({
             logger,
             activityType:    ActivityType.Custom,
-            identityContext: 'Test Bot',
+            identityContext: _constant(Promise.resolve('Test Bot')),
         });
 
         // Create presence manager
@@ -156,7 +156,7 @@ describe('Discord Presence Flow (Integration)', () => {
         const idleStatusGenerator = createIdleStatusGenerator({
             logger,
             activityType:    ActivityType.Custom,
-            identityContext: 'Test Bot',
+            identityContext: _constant(Promise.resolve('Test Bot')),
         });
 
         // Create presence manager with SHORT idle timeout for testing

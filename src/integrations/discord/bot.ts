@@ -285,6 +285,15 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             }
         };
 
+        // Track last thinking content for context-aware idle status generation
+        let lastThinkingContent: string | undefined;
+
+        const setLastThinkingContent = (content: string): void => {
+            lastThinkingContent = content;
+        };
+
+        const getLastThinkingContent = (): string | undefined => lastThinkingContent;
+
         // Create rate limiter for Discord message sending
         rateLimiter = new DiscordRateLimiter({
             globalConcurrency: 5,
@@ -332,6 +341,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     }
                     return recentMessages.join('\n• ');
                 },
+                contextBuilder,
+                getLastThinkingContent,
             });
             presenceManager = presenceSetup.presenceManager;
             unsubscribeModeTransition = presenceSetup.unsubscribeModeTransition;
@@ -355,7 +366,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 dynamicStatusGenerator,
                 responseRouter,
                 rateLimiter,
-                client: readyClient,
+                client:                  readyClient,
+                onThinkingContentUpdate: setLastThinkingContent,
             });
         }
 
@@ -363,14 +375,15 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         if(agent && options.perchConfig?.enabled) {
             const perchSetup = setupPerchSessionRunnerAndScheduler({
                 agent,
-                perchConfig: options.perchConfig,
+                perchConfig:             options.perchConfig,
                 botStateManager,
                 presenceManager,
                 dynamicStatusGenerator,
                 responseRouter,
                 rateLimiter,
-                client:      readyClient,
+                client:                  readyClient,
                 contextBuilder,
+                onThinkingContentUpdate: setLastThinkingContent,
             });
             perchSessionRunner = perchSetup.runner;
             perchScheduler = perchSetup.scheduler;
@@ -390,10 +403,11 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 catchUpSessionRunner,
                 perchSessionRunner,
                 responseRouter,
-                rateLimiter: rateLimiter,
+                rateLimiter:             rateLimiter,
                 readyClient,
                 channelRegistry,
                 eventDeltaTracker,
+                onThinkingContentUpdate: setLastThinkingContent,
             });
 
             // Register message handler AFTER channel registry is initialized and coordinator is created

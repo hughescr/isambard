@@ -43,7 +43,7 @@ describe('PresenceManager', () => {
 
         mockIdleGenerator = {
             generate: mock(async () => ({
-                name: 'Dozing peacefully',
+                name: '💤 Dozing peacefully',
                 type: ActivityType.Custom,
             })),
         };
@@ -643,8 +643,8 @@ describe('PresenceManager', () => {
             await Promise.resolve();
             await Promise.resolve();
 
-            // Should have called idle generator (with catch-up context)
-            expect(mockIdleGenerator.generate).toHaveBeenCalledWith(true, 'catching_up');
+            // Should have called idle generator
+            expect(mockIdleGenerator.generate).toHaveBeenCalled();
             expect(mockClient.user.setActivity).toHaveBeenCalled();
         });
 
@@ -739,9 +739,9 @@ describe('PresenceManager', () => {
             const idleGeneratePromises: { resolve: (value: any) => void, mode: string }[] = [];
 
             // Override idle generator to return controllable promises
-            mockIdleGenerator.generate = mock((_includeEmoji: boolean, mode: string) => {
+            mockIdleGenerator.generate = mock(() => {
                 return new Promise((resolve) => {
-                    idleGeneratePromises.push({ resolve, mode });
+                    idleGeneratePromises.push({ resolve, mode: 'none' });
                 });
             });
 
@@ -779,7 +779,6 @@ describe('PresenceManager', () => {
 
             // Idle generator should have been called for the second time (async generation started)
             expect(idleGeneratePromises.length).toBe(2);
-            expect(idleGeneratePromises[1].mode).toBe('none');
 
             // NOW change the mode WHILE the generation is still in progress
             // This will also trigger another generation (entering catch-up while idle)
@@ -861,7 +860,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Should have called idle generator (fallback when no dynamic generator)
-            expect(mockIdleGenerator.generate).toHaveBeenCalledWith(true, 'catching_up');
+            expect(mockIdleGenerator.generate).toHaveBeenCalled();
             expect(mockClient.user.setActivity).toHaveBeenCalled();
         });
 
@@ -927,7 +926,7 @@ describe('PresenceManager', () => {
 
             // Should have called idle generator (fallback)
             expect(mockIdleGenerator.generate.mock.calls.length).toBe(initialCallCount + 1);
-            expect(mockIdleGenerator.generate).toHaveBeenCalledWith(true, 'catching_up');
+            expect(mockIdleGenerator.generate).toHaveBeenCalled();
         });
 
         it('should generate catch-up status when entering catch-up mode with idle currentPhase (with dynamic generator)', async () => {
@@ -999,9 +998,9 @@ describe('PresenceManager', () => {
 
             // Should have triggered refreshIdleStatus
             expect(mockIdleGenerator.generate.mock.calls.length).toBe(callCountAfterIdle + 1);
-            // Should have been called with mode 'none' now
+            // Should have been called (no arguments expected)
             const lastCall = mockIdleGenerator.generate.mock.calls[mockIdleGenerator.generate.mock.calls.length - 1];
-            expect(lastCall).toEqual([true, 'none']);
+            expect(lastCall).toEqual([]);
         });
 
         it('should update active phase status immediately when entering catch-up mode', async () => {

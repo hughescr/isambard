@@ -59,15 +59,17 @@ export interface StreamEventHandlerDeps {
         error: (obj: Record<string, unknown> | string, message?: string) => void
     }
     /** The user's original message being processed */
-    userMessage:       string
+    userMessage:              string
     /** Optional message ID for logging */
-    messageId?:        string
+    messageId?:               string
     /** Optional pre-generated thinking synopsis */
-    thinkingSynopsis?: string
+    thinkingSynopsis?:        string
     /**
      * Bot state manager for activity phase updates.
      */
-    botStateManager:   BotStateManager
+    botStateManager:          BotStateManager
+    /** Optional callback fired when thinking content is updated */
+    onThinkingContentUpdate?: (content: string) => void
 }
 
 /**
@@ -110,7 +112,7 @@ export interface StreamEventHandler {
 export function createStreamEventHandler(
     deps: StreamEventHandlerDeps
 ): StreamEventHandler {
-    const { dynamicStatusGenerator, logger, userMessage, messageId, thinkingSynopsis, botStateManager } = deps;
+    const { dynamicStatusGenerator, logger, userMessage, messageId, thinkingSynopsis, botStateManager, onThinkingContentUpdate } = deps;
 
     // Track current phase for transition detection
     let currentPhase: 'thinking' | 'using_tool' | 'responding' | null = null;
@@ -122,7 +124,8 @@ export function createStreamEventHandler(
     let accumulatedText = '';
     let accumulatedThinkingContent = '';
     const recentToolCalls: string[] = [];
-    const MAX_THINKING_CONTENT_LENGTH = 500;
+    // Stryker disable next-line ArithmeticOperator: Configuration constant
+    const MAX_THINKING_CONTENT_LENGTH = 1500;
     const MAX_RECENT_TOOLS = 3;
 
     // Helper to handle presence update errors
@@ -251,6 +254,8 @@ export function createStreamEventHandler(
                     if(block.type === 'thinking' && block.thinking) {
                         // Stryker disable next-line MethodExpression: Truncation optimization - bounds accumulated content
                         accumulatedThinkingContent = (accumulatedThinkingContent + block.thinking).slice(-MAX_THINKING_CONTENT_LENGTH);
+                        // Stryker disable next-line OptionalChaining: Optional callback pattern
+                        onThinkingContentUpdate?.(accumulatedThinkingContent);
                     }
                 }
             }
