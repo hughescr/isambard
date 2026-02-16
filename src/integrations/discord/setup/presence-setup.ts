@@ -42,6 +42,7 @@ export function setupPresence(params: {
     botStateManager:         BotStateManager
     dynamicStatusGenerator:  ReturnType<typeof createDynamicStatusGenerator> | undefined
     inboxManager:            InboxManager | undefined
+    getTaskContext?:         () => Promise<string | undefined>
     getRecentContext:        () => Promise<string | undefined>
     contextBuilder?:         ContextBuilder
     getLastThinkingContent?: () => string | undefined
@@ -53,6 +54,7 @@ export function setupPresence(params: {
         botStateManager,
         dynamicStatusGenerator,
         inboxManager,
+        getTaskContext,
         getRecentContext,
         contextBuilder,
         getLastThinkingContent,
@@ -90,6 +92,7 @@ export function setupPresence(params: {
         logger,
         activityType:    ActivityType.Custom,
         identityContext: getIdentityContext,
+        getTaskContext,
         getRecentContext,
         getLastThinkingContent,
     });

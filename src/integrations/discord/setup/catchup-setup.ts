@@ -88,6 +88,7 @@ export interface SetupCatchUpRunnerParams {
     rateLimiter:              DiscordRateLimiter
     client:                   Client
     onThinkingContentUpdate?: (content: string) => void
+    setLastSessionId?:        (sessionId: string | undefined) => void
 }
 
 /**
@@ -152,6 +153,9 @@ export function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): Cat
             if(streamEventHandler) {
                 streamEventHandler.complete();
             }
+
+            // Update session ID tracker
+            params.setLastSessionId?.(result.sessionId);
 
             // Log session completion
             logger.info({

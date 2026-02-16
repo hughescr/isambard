@@ -39,6 +39,8 @@ export interface IdleStatusGeneratorDeps {
     activityType:            ActivityType
     /** Async callback to retrieve identity/personality context for the AI prompt */
     identityContext:         () => Promise<string>
+    /** Optional callback to retrieve task context summary */
+    getTaskContext?:         () => Promise<string | undefined>
     /** Optional callback to retrieve recent conversation context */
     getRecentContext?:       () => Promise<string | undefined>
     /** Optional callback to retrieve last thinking content */
@@ -102,7 +104,7 @@ const USER_PROMPT_WITHOUT_CONTEXT = 'Status text (first person, max 128 chars):'
 export function createIdleStatusGenerator(
     deps: IdleStatusGeneratorDeps
 ): IdleStatusGenerator {
-    const { logger, activityType, identityContext, getRecentContext, getLastThinkingContent } = deps;
+    const { logger, activityType, identityContext, getTaskContext, getRecentContext, getLastThinkingContent } = deps;
 
     return {
         // Stryker disable StringLiteral,ObjectLiteral: Prompt template building and logging for status generation
@@ -116,12 +118,17 @@ export function createIdleStatusGenerator(
                 // Build system prompt
                 const systemPrompt = _.replace(SYSTEM_PROMPT_TEMPLATE, '{identityContext}', identity);
 
-                // Get recent context and thinking content if callbacks are provided
+                // Get task context, recent context, and thinking content if callbacks are provided
+                const taskContext = await getTaskContext?.();
                 const recentContext = await getRecentContext?.();
                 const thinkingContext = getLastThinkingContent?.();
 
                 // Build user prompt sections dynamically
+                // Order: task context (changes with tasks), recent conversation (changes with each conversation), last thoughts (changes with each turn)
                 const sections: string[] = [];
+                if(taskContext) {
+                    sections.push(`Current work:\n${taskContext}`);
+                }
                 if(recentContext) {
                     sections.push(`Recent conversation:\n${recentContext}`);
                 }

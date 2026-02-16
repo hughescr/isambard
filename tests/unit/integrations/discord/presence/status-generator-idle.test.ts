@@ -450,6 +450,65 @@ describe('IdleStatusGenerator', () => {
                 expect(userPromptArg).toContain(thinkingContext);
             });
 
+            test('should include task context in user prompt when available', async () => {
+                const taskContext = 'Working on: Fix bugs\n2 pending tasks';
+                const mockGetTaskContext = mock(() => Promise.resolve(taskContext));
+
+                const generator = createIdleStatusGenerator({
+                    logger:          mockLogger,
+                    activityType:    ActivityType.Custom,
+                    identityContext: _constant(Promise.resolve('Test identity')),
+                    getTaskContext:  mockGetTaskContext,
+                });
+
+                await generator.generate();
+
+                const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(userPromptArg).toContain('Current work:');
+                expect(userPromptArg).toContain(taskContext);
+            });
+
+            test('should omit task context when not available', async () => {
+                const mockGetTaskContext = mock(() => Promise.resolve(undefined));
+
+                const generator = createIdleStatusGenerator({
+                    logger:          mockLogger,
+                    activityType:    ActivityType.Custom,
+                    identityContext: _constant(Promise.resolve('Test identity')),
+                    getTaskContext:  mockGetTaskContext,
+                });
+
+                await generator.generate();
+
+                const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(userPromptArg).not.toContain('Current work:');
+                expect(userPromptArg).toBe('Status text (first person, max 128 chars):');
+            });
+
+            test('should order task context before recent conversation in prompt', async () => {
+                const taskContext = 'Working on: Test task';
+                const recentContext = 'Recent chat';
+                const mockGetTaskContext = mock(() => Promise.resolve(taskContext));
+                const mockGetRecentContext = mock(() => Promise.resolve(recentContext));
+
+                const generator = createIdleStatusGenerator({
+                    logger:           mockLogger,
+                    activityType:     ActivityType.Custom,
+                    identityContext:  _constant(Promise.resolve('Test identity')),
+                    getTaskContext:   mockGetTaskContext,
+                    getRecentContext: mockGetRecentContext,
+                });
+
+                await generator.generate();
+
+                const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                const taskIndex = userPromptArg.indexOf('Current work:');
+                const recentIndex = userPromptArg.indexOf('Recent conversation:');
+                expect(taskIndex).toBeGreaterThan(-1);
+                expect(recentIndex).toBeGreaterThan(-1);
+                expect(taskIndex).toBeLessThan(recentIndex);
+            });
+
             test.each([
                 { section: 'Who is Isambard', marker: '## Who is Isambard (Izzy)?', content: 'Test identity' },
                 { section: 'The Vibe', marker: '## The Vibe', content: 'Izzy is between conversations, mind wandering' },

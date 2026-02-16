@@ -19,5 +19,6 @@ export { buildMultimodalContent, hasImages, type ContentBlock, type TextContentB
 export { createTaskDirectoryCopier, getTaskDirectoryPath, type TaskDirectoryCopier, type TaskDirectoryCopierOptions } from './task-directory-copier';
 export { createTaskPersistenceCoordinator, type TaskPersistenceCoordinator, type TaskPersistenceCoordinatorOptions } from './task-persistence-coordinator';
 export { createTaskCleanupProcessor, type TaskCleanupProcessor, type TaskCleanupProcessorOptions, type TaskCleanupResult, type TaskCleanupDeps } from './task-cleanup-processor';
+export { createTaskListReader, type TaskListReader } from './task-list-reader';
 // Re-export SdkPluginConfig from SDK for consumers of this module
 export type { SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';

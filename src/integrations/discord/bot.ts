@@ -3,6 +3,7 @@ import { logger } from '@hughescr/logger';
 import type { DiscordConfig } from '@/config/schemas';
 import type { ClaudeAgent } from '@/agent/agent';
 import type { ContextBuilder } from '@/agent/context-builder';
+import { createTaskListReader } from '@/agent';
 import { createDiscordClient } from './client';
 import { createReadyHandler, createErrorHandler } from './handlers';
 import {
@@ -274,6 +275,15 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         // At this point, readyClient.user is guaranteed to be non-null
         // because the 'clientReady' event only fires after successful authentication
 
+        // Track last session ID for task context
+        let lastSessionId: string | undefined;
+        const setLastSessionId = (sessionId: string | undefined): void => {
+            if(sessionId) {
+                lastSessionId = sessionId;
+            }
+        };
+        const getLastSessionId = (): string | undefined => lastSessionId;
+
         // Track recent messages for context-aware idle status generation
         const MAX_RECENT_MESSAGES = 5;
         const recentMessages: string[] = [];
@@ -293,6 +303,12 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         };
 
         const getLastThinkingContent = (): string | undefined => lastThinkingContent;
+
+        // Create task list reader for idle status context
+        const taskListReader = createTaskListReader({
+            getCurrentSessionId: getLastSessionId,
+            logger,
+        });
 
         // Create rate limiter for Discord message sending
         rateLimiter = new DiscordRateLimiter({
@@ -335,6 +351,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 botStateManager,
                 dynamicStatusGenerator,
                 inboxManager,
+                getTaskContext:   () => taskListReader.buildTaskListSummary(),
                 getRecentContext: async () => {
                     if(recentMessages.length === 0) {
                         return undefined;
@@ -368,6 +385,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 rateLimiter,
                 client:                  readyClient,
                 onThinkingContentUpdate: setLastThinkingContent,
+                setLastSessionId,
             });
         }
 
@@ -384,6 +402,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 client:                  readyClient,
                 contextBuilder,
                 onThinkingContentUpdate: setLastThinkingContent,
+                setLastSessionId,
             });
             perchSessionRunner = perchSetup.runner;
             perchScheduler = perchSetup.scheduler;
@@ -408,6 +427,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 channelRegistry,
                 eventDeltaTracker,
                 onThinkingContentUpdate: setLastThinkingContent,
+                setLastSessionId,
             });
 
             // Register message handler AFTER channel registry is initialized and coordinator is created

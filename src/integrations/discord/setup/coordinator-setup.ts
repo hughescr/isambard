@@ -128,6 +128,7 @@ export interface SetupCoordinatorParams {
     channelRegistry:          ChannelRegistryManager
     eventDeltaTracker?:       import('../../../agent/event-delta-tracker').EventDeltaTracker
     onThinkingContentUpdate?: (content: string) => void
+    setLastSessionId?:        (sessionId: string | undefined) => void
 }
 
 /**
@@ -207,6 +208,9 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                     useFallbackOnError: false,
                 });
             }
+
+            // Update session ID tracker
+            params.setLastSessionId?.(result.sessionId);
 
             // Resume catch-up if we were suspended
             if(botStateManager.getMode() === 'idle' && catchUpSessionRunner?.isSuspended()) {

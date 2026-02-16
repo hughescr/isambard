@@ -31,6 +31,7 @@ export interface SetupPerchParams {
     client:                   Client
     contextBuilder?:          ContextBuilder
     onThinkingContentUpdate?: (content: string) => void
+    setLastSessionId?:        (sessionId: string | undefined) => void
 }
 
 /**
@@ -87,6 +88,9 @@ export function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
             if(streamEventHandler) {
                 streamEventHandler.complete();
             }
+
+            // Update session ID tracker
+            params.setLastSessionId?.(result.sessionId);
 
             // Log session completion
             logger.info({
