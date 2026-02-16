@@ -77,6 +77,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             ['logEvent', 'Log an event to the events layer'],
             ['search', 'Search memories by tag with optional filters'],
             ['deleteMemory', 'Delete a memory at the specified path. Returns the deleted content as confirmation.'],
+            ['updateTags', 'Add or remove tags on an existing memory without changing its content.'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
@@ -93,6 +94,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             ['logEvent', ['eventType', 'summary', 'details', 'tags']],
             ['search', ['tags', 'layer', 'limit']],
             ['deleteMemory', ['path']],
+            ['updateTags', ['path', 'addTags', 'removeTags']],
         ])('should have %s tool with required input schema fields', (toolName, requiredFields) => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
@@ -119,6 +121,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             ['list',            { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false }],
             ['listTags',        { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false }],
             ['deleteMemory',    { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: false }],
+            ['updateTags',      { readOnlyHint: false, destructiveHint: false, idempotentHint: true,  openWorldHint: false }],
         ])('should have %s tool with correct annotations', (toolName, expectedAnnotations) => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
@@ -1065,6 +1068,331 @@ describe.concurrent('createMemoryMCPServer', () => {
             expect(result.content[0].text).toContain('/identity/test.md: Test preview content');
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBeUndefined();
+        });
+    });
+
+    describe('updateTags tool', () => {
+        test('should add tags to memory with existing tags', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path: '/state/test' as MemoryPath,
+                tags: new Set(['existing', 'old']),
+            }));
+            mockBackend.update = mock(async () => createMockItem());
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({ path: '/state/test', addTags: ['new1', 'new2'] });
+
+            expect(mockBackend.update).toHaveBeenCalledWith('/state/test', {
+                tags: new Set(['existing', 'new1', 'new2', 'old']),
+            });
+        });
+
+        test('should remove tags from memory', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path: '/state/test' as MemoryPath,
+                tags: new Set(['keep', 'remove-me']),
+            }));
+            mockBackend.update = mock(async () => createMockItem());
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({ path: '/state/test', removeTags: ['remove-me'] });
+
+            expect(mockBackend.update).toHaveBeenCalledWith('/state/test', {
+                tags: new Set(['keep']),
+            });
+        });
+
+        test('should add and remove tags simultaneously', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path: '/state/test' as MemoryPath,
+                tags: new Set(['a', 'b', 'c']),
+            }));
+            mockBackend.update = mock(async () => createMockItem());
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({ path: '/state/test', addTags: ['d'], removeTags: ['b'] });
+
+            expect(mockBackend.update).toHaveBeenCalledWith('/state/test', {
+                tags: new Set(['a', 'c', 'd']),
+            });
+        });
+
+        test('should remove tag when it appears in both addTags and removeTags (remove wins)', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path: '/state/test' as MemoryPath,
+                tags: new Set(['existing']),
+            }));
+            mockBackend.update = mock(async () => createMockItem());
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({ path: '/state/test', addTags: ['conflict', 'new'], removeTags: ['conflict'] });
+
+            expect(mockBackend.update).toHaveBeenCalledWith('/state/test', {
+                tags: new Set(['existing', 'new']),
+            });
+        });
+
+        test('should return response showing before and after tags', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path: '/events/test/2026-01-26T07-19-53-557Z' as MemoryPath,
+                tags: new Set(['debugging', 'discord']),
+            }));
+            mockBackend.update = mock(async () => createMockItem());
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/events/test/2026-01-26T07-19-53-557Z', addTags: ['catch-up'], removeTags: ['discord'] });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Updated tags on /events/test/2026-01-26T07-19-53-557Z\nBefore: debugging, discord\nAfter: catch-up, debugging');
+
+            expect(mockBackend.update).toHaveBeenCalledWith('/events/test/2026-01-26T07-19-53-557Z', {
+                tags: new Set(['catch-up', 'debugging']),
+            });
+        });
+
+        test('should return error when memory not found', async () => {
+            mockBackend.get = mock(async () => undefined);
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/nonexistent/path', addTags: ['test'] });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBe(true);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Memory not found at path: /nonexistent/path');
+        });
+
+        test('should return error when backend.get throws Error', async () => {
+            mockBackend.get = mock(async () => {
+                throw new Error('Database error');
+            });
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/state/test', addTags: ['test'] });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBe(true);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Error updating tags: Database error');
+        });
+
+        test('should return error when backend.get throws non-Error', async () => {
+            mockBackend.get = mock(async () => {
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
+                throw 'Connection reset';
+            });
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/state/test', addTags: ['test'] });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBe(true);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Error updating tags: Connection reset');
+        });
+
+        test('should return error when backend.update throws Error', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path: '/state/test' as MemoryPath,
+                tags: new Set(['existing']),
+            }));
+            mockBackend.update = mock(async () => {
+                throw new Error('Write failed');
+            });
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/state/test', addTags: ['test'] });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBe(true);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Error updating tags: Write failed');
+        });
+
+        test('should return error when backend.update throws non-Error', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path: '/state/test' as MemoryPath,
+                tags: new Set(['existing']),
+            }));
+            mockBackend.update = mock(async () => {
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
+                throw 'Timeout';
+            });
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/state/test', addTags: ['test'] });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBe(true);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Error updating tags: Timeout');
+        });
+
+        test('should return validation error when neither addTags nor removeTags provided', async () => {
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/state/test' });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBe(true);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Must provide at least one of addTags or removeTags (non-empty)');
+        });
+
+        test('should return validation error when both arrays are empty', async () => {
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/state/test', addTags: [], removeTags: [] });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.isError).toBe(true);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toBe('Must provide at least one of addTags or removeTags (non-empty)');
+        });
+
+        test('should handle adding tags that are already present (idempotent)', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path: '/state/test' as MemoryPath,
+                tags: new Set(['a', 'b']),
+            }));
+            mockBackend.update = mock(async () => createMockItem());
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({ path: '/state/test', addTags: ['a', 'b'] });
+
+            expect(mockBackend.update).toHaveBeenCalledWith('/state/test', {
+                tags: new Set(['a', 'b']),
+            });
+        });
+
+        test('should handle removing non-existent tags', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path: '/state/test' as MemoryPath,
+                tags: new Set(['a', 'b']),
+            }));
+            mockBackend.update = mock(async () => createMockItem());
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({ path: '/state/test', removeTags: ['nonexistent'] });
+
+            expect(mockBackend.update).toHaveBeenCalledWith('/state/test', {
+                tags: new Set(['a', 'b']),
+            });
+        });
+
+        test('should handle memory with no existing tags', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path: '/state/test' as MemoryPath,
+                // No tags property
+            }));
+            mockBackend.update = mock(async () => createMockItem());
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({ path: '/state/test', addTags: ['new-tag'] });
+
+            expect(mockBackend.update).toHaveBeenCalledWith('/state/test', {
+                tags: new Set(['new-tag']),
+            });
+        });
+
+        test('should show "(none)" in Before when memory had no tags', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path: '/state/test' as MemoryPath,
+                tags: undefined,
+            }));
+            mockBackend.update = mock(async () => createMockItem());
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/state/test', addTags: ['new'] });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('Before: (none)');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('After: new');
+        });
+
+        test('should show "(none)" in After when all tags are removed', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path: '/state/test' as MemoryPath,
+                tags: new Set(['only-tag']),
+            }));
+            mockBackend.update = mock(async () => createMockItem());
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/state/test', removeTags: ['only-tag'] });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('Before: only-tag');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('After: (none)');
+        });
+
+        test('should sort tags alphabetically in before/after display', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path: '/state/test' as MemoryPath,
+                tags: new Set(['zebra', 'apple', 'mango']),
+            }));
+            mockBackend.update = mock(async () => createMockItem());
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'updateTags');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({ path: '/state/test', addTags: ['banana'] });
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('Before: apple, mango, zebra');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.content[0].text).toContain('After: apple, banana, mango, zebra');
         });
     });
 });

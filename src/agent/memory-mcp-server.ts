@@ -379,6 +379,66 @@ export function createMemoryMCPServer(
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } }
             ),
+            // Stryker disable StringLiteral: Tool name and description are MCP server configuration
+            tool(
+                'updateTags',
+                'Add or remove tags on an existing memory without changing its content.',
+                // Stryker restore StringLiteral
+                {
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    path:       z.string().describe('Memory path to update tags on'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    addTags:    z.array(z.string()).optional().describe('Tags to add to the memory'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    removeTags: z.array(z.string()).optional().describe('Tags to remove from the memory'),
+                },
+                async (args): Promise<CallToolResult> => {
+                    try {
+                        const addTags = args.addTags ?? [];
+                        const removeTags = args.removeTags ?? [];
+                        if(addTags.length === 0 && removeTags.length === 0) {
+                            return {
+                                content: [{ type: 'text' as const, text: 'Must provide at least one of addTags or removeTags (non-empty)' }],
+                                isError: true,
+                            };
+                        }
+
+                        const memoryPath = createMemoryPath(args.path);
+                        const existing = await backend.get(memoryPath);
+                        if(!existing) {
+                            return {
+                                content: [{ type: 'text' as const, text: `Memory not found at path: ${args.path}` }],
+                                isError: true,
+                            };
+                        }
+
+                        const beforeTags = new Set(existing.tags ?? []);
+                        const newTags = new Set(beforeTags);
+                        for(const tag of addTags) {
+                            newTags.add(tag);
+                        }
+                        for(const tag of removeTags) {
+                            newTags.delete(tag);
+                        }
+
+                        await backend.update(memoryPath, { tags: newTags });
+
+                        const beforeStr = beforeTags.size > 0 ? [...beforeTags].sort().join(', ') : '(none)';
+                        const afterStr = newTags.size > 0 ? [...newTags].sort().join(', ') : '(none)';
+                        return {
+                            content: [{ type: 'text' as const, text: `Updated tags on ${args.path}\nBefore: ${beforeStr}\nAfter: ${afterStr}` }],
+                        };
+                    } catch (error) {
+                        const message = _.isError(error) ? error.message : String(error);
+                        return {
+                            content: [{ type: 'text' as const, text: `Error updating tags: ${message}` }],
+                            isError: true,
+                        };
+                    }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
+            ),
         ],
     });
 }
