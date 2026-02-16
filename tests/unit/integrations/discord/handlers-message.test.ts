@@ -1295,33 +1295,27 @@ describe('Discord Event Handlers', () => {
             });
         });
 
-        describe('mode interruption handling', () => {
-            it('should call perchSessionRunner.interrupt even when already interrupted in perching mode', async () => {
+        describe('mode suspension handling', () => {
+            it('should always call suspend when in perching mode', async () => {
                 const mockPerchRunner = {
-                    interrupt: mock(() => undefined),
+                    suspend: mock(() => undefined),
                 };
 
                 const mockBotState = createMockBotStateManager();
-                // Override to return 'perching' mode and isInterrupted = true
+                // Override to return 'perching' mode
                 (mockBotState.getMode as any) = mock(() => 'perching' as const);
-                // Add isInterrupted method to the mock
-                const mockStateWithInterrupted = {
-                    ...mockBotState,
-                    isInterrupted: mock(() => true),
-                };
 
                 const handler = createMessageHandler({
                     botUserId:          '999999999999999999' as UserId,
                     channelRegistry:    { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
                     coordinator:        createMockCoordinator(),
-                    botStateManager:    mockStateWithInterrupted as any,
+                    botStateManager:    mockBotState as any,
                     perchSessionRunner: mockPerchRunner as any,
                 });
 
                 await handler(mockMessage);
 
-                // The key assertion: interrupt was called even though isInterrupted() returns true
-                expect(mockPerchRunner.interrupt).toHaveBeenCalled();
+                expect(mockPerchRunner.suspend).toHaveBeenCalled();
             });
         });
     });

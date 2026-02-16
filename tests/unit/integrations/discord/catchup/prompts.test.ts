@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-import { buildCatchUpPrompt, buildCatchUpInterruptedPrompt } from '@/integrations/discord/catchup/prompts';
-import type { CatchUpInterruptedOptions } from '@/integrations/discord/catchup/prompts';
+import { buildCatchUpPrompt, buildCatchUpResumedPrompt } from '@/integrations/discord/catchup/prompts';
+import type { CatchUpResumedOptions } from '@/integrations/discord/catchup/prompts';
 
 describe('buildCatchUpPrompt', () => {
     it('should include time context', () => {
@@ -47,9 +47,9 @@ describe('buildCatchUpPrompt', () => {
     });
 });
 
-describe('buildCatchUpInterruptedPrompt', () => {
+describe('buildCatchUpResumedPrompt', () => {
     it('should include time context', () => {
-        const options: CatchUpInterruptedOptions = {
+        const options: CatchUpResumedOptions = {
             viewedChannels:    ['general'],
             remainingUnread:   5,
             remainingChannels: 2,
@@ -59,13 +59,13 @@ describe('buildCatchUpInterruptedPrompt', () => {
                 content:     'Hello!',
             },
         };
-        const prompt = buildCatchUpInterruptedPrompt(options);
+        const prompt = buildCatchUpResumedPrompt(options);
         expect(prompt).toContain('## Current Time');
         expect(prompt).toContain('UTC:');
     });
 
     it('should include viewed channels', () => {
-        const options: CatchUpInterruptedOptions = {
+        const options: CatchUpResumedOptions = {
             viewedChannels:    ['general', 'random'],
             remainingUnread:   5,
             remainingChannels: 2,
@@ -75,12 +75,12 @@ describe('buildCatchUpInterruptedPrompt', () => {
                 content:     'Hello!',
             },
         };
-        const prompt = buildCatchUpInterruptedPrompt(options);
+        const prompt = buildCatchUpResumedPrompt(options);
         expect(prompt).toContain('general, random');  // verify comma-space separator
     });
 
     it('should show "None yet" when no channels viewed', () => {
-        const options: CatchUpInterruptedOptions = {
+        const options: CatchUpResumedOptions = {
             viewedChannels:    [],
             remainingUnread:   10,
             remainingChannels: 3,
@@ -90,12 +90,12 @@ describe('buildCatchUpInterruptedPrompt', () => {
                 content:     'Need assistance',
             },
         };
-        const prompt = buildCatchUpInterruptedPrompt(options);
+        const prompt = buildCatchUpResumedPrompt(options);
         expect(prompt).toContain('None yet');
     });
 
     it('should include new message details', () => {
-        const options: CatchUpInterruptedOptions = {
+        const options: CatchUpResumedOptions = {
             viewedChannels:    [],
             remainingUnread:   5,
             remainingChannels: 1,
@@ -105,14 +105,14 @@ describe('buildCatchUpInterruptedPrompt', () => {
                 content:     'Check this PR',
             },
         };
-        const prompt = buildCatchUpInterruptedPrompt(options);
+        const prompt = buildCatchUpResumedPrompt(options);
         expect(prompt).toContain('Charlie');
         expect(prompt).toContain('#dev');
         expect(prompt).toContain('Check this PR');
     });
 
     it('should include remaining unread state', () => {
-        const options: CatchUpInterruptedOptions = {
+        const options: CatchUpResumedOptions = {
             viewedChannels:    ['general'],
             remainingUnread:   8,
             remainingChannels: 2,
@@ -122,13 +122,13 @@ describe('buildCatchUpInterruptedPrompt', () => {
                 content:     'Hi',
             },
         };
-        const prompt = buildCatchUpInterruptedPrompt(options);
+        const prompt = buildCatchUpResumedPrompt(options);
         expect(prompt).toContain('8 unread messages remain');
         expect(prompt).toContain('2 channels');
     });
 
     it('should handle singular remaining counts', () => {
-        const options: CatchUpInterruptedOptions = {
+        const options: CatchUpResumedOptions = {
             viewedChannels:    ['general'],
             remainingUnread:   1,
             remainingChannels: 1,
@@ -138,7 +138,7 @@ describe('buildCatchUpInterruptedPrompt', () => {
                 content:     'Test',
             },
         };
-        const prompt = buildCatchUpInterruptedPrompt(options);
+        const prompt = buildCatchUpResumedPrompt(options);
         expect(prompt).toContain('1 unread message remains');
         expect(prompt).toContain('1 channel');
         expect(prompt).not.toContain('1 unread messages remain');  // verify singular
@@ -146,7 +146,7 @@ describe('buildCatchUpInterruptedPrompt', () => {
     });
 
     it('should handle plural remaining counts', () => {
-        const options: CatchUpInterruptedOptions = {
+        const options: CatchUpResumedOptions = {
             viewedChannels:    ['general'],
             remainingUnread:   5,
             remainingChannels: 3,
@@ -156,14 +156,14 @@ describe('buildCatchUpInterruptedPrompt', () => {
                 content:     'Test',
             },
         };
-        const prompt = buildCatchUpInterruptedPrompt(options);
+        const prompt = buildCatchUpResumedPrompt(options);
         expect(prompt).toContain('5 unread messages remain');
         expect(prompt).toContain('3 channels');
         expect(prompt).not.toContain('5 unread message remains across');  // verify plural (message vs messages)
     });
 
     it('should present new message for prioritization', () => {
-        const options: CatchUpInterruptedOptions = {
+        const options: CatchUpResumedOptions = {
             viewedChannels:    ['general'],
             remainingUnread:   5,
             remainingChannels: 2,
@@ -173,14 +173,15 @@ describe('buildCatchUpInterruptedPrompt', () => {
                 content:     'Hello!',
             },
         };
-        const prompt = buildCatchUpInterruptedPrompt(options);
-        expect(prompt).toContain('NEW MESSAGE');
+        const prompt = buildCatchUpResumedPrompt(options);
+        expect(prompt).toContain('CATCH-UP SESSION RESUMED');
+        expect(prompt).toContain('MESSAGE HANDLED');
         expect(prompt).toContain('What To Do');
         expect(prompt).toContain('already been handled by your normal conversation flow');
     });
 
     it('should tell agent to continue catching up after handling', () => {
-        const options: CatchUpInterruptedOptions = {
+        const options: CatchUpResumedOptions = {
             viewedChannels:    ['general'],
             remainingUnread:   3,
             remainingChannels: 1,
@@ -190,7 +191,7 @@ describe('buildCatchUpInterruptedPrompt', () => {
                 content:     'Need help',
             },
         };
-        const prompt = buildCatchUpInterruptedPrompt(options);
+        const prompt = buildCatchUpResumedPrompt(options);
         expect(prompt).toContain('Continue catching up on remaining channels');
         expect(prompt).toContain('inbox tools are still available');
     });

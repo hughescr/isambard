@@ -131,8 +131,6 @@ function getEmojiPrefix(presenceDisplayMode: PresenceDisplayMode): string {
     switch(presenceDisplayMode) {
         case 'catching_up':
             return '📥 ';
-        case 'catching_up_interrupted':
-            return '📥💬 ';
         default:
             return '💤 ';
     }
@@ -153,8 +151,6 @@ function getFallbackStatus(presenceDisplayMode: PresenceDisplayMode, includeEmoj
     switch(presenceDisplayMode) {
         case 'catching_up':
             return '📥 Catching up';
-        case 'catching_up_interrupted':
-            return '📥💬 Catching up';
         default:
             return '💤 Idle';
     }
@@ -196,7 +192,7 @@ export function createIdleStatusGenerator(
 
                 // Determine if we're in catch-up mode
                 // Stryker disable next-line ConditionalExpression: Mode detection - tested through different prompt usage
-                const isCatchUp = presenceDisplayMode === 'catching_up' || presenceDisplayMode === 'catching_up_interrupted';
+                const isCatchUp = presenceDisplayMode === 'catching_up';
 
                 // Build system and user prompts based on presence display mode
                 let systemPrompt: string;

@@ -162,7 +162,7 @@ function buildContextFromState(
     }
 ): StatusContext {
     // Get emoji prefix using getModeEmoji
-    const emojiPrefix = getModeEmoji(state.mode, state.interrupted);
+    const emojiPrefix = getModeEmoji(state.mode);
 
     // Determine strategy
     const strategy = determineStrategy(state);

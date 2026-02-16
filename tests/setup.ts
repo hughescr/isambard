@@ -230,14 +230,13 @@ mockLogger.child = mock(() => mockLogger);
 // Mock helpers for Discord handlers
 export function createMockBotStateManager() {
     return {
-        shouldUpdatePresence:      mock(constant(true)),
-        updateActivityPhase:       mock(constant(undefined)),
-        clearActivityPhase:        mock(constant(undefined)),
-        getMode:                   mock(constant('idle' as const)),
-        goIdle:                    mock(constant(undefined)),
-        startProcessingMessage:    mock(constant(undefined)),
-        updateInterruptingMessage: mock(constant(undefined)),
-        getSessionType:            mock((isDM: boolean) => (isDM ? 'dm' : 'guild')),
+        shouldUpdatePresence:   mock(constant(true)),
+        updateActivityPhase:    mock(constant(undefined)),
+        clearActivityPhase:     mock(constant(undefined)),
+        getMode:                mock(constant('idle' as const)),
+        goIdle:                 mock(constant(undefined)),
+        startProcessingMessage: mock(constant(undefined)),
+        getSessionType:         mock((isDM: boolean) => (isDM ? 'dm' : 'guild')),
     };
 }
 

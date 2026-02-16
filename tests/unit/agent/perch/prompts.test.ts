@@ -3,11 +3,11 @@ import _ from 'lodash';
 import {
     buildPerchPrompt,
     buildTestPerchPrompt,
-    buildPerchInterruptedPrompt,
+    buildPerchResumedPrompt,
     buildPerchTimeoutPrompt,
     getSuggestionLevelDescription,
     BASE_PROMPT,
-    type PerchInterruptedOptions,
+    type PerchResumedOptions,
     type PerchTimeoutOptions
 } from '@/agent/perch/prompts';
 import type { PerchSlot } from '@/agent/perch/types';
@@ -300,329 +300,147 @@ describe.concurrent('getSuggestionLevelDescription edge cases', () => {
     });
 });
 
-describe.concurrent('buildPerchInterruptedPrompt', () => {
-    test('should return multi-line prompt with all sections', () => {
-        const options: PerchInterruptedOptions = {
-            partialWork: {
-                thinking:       'Working on something',
-                text:           'Draft text',
-                pendingToolUse: {
-                    type:  'tool_use',
-                    id:    'toolu_123',
-                    name:  'test_tool',
-                    input: {},
-                },
-                sessionId:                  undefined,
-                uncollectedBackgroundTasks: 0,
-            },
-            newMessage: {
-                author:      'TestUser',
-                channelName: 'test-channel',
-                content:     'Test message',
-            },
+describe.concurrent('buildPerchResumedPrompt', () => {
+    test('should include time header', () => {
+        const options: PerchResumedOptions = {
+            suspendedDurationMs: 120000,
+            interruptingSummary: 'A message from Craig in #general',
         };
 
-        const prompt = buildPerchInterruptedPrompt(options);
-        // Verify it's a multi-line prompt (array was used correctly)
-        const lines = _.split(prompt, '\n');
-        expect(lines.length).toBeGreaterThan(10);
-    });
-
-    test('should include time header with UTC time', () => {
-        const options: PerchInterruptedOptions = {
-            partialWork: {
-                thinking:                   '',
-                text:                       '',
-                pendingToolUse:             null,
-                sessionId:                  undefined,
-                uncollectedBackgroundTasks: 0,
-            },
-            newMessage: {
-                author:      'TestUser',
-                channelName: 'test-channel',
-                content:     'Test message',
-            },
-        };
-
-        const prompt = buildPerchInterruptedPrompt(options);
+        const prompt = buildPerchResumedPrompt(options);
         expect(prompt).toContain('## Current Time');
         expect(prompt).toContain('UTC:');
     });
 
-    test('should include interrupted header', () => {
-        const options: PerchInterruptedOptions = {
-            partialWork: {
-                thinking:                   '',
-                text:                       '',
-                pendingToolUse:             null,
-                sessionId:                  undefined,
-                uncollectedBackgroundTasks: 0,
-            },
-            newMessage: {
-                author:      'TestUser',
-                channelName: 'test-channel',
-                content:     'Test message',
-            },
+    test('should include PERCH TIME RESUMED header', () => {
+        const options: PerchResumedOptions = {
+            suspendedDurationMs: 60000,
+            interruptingSummary: 'A message from Alice in #dev',
         };
 
-        const prompt = buildPerchInterruptedPrompt(options);
-        expect(prompt).toContain('--- PERCH TIME INTERRUPTED ---');
-        expect(prompt).toContain('autonomous perch time when a new message arrived');
+        const prompt = buildPerchResumedPrompt(options);
+        expect(prompt).toContain('--- PERCH TIME RESUMED ---');
     });
 
-    test('should include partial thinking if present', () => {
-        const options: PerchInterruptedOptions = {
-            partialWork: {
-                thinking:                   'I was thinking about X',
-                text:                       '',
-                pendingToolUse:             null,
-                sessionId:                  undefined,
-                uncollectedBackgroundTasks: 0,
-            },
-            newMessage: {
-                author:      'TestUser',
-                channelName: 'test-channel',
-                content:     'Test message',
-            },
+    test('should format suspension duration in minutes', () => {
+        const options: PerchResumedOptions = {
+            suspendedDurationMs: 180000, // 3 minutes
+            interruptingSummary: 'A message from Bob in #test',
         };
 
-        const prompt = buildPerchInterruptedPrompt(options);
-        expect(prompt).toContain('[Your thinking at interruption:]');
-        expect(prompt).toContain('I was thinking about X');
+        const prompt = buildPerchResumedPrompt(options);
+        expect(prompt).toContain('approximately 3 minutes');
     });
 
-    test('should not include thinking section if empty', () => {
-        const options: PerchInterruptedOptions = {
-            partialWork: {
-                thinking:                   '',
-                text:                       '',
-                pendingToolUse:             null,
-                sessionId:                  undefined,
-                uncollectedBackgroundTasks: 0,
-            },
-            newMessage: {
-                author:      'TestUser',
-                channelName: 'test-channel',
-                content:     'Test message',
-            },
+    test('should format less than 1 minute duration', () => {
+        const options: PerchResumedOptions = {
+            suspendedDurationMs: 20000, // 20 seconds (rounds to 0 minutes)
+            interruptingSummary: 'A message from Craig in #general',
         };
 
-        const prompt = buildPerchInterruptedPrompt(options);
-        expect(prompt).not.toContain('[Your thinking at interruption:]');
+        const prompt = buildPerchResumedPrompt(options);
+        expect(prompt).toContain('less than a minute');
     });
 
-    test('should include partial text if present', () => {
-        const options: PerchInterruptedOptions = {
-            partialWork: {
-                thinking:                   '',
-                text:                       'I was composing a response',
-                pendingToolUse:             null,
-                sessionId:                  undefined,
-                uncollectedBackgroundTasks: 0,
-            },
-            newMessage: {
-                author:      'TestUser',
-                channelName: 'test-channel',
-                content:     'Test message',
-            },
+    test('should include interrupting message summary', () => {
+        const options: PerchResumedOptions = {
+            suspendedDurationMs: 120000,
+            interruptingSummary: 'A message from Alice in #dev',
         };
 
-        const prompt = buildPerchInterruptedPrompt(options);
-        expect(prompt).toContain('[You were composing:]');
-        expect(prompt).toContain('I was composing a response');
+        const prompt = buildPerchResumedPrompt(options);
+        expect(prompt).toContain('[While you were suspended:]');
+        expect(prompt).toContain('A message from Alice in #dev');
     });
 
-    test('should not include text section if empty', () => {
-        const options: PerchInterruptedOptions = {
-            partialWork: {
-                thinking:                   '',
-                text:                       '',
-                pendingToolUse:             null,
-                sessionId:                  undefined,
-                uncollectedBackgroundTasks: 0,
-            },
-            newMessage: {
-                author:      'TestUser',
-                channelName: 'test-channel',
-                content:     'Test message',
-            },
+    test('should include new events when provided', () => {
+        const options: PerchResumedOptions = {
+            suspendedDurationMs: 120000,
+            interruptingSummary: 'A message from Craig in #general',
+            newEventsSummary:    '- /events/2024-01-01.md: New event logged\n- /state/project.md: Updated status',
         };
 
-        const prompt = buildPerchInterruptedPrompt(options);
-        expect(prompt).not.toContain('[You were composing:]');
+        const prompt = buildPerchResumedPrompt(options);
+        expect(prompt).toContain('- /events/2024-01-01.md: New event logged');
+        expect(prompt).toContain('- /state/project.md: Updated status');
     });
 
-    test('should include pending tool use if present', () => {
-        const options: PerchInterruptedOptions = {
-            partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: {
-                    type:  'tool_use',
-                    id:    'toolu_123',
-                    name:  'search_memory',
-                    input: {},
-                },
-                sessionId:                  undefined,
-                uncollectedBackgroundTasks: 0,
-            },
-            newMessage: {
-                author:      'TestUser',
-                channelName: 'test-channel',
-                content:     'Test message',
-            },
+    test('should omit new events section when not provided', () => {
+        const options: PerchResumedOptions = {
+            suspendedDurationMs: 120000,
+            interruptingSummary: 'A message from Craig in #general',
         };
 
-        const prompt = buildPerchInterruptedPrompt(options);
-        expect(prompt).toContain('[You were about to use "search_memory"]');
+        const prompt = buildPerchResumedPrompt(options);
+        // Should not contain specific event paths (only the interrupting message)
+        const lines = _.split(prompt, '\n');
+        const eventLines = _.filter(lines, line => _.startsWith(line, '- /'));
+        expect(eventLines.length).toBe(0);
     });
 
-    test('should not include tool use section if not present', () => {
-        const options: PerchInterruptedOptions = {
-            partialWork: {
-                thinking:                   '',
-                text:                       '',
-                pendingToolUse:             null,
-                sessionId:                  undefined,
-                uncollectedBackgroundTasks: 0,
-            },
-            newMessage: {
-                author:      'TestUser',
-                channelName: 'test-channel',
-                content:     'Test message',
-            },
+    test('should include TaskList reminder', () => {
+        const options: PerchResumedOptions = {
+            suspendedDurationMs: 120000,
+            interruptingSummary: 'A message from Craig in #general',
         };
 
-        const prompt = buildPerchInterruptedPrompt(options);
-        expect(prompt).not.toContain('[You were about to use');
-    });
-
-    test('should include new message details', () => {
-        const options: PerchInterruptedOptions = {
-            partialWork: {
-                thinking:                   '',
-                text:                       '',
-                pendingToolUse:             null,
-                sessionId:                  undefined,
-                uncollectedBackgroundTasks: 0,
-            },
-            newMessage: {
-                author:      'Alice',
-                channelName: 'general',
-                content:     'Hey, can you help me?',
-            },
-        };
-
-        const prompt = buildPerchInterruptedPrompt(options);
-        expect(prompt).toContain('--- NEW MESSAGE ---');
-        expect(prompt).toContain('From: Alice in #general');
-        expect(prompt).toContain('Hey, can you help me?');
-    });
-
-    test('should include task instructions', () => {
-        const options: PerchInterruptedOptions = {
-            partialWork: {
-                thinking:                   '',
-                text:                       '',
-                pendingToolUse:             null,
-                sessionId:                  undefined,
-                uncollectedBackgroundTasks: 0,
-            },
-            newMessage: {
-                author:      'TestUser',
-                channelName: 'test-channel',
-                content:     'Test message',
-            },
-        };
-
-        const prompt = buildPerchInterruptedPrompt(options);
-        expect(prompt).toContain('## What To Do');
-        expect(prompt).toContain('already been handled by your normal conversation flow');
-        expect(prompt).toContain('do NOT need to respond to it again');
+        const prompt = buildPerchResumedPrompt(options);
         expect(prompt).toContain('Check TaskList');
         expect(prompt).toContain('Trust TaskList as your source of truth');
     });
 
-    test('should build correct structure with empty partial work', () => {
-        const options: PerchInterruptedOptions = {
-            partialWork: {
-                thinking:                   '',
-                text:                       '',
-                pendingToolUse:             null,
-                sessionId:                  undefined,
-                uncollectedBackgroundTasks: 0,
-            },
-            newMessage: {
-                author:      'Alice',
-                channelName: 'general',
-                content:     'Need help',
-            },
+    test('should format single minute duration correctly', () => {
+        const options: PerchResumedOptions = {
+            suspendedDurationMs: 90000, // 1.5 minutes, rounds to 2
+            interruptingSummary: 'A message from Bob in #test',
         };
 
-        const prompt = buildPerchInterruptedPrompt(options);
-
-        // Verify header is present
-        expect(prompt).toMatch(/^## Current Time/);
-
-        // Verify interrupted section
-        expect(prompt).toContain('--- PERCH TIME INTERRUPTED ---');
-
-        // Verify message section with correct format
-        expect(prompt).toContain('--- NEW MESSAGE ---');
-        expect(prompt).toContain('From: Alice in #general');
-        expect(prompt).toContain('Need help');
-
-        // Verify action items section
-        expect(prompt).toContain('## What To Do');
-        expect(prompt).toContain('1. Review the message for context');
+        const prompt = buildPerchResumedPrompt(options);
+        expect(prompt).toContain('approximately 2 minutes');
     });
 
-    test('should include tool name when pendingToolUse is present', () => {
-        const options: PerchInterruptedOptions = {
-            partialWork: {
-                thinking:       '',
-                text:           '',
-                pendingToolUse: {
-                    type:  'tool_use',
-                    id:    'toolu_999',
-                    name:  'memory_search',
-                    input: {},
-                },
-                sessionId:                  undefined,
-                uncollectedBackgroundTasks: 0,
-            },
-            newMessage: {
-                author:      'Bob',
-                channelName: 'dev',
-                content:     'Quick question',
-            },
+    test('should format exactly 1 minute as singular "minute" not "minutes"', () => {
+        const options: PerchResumedOptions = {
+            suspendedDurationMs: 60000, // exactly 1 minute
+            interruptingSummary: 'A message from Craig in #general',
         };
 
-        const prompt = buildPerchInterruptedPrompt(options);
-
-        // Verify tool name appears in output
-        expect(prompt).toContain('memory_search');
-        expect(prompt).toContain('[You were about to use "memory_search"]');
+        const prompt = buildPerchResumedPrompt(options);
+        // Use regex to ensure "1 minute" is followed by a non-alphanumeric character (not 's' and not other text)
+        expect(prompt).toMatch(/approximately 1 minute[^a-zA-Z]/);
     });
 
-    test('should mention message was already handled', () => {
-        const options: PerchInterruptedOptions = {
-            partialWork: {
-                thinking:                   '',
-                text:                       '',
-                pendingToolUse:             null,
-                sessionId:                  undefined,
-                uncollectedBackgroundTasks: 0,
-            },
-            newMessage: {
-                author:      'TestUser',
-                channelName: 'test-channel',
-                content:     'Test message',
-            },
+    test('should join sections with newlines', () => {
+        const options: PerchResumedOptions = {
+            suspendedDurationMs: 120000,
+            interruptingSummary: 'A message from Craig in #general',
         };
 
-        const prompt = buildPerchInterruptedPrompt(options);
-        expect(prompt).toContain('already been handled by your normal conversation flow');
+        const prompt = buildPerchResumedPrompt(options);
+        // Verify sections are separated by newlines (not concatenated)
+        expect(prompt).toContain('--- PERCH TIME RESUMED ---\n');
+        expect(prompt).toContain('\nContinue your perch work');
+    });
+
+    test('should mention suspension for message handling', () => {
+        const options: PerchResumedOptions = {
+            suspendedDurationMs: 120000,
+            interruptingSummary: 'A message from Craig in #general',
+        };
+
+        const prompt = buildPerchResumedPrompt(options);
+        expect(prompt).toContain('suspended');
+        expect(prompt).toContain('user message was handled');
+    });
+
+    test('should instruct to continue perch work', () => {
+        const options: PerchResumedOptions = {
+            suspendedDurationMs: 120000,
+            interruptingSummary: 'A message from Craig in #general',
+        };
+
+        const prompt = buildPerchResumedPrompt(options);
+        expect(prompt).toContain('Continue your perch work');
     });
 });
 

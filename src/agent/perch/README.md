@@ -26,6 +26,7 @@ Time-specific hints are **advisory, not requirements**. The agent decides what's
 |------|-------|------------------|---------|
 | **pre-dawn** | 5-7am | Strongly suggestive | Digest prep for Craig's wake-up |
 | **mid-morning** | 9-11am | Moderate | Follow up on tasks/threads |
+| **wikipedia** | 12-2pm | Open | Wikipedia exploration |
 | **afternoon** | 1-3pm | Open | Exploration, research |
 | **evening** | 6-8pm | Light touch | Light exploration |
 | **late-night** | 11pm-1am | Moderate | Deep research, prep |
@@ -71,7 +72,11 @@ Time-specific hints are **advisory, not requirements**. The agent decides what's
 **Busy states that defer perch:**
 - `catching_up`: Processing backlog of Discord messages
 - `processing_message`: Handling active user message
-- `perching` with `interrupted: true`: Already in interrupted perch
+- `perching`: Already in active perch session
+
+**Suspension guard:**
+- Scheduler checks `isSuspended()` before starting new perch
+- Won't start if perch is currently suspended (waiting to resume)
 
 ### Session Lifecycle
 
@@ -84,36 +89,115 @@ graph TD
     E --> F[Run Deferred Perch]
     F --> C
     C --> G[Agent Runs with Prompt]
-    G --> H{Interrupted?}
-    H -->|Yes| I[Capture StreamProgress]
+    G --> H{User Message?}
+    H -->|Yes| I[Suspend: Save State]
     H -->|No| J[Complete & Go Idle]
-    I --> K[User Message Handled]
-    K --> L[Resume with Interrupted Prompt]
-    L --> G
+    I --> K[Bot → Idle State]
+    K --> L[Handle Message Normally]
+    L --> M[Resume: Restore State]
+    M --> N[Continue with Paused Clock]
+    N --> G
 ```
 
-## Interruption Handling
+## Suspension Handling
 
 ### When User Messages Arrive
 
 If a message arrives during perch time:
 
-1. **Capture context**: StreamProgress stores thinking, text, pending tool use, and background task collection state
-2. **Interrupt session**: `BotStateManager.interrupt(messageDetails)` called
+1. **Save state**: `suspend()` stores `sessionId`, `slot`, `elapsedMs`, and `suspendedAt`
+2. **Transition to idle**: Bot state changes from `perching` to `idle`
 3. **Abort signal fired**: Agent stream stops gracefully
-4. **Handle message**: Bot processes user message normally
-5. **Resume perch**: After response sent, resume with same `sessionId`
+4. **Handle message normally**: Message coordinator processes message in standard `idle→processing_message` flow
+5. **Pass context note**: Message handler receives note: "Note: This message arrived during perch-time..."
+6. **Resume after response**: `resumeAfterSuspension()` restores state and continues perch
 
-### Interrupted Prompt
+### Key Differences from Old Model
 
-When resuming, agent receives context about both streams of thought:
+**OLD (Interruption):**
+- Bot stayed in `perching+interrupted` state during message handling
+- Timeout kept ticking (wall-clock based)
+- Resumed prompt included partialWork + user message content
+- Single state machine with interrupted flag
+
+**NEW (Suspension):**
+- Bot transitions to `idle` state during suspension
+- Timeout clock **pauses** (tracks elapsed perch time, not wall clock)
+- Resumed prompt is lightweight (no partialWork, no user message)
+- Clear separation: perch session vs. message session
+
+### Suspended State
+
+The session runner tracks suspension state:
+
+```typescript
+interface SuspendedState {
+  sessionId: string;          // Same session continues
+  slot: PerchSlot;           // Original time slot
+  elapsedMs: number;         // How much perch time used so far
+  suspendedAt: Date;         // When suspension happened
+}
+```
+
+**Guaranteed minimum time on resume:** At least 1 minute (`Math.max(maxMs - elapsedMs, 60_000)`)
+
+### Resumed Prompt
+
+When resuming, agent receives a clean, lightweight prompt:
 
 ```
---- PERCH TIME INTERRUPTED ---
+[Current time: Saturday, February 15, 2026 at 2:30 PM Pacific]
 
-You were in autonomous perch time when a new message arrived.
+--- PERCH TIME RESUMED ---
 
-[Your thinking at interruption:]
+You were suspended for approximately 15 minutes while a user message was handled in a separate conversation session.
+
+[While you were suspended:]
+- A message from Craig in #general was handled separately
+- 2 new events were logged to your memory
+
+Continue your perch work from where you left off. Check TaskList for your active tasks.
+Trust TaskList as your source of truth — sessions are transient, tasks are durable.
+```
+
+**Why no partialWork?**
+- Session history already contains prior thinking (same `sessionId`)
+- No need to repeat what's already in context
+
+**Why no user message content?**
+- Message was handled in a separate conversation session
+- Avoids confusion about needing to respond
+- Keeps perch focus clean
+
+### Session Continuity
+
+- Same `sessionId` preserved across suspension/resumption
+- Elapsed time tracked independently of wall-clock time
+- Clock pauses during suspension, resumes with remaining time
+- Multiple suspensions possible within one perch session
+- Session history maintains coherent conversation thread
+
+## Timeout System
+
+### Session Timeout
+
+Perch sessions have a maximum duration (`maxSessionMinutes`, default 45) to prevent runaway sessions. When the timeout is reached:
+
+1. **Timeout triggered**: After `maxSessionMinutes` of **active perch time** (not wall-clock)
+2. **Capture context**: StreamProgress stores thinking, text, pending tool use
+3. **Send timeout prompt**: Agent receives wrapped-up prompt with partialWork
+4. **Graceful wrap-up**: Agent has `wrapUpTimeoutMinutes` (default 5) to finish
+
+### Timeout Prompt
+
+The timeout prompt includes the agent's partial work for context:
+
+```
+--- PERCH TIME TIMEOUT ---
+
+Your perch session has reached the maximum duration (45 minutes).
+
+[Your thinking so far:]
 {captured thinking text}
 
 [You were composing:]
@@ -121,27 +205,37 @@ You were in autonomous perch time when a new message arrived.
 
 [You were about to use "tool-name"]
 
---- NEW MESSAGE ---
-From: User in #channel
-{message content}
 ---
 
-## What To Do
-The message above has already been handled by your normal conversation flow.
-You do NOT need to respond to it again.
+Please wrap up your current line of thinking. You have a few minutes to:
+- Complete any critical in-progress tasks
+- Store important discoveries to memory
+- Leave clear notes in TaskList for next perch session
 
-1. Review the message for context (it may affect your perch work)
-2. Check TaskList to see what you were working on before the interruption
-3. Continue your perch work, adjusting priorities if the message changes things
-
-Trust TaskList as your source of truth - sessions are transient, tasks are durable.
+This is a graceful timeout - finish your current thought, then the session will end.
 ```
 
-### Session Continuity
+### Clock Behavior
 
-- Same `sessionId` used across interruption/resumption
-- Agent maintains context across the entire perch window
-- Multiple interruptions possible within one perch session
+**Important:** The timeout clock tracks **elapsed perch time**, not wall-clock time:
+- Clock runs during active perch session
+- Clock **pauses** during suspension (while message is being handled)
+- Clock resumes when perch resumes after suspension
+- Multiple suspensions don't count against the timeout
+
+**Example:**
+- Perch starts at 6:00am with 45-minute max
+- At 6:20am (20 minutes elapsed), suspended for user message
+- Message handled from 6:20am-6:30am (10 minutes wall-clock)
+- Resume at 6:30am with 25 minutes **remaining** (not 15)
+- Timeout triggers at 7:15am (45 minutes of actual perch time)
+
+### Wrap-Up Timeout
+
+To prevent sessions from hanging during wrap-up:
+- After timeout prompt sent, agent has `wrapUpTimeoutMinutes` (default 5)
+- If wrap-up exceeds this time, session is forcefully aborted
+- Ensures perch sessions always terminate eventually
 
 ## Configuration
 
@@ -159,8 +253,11 @@ interface PerchConfig {
   /** @deprecated No longer used - cron-parser's H option provides full jitter */
   jitterMinutes: number;      // Default: 15
 
-  /** Max session duration */
+  /** Max session duration (timeout clock pauses during suspension) */
   maxSessionMinutes: number;  // Default: 45
+
+  /** Wrap-up timeout to prevent hangs during graceful shutdown */
+  wrapUpTimeoutMinutes: number; // Default: 5
 }
 ```
 
@@ -182,19 +279,24 @@ sst secret set PerchEnabled true
 
 ### handlers.ts
 - On `messageCreate`, checks if bot is in perching mode
-- Calls `PerchSessionRunner.interrupt()` with message details
-- Message coordinator ensures perch resume happens after response
+- Calls `PerchSessionRunner.suspend()` with message details
+- Triggers bot state transition to `idle`
 
 ### state/manager.ts
 - Tracks `perching` mode with `PerchingModeContext`
-- Stores `interrupted` flag and `interruptingMessage` details
-- Provides `interrupt()`, `resume()`, `isInterrupted()` methods
-- **Single source of truth** for perch state
+- Uses `goIdle()` for suspension (transitions to idle state)
+- Provides `startPerching()` for resumption
+- **Single source of truth** for bot state transitions
 
 ### presence/manager.ts
 - Shows 🦉 emoji when in `perching` mode
-- Shows 🦉💬 when perching and interrupted
 - Updates status text based on perch activity
+- Transitions to idle presence when perch suspended
+
+### coordinator-setup.ts
+- Checks `isSuspended()` after message response completes
+- Triggers `resumeAfterSuspension()` to restore perch session
+- Passes `contextNote` to message handling during suspension
 
 ## Files
 
@@ -214,20 +316,25 @@ sst secret set PerchEnabled true
 - **`prompts.ts`**: Prompt generation
   - `BASE_PROMPT`: Core perch philosophy
   - `buildPerchPrompt(slot)`: Combines base + slot hint
-  - `buildPerchInterruptedPrompt()`: Resume context
+  - `buildPerchResumedPrompt()`: Lightweight resume context after suspension
+  - `buildPerchTimeoutPrompt()`: Timeout prompt with partialWork
   - `getSuggestionLevelDescription()`: Human-readable levels
 
 - **`scheduler.ts`**: Cron-based scheduling
-  - `createPerchScheduler()`: Factory for scheduler
+  - `createPerchScheduler()`: Factory for scheduler (accepts optional `perchSessionRunner` for suspension guard)
   - Uses `cron-parser` with `H * * * *` pattern
   - Handles deferral when bot busy
+  - Suspension guard: checks `isSuspended()` before starting new perch
   - Subscribes to `BotStateManager` for idle transitions
 
 - **`session-runner.ts`**: Session lifecycle
   - `createPerchSessionRunner()`: Factory for runner
   - `startPerch(slot)`: Begins session with slot-specific prompt
-  - `interrupt(message)`: Captures context and aborts
-  - `resumeAfterInterruption()`: Continues with interrupted prompt
+  - `suspend(message)`: Saves state (`sessionId`, `slot`, `elapsedMs`, `suspendedAt`), aborts session, transitions to idle
+  - `resumeAfterSuspension()`: Restores state, resumes with paused clock and lightweight prompt
+  - `isSuspended()`: Checks if perch is currently suspended
+  - `clearSuspension()`: Error recovery to clear suspended state
+  - Timeout tracking: elapsed perch time (not wall-clock)
   - Error handling and state cleanup
 
 - **`index.ts`**: Public API exports
@@ -248,10 +355,12 @@ const scheduler = createPerchScheduler({
     intervalMinutes: 60,
     jitterMinutes: 15,
     maxSessionMinutes: 45,
+    wrapUpTimeoutMinutes: 5,
   },
   onPerchTrigger: async (slot) => {
     await sessionRunner.startPerch(slot);
   },
+  perchSessionRunner: sessionRunner, // Optional: enables suspension guard
 });
 
 scheduler.start();
@@ -275,23 +384,29 @@ const runner = createPerchSessionRunner({
       sessionId,
       abortController,
     });
-    return { completed: !result.wasInterrupted, sessionId: result.sessionId };
+    return { completed: result.completed, sessionId: result.sessionId };
   },
 });
 
 // Start perch for current slot
 await runner.startPerch('pre-dawn');
 
-// Handle interruption
-runner.interrupt({
+// Handle suspension (when user message arrives)
+runner.suspend({
   channelId: '...',
   author: 'Craig',
   channelName: 'general',
   content: 'Quick question...',
 });
 
-// Resume after responding
-await runner.resumeAfterInterruption();
+// Check if suspended
+const suspended = runner.isSuspended(); // true
+
+// Resume after responding to the message
+await runner.resumeAfterSuspension();
+
+// Clear suspension (error recovery)
+runner.clearSuspension();
 ```
 
 ### Manual Testing
@@ -310,9 +425,10 @@ console.log(state.pendingSlot);  // 'pre-dawn', etc.
 
 - **Time slot logic**: Test `getSlotForHour()` with all edge cases (midnight, boundaries)
 - **Deferral**: Verify pending state when bot busy, correct slot on resume
-- **Interruption**: Ensure StreamProgress captured (including background task state), session resumed with same ID
-- **Scheduling**: Mock cron-parser to control trigger timing
-- **Error handling**: Test abort signals, network failures, state recovery
+- **Suspension**: Ensure state saved/restored correctly, clock pauses, session resumed with same ID
+- **Timeout**: Test elapsed time tracking, timeout prompt generation, wrap-up timeout
+- **Scheduling**: Mock cron-parser to control trigger timing, verify suspension guard
+- **Error handling**: Test abort signals, network failures, state recovery, `clearSuspension()`
 
 ## Design Decisions
 
@@ -332,14 +448,31 @@ If trigger fires at 6am (pre-dawn) but bot is busy until 9am:
 
 ### Why Same SessionId on Resume?
 
-- Preserves conversation context across interruption
-- Agent can reference earlier thinking
-- More coherent multi-interrupt sessions
+- Preserves conversation context across suspension
+- Agent can reference earlier thinking from session history
+- No need to repeat partialWork in resumed prompt
+- More coherent multi-suspension sessions
 - Matches user expectation of continuous perch "session"
+
+### Why Pause the Clock During Suspension?
+
+**OLD model (wall-clock timeout):**
+- 45-minute perch starts at 6:00am
+- At 6:30am, suspended for 15 minutes (user message)
+- Resume at 6:45am with 0 minutes remaining → immediate timeout
+- Agent gets no time to continue work
+
+**NEW model (elapsed time timeout):**
+- 45-minute perch starts at 6:00am
+- At 6:30am (30 minutes elapsed), suspended for 15 minutes
+- Resume at 6:45am with **15 minutes remaining** (45 - 30 = 15)
+- Agent can complete meaningful work
+
+The timeout should measure **work time**, not **wall-clock time**. Suspension is not the agent's "fault" — it shouldn't count against the session limit.
 
 ### Why BotStateManager as Single Source of Truth?
 
 - No duplicate state between scheduler, runner, and state manager
-- Clear ownership: BotStateManager owns all mode/interrupt state
+- Clear ownership: BotStateManager owns all mode/suspension state
 - Prevents race conditions and state drift
 - Simplifies testing - one place to verify state

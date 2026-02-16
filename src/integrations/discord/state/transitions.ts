@@ -12,12 +12,12 @@ export { TransitionError };
  * transitions (e.g., `catching_up` → `processing_message`) are intentionally
  * forbidden to maintain clear state boundaries.
  *
- * ### Interrupting a Mode
+ * ### Suspending a Mode
  *
- * To interrupt one mode for another (e.g., interrupt catch-up to process a message):
- * 1. Call `interrupt()` to signal the current operation should stop
- * 2. Call `goIdle()` to complete the transition to idle
- * 3. Call the appropriate start method (e.g., `startProcessingMessage()`) for the new mode
+ * To suspend one mode for another (e.g., suspend catch-up to process a message):
+ * 1. Session runner's `suspend()` saves state and calls `goIdle()`
+ * 2. New message is processed normally (idle → processing_message → idle)
+ * 3. Session runner's `resumeAfterSuspension()` restores state and continues
  *
  * This pattern ensures clean state transitions and proper cleanup between operations.
  *
@@ -59,23 +59,12 @@ export function assertValidTransition(from: OperationalMode, to: OperationalMode
 }
 
 /**
- * Check if a mode can be interrupted by incoming messages.
- *
- * @param mode - The operational mode to check
- * @returns true if the mode can be interrupted, false otherwise
- */
-export function canInterrupt(mode: OperationalMode): boolean {
-    return mode !== 'idle';
-}
-
-/**
- * Get the emoji prefix for a mode, including interrupt indicator if applicable.
+ * Get the emoji prefix for a mode.
  *
  * @param mode - The operational mode
- * @param interrupted - Whether the mode is currently interrupted
  * @returns The emoji string for the mode
  */
-export function getModeEmoji(mode: OperationalMode, interrupted: boolean): string {
+export function getModeEmoji(mode: OperationalMode): string {
     const baseEmojis: Record<OperationalMode, string> = {
         idle:               '💤',
         catching_up:        '📥',
@@ -83,12 +72,5 @@ export function getModeEmoji(mode: OperationalMode, interrupted: boolean): strin
         perching:           '🪶',
     };
 
-    const baseEmoji = baseEmojis[mode];
-
-    // Add interrupt indicator for interruptible modes
-    if(interrupted && canInterrupt(mode) && mode !== 'processing_message') {
-        return `${baseEmoji}💬`;
-    }
-
-    return baseEmoji;
+    return baseEmojis[mode];
 }

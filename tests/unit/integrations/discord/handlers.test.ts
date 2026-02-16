@@ -666,14 +666,13 @@ describe('Discord Event Handlers', () => {
             } as unknown as Message;
         };
 
-        it('should call handleCatchUpInterruption when state is catching_up and runner exists', async () => {
+        it('should call handleCatchUpSuspension when state is catching_up and runner exists', async () => {
             const mockBotStateManager = {
-                getMode:       mock(_.constant('catching_up' as const)),
-                isInterrupted: mock(_.constant(false)),
+                getMode: mock(_.constant('catching_up' as const)),
             };
 
             const mockCatchUpSessionRunner = {
-                interrupt: mock(async () => { /* intentionally empty */ }),
+                suspend: mock(() => undefined),
             };
 
             const handler = createMessageHandler({
@@ -687,21 +686,21 @@ describe('Discord Event Handlers', () => {
             const message = createMockMessageForCatchUp();
             await handler(message);
 
-            // Verify handleCatchUpInterruption was called (which calls interrupt)
-            expect(mockCatchUpSessionRunner.interrupt).toHaveBeenCalled();
+            // Verify handleCatchUpSuspension was called (which calls suspend)
+            expect(mockCatchUpSessionRunner.suspend).toHaveBeenCalled();
 
-            // Message should continue to onMessage after interruption (no coordinator in this test)
+            // Message should continue to onMessage after suspension (no coordinator in this test)
             // onMessage is no longer called directly - coordinator handles messages;
         });
 
-        it('should NOT call handleCatchUpInterruption when state is NOT catching_up', async () => {
+        it('should NOT call handleCatchUpSuspension when state is NOT catching_up', async () => {
             const mockBotStateManager = {
                 getMode:                mock(_.constant('idle' as const)),
                 startProcessingMessage: mock(() => _.noop()),
             };
 
             const mockCatchUpSessionRunner = {
-                interrupt: mock(async () => { /* intentionally empty */ }),
+                suspend: mock(() => undefined),
             };
 
             const handler = createMessageHandler({
@@ -715,11 +714,11 @@ describe('Discord Event Handlers', () => {
             const message = createMockMessageForCatchUp();
             await handler(message);
 
-            // Verify handleCatchUpInterruption was NOT called
-            expect(mockCatchUpSessionRunner.interrupt).not.toHaveBeenCalled();
+            // Verify handleCatchUpSuspension was NOT called
+            expect(mockCatchUpSessionRunner.suspend).not.toHaveBeenCalled();
         });
 
-        it('should NOT call handleCatchUpInterruption when catchUpSessionRunner is undefined', async () => {
+        it('should NOT call handleCatchUpSuspension when catchUpSessionRunner is undefined', async () => {
             const mockBotStateManager = {
                 getMode:                mock(_.constant('idle' as const)),
                 startProcessingMessage: mock(() => _.noop()),
@@ -744,12 +743,11 @@ describe('Discord Event Handlers', () => {
         it('should call coordinator after interrupting catch-up (message reaches coordinator)', async () => {
             const mockBotStateManager = {
                 getMode:                mock(_.constant('catching_up' as const)),
-                isInterrupted:          mock(_.constant(false)),
                 startProcessingMessage: mock(() => _.noop()),
             };
 
             const mockCatchUpSessionRunner = {
-                interrupt: mock(async () => { /* intentionally empty */ }),
+                suspend: mock(() => undefined),
             };
 
             const mockCoordinator = {
@@ -767,21 +765,20 @@ describe('Discord Event Handlers', () => {
             const message = createMockMessageForCatchUp();
             await handler(message);
 
-            // Verify interrupt was called
-            expect(mockCatchUpSessionRunner.interrupt).toHaveBeenCalled();
+            // Verify suspend was called
+            expect(mockCatchUpSessionRunner.suspend).toHaveBeenCalled();
 
-            // Message should reach the coordinator after interruption
+            // Message should reach the coordinator after suspension
             expect(mockCoordinator.handleMessage).toHaveBeenCalled();
         });
 
-        it('should always call interrupt when catching_up regardless of interrupted state', async () => {
+        it('should always call suspend when catching_up regardless of suspended state', async () => {
             const mockBotStateManager = {
-                getMode:       mock(_.constant('catching_up' as const)),
-                isInterrupted: mock(_.constant(true)), // Already interrupted
+                getMode: mock(_.constant('catching_up' as const)),
             };
 
             const mockCatchUpSessionRunner = {
-                interrupt: mock(async () => { /* intentionally empty */ }),
+                suspend: mock(() => undefined),
             };
 
             const mockCoordinator = {
@@ -799,8 +796,8 @@ describe('Discord Event Handlers', () => {
             const message = createMockMessageForCatchUp();
             await handler(message);
 
-            // CRITICAL: Verify interrupt WAS called (session runner decides what to do)
-            expect(mockCatchUpSessionRunner.interrupt).toHaveBeenCalled();
+            // CRITICAL: Verify suspend WAS called (session runner decides what to do)
+            expect(mockCatchUpSessionRunner.suspend).toHaveBeenCalled();
 
             // CRITICAL: Verify coordinator WAS called (message routed to coordinator for batching)
             expect(mockCoordinator.handleMessage).toHaveBeenCalled();
@@ -916,7 +913,7 @@ describe('Discord Event Handlers', () => {
         });
     });
 
-    describe('Perch interruption handling', () => {
+    describe('Perch suspension handling', () => {
         const botUserId = createUserId('bot-123');
         const monitoredChannelId = createChannelId('channel-456');
 
@@ -945,14 +942,14 @@ describe('Discord Event Handlers', () => {
             } as unknown as Message;
         };
 
-        it('should call handlePerchInterruption when state is perching and runner exists', async () => {
+        it('should call handlePerchSuspension when state is perching and runner exists', async () => {
             const mockBotStateManager = {
-                getMode:       mock(_.constant('perching' as const)),
-                isInterrupted: mock(_.constant(false)),
+                getMode: mock(_.constant('perching' as const)),
+
             };
 
             const mockPerchSessionRunner = {
-                interrupt: mock(async () => { /* intentionally empty */ }),
+                suspend: mock(() => undefined),
             };
 
             const handler = createMessageHandler({
@@ -966,21 +963,21 @@ describe('Discord Event Handlers', () => {
             const message = createMockMessageForPerch();
             await handler(message);
 
-            // Verify handlePerchInterruption was called (which calls interrupt)
-            expect(mockPerchSessionRunner.interrupt).toHaveBeenCalled();
+            // Verify handlePerchSuspension was called (which calls suspend)
+            expect(mockPerchSessionRunner.suspend).toHaveBeenCalled();
 
-            // Message should continue to onMessage after interruption (no coordinator in this test)
+            // Message should continue to onMessage after suspension (no coordinator in this test)
             // onMessage is no longer called directly - coordinator handles messages;
         });
 
-        it('should call interrupt with correct message details including channel name', async () => {
+        it('should call suspend with correct message details including channel name', async () => {
             const mockBotStateManager = {
-                getMode:       mock(_.constant('perching' as const)),
-                isInterrupted: mock(_.constant(false)),
+                getMode: mock(_.constant('perching' as const)),
+
             };
 
             const mockPerchSessionRunner = {
-                interrupt: mock(async () => { /* intentionally empty */ }),
+                suspend: mock(() => undefined),
             };
 
             const handler = createMessageHandler({
@@ -994,8 +991,8 @@ describe('Discord Event Handlers', () => {
             const message = createMockMessageForPerch();
             await handler(message);
 
-            // Verify interrupt was called with correct structure
-            expect(mockPerchSessionRunner.interrupt).toHaveBeenCalledWith({
+            // Verify suspend was called with correct structure
+            expect(mockPerchSessionRunner.suspend).toHaveBeenCalledWith({
                 channelId:   monitoredChannelId,
                 author:      'TestUser',
                 channelName: 'general',
@@ -1005,12 +1002,12 @@ describe('Discord Event Handlers', () => {
 
         it('should use channel ID as fallback when channel name is null', async () => {
             const mockBotStateManager = {
-                getMode:       mock(_.constant('perching' as const)),
-                isInterrupted: mock(_.constant(false)),
+                getMode: mock(_.constant('perching' as const)),
+
             };
 
             const mockPerchSessionRunner = {
-                interrupt: mock(async () => { /* intentionally empty */ }),
+                suspend: mock(() => undefined),
             };
 
             const handler = createMessageHandler({
@@ -1046,8 +1043,8 @@ describe('Discord Event Handlers', () => {
 
             await handler(messageWithNullName);
 
-            // Verify interrupt uses channel ID as fallback
-            expect(mockPerchSessionRunner.interrupt).toHaveBeenCalledWith({
+            // Verify suspend uses channel ID as fallback
+            expect(mockPerchSessionRunner.suspend).toHaveBeenCalledWith({
                 channelId:   monitoredChannelId,
                 author:      'TestUser',
                 channelName: monitoredChannelId, // Falls back to channel ID
@@ -1055,14 +1052,14 @@ describe('Discord Event Handlers', () => {
             });
         });
 
-        it('should NOT call handlePerchInterruption when state is NOT perching', async () => {
+        it('should NOT call handlePerchSuspension when state is NOT perching', async () => {
             const mockBotStateManager = {
                 getMode:                mock(_.constant('idle' as const)),
                 startProcessingMessage: mock(() => _.noop()),
             };
 
             const mockPerchSessionRunner = {
-                interrupt: mock(async () => { /* intentionally empty */ }),
+                suspend: mock(() => undefined),
             };
 
             const handler = createMessageHandler({
@@ -1076,11 +1073,11 @@ describe('Discord Event Handlers', () => {
             const message = createMockMessageForPerch();
             await handler(message);
 
-            // Verify handlePerchInterruption was NOT called
-            expect(mockPerchSessionRunner.interrupt).not.toHaveBeenCalled();
+            // Verify handlePerchSuspension was NOT called
+            expect(mockPerchSessionRunner.suspend).not.toHaveBeenCalled();
         });
 
-        it('should NOT call handlePerchInterruption when perchSessionRunner is undefined', async () => {
+        it('should NOT call handlePerchSuspension when perchSessionRunner is undefined', async () => {
             const mockBotStateManager = {
                 getMode:                mock(_.constant('idle' as const)),
                 startProcessingMessage: mock(() => _.noop()),
@@ -1103,15 +1100,14 @@ describe('Discord Event Handlers', () => {
             // onMessage is no longer called directly - coordinator handles messages;
         });
 
-        it('should call coordinator after interrupting perch (message reaches coordinator)', async () => {
+        it('should call coordinator after suspending perch (message reaches coordinator)', async () => {
             const mockBotStateManager = {
                 getMode:                mock(_.constant('perching' as const)),
-                isInterrupted:          mock(_.constant(false)),
                 startProcessingMessage: mock(() => _.noop()),
             };
 
             const mockPerchSessionRunner = {
-                interrupt: mock(async () => { /* intentionally empty */ }),
+                suspend: mock(() => undefined),
             };
 
             const mockCoordinator = {
@@ -1130,21 +1126,20 @@ describe('Discord Event Handlers', () => {
             const message = createMockMessageForPerch();
             await handler(message);
 
-            // Verify interrupt was called
-            expect(mockPerchSessionRunner.interrupt).toHaveBeenCalled();
+            // Verify suspend was called
+            expect(mockPerchSessionRunner.suspend).toHaveBeenCalled();
 
-            // Message should reach the coordinator after interruption
+            // Message should reach the coordinator after suspension
             expect(mockCoordinator.handleMessage).toHaveBeenCalled();
         });
 
-        it('should always call interrupt even when already interrupted (session runner decides behavior)', async () => {
+        it('should always call suspend even when already suspended (session runner decides behavior)', async () => {
             const mockBotStateManager = {
-                getMode:       mock(_.constant('perching' as const)),
-                isInterrupted: mock(_.constant(true)), // Already interrupted
+                getMode: mock(_.constant('perching' as const)),
             };
 
             const mockPerchSessionRunner = {
-                interrupt: mock(async () => { /* intentionally empty */ }),
+                suspend: mock(() => undefined),
             };
 
             const mockCoordinator = {
@@ -1163,11 +1158,11 @@ describe('Discord Event Handlers', () => {
             const message = createMockMessageForPerch();
             await handler(message);
 
-            // CRITICAL: Verify interrupt WAS called even when already interrupted
+            // CRITICAL: Verify suspend WAS called even when already interrupted
             // The session runner decides what to do based on its internal state
-            expect(mockPerchSessionRunner.interrupt).toHaveBeenCalled();
+            expect(mockPerchSessionRunner.suspend).toHaveBeenCalled();
 
-            // Message should also reach the coordinator after interruption
+            // Message should also reach the coordinator after suspension
             // (perch mode allows message batching to continue)
             expect(mockCoordinator.handleMessage).toHaveBeenCalled();
         });

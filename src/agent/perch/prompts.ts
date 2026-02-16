@@ -163,87 +163,60 @@ export function getSuggestionLevelDescription(slot: PerchSlot): string {
 }
 
 /**
- * Options for building the perch interrupted prompt.
+ * Options for building the perch resumed prompt.
  */
-export interface PerchInterruptedOptions {
-    /** Partial work captured when perch was interrupted */
-    partialWork: StreamProgress
-    /** New message that interrupted the perch (for context only - already handled) */
-    newMessage:  {
-        author:      string
-        channelName: string
-        content:     string
-    }
+export interface PerchResumedOptions {
+    /** How long the perch was suspended in milliseconds */
+    suspendedDurationMs: number
+    /** Brief summary of what interrupted (e.g., "A message from Craig in #general") */
+    interruptingSummary: string
+    /** Formatted new events since suspension (optional) */
+    newEventsSummary?:   string
 }
 
 /**
- * Builds the perch interrupted prompt.
- * Used when resuming after a user message interrupts perch time.
+ * Builds the perch resumed prompt.
+ * Used when resuming after a suspension caused by a user message.
  *
- * @param options - Options for the interrupted prompt
- * @returns The formatted interrupted prompt
+ * @param options - Options for the resumed prompt
+ * @returns The formatted resumed prompt
  */
-export function buildPerchInterruptedPrompt(options: PerchInterruptedOptions): string {
+export function buildPerchResumedPrompt(options: PerchResumedOptions): string {
+    // Stryker disable next-line ArrayDeclaration: Array initialization value is not behavior-affecting
     const sections: string[] = [];
 
     sections.push(formatTimeHeader());
     // Stryker disable next-line StringLiteral: Empty string for formatting
     sections.push('');
     // Stryker disable next-line StringLiteral: Prompt header text is product design
-    sections.push('--- PERCH TIME INTERRUPTED ---');
+    sections.push('--- PERCH TIME RESUMED ---');
     // Stryker disable next-line StringLiteral: Empty string for formatting
     sections.push('');
+
+    // Format duration
+    // Stryker disable next-line ArithmeticOperator: Duration calculation for display only
+    const durationMinutes = Math.round(options.suspendedDurationMs / 60000);
+    // Stryker disable next-line ConditionalExpression: Duration display logic is product design
+    const durationText = durationMinutes < 1 ? 'less than a minute' : `approximately ${durationMinutes} minute${durationMinutes === 1 ? '' : 's'}`;
     // Stryker disable next-line StringLiteral: Prompt explanation text is product design
-    sections.push('You were in autonomous perch time when a new message arrived.');
+    sections.push(`You were suspended for ${durationText} while a user message was handled in a separate conversation session.`);
     // Stryker disable next-line StringLiteral: Empty string for formatting
     sections.push('');
-
-    if(options.partialWork.thinking) {
-        sections.push('[Your thinking at interruption:]');
-        sections.push(options.partialWork.thinking);
-        // Stryker disable next-line StringLiteral: Empty string for formatting
-        sections.push('');
-    }
-
-    if(options.partialWork.text) {
-        sections.push('[You were composing:]');
-        sections.push(options.partialWork.text);
-        // Stryker disable next-line StringLiteral: Empty string for formatting
-        sections.push('');
-    }
-
-    if(options.partialWork.pendingToolUse) {
-        sections.push(`[You were about to use "${options.partialWork.pendingToolUse.name}"]`);
-        // Stryker disable next-line StringLiteral: Empty string for formatting
-        sections.push('');
-    }
 
     // Stryker disable next-line StringLiteral: Prompt section header is product design
-    sections.push('--- NEW MESSAGE ---');
-    sections.push(`From: ${options.newMessage.author} in #${options.newMessage.channelName}`);
-    sections.push(options.newMessage.content);
-    // Stryker disable next-line StringLiteral: Section separator is product design
-    sections.push('---');
-    // Stryker disable next-line StringLiteral: Empty string for formatting
-    sections.push('');
-    // Stryker disable next-line StringLiteral: Prompt section header is product design
-    sections.push('## What To Do');
-    // Stryker disable next-line StringLiteral: Prompt instruction text is product design
-    sections.push('The message above has already been handled by your normal conversation flow.');
-    // Stryker disable next-line StringLiteral: Prompt instruction text is product design
-    sections.push('You do NOT need to respond to it again.');
+    sections.push('[While you were suspended:]');
+    sections.push(`- ${options.interruptingSummary} was handled separately`);
+
+    if(options.newEventsSummary) {
+        sections.push(options.newEventsSummary);
+    }
+
     // Stryker disable next-line StringLiteral: Empty string for formatting
     sections.push('');
     // Stryker disable next-line StringLiteral: Prompt instruction text is product design
-    sections.push('1. Review the message for context (it may affect your perch work)');
+    sections.push('Continue your perch work from where you left off. Check TaskList for your active tasks.');
     // Stryker disable next-line StringLiteral: Prompt instruction text is product design
-    sections.push('2. Check TaskList to see what you were working on before the interruption');
-    // Stryker disable next-line StringLiteral: Prompt instruction text is product design
-    sections.push('3. Continue your perch work, adjusting priorities if the message changes things');
-    // Stryker disable next-line StringLiteral: Empty string for formatting
-    sections.push('');
-    // Stryker disable next-line StringLiteral: Prompt instruction text is product design
-    sections.push('Trust TaskList as your source of truth - sessions are transient, tasks are durable.');
+    sections.push('Trust TaskList as your source of truth — sessions are transient, tasks are durable.');
 
     return sections.join('\n');
 }

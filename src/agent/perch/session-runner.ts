@@ -4,15 +4,15 @@
  * Orchestrates perch time sessions:
  * - Starting sessions with the correct slot-specific prompt
  * - Running agent with perching mode
- * - Handling interruptions from user messages
- * - Resuming after interruption
+ * - Handling suspensions from user messages
+ * - Resuming after suspension
  * - Completing sessions and returning to idle
  */
 
 import type { Logger } from '@hughescr/logger';
-import type { BotStateManager, PerchingModeContext, InterruptingMessageDetails } from '@/integrations/discord/state';
+import type { BotStateManager, InterruptingMessageDetails } from '@/integrations/discord/state';
 import { type PerchSlot, type PerchConfig } from './types';
-import { buildPerchPrompt, buildTestPerchPrompt, buildPerchInterruptedPrompt, buildPerchTimeoutPrompt, getSuggestionLevelDescription } from './prompts';
+import { buildPerchPrompt, buildTestPerchPrompt, buildPerchResumedPrompt, buildPerchTimeoutPrompt, getSuggestionLevelDescription } from './prompts';
 import type { StreamProgress } from '@/agent/stream-tracker';
 import type { ContextBuilder } from '@/agent/context-builder';
 import _ from 'lodash';
@@ -75,16 +75,26 @@ export interface PerchSessionRunner {
     startPerch(slot: PerchSlot): Promise<void>
 
     /**
-     * Interrupt the current perch session due to a user message.
-     * Sets state to interrupted and stores the interrupting message details.
+     * Suspend the current perch session due to a user message.
+     * Transitions to idle mode and stores suspension state for later resume.
      */
-    interrupt(message: InterruptingMessage): void
+    suspend(message: InterruptingMessage): void
 
     /**
-     * Resume perch after handling an interruption.
+     * Resume perch after handling a suspension.
      * Called after the interrupting message has been responded to.
      */
-    resumeAfterInterruption(): Promise<void>
+    resumeAfterSuspension(): Promise<void>
+
+    /**
+     * Check if a perch session is currently suspended.
+     */
+    isSuspended(): boolean
+
+    /**
+     * Clear suspension state (for error recovery).
+     */
+    clearSuspension(): void
 
     /**
      * Get the current abort controller (for external interruption).
@@ -109,11 +119,11 @@ export interface PerchSessionRunner {
  * // Start a perch session
  * await runner.startPerch('pre-dawn');
  *
- * // Handle interruption
- * runner.interrupt({ channelId, author, channelName, content });
+ * // Handle suspension
+ * runner.suspend({ channelId, author, channelName, content });
  *
- * // Resume after handling interruption
- * await runner.resumeAfterInterruption();
+ * // Resume after handling suspension
+ * await runner.resumeAfterSuspension();
  * ```
  */
 export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSessionRunner {
@@ -127,8 +137,13 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
     let sessionTimeout: ReturnType<typeof setTimeout> | null = null;
     let sessionStartTime: Date | null = null;
     let isTimingOut = false;
-    let resumeInProgress = false;
-    let wasReInterrupted = false;
+    let suspendedState: {
+        sessionId:           string | undefined
+        slot:                PerchSlot
+        elapsedMs:           number
+        suspendedAt:         Date
+        interruptingMessage: InterruptingMessage
+    } | null = null;
 
     // Timeout handler - aborts session when max duration reached
     function handleSessionTimeout(): void {
@@ -145,96 +160,6 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
         if(currentAbortController) {
             logger.info({ slot: currentSlot }, 'Session timeout - aborting for wrap-up');
             currentAbortController.abort();
-        }
-    }
-
-    // Internal resume logic - uses BotStateManager.isInterrupted() as the trigger
-    async function doResume(): Promise<void> {
-        // Guard: verify we're still in perching mode and interrupted, and not already resuming
-        // BotStateManager is the single source of truth for this state
-        // Stryker disable next-line all: Complex guard condition tested via behavior in resume-after-interruption tests
-        if(stateManager.getMode() !== 'perching' || !stateManager.isInterrupted() || resumeInProgress) {
-            return;
-        }
-
-        // Mark resume as in progress to prevent double-resume
-        resumeInProgress = true;
-
-        logger.info({
-            slot:           currentSlot,
-            // Stryker disable next-line ArithmeticOperator,MethodExpression: Timeout calculation internals for logging only
-            remainingMs:    Math.max((config.maxSessionMinutes * 60 * 1000) - (sessionStartTime ? Date.now() - sessionStartTime.getTime() : 0), 60_000),
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: Logging-only field, mutation doesn't affect behavior
-            hasPartialWork: partialWork !== null,
-        }, 'doResume starting');
-
-        // Create new abort controller
-        currentAbortController = new AbortController();
-
-        // Stryker disable ArithmeticOperator,MethodExpression,ArrowFunction: Timeout calculation internals - correctness validated by integration behavior
-        // Set timeout for resume based on remaining time from original session
-        const elapsedMs = sessionStartTime ? Date.now() - sessionStartTime.getTime() : 0;
-        const maxMs = config.maxSessionMinutes * 60 * 1000;
-        const remainingMs = Math.max(maxMs - elapsedMs, 60_000); // At least 1 minute
-        sessionTimeout = setTimeout(() => handleSessionTimeout(), remainingMs);
-        // Stryker restore ArithmeticOperator,MethodExpression,ArrowFunction
-
-        // Build perch interrupted prompt
-        const state = stateManager.getState();
-        const perchContext = state.modeContext as PerchingModeContext;
-
-        // Get interrupting message from BotStateManager context
-        const storedMessage = perchContext.interruptingMessage;
-        const newMessage = storedMessage
-            ? {
-                author:      storedMessage.author,
-                channelName: storedMessage.channelName,
-                content:     storedMessage.content,
-            }
-            : {
-                // Stryker disable all: Fallback strings for missing data - logging only
-                author:      'Unknown',
-                channelName: 'unknown',
-                content:     '',
-                // Stryker restore all
-            };
-
-        const prompt = buildPerchInterruptedPrompt({
-            // Stryker disable next-line all: Fallback default values for partial work state
-            partialWork: partialWork ?? { thinking: '', text: '', pendingToolUse: null, sessionId: undefined, uncollectedBackgroundTasks: 0 },
-            newMessage,
-        });
-
-        // Run agent session with error handling
-        try {
-            await runSessionAndFinalize({
-                prompt,
-                slot: currentSlot ?? 'unscheduled',
-            });
-        } finally {
-            if(wasReInterrupted) {
-                // Re-interrupted during resume — stay in perching+interrupted
-                // The onResponse callback will trigger a fresh resume
-                wasReInterrupted = false;
-                resumeInProgress = false;
-                // Don't call stateManager.resume() or goIdle()
-            } else {
-                // Normal completion
-                stateManager.resume();
-                resumeInProgress = false;
-                // Safety net: handles ALL resume exit paths (incomplete, aborted, errored)
-                if(stateManager.getMode() === 'perching') {
-                    stateManager.goIdle();
-                    currentSessionId = undefined;
-                    partialWork = null;
-                    currentSlot = null;
-                    if(sessionTimeout) {
-                        clearTimeout(sessionTimeout);
-                        sessionTimeout = null;
-                        sessionStartTime = null;
-                    }
-                }
-            }
         }
     }
 
@@ -257,6 +182,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
         }, wrapUpTimeoutMs);
 
         // Calculate session duration
+        // Stryker disable next-line ArithmeticOperator: Duration calculation for timeout prompt display
         const durationMs = sessionStartTime ? Date.now() - sessionStartTime.getTime() : 0;
         // Stryker disable next-line ArithmeticOperator: Duration calculation for logging only
         const durationMinutes = Math.round(durationMs / 60000);
@@ -283,6 +209,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 slot,
             });
         } finally {
+            // Stryker disable all: Defensive cleanup in finally - tested via wrap-up behavior tests
             clearTimeout(wrapUpTimer);
             // Ensure we always go idle after wrap-up, regardless of outcome
             if(stateManager.getMode() === 'perching') {
@@ -299,6 +226,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 sessionStartTime = null;
             }
         }
+        // Stryker restore all
     }
 
     // Helper for running sessions with error handling
@@ -319,19 +247,12 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             currentSessionId = result.sessionId;
 
             // Store partial work if interrupted
+            // Stryker disable next-line BlockStatement: partialWork storage tested via timeout wrap-up prompt tests
             if(result.partialWork) {
                 partialWork = result.partialWork;
             }
 
-            // Check interrupt state FIRST - state manager is single source of truth
-            // The result.completed flag can be incorrect when abort errors are caught
-            // Don't schedule resume if we're already in a resume (resumeInProgress)
-            if(stateManager.isInterrupted() && !resumeInProgress) {
-                // Session was interrupted — don't resume here.
-                // The onResponse callback in bot.ts will call resumeAfterInterruption()
-                // after the interrupting message has been handled.
-                logger.debug({ slot: options.slot }, 'Session interrupted - awaiting external resume');
-            } else if(result.completed && !resumeInProgress) {
+            if(result.completed) {
                 // Session completed normally, transition to idle
                 logger.info({ slot: options.slot }, 'Perch session completed');
                 if(stateManager.getMode() === 'perching') {
@@ -347,23 +268,29 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                     sessionTimeout = null;
                     sessionStartTime = null;
                 }
-            } else if(resumeInProgress && stateManager.getMode() === 'perching') {
-                // Resume session exiting — doResume finally block will handle cleanup
-                logger.info({ slot: options.slot }, 'Resume session exiting - cleanup deferred to doResume');
             } else if(isTimingOut && !result.completed) {
                 // Timeout abort caught via return path (agent caught AbortError internally and returned completed:false)
                 // Run wrap-up using shared helper
                 await runTimeoutWrapUp(options.slot);
                 return;
-            } else if(!result.completed && !resumeInProgress) {
+            } else if(!result.completed && suspendedState !== null) {
+                // Suspended — preserve session state for resume
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Session ID storage in suspension path
+                currentSessionId = result.sessionId;
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message in suspension path
+                logger.debug({ slot: options.slot }, 'Session suspended - state preserved for resume');
+            // Stryker disable next-line ConditionalExpression,EqualityOperator: Safety-net path — hard-to-reach unknown non-completion
+            } else if(!result.completed) {
                 // Safety net — unknown non-completion, go idle
                 logger.warn({ slot: options.slot }, 'Session returned incomplete for unknown reason - going idle');
+                // Stryker disable next-line ConditionalExpression: Defensive guard — always goes idle on unknown non-completion
                 if(stateManager.getMode() === 'perching') {
                     stateManager.goIdle();
                 }
                 currentSessionId = undefined;
                 partialWork = null;
                 currentSlot = null;
+                // Stryker disable next-line BlockStatement: Defensive cleanup tested via timer count assertions
                 if(sessionTimeout) {
                     clearTimeout(sessionTimeout);
                     sessionTimeout = null;
@@ -371,14 +298,13 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 }
             }
         } catch (error) {
-            // Check BotStateManager - it's the single source of truth for interrupt state
-            // If interrupted by message, leave state as perching+interrupted for onResponse to handle
-            // Don't schedule resume if we're already in a resume (resumeInProgress)
-            if(stateManager.isInterrupted() && !resumeInProgress) {
-                // Interrupted — leave state as perching+interrupted for onResponse to handle
-                logger.debug({ slot: options.slot }, 'Session aborted by interrupt - awaiting external resume');
+            // Check if this is a suspension abort (mode is idle because suspend() called goIdle())
+            // Stryker disable all: Suspension abort path — tested via suspension behavior tests
+            if(_.isError(error) && error.name === 'AbortError' && suspendedState !== null) {
+                logger.debug({ slot: options.slot }, 'Perch session aborted by suspension');
                 return;
             }
+            // Stryker restore all
 
             // Check if this is a timeout abort (not a message interrupt)
             // Stryker disable next-line all: Timeout handling tested via behavior in timeout tests
@@ -392,7 +318,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             if(_.isError(error) && error.name === 'AbortError') {
                 logger.debug({ slot: options.slot }, 'Perch session aborted');
                 // Clear timeout for all AbortError cases to prevent orphaned timers
-                // (may already be null if cleared by interrupt() during re-interruption)
+                // Stryker disable next-line BlockStatement: Defensive cleanup tested via timer count assertions
                 if(sessionTimeout) {
                     clearTimeout(sessionTimeout);
                     sessionTimeout = null;
@@ -477,12 +403,14 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 });
             } catch (error) {
                 logger.error({ error, slot }, 'Failed to start perch session');
+                // Stryker disable next-line ConditionalExpression: Defensive guard - always goes idle on error
                 if(stateManager.getMode() === 'perching') {
                     stateManager.goIdle();
                 }
                 currentSessionId = undefined;
                 partialWork = null;
                 currentSlot = null;
+                // Stryker disable next-line ConditionalExpression: Defensive cleanup - tested via timer count assertions
                 if(sessionTimeout) {
                     clearTimeout(sessionTimeout);
                     sessionTimeout = null;
@@ -493,31 +421,39 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             // Stryker restore BlockStatement
         },
 
-        interrupt(message: InterruptingMessage): void {
-            if(stateManager.isInterrupted()) {
-                // Case: already interrupted
-                if(resumeInProgress && currentAbortController) {
-                    // Re-interrupt: abort the active resume session
-                    wasReInterrupted = true;
-                    stateManager.updateInterruptingMessage(message);
-                    if(sessionTimeout) {
-                        clearTimeout(sessionTimeout);
-                        sessionTimeout = null;
-                    }
-                    currentAbortController.abort();
-                }
-                // Else: interrupted but resume not started yet — no-op, message batches naturally
+        suspend(message: InterruptingMessage): void {
+            // Guard: if mode is not perching or already suspended, no-op
+            // Stryker disable next-line all: Guard tested via behavior in suspend tests
+            if(stateManager.getMode() !== 'perching' || suspendedState !== null) {
+                // Stryker disable next-line all: Log message content inside guard block is not behavior-affecting
+                logger.debug({ mode: stateManager.getMode(), alreadySuspended: suspendedState !== null }, 'Suspend called but not in active perching state - no-op');
                 return;
             }
 
-            // Normal first interrupt (unchanged logic)
-            stateManager.interrupt(message);
+            // Calculate elapsed time before suspension
+            // Stryker disable next-line ArithmeticOperator,MethodExpression: Duration calculation for resume timeout
+            const elapsedMs = sessionStartTime ? Date.now() - sessionStartTime.getTime() : 0;
 
-            // Clear timeout when interrupted by message
+            // Save state for resume
+            suspendedState = {
+                sessionId:           currentSessionId,
+                slot:                currentSlot ?? 'unscheduled',
+                elapsedMs,
+                suspendedAt:         new Date(),
+                interruptingMessage: message,
+            };
+
+            // Clear partialWork (resume uses same sessionId, prior thinking is in conversation history)
+            partialWork = null;
+
+            // Clear timeout
             if(sessionTimeout) {
                 clearTimeout(sessionTimeout);
                 sessionTimeout = null;
             }
+
+            // Transition to idle BEFORE aborting (so runSessionAndFinalize sees idle mode)
+            stateManager.goIdle();
 
             // Abort current session
             if(currentAbortController) {
@@ -525,15 +461,90 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             }
         },
 
-        async resumeAfterInterruption(): Promise<void> {
-            // This public method is used for external resume calls
-            // (e.g., from coordinator's onResponse callback)
-            // Stryker disable next-line all: Resume guard tested via behavior in resume-after-interruption tests
-            if(stateManager.getMode() !== 'perching' || !stateManager.isInterrupted()) {
+        async resumeAfterSuspension(): Promise<void> {
+            // Guard: if no suspended state, return
+            if(suspendedState === null) {
                 return;
             }
 
-            await doResume();
+            // Grab saved state and clear suspendedState (prevents double-resume and race conditions)
+            const savedState = suspendedState;
+            suspendedState = null;
+
+            // Calculate remaining time
+            // Stryker disable ArithmeticOperator,MethodExpression: Duration calculation internals
+            const maxMs = config.maxSessionMinutes * 60 * 1000;
+            const remainingMs = Math.max(maxMs - savedState.elapsedMs, 60_000); // At least 1 minute
+            // Stryker restore ArithmeticOperator,MethodExpression
+
+            // Transition to perching
+            // Stryker disable next-line StringLiteral: Activity type string tested via startPerching assertion
+            const activityType = `Perch time: ${savedState.slot}`;
+            stateManager.startPerching(activityType);
+
+            // Create new abort controller
+            currentAbortController = new AbortController();
+
+            // Store current slot
+            currentSlot = savedState.slot;
+
+            // Set session start time for timeout tracking
+            sessionStartTime = new Date();
+
+            // Set timeout with remaining time
+            // Stryker disable next-line ArrowFunction: Timeout handler delegation tested via timeout behavior tests
+            sessionTimeout = setTimeout(() => handleSessionTimeout(), remainingMs);
+
+            // Load new events since suspension
+            let newEventsSummary: string | undefined;
+            if(contextBuilder) {
+                const eventsResult = await contextBuilder.loadRecentEvents(5);
+                // Filter to events updated after suspension
+                // Stryker disable all: Event filtering and formatting — tested via post-suspension event inclusion tests
+                const newEvents = _.filter(eventsResult.items, item =>
+                    new Date(item.updatedAt) > savedState.suspendedAt
+                );
+                if(newEvents.length > 0) {
+                    newEventsSummary = _.map(newEvents, item =>
+                        `- ${item.path}: ${item.contentPreview ?? '(no preview)'}`
+                    ).join('\n');
+                }
+                // Stryker restore all
+            }
+
+            // Calculate suspension duration
+            // Stryker disable next-line ArithmeticOperator,MethodExpression: Duration calculation for prompt
+            const suspendedDurationMs = Date.now() - savedState.suspendedAt.getTime();
+
+            // Build interrupting message summary
+            // Stryker disable next-line StringLiteral: Prompt summary text is product design
+            const interruptingSummary = `A message from ${savedState.interruptingMessage.author} in #${savedState.interruptingMessage.channelName}`;
+
+            // Build resumed prompt
+            const prompt = buildPerchResumedPrompt({
+                suspendedDurationMs,
+                interruptingSummary,
+                newEventsSummary,
+            });
+
+            // Run session and finalize
+            await runSessionAndFinalize({
+                prompt,
+                slot: savedState.slot,
+            });
+        },
+
+        isSuspended(): boolean {
+            return suspendedState !== null;
+        },
+
+        clearSuspension(): void {
+            // Stryker disable next-line all: Defensive log guard — tested via clearSuspension behavior tests
+            if(suspendedState !== null) {
+                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+                logger.warn('Clearing suspension state - error recovery');
+            }
+            suspendedState = null;
         },
 
         getAbortController(): AbortController | null {

@@ -15,7 +15,6 @@ function createMockStateManager(state: BotState): BotStateManager {
     return {
         getState:             () => state,
         getMode:              () => state.mode,
-        isInterrupted:        () => state.interrupted,
         shouldUpdatePresence: constant(true),
         getSessionType:       (isDMChannel?: boolean) => {
             if(state.mode === 'catching_up') {
@@ -29,21 +28,18 @@ function createMockStateManager(state: BotState): BotStateManager {
             }
             return 'processing_message';
         },
-        startCatchUp:              _,
-        startProcessingMessage:    _,
-        startPerching:             _,
-        goIdle:                    _,
-        interrupt:                 _,
-        updateInterruptingMessage: _,
-        resume:                    _,
-        updateActivityPhase:       _,
-        clearActivityPhase:        _,
-        markChannelViewed:         _,
-        setSessionId:              _,
-        recordPresenceUpdate:      _,
-        subscribe:                 () => _,
-        start:                     _,
-        stop:                      _,
+        startCatchUp:           _,
+        startProcessingMessage: _,
+        startPerching:          _,
+        goIdle:                 _,
+        updateActivityPhase:    _,
+        clearActivityPhase:     _,
+        markChannelViewed:      _,
+        setSessionId:           _,
+        recordPresenceUpdate:   _,
+        subscribe:              () => _,
+        start:                  _,
+        stop:                   _,
     };
 }
 
@@ -62,7 +58,6 @@ describe('StatusContextBuilder', () => {
         it('should return 📥 for catching_up mode', () => {
             const state: BotState = {
                 mode:          'catching_up',
-                interrupted:   false,
                 activityPhase: null,
                 modeEnteredAt: new Date(),
                 modeContext:   {
@@ -83,34 +78,9 @@ describe('StatusContextBuilder', () => {
             expect(context.emojiPrefix).toBe('📥');
         });
 
-        it('should return 📥💬 for catching_up mode with interrupted', () => {
-            const state: BotState = {
-                mode:          'catching_up',
-                interrupted:   true,
-                activityPhase: null,
-                modeEnteredAt: new Date(),
-                modeContext:   {
-                    viewedChannels:      new Set(),
-                    sessionId:           null,
-                    startedAt:           new Date(),
-                    unreadCount:         5,
-                    channelNames:        ['general'],
-                    topAuthors:          ['Alice'],
-                    timeSinceLastActive: '1 hour',
-                },
-            };
-            const manager = createMockStateManager(state);
-            const builder = createStatusContextBuilder({ stateManager: manager });
-
-            const context = builder.buildContext();
-
-            expect(context.emojiPrefix).toBe('📥💬');
-        });
-
         it('should return 💬 for processing_message mode', () => {
             const state: BotState = {
                 mode:          'processing_message',
-                interrupted:   false,
                 activityPhase: null,
                 modeEnteredAt: new Date(),
                 modeContext:   {
@@ -130,7 +100,6 @@ describe('StatusContextBuilder', () => {
         it('should return 🪶 for perching mode', () => {
             const state: BotState = {
                 mode:          'perching',
-                interrupted:   false,
                 activityPhase: null,
                 modeEnteredAt: new Date(),
                 modeContext:   {
@@ -144,25 +113,6 @@ describe('StatusContextBuilder', () => {
             const context = builder.buildContext();
 
             expect(context.emojiPrefix).toBe('🪶');
-        });
-
-        it('should return 🪶💬 for perching mode with interrupted', () => {
-            const state: BotState = {
-                mode:          'perching',
-                interrupted:   true,
-                activityPhase: null,
-                modeEnteredAt: new Date(),
-                modeContext:   {
-                    activityType: 'Observing',
-                    sessionId:    null,
-                },
-            };
-            const manager = createMockStateManager(state);
-            const builder = createStatusContextBuilder({ stateManager: manager });
-
-            const context = builder.buildContext();
-
-            expect(context.emojiPrefix).toBe('🪶💬');
         });
     });
 
@@ -183,7 +133,6 @@ describe('StatusContextBuilder', () => {
         it('should use static fallback for active mode without activityPhase', () => {
             const state: BotState = {
                 mode:          'processing_message',
-                interrupted:   false,
                 activityPhase: null,
                 modeEnteredAt: new Date(),
                 modeContext:   {
@@ -206,7 +155,6 @@ describe('StatusContextBuilder', () => {
         it('should generate dynamic LLM-based status for active mode with activityPhase', () => {
             const state: BotState = {
                 mode:          'processing_message',
-                interrupted:   false,
                 activityPhase: {
                     type:      'thinking',
                     startedAt: new Date(),
@@ -235,7 +183,6 @@ describe('StatusContextBuilder', () => {
         it('should extract thinking phase context', () => {
             const state: BotState = {
                 mode:          'processing_message',
-                interrupted:   false,
                 activityPhase: {
                     type:            'thinking',
                     startedAt:       new Date(),
@@ -264,7 +211,6 @@ describe('StatusContextBuilder', () => {
         it('should extract using_tool phase context', () => {
             const state: BotState = {
                 mode:          'processing_message',
-                interrupted:   false,
                 activityPhase: {
                     type:            'using_tool',
                     toolName:        'memory_tool',
@@ -293,7 +239,6 @@ describe('StatusContextBuilder', () => {
         it('should extract responding phase context', () => {
             const state: BotState = {
                 mode:          'processing_message',
-                interrupted:   false,
                 activityPhase: {
                     type:            'responding',
                     startedAt:       new Date(),
@@ -320,7 +265,6 @@ describe('StatusContextBuilder', () => {
         it('should extract catch-up context from catching_up mode', () => {
             const state: BotState = {
                 mode:          'catching_up',
-                interrupted:   false,
                 activityPhase: {
                     type:            'thinking',
                     startedAt:       new Date(),
@@ -364,7 +308,6 @@ describe('StatusContextBuilder', () => {
         it('should not include prompt context for active mode without activityPhase', () => {
             const state: BotState = {
                 mode:          'processing_message',
-                interrupted:   false,
                 activityPhase: null,
                 modeEnteredAt: new Date(),
                 modeContext:   {
@@ -386,7 +329,6 @@ describe('StatusContextBuilder', () => {
         it('should merge provided userMessage into thinking phase', () => {
             const state: BotState = {
                 mode:          'processing_message',
-                interrupted:   false,
                 activityPhase: {
                     type:      'thinking',
                     startedAt: new Date(),
@@ -411,7 +353,6 @@ describe('StatusContextBuilder', () => {
         it('should merge provided toolName into using_tool phase', () => {
             const state: BotState = {
                 mode:          'processing_message',
-                interrupted:   false,
                 activityPhase: {
                     type:      'using_tool',
                     toolName:  'old_tool',
@@ -437,7 +378,6 @@ describe('StatusContextBuilder', () => {
         it('should merge provided accumulatedText into responding phase', () => {
             const state: BotState = {
                 mode:          'processing_message',
-                interrupted:   false,
                 activityPhase: {
                     type:      'responding',
                     startedAt: new Date(),
@@ -462,7 +402,6 @@ describe('StatusContextBuilder', () => {
         it('should preserve existing prompt context fields when merging', () => {
             const state: BotState = {
                 mode:          'processing_message',
-                interrupted:   false,
                 activityPhase: {
                     type:            'thinking',
                     startedAt:       new Date(),

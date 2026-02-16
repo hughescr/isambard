@@ -155,7 +155,6 @@ describe('botStateSchema', () => {
     it('should accept valid idle state', () => {
         const state: BotState = {
             mode:          'idle',
-            interrupted:   false,
             activityPhase: null,
             modeEnteredAt: new Date(),
             modeContext:   {},
@@ -166,7 +165,6 @@ describe('botStateSchema', () => {
     it('should accept state with activity phase', () => {
         const state: BotState = {
             mode:          'processing_message',
-            interrupted:   false,
             activityPhase: {
                 type:      'thinking',
                 startedAt: new Date(),
@@ -176,25 +174,6 @@ describe('botStateSchema', () => {
                 channelId:   createChannelId('123'),
                 userMessage: 'Hello!',
                 sessionId:   null,
-            },
-        };
-        expect(() => botStateSchema.parse(state)).not.toThrow();
-    });
-
-    it('should accept interrupted state', () => {
-        const state: BotState = {
-            mode:          'catching_up',
-            interrupted:   true,
-            activityPhase: null,
-            modeEnteredAt: new Date(),
-            modeContext:   {
-                viewedChannels:      new Set(),
-                sessionId:           null,
-                startedAt:           new Date(),
-                unreadCount:         0,
-                channelNames:        [],
-                topAuthors:          [],
-                timeSinceLastActive: null,
             },
         };
         expect(() => botStateSchema.parse(state)).not.toThrow();
@@ -210,7 +189,6 @@ describe('stateChangeSchema', () => {
     it('should accept valid state change', () => {
         const previousState: BotState = {
             mode:          'idle',
-            interrupted:   false,
             activityPhase: null,
             modeEnteredAt: new Date(),
             modeContext:   {},
@@ -218,7 +196,6 @@ describe('stateChangeSchema', () => {
 
         const newState: BotState = {
             mode:          'processing_message',
-            interrupted:   false,
             activityPhase: null,
             modeEnteredAt: new Date(),
             modeContext:   {
@@ -240,13 +217,12 @@ describe('stateChangeSchema', () => {
     it('should accept all change types', () => {
         const state: BotState = {
             mode:          'idle',
-            interrupted:   false,
             activityPhase: null,
             modeEnteredAt: new Date(),
             modeContext:   {},
         };
 
-        const changeTypes = ['mode_transition', 'activity_phase', 'interrupted', 'context_update'] as const;
+        const changeTypes = ['mode_transition', 'activity_phase', 'context_update'] as const;
 
         for(const changeType of changeTypes) {
             const change: StateChange = {
@@ -261,7 +237,6 @@ describe('stateChangeSchema', () => {
     it('should reject invalid change type', () => {
         const state: BotState = {
             mode:          'idle',
-            interrupted:   false,
             activityPhase: null,
             modeEnteredAt: new Date(),
             modeContext:   {},
@@ -368,7 +343,6 @@ describe('createDefaultBotState', () => {
         const state = createDefaultBotState();
 
         expect(state.mode).toBe('idle');
-        expect(state.interrupted).toBe(false);
         expect(state.activityPhase).toBeNull();
         expect(state.modeEnteredAt).toBeInstanceOf(Date);
         expect(state.modeContext).toEqual({});

@@ -1056,45 +1056,6 @@ describe('PresenceManager', () => {
             expect(mockActiveGenerator.generate).not.toHaveBeenCalled();
         });
 
-        it('should handle catching_up_interrupted mode with null currentPhase', async () => {
-            const mockDynamicGenerator = {
-                // eslint-disable-next-line lodash/prefer-constant -- mock requires async function
-                generateSynopsis:        mock(async () => 'Test dynamic status'),
-                // eslint-disable-next-line lodash/prefer-constant -- mock requires async function
-                generateCatchUpSynopsis: mock(async () => 'New message while catching up!'),
-            };
-
-            const manager = new PresenceManager({
-                discordClient:          mockClient,
-                activeStatusGenerator:  mockActiveGenerator,
-                idleStatusGenerator:    mockIdleGenerator,
-                dynamicStatusGenerator: mockDynamicGenerator,
-                config,
-                logger:                 mockLogger,
-            });
-
-            const catchUpContext = {
-                totalUnread:         8,
-                channelCount:        3,
-                channelNames:        ['general', 'random', 'DM'],
-                topAuthors:          ['Alice', 'Bob'],
-                timeSinceLastActive: '2 hours',
-                timeOfDay:           'evening',
-                dayOfWeek:           'Friday',
-            };
-
-            // Enter catching_up_interrupted mode
-            manager.transitionPresenceDisplayMode('catching_up_interrupted', catchUpContext);
-
-            // Wait for async status generation
-            await Promise.resolve();
-            await Promise.resolve();
-
-            // Should have called dynamic generator
-            expect(mockDynamicGenerator.generateCatchUpSynopsis).toHaveBeenCalledWith(catchUpContext);
-            expect(mockActiveGenerator.formatStatus).toHaveBeenCalledWith('New message while catching up!', 'catching_up_interrupted');
-        });
-
         it('should handle error during async status generation gracefully', async () => {
             const errorDynamicGenerator = {
                 // eslint-disable-next-line lodash/prefer-constant -- mock requires async function
@@ -1186,33 +1147,6 @@ describe('PresenceManager', () => {
             // Should NOT have generated any status (only catch-up mode generates at startup)
             expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
             expect(mockActiveGenerator.generate).not.toHaveBeenCalled();
-        });
-
-        it('should exit catching_up_interrupted mode correctly', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // Enter catching_up_interrupted mode
-            manager.transitionPresenceDisplayMode('catching_up_interrupted');
-            await Promise.resolve();
-            await Promise.resolve();
-
-            // Go idle
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-            const callCountAfterIdle = mockIdleGenerator.generate.mock.calls.length;
-
-            // Exit to 'none' mode
-            manager.transitionPresenceDisplayMode('none');
-            await Promise.resolve();
-            await Promise.resolve();
-
-            // Should have triggered refreshIdleStatus (exiting catch-up)
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(callCountAfterIdle + 1);
         });
 
         it('should handle mode transition logging', async () => {

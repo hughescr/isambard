@@ -4,7 +4,6 @@ import {
     VALID_TRANSITIONS,
     isValidTransition,
     assertValidTransition,
-    canInterrupt,
     TransitionError,
     getModeEmoji
 } from '@/integrations/discord/state/transitions';
@@ -147,59 +146,21 @@ describe('assertValidTransition', () => {
     });
 });
 
-describe('canInterrupt', () => {
-    test('idle cannot be interrupted', () => {
-        expect(canInterrupt('idle')).toBe(false);
-    });
-
-    test('catching_up can be interrupted', () => {
-        expect(canInterrupt('catching_up')).toBe(true);
-    });
-
-    test('processing_message can be interrupted', () => {
-        expect(canInterrupt('processing_message')).toBe(true);
-    });
-
-    test('perching can be interrupted', () => {
-        expect(canInterrupt('perching')).toBe(true);
-    });
-});
-
 describe('getModeEmoji', () => {
-    describe('non-interrupted modes', () => {
-        test('idle returns sleep emoji', () => {
-            expect(getModeEmoji('idle', false)).toBe('💤');
-        });
-
-        test('catching_up returns inbox emoji', () => {
-            expect(getModeEmoji('catching_up', false)).toBe('📥');
-        });
-
-        test('processing_message returns speech emoji', () => {
-            expect(getModeEmoji('processing_message', false)).toBe('💬');
-        });
-
-        test('perching returns feather emoji', () => {
-            expect(getModeEmoji('perching', false)).toBe('🪶');
-        });
+    test('idle returns sleep emoji', () => {
+        expect(getModeEmoji('idle')).toBe('💤');
     });
 
-    describe('interrupted modes', () => {
-        test('idle interrupted returns sleep emoji only', () => {
-            expect(getModeEmoji('idle', true)).toBe('💤');
-        });
+    test('catching_up returns inbox emoji', () => {
+        expect(getModeEmoji('catching_up')).toBe('📥');
+    });
 
-        test('catching_up interrupted returns inbox + speech emoji', () => {
-            expect(getModeEmoji('catching_up', true)).toBe('📥💬');
-        });
+    test('processing_message returns speech emoji', () => {
+        expect(getModeEmoji('processing_message')).toBe('💬');
+    });
 
-        test('processing_message interrupted returns speech emoji only', () => {
-            expect(getModeEmoji('processing_message', true)).toBe('💬');
-        });
-
-        test('perching interrupted returns feather + speech emoji', () => {
-            expect(getModeEmoji('perching', true)).toBe('🪶💬');
-        });
+    test('perching returns feather emoji', () => {
+        expect(getModeEmoji('perching')).toBe('🪶');
     });
 });
 

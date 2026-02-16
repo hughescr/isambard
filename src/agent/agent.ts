@@ -282,6 +282,8 @@ export interface HandleInputOptions {
     perchPrompt?:     string
     /** Optional list of available channels for system prompt context */
     channelList?:     string[]
+    /** Optional context note prepended to the user message (e.g., perch-time interruption notice) */
+    contextNote?:     string
 }
 
 /** Result from handleInput processing */
@@ -1068,6 +1070,7 @@ async function attemptAutoResume(
         if(resumeResult.lastAssistantText) {
             updatedText = resumeResult.lastAssistantText;
         }
+        // Stryker disable next-line ConditionalExpression: Defensive guard — resume always returns sessionId in practice
         if(resumeResult.capturedSessionId) {
             updatedSessionId = resumeResult.capturedSessionId;
         }
@@ -1120,8 +1123,13 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                     options?.perchPrompt
                 );
 
+                // 3.5. Prepend context note if provided
+                const finalMessageText = options?.contextNote
+                    ? `[${options.contextNote}]\n\n${userMessageText}`
+                    : userMessageText;
+
                 // 4. Build prompt (string for text-only, async generator for images or text)
-                const prompt = buildPromptForHandleInput(userMessageText, options?.images);
+                const prompt = buildPromptForHandleInput(finalMessageText, options?.images);
 
                 // 5. Log start of processing
                 logger.info({

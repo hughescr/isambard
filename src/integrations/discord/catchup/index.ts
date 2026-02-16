@@ -5,8 +5,8 @@
  * handling interruptions, and tracking completion.
  */
 
-export { buildCatchUpPrompt, buildCatchUpInterruptedPrompt } from './prompts';
-export type { CatchUpInterruptedOptions } from './prompts';
+export { buildCatchUpPrompt, buildCatchUpResumedPrompt } from './prompts';
+export type { CatchUpResumedOptions } from './prompts';
 export type {
     CatchUpSessionRunner,
     CatchUpSessionRunnerDeps,

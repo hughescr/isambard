@@ -68,14 +68,10 @@ function getPresencePrefix(presenceDisplayMode: PresenceDisplayMode | undefined)
     switch(presenceDisplayMode) { // Stryker disable ConditionalExpression,StringLiteral
         case 'catching_up':
             return '📥 ';
-        case 'catching_up_interrupted':
-            return '📥💬 ';
         case 'processing_message':
             return '💬 ';
         case 'perching':
             return '🦉 ';
-        case 'perching_interrupted':
-            return '🦉💬 ';
         default:
             return '';
     }
@@ -90,8 +86,8 @@ function getPresencePrefix(presenceDisplayMode: PresenceDisplayMode | undefined)
  *
  * When presence display mode is provided, adds appropriate emoji prefixes:
  * - catching_up: 📥
- * - catching_up_interrupted: 📥💬
  * - processing_message: 💬
+ * - perching: 🦉
  *
  * @param deps - Dependencies including logger and activity type
  * @returns ActiveStatusGenerator instance

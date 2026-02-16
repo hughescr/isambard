@@ -1,16 +1,16 @@
 import { formatTimeHeader } from '@/utils/time';
 
 /**
- * Options for building the catch-up interrupted prompt.
+ * Options for building the catch-up resumed prompt.
  */
-export interface CatchUpInterruptedOptions {
+export interface CatchUpResumedOptions {
     /** Channel names that were viewed during catch-up */
     viewedChannels:    string[]
     /** Number of unread messages remaining */
     remainingUnread:   number
     /** Number of channels with unread messages remaining */
     remainingChannels: number
-    /** New message that interrupted the catch-up */
+    /** New message that was handled during suspension */
     newMessage:        {
         author:      string
         channelName: string
@@ -60,12 +60,12 @@ Your inbox tools will not be available in regular conversations, so process ever
 }
 
 /**
- * Builds the catch-up interrupted prompt.
+ * Builds the catch-up resumed prompt.
  *
- * @param options - Options for the interrupted prompt
- * @returns The formatted interrupted prompt
+ * @param options - Options for the resumed prompt
+ * @returns The formatted resumed prompt
  */
-export function buildCatchUpInterruptedPrompt(options: CatchUpInterruptedOptions): string {
+export function buildCatchUpResumedPrompt(options: CatchUpResumedOptions): string {
     const { viewedChannels, remainingUnread, remainingChannels, newMessage } = options;
 
     const viewedList = viewedChannels.length > 0
@@ -77,17 +77,17 @@ export function buildCatchUpInterruptedPrompt(options: CatchUpInterruptedOptions
 
     return `${formatTimeHeader()}
 
---- CATCH-UP SESSION INTERRUPTED ---
+--- CATCH-UP SESSION RESUMED ---
 
 A new message arrived while you were catching up on unread messages.
 
-Before interruption, you had viewed these channels (summaries retrieved):
+Before suspension, you had viewed these channels (summaries retrieved):
 ${viewedList}
 
 Current inbox state:
 - ${remainingUnread} unread ${messagePlural} across ${remainingChannels} ${channelPlural}
 
---- NEW MESSAGE ---
+--- MESSAGE HANDLED ---
 From: ${newMessage.author} in #${newMessage.channelName}
 ${newMessage.content}
 ---

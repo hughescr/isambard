@@ -1032,6 +1032,33 @@ describe('createClaudeAgent', () => {
             expect(lines[firstIndex + 1]).toBe('');
         });
 
+        test('should prepend contextNote to user message when provided', async () => {
+            const agent = createClaudeAgent({});
+            await agent.handleInput([mockMessageContext], { contextNote: 'Test note' });
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            const prompt = querySpy.mock.calls[0][0].prompt as string;
+
+            // Should start with contextNote in brackets
+            expect(prompt).toMatch(/^\[Test note\]\n\n/);
+            // Should still contain the user message content after the contextNote
+            expect(prompt).toContain('User @111222333');
+            expect(prompt).toContain('Hello Claude!');
+        });
+
+        test('should not prepend contextNote when not provided', async () => {
+            const agent = createClaudeAgent({});
+            await agent.handleInput([mockMessageContext]);
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            const prompt = querySpy.mock.calls[0][0].prompt as string;
+
+            // Should NOT start with brackets (no contextNote)
+            expect(prompt).not.toMatch(/^\[/);
+            // Should start with User message directly
+            expect(prompt).toMatch(/^User @/);
+        });
+
         test('should initialize lastAssistantText as empty string', async () => {
             querySpy.mockImplementation((_params: any): any => {
                 async function* mockGenerator() {

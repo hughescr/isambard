@@ -207,26 +207,25 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                 });
             }
 
-            // Resume catch-up if we were interrupted
-            if(botStateManager.getMode() === 'catching_up' && botStateManager.isInterrupted() && catchUpSessionRunner) {
-                logger.info({ msg: 'Resuming catch-up after interruption' });
+            // Resume catch-up if we were suspended
+            if(botStateManager.getMode() === 'idle' && catchUpSessionRunner?.isSuspended()) {
+                logger.info({ msg: 'Resuming catch-up after suspension' });
                 // Resume catch-up (async, don't await)
-                void catchUpSessionRunner.resumeAfterInterruption().catch((error) => {
+                void catchUpSessionRunner.resumeAfterSuspension().catch((error) => {
                     const errorMsg = _.isError(error) ? error.message : String(error);
-                    logger.error({ error: errorMsg, msg: 'Failed to resume catch-up after interruption' });
-                    // Reset botStateManager to idle (was stuck in interrupted state)
-                    botStateManager.goIdle();
+                    logger.error({ error: errorMsg, msg: 'Failed to resume catch-up after suspension' });
+                    // Clear suspension state (error recovery)
+                    catchUpSessionRunner.clearSuspension();
                 });
             }
 
-            // Resume perch if we were interrupted
-            if(botStateManager.getMode() === 'perching' && botStateManager.isInterrupted() && perchSessionRunner) {
-                logger.info({ msg: 'Resuming perch after interruption' });
-                void perchSessionRunner.resumeAfterInterruption().catch((error) => {
+            // Resume perch if we were suspended
+            if(botStateManager.getMode() === 'idle' && perchSessionRunner?.isSuspended()) {
+                logger.info({ msg: 'Resuming perch after suspension' });
+                void perchSessionRunner.resumeAfterSuspension().catch((error) => {
                     const errorMsg = _.isError(error) ? error.message : String(error);
-                    logger.error({ error: errorMsg, msg: 'Failed to resume perch after interruption' });
-                    // Reset botStateManager to idle (was stuck in interrupted state)
-                    botStateManager.goIdle();
+                    logger.error({ error: errorMsg, msg: 'Failed to resume perch after suspension' });
+                    perchSessionRunner.clearSuspension();
                 });
             }
         },
@@ -254,17 +253,14 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
             return;
         }
 
-        // Transition to idle after completion, but NOT if we're in catch-up interrupted state
-        // (the resumed catch-up session will handle presence updates)
+        // Transition to idle after completion
         const currentMode = botStateManager.getMode();
-        const isInterrupted = botStateManager.isInterrupted();
-        if(streamEventHandler && !((currentMode === 'catching_up' || currentMode === 'perching') && isInterrupted)) {
+        if(streamEventHandler) {
             streamEventHandler.complete();
         }
 
         // Transition state manager to idle when message processing completes
-        // (unless we're in catch-up interrupted state)
-        if(currentMode === 'processing_message' && !isInterrupted) {
+        if(currentMode === 'processing_message') {
             botStateManager.goIdle();
         }
     };
@@ -329,6 +325,14 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                 return formatted;
             });
 
+            // Build context note for suspended sessions
+            let contextNote: string | undefined;
+            if(perchSessionRunner?.isSuspended()) {
+                contextNote = 'Note: This message arrived during perch-time, which has been paused. Respond normally to the user. Perch-time will resume after this conversation.';
+            } else if(catchUpSessionRunner?.isSuspended()) {
+                contextNote = 'Note: This message arrived during catch-up, which has been paused. Respond normally to the user. Catch-up will resume after this conversation.';
+            }
+
             // Call handleInput with presence updates, images, and channel context
             const result = await agent.handleInput(toMessageContexts(modifiedContexts), {
                 sessionId,
@@ -337,6 +341,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                 onStreamEvent: streamEventHandler?.onStreamEvent,
                 images:        images.length > 0 ? toPlatformImages(images) : undefined,
                 channelList,
+                contextNote,
             });
 
             // Complete presence updates after processing

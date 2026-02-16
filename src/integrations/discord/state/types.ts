@@ -144,28 +144,25 @@ export interface InterruptingMessageDetails {
  *   unreadCount: 42,
  *   channelNames: ['general', 'random'],
  *   topAuthors: ['Alice', 'Bob', 'Charlie'],
- *   timeSinceLastActive: '3 hours',
- *   interruptingMessage: null
+ *   timeSinceLastActive: '3 hours'
  * };
  * ```
  */
 export interface CatchingUpModeContext {
     /** Channels that have been viewed during this catch-up session */
-    viewedChannels:       Set<ChannelId>
+    viewedChannels:      Set<ChannelId>
     /** Claude agent session ID for this catch-up session */
-    sessionId:            string | null
+    sessionId:           string | null
     /** When catch-up mode was entered */
-    startedAt:            Date
+    startedAt:           Date
     /** Initial count of unread messages when catch-up started */
-    unreadCount:          number
+    unreadCount:         number
     /** Names of channels with unread messages */
-    channelNames:         string[]
+    channelNames:        string[]
     /** Top authors who sent messages (up to 3) */
-    topAuthors:           string[]
+    topAuthors:          string[]
     /** Human-readable time since last active (e.g., "3 hours", "overnight") */
-    timeSinceLastActive:  string | null
-    /** Details of the message that interrupted catch-up, if any */
-    interruptingMessage?: InterruptingMessageDetails
+    timeSinceLastActive: string | null
 }
 
 /**
@@ -192,7 +189,6 @@ export const catchingUpModeContextSchema = z.object({
     channelNames:        z.array(z.string()),
     topAuthors:          z.array(z.string()),
     timeSinceLastActive: z.string().nullable(),
-    interruptingMessage: interruptingMessageDetailsSchema.optional(),
 });
 // Stryker restore ObjectLiteral
 
@@ -233,6 +229,8 @@ export const processingMessageModeContextSchema = z.object({
  * Context for perching mode.
  * Contains state for passive observation mode.
  *
+ * @internal Used by BotStateManager for mode context tracking.
+ *
  * @example
  * ```typescript
  * const context: PerchingModeContext = {
@@ -243,11 +241,9 @@ export const processingMessageModeContextSchema = z.object({
  */
 export interface PerchingModeContext {
     /** Type of perching activity (e.g., "Observing", "Listening") */
-    activityType:         string
+    activityType: string
     /** Claude agent session ID if applicable */
-    sessionId:            string | null
-    /** Details of the message that interrupted perch, if any */
-    interruptingMessage?: InterruptingMessageDetails
+    sessionId:    string | null
 }
 
 /**
@@ -255,9 +251,8 @@ export interface PerchingModeContext {
  */
 // Stryker disable ObjectLiteral: Zod schema definition - structure tested through usage
 export const perchingModeContextSchema = z.object({
-    activityType:        z.string(),
-    sessionId:           z.string().nullable(),
-    interruptingMessage: interruptingMessageDetailsSchema.optional(),
+    activityType: z.string(),
+    sessionId:    z.string().nullable(),
 });
 // Stryker restore ObjectLiteral
 
@@ -290,37 +285,10 @@ export const modeContextSchema = z.union([
  * Complete bot state including mode, activity, and context.
  * This is the single source of truth for bot behavior.
  *
- * ## Orthogonal State Design
- *
- * The `interrupted` flag is intentionally separate from `mode` to model orthogonal concerns:
- * - **mode**: What the bot is currently doing (idle, catching_up, processing_message, perching)
- * - **interrupted**: Whether the current activity has been interrupted by new input
- *
- * This design allows any mode to be interrupted without creating exponential state combinations.
- * For example, we can have `mode='catching_up', interrupted=false` OR `mode='catching_up', interrupted=true`
- * without needing distinct mode values like 'catching_up_interrupted'.
- *
- * ## Mapping to PresenceManager
- *
- * PresenceManager uses a simplified type system for Discord presence display that combines
- * these orthogonal flags into single enum values. The mapping logic in bot.ts combines:
- * - `mode='catching_up', interrupted=false` → `PresenceDisplayMode='catching_up'`
- * - `mode='catching_up', interrupted=true` → `PresenceDisplayMode='catching_up_interrupted'`
- * - `mode!='catching_up'` → `PresenceDisplayMode='none'`
- *
- * This separation allows:
- * - BotStateManager to model state naturally with orthogonal flags
- * - PresenceManager to generate status text from simplified enum values
- * - Future modes to support interruption without changing PresenceManager
- *
- * @see PresenceDisplayMode in src/integrations/discord/presence/types.ts for the presence enum
- * @see bot.ts for the mapping logic between these type systems
- *
  * @example
  * ```typescript
  * const state: BotState = {
  *   mode: 'idle',
- *   interrupted: false,
  *   activityPhase: null,
  *   modeEnteredAt: new Date(),
  *   modeContext: {}
@@ -330,8 +298,6 @@ export const modeContextSchema = z.union([
 export interface BotState {
     /** Current operational mode */
     mode:          OperationalMode
-    /** Whether the bot has been interrupted (e.g., new message during catch-up) */
-    interrupted:   boolean
     /** Current activity phase, or null if no active phase */
     activityPhase: ActivityPhase | null
     /** When the current mode was entered */
@@ -346,7 +312,6 @@ export interface BotState {
 // Stryker disable ObjectLiteral: Zod schema definition - structure tested through usage
 export const botStateSchema = z.object({
     mode:          operationalModeSchema,
-    interrupted:   z.boolean(),
     activityPhase: activityPhaseSchema.nullable(),
     modeEnteredAt: z.date(),
     modeContext:   modeContextSchema,
@@ -364,7 +329,6 @@ export const botStateSchema = z.object({
  * Change types:
  * - mode_transition: Mode changed (e.g., idle → processing_message)
  * - activity_phase: Activity phase changed (e.g., thinking → using_tool)
- * - interrupted: Interrupted flag changed
  * - context_update: Mode context was updated
  *
  * @example
@@ -382,7 +346,7 @@ export interface StateChange {
     /** State after the change */
     newState:      BotState
     /** Type of change that occurred */
-    changeType:    'mode_transition' | 'activity_phase' | 'interrupted' | 'context_update'
+    changeType:    'mode_transition' | 'activity_phase' | 'context_update'
 }
 
 /**
@@ -392,7 +356,7 @@ export interface StateChange {
 export const stateChangeSchema = z.object({
     previousState: botStateSchema,
     newState:      botStateSchema,
-    changeType:    z.enum(['mode_transition', 'activity_phase', 'interrupted', 'context_update']),
+    changeType:    z.enum(['mode_transition', 'activity_phase', 'context_update']),
 });
 // Stryker restore StringLiteral,ObjectLiteral,ArrayDeclaration
 
@@ -452,11 +416,6 @@ export interface BotStateManager {
      * Get the current operational mode.
      */
     getMode(): OperationalMode
-
-    /**
-     * Check if the bot is currently interrupted.
-     */
-    isInterrupted(): boolean
 
     /**
      * Check if presence should be updated.
@@ -519,26 +478,6 @@ export interface BotStateManager {
     // ========================================================================
     // Within-Mode Operations
     // ========================================================================
-
-    /**
-     * Mark the bot as interrupted (e.g., new message during catch-up).
-     * Does not change mode, only sets interrupted flag.
-     * If in catching_up mode, stores the interrupting message details.
-     *
-     * @param message - Optional details of the interrupting message
-     */
-    interrupt(message?: InterruptingMessageDetails): void
-
-    /**
-     * Update the stored interrupting message without changing interrupted flag.
-     * Used during re-interruption of a resume session.
-     */
-    updateInterruptingMessage(message: InterruptingMessageDetails): void
-
-    /**
-     * Clear the interrupted flag.
-     */
-    resume(): void
 
     /**
      * Update the current activity phase.
@@ -653,14 +592,11 @@ export function isModeContext(value: unknown): value is ModeContext {
  * console.log(initialState.mode); // 'idle'
  * ```
  */
-// Stryker disable BooleanLiteral: Default value tested through state initialization
 export function createDefaultBotState(): BotState {
     return {
         mode:          'idle',
-        interrupted:   false,
         activityPhase: null,
         modeEnteredAt: new Date(),
         modeContext:   {},
     };
 }
-// Stryker restore BooleanLiteral

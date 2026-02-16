@@ -82,7 +82,6 @@ export function setupPresence(params: {
         // Sync mode changes to presence manager
         if(change.changeType === 'mode_transition') {
             const mode = change.newState.mode;
-            const interrupted = change.newState.interrupted;
 
             // Map BotState mode to PresenceDisplayMode for presence
             if(mode === 'idle') {
@@ -90,22 +89,11 @@ export function setupPresence(params: {
                 // Explicitly transition presence to idle phase
                 void presenceManager.updatePhase({ type: 'idle', since: new Date() });
             } else if(mode === 'catching_up') {
-                presenceManager.transitionPresenceDisplayMode(interrupted ? 'catching_up_interrupted' : 'catching_up');
+                presenceManager.transitionPresenceDisplayMode('catching_up');
             } else if(mode === 'processing_message') {
                 presenceManager.transitionPresenceDisplayMode('processing_message');
             } else if(mode === 'perching') {
-                presenceManager.transitionPresenceDisplayMode(interrupted ? 'perching_interrupted' : 'perching');
-            }
-        }
-
-        // Sync interrupted flag changes
-        if(change.changeType === 'interrupted') {
-            const mode = change.newState.mode;
-            const interrupted = change.newState.interrupted;
-            if(mode === 'catching_up') {
-                presenceManager.transitionPresenceDisplayMode(interrupted ? 'catching_up_interrupted' : 'catching_up');
-            } else if(mode === 'perching') {
-                presenceManager.transitionPresenceDisplayMode(interrupted ? 'perching_interrupted' : 'perching');
+                presenceManager.transitionPresenceDisplayMode('perching');
             }
         }
     });

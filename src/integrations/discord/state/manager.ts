@@ -16,12 +16,11 @@ import {
     type ProcessingMessageModeContext,
     type PerchingModeContext,
     type ModeContext,
-    type InterruptingMessageDetails,
     type SessionType,
     createDefaultBotState
 } from './types';
 import { type ChannelId } from '../types';
-import { isValidTransition, canInterrupt, TransitionError } from './transitions';
+import { isValidTransition, TransitionError } from './transitions';
 
 // Re-export for convenience
 export type { BotStateManager };
@@ -86,7 +85,6 @@ export class BotStateManagerImpl implements BotStateManager {
     private cloneState(state: BotState): BotState {
         const cloned: BotState = {
             mode:          state.mode,
-            interrupted:   state.interrupted,
             activityPhase: state.activityPhase ? { ...state.activityPhase } : null,
             modeEnteredAt: new Date(state.modeEnteredAt),
             modeContext:   this.cloneModeContext(state.modeContext),
@@ -165,10 +163,6 @@ export class BotStateManagerImpl implements BotStateManager {
         return this.currentState.mode;
     }
 
-    isInterrupted(): boolean {
-        return this.currentState.interrupted;
-    }
-
     shouldUpdatePresence(): boolean {
         const now = Date.now();
         // Stryker disable next-line EqualityOperator: Boundary condition >= vs > makes no practical difference
@@ -203,7 +197,6 @@ export class BotStateManagerImpl implements BotStateManager {
 
         this.currentState = {
             mode:          'catching_up',
-            interrupted:   false,
             activityPhase: null,
             modeEnteredAt: new Date(),
             modeContext:   {
@@ -232,15 +225,12 @@ export class BotStateManagerImpl implements BotStateManager {
             sessionId: null,
         };
 
-        // Stryker disable BooleanLiteral: Initial state values - tested via behavior
         this.currentState = {
             mode:          'processing_message',
-            interrupted:   false,
             activityPhase: null,
             modeEnteredAt: new Date(),
             modeContext:   context,
         };
-        // Stryker restore BooleanLiteral
 
         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
         this.deps.logger.info({ mode: 'processing_message', channelId }, 'Transitioned to processing_message mode');
@@ -261,15 +251,12 @@ export class BotStateManagerImpl implements BotStateManager {
             sessionId: null,
         };
 
-        // Stryker disable BooleanLiteral: Initial state values - tested via behavior
         this.currentState = {
             mode:          'perching',
-            interrupted:   false,
             activityPhase: null,
             modeEnteredAt: new Date(),
             modeContext:   context,
         };
-        // Stryker restore BooleanLiteral
 
         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
         this.deps.logger.info({ mode: 'perching', activityType }, 'Transitioned to perching mode');
@@ -298,96 +285,6 @@ export class BotStateManagerImpl implements BotStateManager {
     // ========================================================================
     // Within-Mode Operations
     // ========================================================================
-
-    interrupt(message?: InterruptingMessageDetails): void {
-        this.assertNotStopped();
-        const previousState = this.cloneState(this.currentState);
-
-        // Can only interrupt non-idle modes
-        if(!canInterrupt(this.currentState.mode)) {
-            return;
-        }
-
-        // Stryker disable BlockStatement: Guard clause - already interrupted
-        // Stryker disable next-line ConditionalExpression: Guard clause - already interrupted
-        if(this.currentState.interrupted) {
-            return; // Already interrupted
-        }
-        // Stryker restore BlockStatement
-
-        // If in catching_up or perching mode and message provided, store it in the context
-        let modeContext = this.currentState.modeContext;
-        if(message && this.currentState.mode === 'catching_up') {
-            const catchUpContext = this.currentState.modeContext as CatchingUpModeContext;
-            modeContext = {
-                ...catchUpContext,
-                interruptingMessage: message,
-            };
-        } else if(message && this.currentState.mode === 'perching') {
-            const perchContext = this.currentState.modeContext as PerchingModeContext;
-            modeContext = {
-                ...perchContext,
-                interruptingMessage: message,
-            };
-        }
-
-        this.currentState = {
-            ...this.currentState,
-            interrupted: true,
-            modeContext,
-        };
-
-        // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-        this.deps.logger.info({ mode: this.currentState.mode }, 'Bot interrupted');
-        // Stryker restore ObjectLiteral,StringLiteral
-        this.notifySubscribers(previousState, 'interrupted');
-    }
-
-    updateInterruptingMessage(message: InterruptingMessageDetails): void {
-        this.assertNotStopped();
-        if(!this.currentState.interrupted) {
-            return;
-        }
-
-        if(this.currentState.mode === 'perching') {
-            const perchContext = this.currentState.modeContext as PerchingModeContext;
-            this.currentState = {
-                ...this.currentState,
-                modeContext: { ...perchContext, interruptingMessage: message },
-            };
-        } else if(this.currentState.mode === 'catching_up') {
-            const catchUpContext = this.currentState.modeContext as CatchingUpModeContext;
-            this.currentState = {
-                ...this.currentState,
-                modeContext: { ...catchUpContext, interruptingMessage: message },
-            };
-        }
-        // No subscriber notification — this is an internal context update used during
-        // re-interruption of a resume session. Presence doesn't use message content,
-        // and the session runner handles re-interrupt logic internally.
-    }
-
-    resume(): void {
-        this.assertNotStopped();
-        const previousState = this.cloneState(this.currentState);
-
-        // Stryker disable BlockStatement: Guard clause - not interrupted means no work
-        // Stryker disable next-line ConditionalExpression: Guard clause - not interrupted means no work
-        if(!this.currentState.interrupted) {
-            return; // Not interrupted
-        }
-        // Stryker restore BlockStatement
-
-        this.currentState = {
-            ...this.currentState,
-            interrupted: false,
-        };
-
-        // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-        this.deps.logger.info({ mode: this.currentState.mode }, 'Bot resumed');
-        // Stryker restore ObjectLiteral,StringLiteral
-        this.notifySubscribers(previousState, 'interrupted');
-    }
 
     updateActivityPhase(phase: ActivityPhase): void {
         this.assertNotStopped();

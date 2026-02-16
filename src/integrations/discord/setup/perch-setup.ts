@@ -116,10 +116,11 @@ export function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
     });
 
     const scheduler = createPerchScheduler({
-        stateManager:   botStateManager,
+        stateManager:       botStateManager,
         logger,
-        config:         perchConfig,
-        onPerchTrigger: (slot) => {
+        config:             perchConfig,
+        perchSessionRunner: runner,
+        onPerchTrigger:     (slot) => {
             if(runner) {
                 void runner.startPerch(slot).catch((error) => {
                     const errorMsg = _.isError(error) ? error.message : String(error);

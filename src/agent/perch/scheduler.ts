@@ -26,6 +26,8 @@ export interface PerchSchedulerDeps {
     getCurrentLocalHour?: () => number
     /** Callback when perch should start */
     onPerchTrigger:       (slot: PerchSlot) => void
+    /** Optional perch session runner for suspension check */
+    perchSessionRunner?:  import('./session-runner').PerchSessionRunner
 }
 
 /**
@@ -104,6 +106,18 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
         // Clear pending state
         // Stryker disable next-line BooleanLiteral: State cleared regardless of previous value
         state = { perchPending: false };
+
+        // Don't start new perch while one is suspended
+        if(deps.perchSessionRunner?.isSuspended()) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.debug({ slot }, 'Perch trigger skipped - session is suspended');
+            state = {
+                perchPending:       true,
+                pendingSlot:        slot,
+                pendingTriggerTime: new Date(),
+            };
+            return;
+        }
 
         // Check if still idle (could have changed during jitter delay)
         if(stateManager.getMode() !== 'idle') {

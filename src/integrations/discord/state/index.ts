@@ -81,7 +81,6 @@ export {
     VALID_TRANSITIONS,
     isValidTransition,
     assertValidTransition,
-    canInterrupt,
     getModeEmoji,
     TransitionError
 } from './transitions';

@@ -181,24 +181,24 @@ export interface MessageHandlerOptions {
  * ```
  */
 /**
- * Helper function to handle catch-up mode interruption.
- * Interrupts the catch-up session.
+ * Helper function to handle catch-up mode suspension.
+ * Suspends the catch-up session.
  */
-async function handleCatchUpInterruption(
+async function handleCatchUpSuspension(
     message: Message,
     catchUpSessionRunner: CatchUpSessionRunner
 ): Promise<void> {
     // Stryker disable all: Logging for observability
     logger.info({
         channelId: message.channel.id,
-        msg:       'Interrupting catch-up mode for new message',
+        msg:       'Suspending catch-up mode for new message',
     });
     // Stryker restore all
 
-    // Interrupt the catch-up session with full message details
+    // Suspend the catch-up session with full message details
     const channelId = createChannelId(message.channel.id);
     const channel = message.channel as TextChannel;
-    catchUpSessionRunner.interrupt({
+    catchUpSessionRunner.suspend({
         channelId,
         author:      message.author.username,
         // Stryker disable next-line LogicalOperator: Fallback for DM channels where name is null
@@ -210,8 +210,8 @@ async function handleCatchUpInterruption(
 }
 
 /**
- * Helper function to handle perch mode interruption.
- * Interrupts the perch session with message details.
+ * Helper function to handle perch mode suspension.
+ * Suspends the perch session with message details.
  */
 async function handlePerchInterruption(
     message: Message,
@@ -220,15 +220,15 @@ async function handlePerchInterruption(
     // Stryker disable all: Logging for observability
     logger.info({
         channelId: message.channel.id,
-        msg:       'Interrupting perch mode for new message',
+        msg:       'Suspending perch mode for new message',
     });
     // Stryker restore all
 
-    // Get channel name for interruption context
+    // Get channel name for suspension context
     const channel = message.channel as TextChannel;
 
-    // Interrupt the perch session with message details
-    perchSessionRunner.interrupt({
+    // Suspend the perch session with message details
+    perchSessionRunner.suspend({
         channelId:   createChannelId(message.channel.id),
         author:      message.author.username,
         channelName: channel.name ?? message.channel.id,
@@ -291,11 +291,11 @@ async function handleModeInterruptions(
     catchUpSessionRunner: CatchUpSessionRunner | undefined,
     perchSessionRunner: import('@/agent/perch').PerchSessionRunner | undefined
 ): Promise<void> {
-    // Handle catch-up mode interruption
+    // Handle catch-up mode suspension
     if(botStateManager?.getMode() === 'catching_up' && catchUpSessionRunner) {
-        // Always call interrupt — session runner decides what to do based on
-        // whether resume is in progress, already interrupted, etc.
-        await handleCatchUpInterruption(message, catchUpSessionRunner);
+        // Always call suspend — session runner decides what to do based on
+        // whether already suspended, etc.
+        await handleCatchUpSuspension(message, catchUpSessionRunner);
         return;
     }
 

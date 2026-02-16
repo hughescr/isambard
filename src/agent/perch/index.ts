@@ -34,7 +34,11 @@ export {
     BASE_PROMPT,
     buildPerchPrompt,
     buildTestPerchPrompt,
-    getSuggestionLevelDescription
+    buildPerchResumedPrompt,
+    buildPerchTimeoutPrompt,
+    getSuggestionLevelDescription,
+    type PerchResumedOptions,
+    type PerchTimeoutOptions
 } from './prompts';
 
 // Scheduler

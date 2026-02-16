@@ -191,7 +191,7 @@ export class PresenceManager {
         // to show the 📥 prefix. The catch-up agent session's stream handler will then
         // drive all subsequent status updates (thinking, using_tool, responding).
         // We do NOT start the idle refresh loop during catch-up.
-        const enteringCatchUp = (mode === 'catching_up' || mode === 'catching_up_interrupted') && previousMode === 'none';
+        const enteringCatchUp = mode === 'catching_up' && previousMode === 'none';
 
         // Handle based on current phase state
         if(this.currentPhase) {
@@ -223,7 +223,7 @@ export class PresenceManager {
                 }
                 // When exiting catch-up mode, generate an immediate idle refresh
                 // This ensures we show normal idle status without waiting for the next interval
-                const exitingCatchUp = mode === 'none' && (previousMode === 'catching_up' || previousMode === 'catching_up_interrupted');
+                const exitingCatchUp = mode === 'none' && previousMode === 'catching_up';
                 if(exitingCatchUp) {
                     void this.refreshIdleStatus();
                 }
