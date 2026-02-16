@@ -779,6 +779,11 @@ describe('MemoryToolBackend', () => {
                 metadata: {},
             });
 
+            // Should preserve original updatedAt (not refresh) since reconciliation is maintenance
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            const mainItem = putCalls[0].args[0].input.Item as MemoryToolItemData;
+            expect(mainItem.updatedAt).toBe('2024-01-01T00:00:00.000Z');
+
             // Should return updated data
             expect(result.metadata).toEqual({});
         });

@@ -20,9 +20,10 @@ export interface CreateMemoryToolItemInput {
 }
 
 export interface UpdateMemoryToolItemInput {
-    content?:  string
-    metadata?: Record<string, unknown>
-    tags?:     Set<string>
+    content?:           string
+    metadata?:          Record<string, unknown>
+    tags?:              Set<string>
+    preserveUpdatedAt?: boolean
 }
 
 /**
@@ -117,7 +118,8 @@ export class MemoryToolBackendCore {
             ...(newContentPreview !== undefined && { contentPreview: newContentPreview }),
             // updatedAt reflects "last touched" (content edit OR deliberate access via recordAccess),
             // not just content modification. This keeps accessed items visible in GSI1 time-ordered queries.
-            updatedAt: DateTime.utc().toISO(),
+            // When preserveUpdatedAt is true (e.g. tag-only maintenance), the timestamp is not refreshed.
+            updatedAt: input.preserveUpdatedAt ? existing.updatedAt : DateTime.utc().toISO(),
         };
 
         const result = memoryToolItemSchema.safeParse(updatedData);

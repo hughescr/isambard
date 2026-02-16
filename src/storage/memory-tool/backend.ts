@@ -207,15 +207,16 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
     }
 
     /**
-     * Updates memory metadata directly.
+     * Updates memory metadata directly without refreshing updatedAt.
      * Used by reconciliation to clean up previouslyKnownAs metadata.
+     * Preserves updatedAt to avoid affecting sigmoid recency scoring.
      * @internal
      */
     async updateMetadataOnly(
         path: MemoryPath,
         input: { content?: string, metadata?: Record<string, unknown> }
     ): Promise<MemoryToolItemData> {
-        return this.coreOps.update(path, input);
+        return this.coreOps.update(path, { ...input, preserveUpdatedAt: true });
     }
 
     /**

@@ -1086,7 +1086,8 @@ describe.concurrent('createMemoryMCPServer', () => {
             await handler({ path: '/state/test', addTags: ['new1', 'new2'] });
 
             expect(mockBackend.update).toHaveBeenCalledWith('/state/test', {
-                tags: new Set(['existing', 'new1', 'new2', 'old']),
+                tags:              new Set(['existing', 'new1', 'new2', 'old']),
+                preserveUpdatedAt: true,
             });
         });
 
@@ -1104,7 +1105,8 @@ describe.concurrent('createMemoryMCPServer', () => {
             await handler({ path: '/state/test', removeTags: ['remove-me'] });
 
             expect(mockBackend.update).toHaveBeenCalledWith('/state/test', {
-                tags: new Set(['keep']),
+                tags:              new Set(['keep']),
+                preserveUpdatedAt: true,
             });
         });
 
@@ -1122,7 +1124,8 @@ describe.concurrent('createMemoryMCPServer', () => {
             await handler({ path: '/state/test', addTags: ['d'], removeTags: ['b'] });
 
             expect(mockBackend.update).toHaveBeenCalledWith('/state/test', {
-                tags: new Set(['a', 'c', 'd']),
+                tags:              new Set(['a', 'c', 'd']),
+                preserveUpdatedAt: true,
             });
         });
 
@@ -1140,7 +1143,8 @@ describe.concurrent('createMemoryMCPServer', () => {
             await handler({ path: '/state/test', addTags: ['conflict', 'new'], removeTags: ['conflict'] });
 
             expect(mockBackend.update).toHaveBeenCalledWith('/state/test', {
-                tags: new Set(['existing', 'new']),
+                tags:              new Set(['existing', 'new']),
+                preserveUpdatedAt: true,
             });
         });
 
@@ -1161,7 +1165,8 @@ describe.concurrent('createMemoryMCPServer', () => {
             expect(result.content[0].text).toBe('Updated tags on /events/test/2026-01-26T07-19-53-557Z\nBefore: debugging, discord\nAfter: catch-up, debugging');
 
             expect(mockBackend.update).toHaveBeenCalledWith('/events/test/2026-01-26T07-19-53-557Z', {
-                tags: new Set(['catch-up', 'debugging']),
+                tags:              new Set(['catch-up', 'debugging']),
+                preserveUpdatedAt: true,
             });
         });
 
@@ -1298,7 +1303,8 @@ describe.concurrent('createMemoryMCPServer', () => {
             await handler({ path: '/state/test', addTags: ['a', 'b'] });
 
             expect(mockBackend.update).toHaveBeenCalledWith('/state/test', {
-                tags: new Set(['a', 'b']),
+                tags:              new Set(['a', 'b']),
+                preserveUpdatedAt: true,
             });
         });
 
@@ -1316,7 +1322,8 @@ describe.concurrent('createMemoryMCPServer', () => {
             await handler({ path: '/state/test', removeTags: ['nonexistent'] });
 
             expect(mockBackend.update).toHaveBeenCalledWith('/state/test', {
-                tags: new Set(['a', 'b']),
+                tags:              new Set(['a', 'b']),
+                preserveUpdatedAt: true,
             });
         });
 
@@ -1334,7 +1341,8 @@ describe.concurrent('createMemoryMCPServer', () => {
             await handler({ path: '/state/test', addTags: ['new-tag'] });
 
             expect(mockBackend.update).toHaveBeenCalledWith('/state/test', {
-                tags: new Set(['new-tag']),
+                tags:              new Set(['new-tag']),
+                preserveUpdatedAt: true,
             });
         });
 

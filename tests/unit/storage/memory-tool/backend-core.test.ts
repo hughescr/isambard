@@ -156,6 +156,39 @@ describe('MemoryToolBackendCore', () => {
             expect(mainItem.contentPreview).toBe(_repeat('x', 100));
             expect((mainItem.contentPreview!).length).toBe(100);
         });
+
+        test('should preserve original updatedAt when preserveUpdatedAt is true', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: existingItem });
+            ddbMock.on(PutCommand).resolves({});
+
+            const originalUpdatedAt = existingItem.updatedAt;
+
+            await backend.update('/state/preview-conditional' as MemoryPath, {
+                tags:              new Set(['new-tag']),
+                preserveUpdatedAt: true,
+            });
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            const mainItem = putCalls[0].args[0].input.Item as MemoryToolItemData;
+
+            expect(mainItem.updatedAt).toBe(originalUpdatedAt);
+        });
+
+        test('should refresh updatedAt when preserveUpdatedAt is not set', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: existingItem });
+            ddbMock.on(PutCommand).resolves({});
+
+            const originalUpdatedAt = existingItem.updatedAt;
+
+            await backend.update('/state/preview-conditional' as MemoryPath, {
+                tags: new Set(['new-tag']),
+            });
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            const mainItem = putCalls[0].args[0].input.Item as MemoryToolItemData;
+
+            expect(mainItem.updatedAt).not.toBe(originalUpdatedAt);
+        });
     });
 
     describe('basic operations', () => {

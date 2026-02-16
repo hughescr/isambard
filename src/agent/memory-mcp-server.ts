@@ -421,7 +421,7 @@ export function createMemoryMCPServer(
                             newTags.delete(tag);
                         }
 
-                        await backend.update(memoryPath, { tags: newTags });
+                        await backend.update(memoryPath, { tags: newTags, preserveUpdatedAt: true });
 
                         const beforeStr = beforeTags.size > 0 ? [...beforeTags].sort().join(', ') : '(none)';
                         const afterStr = newTags.size > 0 ? [...newTags].sort().join(', ') : '(none)';
