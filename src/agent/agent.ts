@@ -1085,6 +1085,65 @@ async function attemptAutoResume(
     return { lastAssistantText: updatedText, capturedSessionId: updatedSessionId };
 }
 
+/**
+ * Collect uncollected background tasks by auto-resuming the session.
+ * Iterates up to MAX_AUTO_RESUME_ATTEMPTS times, stopping early if no progress.
+ *
+ * @param tracker - StreamTracker instance for monitoring background task collection
+ * @param lastAssistantText - Current response text to update with resumed text
+ * @param capturedSessionId - Session ID to resume (undefined if interrupted or no session)
+ * @param wasInterrupted - Whether processing was interrupted
+ * @param retryableQuery - Retryable query function for Claude API calls
+ * @param systemPrompt - System prompt with core identity
+ * @param memoryMcpServer - Memory MCP server configuration
+ * @param discordMcpServer - Discord MCP server configuration
+ * @param inboxMcpServer - Inbox MCP server configuration
+ * @param plugins - Plugin configurations
+ * @param options - HandleInput options (including abort controller)
+ * @param taskPersistenceCoordinator - Task persistence coordinator if available
+ * @returns Updated lastAssistantText and capturedSessionId
+ */
+async function collectBackgroundTasks(
+    tracker: StreamTracker,
+    lastAssistantText: string,
+    capturedSessionId: string | undefined,
+    wasInterrupted: boolean,
+    retryableQuery: typeof import('@anthropic-ai/claude-agent-sdk').query,
+    systemPrompt: string,
+    memoryMcpServer: McpServerConfig | undefined,
+    discordMcpServer: McpServerConfig | undefined,
+    inboxMcpServer: McpServerConfig | undefined,
+    plugins: SdkPluginConfig[] | undefined,
+    options: HandleInputOptions | undefined,
+    taskPersistenceCoordinator: TaskPersistenceCoordinator | undefined
+): Promise<{ lastAssistantText: string, capturedSessionId: string | undefined }> {
+    if(wasInterrupted || !capturedSessionId) {
+        return { lastAssistantText, capturedSessionId };
+    }
+
+    let updatedText = lastAssistantText;
+    let updatedSessionId: string | undefined = capturedSessionId;
+    let autoResumeAttempts = 0;
+
+    while(tracker.hasUncollectedBackgroundTasks() && autoResumeAttempts < MAX_AUTO_RESUME_ATTEMPTS) {
+        autoResumeAttempts++;
+        const uncollectedBefore = tracker.getProgress().uncollectedBackgroundTasks;
+        const queryOptions = buildQueryOptions(systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, options);
+        const resumeResult = await attemptAutoResume(
+            tracker, updatedText, updatedSessionId,
+            retryableQuery, queryOptions, options, taskPersistenceCoordinator
+        );
+        updatedText = resumeResult.lastAssistantText;
+        updatedSessionId = resumeResult.capturedSessionId ?? updatedSessionId;
+        // Break if no progress was made (error or agent didn't collect anything)
+        if(tracker.getProgress().uncollectedBackgroundTasks >= uncollectedBefore) {
+            break;
+        }
+    }
+
+    return { lastAssistantText: updatedText, capturedSessionId: updatedSessionId };
+}
+
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, taskPersistenceCoordinator } = options;
 
@@ -1152,25 +1211,13 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 let lastAssistantText = initialText;
                 const wasInterrupted = initialInterrupted;
 
-                // 8. Auto-resume loop: collect background tasks (max MAX_AUTO_RESUME_ATTEMPTS attempts)
-                if(!wasInterrupted && capturedSessionId) {
-                    let autoResumeAttempts = 0;
-                    while(tracker.hasUncollectedBackgroundTasks() && autoResumeAttempts < MAX_AUTO_RESUME_ATTEMPTS) {
-                        autoResumeAttempts++;
-                        const uncollectedBefore = tracker.getProgress().uncollectedBackgroundTasks;
-                        const queryOptions = buildQueryOptions(systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, options);
-                        const resumeResult = await attemptAutoResume(
-                            tracker, lastAssistantText, capturedSessionId,
-                            retryableQuery, queryOptions, options, taskPersistenceCoordinator
-                        );
-                        lastAssistantText = resumeResult.lastAssistantText;
-                        capturedSessionId = resumeResult.capturedSessionId ?? capturedSessionId;
-                        // Break if no progress was made (error or agent didn't collect anything)
-                        if(tracker.getProgress().uncollectedBackgroundTasks >= uncollectedBefore) {
-                            break;
-                        }
-                    }
-                }
+                // 8. Auto-resume: collect background tasks
+                const resumeCollected = await collectBackgroundTasks(
+                    tracker, lastAssistantText, capturedSessionId, wasInterrupted,
+                    retryableQuery, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, options, taskPersistenceCoordinator
+                );
+                lastAssistantText = resumeCollected.lastAssistantText;
+                capturedSessionId = resumeCollected.capturedSessionId;
 
                 // 9. Clean up session only on completion (not on interrupt)
                 cleanupSessionIfComplete(wasInterrupted, capturedSessionId);
