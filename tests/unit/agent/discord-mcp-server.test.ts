@@ -158,6 +158,24 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             });
         });
 
+        test.each([
+            ['searchMessages',    { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true }],
+            ['getRecentMessages', { readOnlyHint: true,  destructiveHint: false, idempotentHint: false, openWorldHint: true }],
+            ['getMessageById',    { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true }],
+            ['sendDiscordMessage', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }],
+            ['askUserQuestion',   { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }],
+            ['addReaction',       { readOnlyHint: false, destructiveHint: false, idempotentHint: true,  openWorldHint: true }],
+            ['muteChannel',       { readOnlyHint: false, destructiveHint: false, idempotentHint: true,  openWorldHint: true }],
+            ['unmuteChannel',     { readOnlyHint: false, destructiveHint: false, idempotentHint: true,  openWorldHint: true }],
+            ['listChannels',      { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true }],
+        ])('should have %s tool with correct annotations', (toolName, expectedAnnotations) => {
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing registered tools
+            const tool = (server.instance as any)._registeredTools[toolName];
+
+            expect(tool.annotations).toEqual(expectedAnnotations);
+        });
+
         test('should accept timezone parameter for localTimestamp enrichment', () => {
             const server = createDiscordMCPServer(
                 mockSearchService,

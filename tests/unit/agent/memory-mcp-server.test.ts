@@ -110,6 +110,24 @@ describe.concurrent('createMemoryMCPServer', () => {
             }
         });
 
+        test.each([
+            ['view',            { readOnlyHint: true,  destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+            ['storeSelf',       { readOnlyHint: false, destructiveHint: true,  idempotentHint: false, openWorldHint: false }],
+            ['storeUserMemory', { readOnlyHint: false, destructiveHint: true,  idempotentHint: false, openWorldHint: false }],
+            ['logEvent',        { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+            ['search',          { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false }],
+            ['list',            { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false }],
+            ['listTags',        { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false }],
+            ['deleteMemory',    { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: false }],
+        ])('should have %s tool with correct annotations', (toolName, expectedAnnotations) => {
+            const server = createMemoryMCPServer(mockBackend);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
+            const tool = (server.instance as any)._registeredTools[toolName];
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking tool annotations
+            expect(tool.annotations).toEqual(expectedAnnotations);
+        });
+
         test('should validate search tags parameter accepts multiple tags', () => {
             const server = createMemoryMCPServer(mockBackend);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools

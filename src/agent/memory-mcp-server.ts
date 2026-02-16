@@ -61,7 +61,9 @@ export function createMemoryMCPServer(
                             isError: true,
                         };
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false } }
             ),
 
             tool(
@@ -101,7 +103,9 @@ export function createMemoryMCPServer(
                             isError: true,
                         };
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } }
             ),
 
             tool(
@@ -141,7 +145,9 @@ export function createMemoryMCPServer(
                             isError: true,
                         };
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } }
             ),
 
             tool(
@@ -180,7 +186,9 @@ export function createMemoryMCPServer(
                             isError: true,
                         };
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } }
             ),
 
             tool(
@@ -233,7 +241,9 @@ export function createMemoryMCPServer(
                             isError: true,
                         };
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
             ),
 
             // Stryker disable StringLiteral: Tool name and description are MCP server configuration
@@ -299,7 +309,9 @@ export function createMemoryMCPServer(
                             isError: true,
                         };
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
             ),
 
             // Stryker disable StringLiteral: Tool name and description are MCP server configuration
@@ -329,7 +341,9 @@ export function createMemoryMCPServer(
                             isError: true,
                         };
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
             ),
 
             // Stryker disable StringLiteral: Tool name and description are MCP server configuration
@@ -361,7 +375,9 @@ export function createMemoryMCPServer(
                             isError: true,
                         };
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } }
             ),
         ],
     });

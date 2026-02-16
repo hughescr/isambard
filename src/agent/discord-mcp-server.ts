@@ -507,7 +507,9 @@ export function createDiscordMCPServer(
                             isError: true,
                         };
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
 
             tool(
@@ -547,7 +549,9 @@ export function createDiscordMCPServer(
                             isError: true,
                         };
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
 
             tool(
@@ -609,7 +613,9 @@ export function createDiscordMCPServer(
                             isError: true,
                         };
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
 
             tool(
@@ -737,7 +743,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             isError: true,
                         };
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
 
             tool(
@@ -840,7 +848,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             isError: true,
                         };
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
 
             tool(
@@ -933,7 +943,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         };
                         // Stryker restore all
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
 
             tool(
@@ -964,7 +976,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             isError: true,
                         };
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
 
             tool(
@@ -995,7 +1009,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             isError: true,
                         };
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
 
             tool(
@@ -1035,7 +1051,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             isError: true,
                         };
                     }
-                }
+                },
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
         ],
     });
