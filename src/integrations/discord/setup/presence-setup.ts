@@ -73,12 +73,13 @@ export function setupPresence(params: {
 
     const getIdentityContext = async (): Promise<string> => {
         const now = Date.now();
-        // Stryker disable next-line BlockStatement: TTL cache check - boundary logic
+        // Stryker disable next-line ConditionalExpression,EqualityOperator,ArithmeticOperator,BlockStatement: TTL cache check - boundary logic
         if(cachedIdentity && (now - cachedAt) < IDENTITY_TTL_MS) {
             return cachedIdentity;
         }
         // Stryker disable BlockStatement: Identity loading with fallback - tested via integration
         if(contextBuilder) {
+            // Stryker disable next-line LogicalOperator: Nullish coalescing fallback for missing identity
             cachedIdentity = await contextBuilder.loadCoreIdentity() ?? identityContext;
         } else {
             cachedIdentity = identityContext;

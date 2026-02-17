@@ -5,7 +5,7 @@
  * directory and builds a compact summary for idle status generation.
  */
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import { constant as _constant } from 'lodash';
+import { constant as _constant, replace as _replace } from 'lodash';
 import { mockLogger } from '../../setup';
 import { createTaskListReader } from '@/agent/task-list-reader';
 import type { Dirent } from 'node:fs';
@@ -414,6 +414,46 @@ describe('createTaskListReader', () => {
         expect(result).toBe('1 pending tasks');
     });
 
+    test('should skip files with valid JSON but wrong shape', async () => {
+        const mockFiles: Dirent[] = [
+            { name: 'task1.json', isFile: _constant(true) } as Dirent,
+            { name: 'task2.json', isFile: _constant(true) } as Dirent,
+            { name: 'task3.json', isFile: _constant(true) } as Dirent,
+        ];
+        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
+        mockReadFile = mock((path: string) => {
+            if(path.includes('task1.json')) {
+                // Wrong shape - missing required fields
+                return Promise.resolve(JSON.stringify({ foo: 'bar' }));
+            }
+            if(path.includes('task2.json')) {
+                // Wrong shape - invalid status
+                return Promise.resolve(JSON.stringify({
+                    id:      'task2',
+                    subject: 'Task 2',
+                    status:  'invalid_status',
+                }));
+            }
+            return Promise.resolve(JSON.stringify({
+                id:      'task3',
+                subject: 'Valid task',
+                status:  'pending',
+            }));
+        });
+
+        const reader = createTaskListReader({
+            getCurrentSessionId: mockGetCurrentSessionId,
+            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            readdir:             mockReaddir,
+            readFile:            mockReadFile,
+        });
+
+        const result = await reader.buildTaskListSummary();
+
+        // Should only process task3 (valid shape)
+        expect(result).toBe('1 pending tasks');
+    });
+
     test('should limit to top 10 tasks', async () => {
         const mockFiles: Dirent[] = Array.from({ length: 15 }, (_, i) => ({
             name:   `task${i}.json`,
@@ -517,7 +557,7 @@ describe('createTaskListReader', () => {
 
         // Should truncate to 47 + '...' = 50 chars total
         expect(result).toContain('...');
-        const truncatedSubject = result!.replace('Working on: ', '');
+        const truncatedSubject = _replace(result!, 'Working on: ', '');
         expect(truncatedSubject).toBe('12345678901234567890123456789012345678901234567...');
         expect(truncatedSubject.length).toBe(50);
     });

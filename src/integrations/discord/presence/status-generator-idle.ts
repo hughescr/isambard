@@ -124,7 +124,8 @@ export function createIdleStatusGenerator(
                 const thinkingContext = getLastThinkingContent?.();
 
                 // Build user prompt sections dynamically
-                // Order: task context (changes with tasks), recent conversation (changes with each conversation), last thoughts (changes with each turn)
+                // Ordered most-stable → least-stable for Anthropic API prefix caching:
+                // task context (~hours) → recent conversation (~minutes) → last thoughts (~per turn)
                 const sections: string[] = [];
                 if(taskContext) {
                     sections.push(`Current work:\n${taskContext}`);

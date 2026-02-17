@@ -187,7 +187,7 @@ export class PresenceManager {
         this.presenceDisplayMode = mode;
 
         // When ENTERING catch-up mode (from 'none'), generate ONE initial status update
-        // to show the 📥 prefix. The catch-up agent session's stream handler will then
+        // with the 📥 prefix. The catch-up agent session's stream handler will then
         // drive all subsequent status updates (thinking, using_tool, responding).
         // We do NOT start the idle refresh loop during catch-up.
         const enteringCatchUp = mode === 'catching_up' && previousMode === 'none';

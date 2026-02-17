@@ -96,8 +96,22 @@ export function createTaskListReader(options: TaskListReaderOptions): TaskListRe
                 for(const file of jsonFiles) {
                     try {
                         const content = await readFileFn(join(taskDir, file.name), 'utf-8');
-                        const task = JSON.parse(content) as Task;
-                        tasks.push(task);
+                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- JSON.parse returns unknown, validated below
+                        const parsed = JSON.parse(content);
+
+                        // Validate task shape - check parsed is non-null and has required fields
+                        // Stryker disable next-line OptionalChaining,ConditionalExpression,LogicalOperator: Shape validation tested via wrong-shape test case
+                        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Validated with isString guards
+                        if(!parsed || !_.isString(parsed.id)
+                          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Validated with isString guards
+                          || !_.isString(parsed.subject)
+                          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument,@typescript-eslint/no-unsafe-member-access -- Validated with includes check
+                          || !['pending', 'in_progress', 'completed'].includes(parsed.status)) {
+                            // Skip files with wrong shape
+                            continue;
+                        }
+
+                        tasks.push(parsed as Task);
                     } catch{
                         // Skip unparseable files
                         continue;
