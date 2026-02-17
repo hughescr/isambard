@@ -32,6 +32,7 @@ export interface SetupPerchParams {
     contextBuilder?:          ContextBuilder
     onThinkingContentUpdate?: (content: string) => void
     setLastSessionId?:        (sessionId: string | undefined) => void
+    addRecentMessage?:        (content: string, author: 'user' | 'izzy') => void
 }
 
 /**
@@ -104,6 +105,7 @@ export function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
 
             // Route response to well-known channel if present
             if(result.response && !result.wasInterrupted) {
+                params.addRecentMessage?.(result.response, 'izzy');
                 await sendResponseToWellKnownChannel({
                     response:    result.response,
                     sessionType: 'perching',

@@ -1,5 +1,6 @@
 import type { Client } from 'discord.js';
 import { logger } from '@hughescr/logger';
+import _ from 'lodash';
 import type { DiscordConfig } from '@/config/schemas';
 import type { ClaudeAgent } from '@/agent/agent';
 import type { ContextBuilder } from '@/agent/context-builder';
@@ -284,12 +285,13 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         };
         const getLastSessionId = (): string | undefined => lastSessionId;
 
-        // Track recent messages for context-aware idle status generation
-        const MAX_RECENT_MESSAGES = 5;
-        const recentMessages: string[] = [];
+        // Track recent messages (user + bot) for context-aware idle status generation
+        interface RecentMessage { author: 'user' | 'izzy', content: string, timestamp: number }
+        const MAX_RECENT_MESSAGES = 10; // Increased from 5 since we track both sides
+        const recentMessages: RecentMessage[] = [];
 
-        const addRecentMessage = (content: string): void => {
-            recentMessages.push(content.slice(0, 200)); // Truncate long messages
+        const addRecentMessage = (content: string, author: 'user' | 'izzy' = 'user'): void => {
+            recentMessages.push({ author, content: content.slice(0, 200), timestamp: Date.now() });
             if(recentMessages.length > MAX_RECENT_MESSAGES) {
                 recentMessages.shift();
             }
@@ -356,7 +358,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     if(recentMessages.length === 0) {
                         return undefined;
                     }
-                    return recentMessages.join('\n• ');
+                    const sortedMessages = _.sortBy(recentMessages, 'timestamp');
+                    return _.map(sortedMessages, m => (m.author === 'user' ? `User: ${m.content}` : `Izzy: ${m.content}`)).join('\n');
                 },
                 contextBuilder,
                 getLastThinkingContent,
@@ -386,6 +389,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 client:                  readyClient,
                 onThinkingContentUpdate: setLastThinkingContent,
                 setLastSessionId,
+                addRecentMessage,
             });
         }
 
@@ -403,6 +407,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 contextBuilder,
                 onThinkingContentUpdate: setLastThinkingContent,
                 setLastSessionId,
+                addRecentMessage,
             });
             perchSessionRunner = perchSetup.runner;
             perchScheduler = perchSetup.scheduler;
@@ -428,6 +433,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 eventDeltaTracker,
                 onThinkingContentUpdate: setLastThinkingContent,
                 setLastSessionId,
+                addRecentMessage,
             });
 
             // Register message handler AFTER channel registry is initialized and coordinator is created

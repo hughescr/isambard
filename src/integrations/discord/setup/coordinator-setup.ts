@@ -129,6 +129,7 @@ export interface SetupCoordinatorParams {
     eventDeltaTracker?:       import('../../../agent/event-delta-tracker').EventDeltaTracker
     onThinkingContentUpdate?: (content: string) => void
     setLastSessionId?:        (sessionId: string | undefined) => void
+    addRecentMessage?:        (content: string, author: 'user' | 'izzy') => void
 }
 
 /**
@@ -195,6 +196,9 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
         onResponse:        async (result, discordMessage) => {
             // Only send response if we have both a response and a message to reply to
             if(result.response && discordMessage) {
+                // Track bot response for idle status context
+                params.addRecentMessage?.(result.response, 'izzy');
+
                 // Capture rate limiter reference for safe closure access
                 const limiter = rateLimiter;
 

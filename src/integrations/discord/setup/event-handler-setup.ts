@@ -105,7 +105,7 @@ export interface SetupMessageProcessingParams {
     client:               Client
     readyClient:          Client
     channelRegistry:      ChannelRegistryManager
-    addRecentMessage:     (content: string) => void
+    addRecentMessage:     (content: string, author: 'user' | 'izzy') => void
     coordinator:          MessageCoordinator
     questionRegistry:     QuestionRegistry
     answerClassifier:     AnswerClassifier

@@ -99,7 +99,7 @@ export interface MessageHandlerOptions {
     /**
      * Optional callback to track recent message content for context-aware idle status.
      */
-    addRecentMessage?: (content: string) => void
+    addRecentMessage?: (content: string, author: 'user' | 'izzy') => void
 
     /**
      * Message coordinator for multi-message handling with interruption support.
@@ -590,7 +590,7 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         handleStateAndInbox(message, botStateManager, inboxManager, shouldRespond);
 
         // Track this message for context-aware idle status
-        addRecentMessage?.(message.cleanContent);
+        addRecentMessage?.(message.cleanContent, 'user');
 
         // Convert Discord.js Message to DiscordMessageContext
         const context = createContext(message);

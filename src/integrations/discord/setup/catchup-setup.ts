@@ -89,6 +89,7 @@ export interface SetupCatchUpRunnerParams {
     client:                   Client
     onThinkingContentUpdate?: (content: string) => void
     setLastSessionId?:        (sessionId: string | undefined) => void
+    addRecentMessage?:        (content: string, author: 'user' | 'izzy') => void
 }
 
 /**
@@ -169,6 +170,7 @@ export function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): Cat
 
             // Route response to well-known channel if present
             if(result.response && !result.wasInterrupted) {
+                params.addRecentMessage?.(result.response, 'izzy');
                 await sendResponseToWellKnownChannel({
                     response:    result.response,
                     sessionType: 'catching_up',
