@@ -829,9 +829,8 @@ async function processStreamEvents(
         // The Claude Agent SDK may throw non-standard errors on abort
         if((_.isError(error) && error.name === 'AbortError') || options?.abortController?.signal.aborted) {
             wasInterrupted = true;
-            // Use warn for non-standard abort errors (could mask genuine errors)
-            const logMethod = (_.isError(error) && error.name === 'AbortError') ? logger.info : logger.warn;
-            logMethod({
+            // All abort-signal errors are expected — SDK throws "Operation aborted" (not standard AbortError)
+            logger.info({
                 sessionId: capturedSessionId,
                 msg:       'Batch processing interrupted by abort',
             });
@@ -891,7 +890,12 @@ function buildQueryOptions(
         // Stryker restore StringLiteral
         // Stryker disable all: Observability - stderr logging doesn't affect behavior
         stderr: (data: string) => {
-            logger.error({ stderr: data }, 'Agent SDK stderr');
+            // SDK writes "Operation aborted" + stack trace to stderr during expected abort
+            if(options?.abortController?.signal.aborted && data.includes('Operation aborted')) {
+                logger.debug({ stderr: data }, 'Agent SDK stderr (abort)');
+            } else {
+                logger.error({ stderr: data }, 'Agent SDK stderr');
+            }
         },
         // Stryker restore all
     };

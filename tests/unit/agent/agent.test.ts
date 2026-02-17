@@ -1374,15 +1374,15 @@ describe('createClaudeAgent', () => {
             expect(result.wasInterrupted).toBe(true);
             expect(result.response).toBeNull();
 
-            // Verify warn is used for non-AbortError (not info)
-            const warnCalls = mockLogger.warn.mock.calls;
-            const abortLog = _.find(warnCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort')) as unknown[] | undefined;
-            expect(abortLog).toBeDefined();
-
-            // Verify info was NOT used for this case
+            // Verify info is used for all abort-signal errors (SDK never throws standard AbortError)
             const infoCalls = mockLogger.info.mock.calls;
             const infoAbortLog = _.find(infoCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort')) as unknown[] | undefined;
-            expect(infoAbortLog).toBeUndefined();
+            expect(infoAbortLog).toBeDefined();
+
+            // Verify warn was NOT used for this case
+            const warnCalls = mockLogger.warn.mock.calls;
+            const abortLog = _.find(warnCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort')) as unknown[] | undefined;
+            expect(abortLog).toBeUndefined();
         });
 
         test('should return streamTracker with captured progress', async () => {
