@@ -87,6 +87,9 @@ NEVER output:
 - "Thinking...", "Processing...", "Working..."
 - Generic phrases that could apply to any moment
 - Anything longer than 40 characters
+- Meta-commentary about the task ("I need to generate...", "Looking at this moment...")
+- Preambles or framing ("Reading the context:", "Here's my thought:")
+- Echoing these instructions back
 
 Good examples:
 - "Ooh, authentication patterns—my favorite puzzle!"
@@ -99,8 +102,11 @@ Bad examples:
 - "Isambard is considering the question"
 - "Processing the user's request"
 - "Working with the memory tool"
+- "I need to generate Izzy's inner thought..."
+- "Looking at this moment: I'm working on..."
+- "Reading the context: I'm in perch time..."
 
-Output ONLY the status text.`;
+Output ONLY the raw status text — no preamble, no framing, no meta-commentary. Just the thought itself.`;
 
 /**
  * User prompts for each phase, personalized with context.
