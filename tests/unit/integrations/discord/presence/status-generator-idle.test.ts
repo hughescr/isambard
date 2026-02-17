@@ -5,7 +5,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return -- Test mocks */
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { ActivityType } from 'discord.js';
-import { constant as _constant, keys as _keys, repeat as _repeat, size as _size, isString as _isString } from 'lodash';
+import { constant as _constant, keys as _keys, repeat as _repeat, replace as _replace, size as _size, isString as _isString } from 'lodash';
 import { createIdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
 import { mockGenerateTextWithSystemPrompt } from '../../../../setup';
 
@@ -43,7 +43,7 @@ describe('IdleStatusGenerator', () => {
             expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalled();
             const [systemPrompt, userPrompt] = mockGenerateTextWithSystemPrompt.mock.calls[0];
             expect(systemPrompt).toContain('I am a helpful assistant');
-            expect(userPrompt).toContain('Status text (first person, max 128 chars):');
+            expect(userPrompt).toContain('Status text (first person, under 50 chars):');
         });
 
         test('should pass stripMarkdown: true option to generateTextWithSystemPrompt', async () => {
@@ -100,7 +100,7 @@ describe('IdleStatusGenerator', () => {
             { len: 200, 'char': 'A', desc: '200 characters' },
             { len: 128, 'char': 'B', desc: 'exactly 128 characters' },
             { len: 129, 'char': 'C', desc: '129 characters' },
-        ])('should truncate status text from $desc to 128', async ({ len, char }) => {
+        ])('should truncate status text from $desc with word-boundary truncation', async ({ len, char }) => {
             const text = _repeat(char, len);
             mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve(text)));
 
@@ -112,12 +112,12 @@ describe('IdleStatusGenerator', () => {
 
             const result = await generator.generate();
 
-            // With "💤 " prefix (3 code units), we truncate to 125 chars before adding emoji
-            // This ensures the final status is exactly 128 code units (Discord's limit)
-            // Note: "💤 " is 3 code units (2 for emoji surrogate pair + 1 for space)
-            // but lodash _size counts it as 2 (it counts characters, not code units)
+            // truncateToWordBoundary with no spaces: hard truncates at maxLength-1 (124) + '…'
+            // maxLength = 128 - 3 (emojiPrefix.length) = 125
+            // No spaces in repeated-char text → slice(0, 124) + '…' = 125 chars
+            // Final with "💤 " (3 code units): 3 + 125 = 128 code units (Discord's limit)
             expect(result.name.length).toBe(128); // Discord's limit is based on .length
-            expect(result.name).toBe(`💤 ${_repeat(char, 125)}`);
+            expect(result.name).toBe(`💤 ${_repeat(char, 124)}\u2026`);
             // Verify correct truncation for edge cases
             if(len > 125) {
                 expect(result.name).not.toBe(text);
@@ -138,6 +138,32 @@ describe('IdleStatusGenerator', () => {
             const result = await generator.generate();
 
             expect(result.name).toBe('💤 Waiting patiently');
+        });
+
+        test('should truncate at word boundary with ellipsis when text is too long', async () => {
+            // A long response with spaces — word-boundary truncation should cut at a space
+            // rather than mid-word, and append '…' (unicode ellipsis)
+            const longText = _repeat('hello world ', 20); // 240 chars of "hello world " repeated
+
+            mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve(longText)));
+
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: _constant(Promise.resolve('Test identity')),
+            });
+
+            const result = await generator.generate();
+
+            // Should end with ellipsis (word-boundary truncation), not a mid-word cut
+            expect(result.name).toEndWith('\u2026');
+            // Should not exceed Discord's 128-code-unit limit
+            expect(result.name.length).toBeLessThanOrEqual(128);
+            // Should not contain a partial word at the end (before the ellipsis)
+            const statusWithoutEmoji = _replace(result.name, '💤 ', '');
+            const withoutEllipsis = statusWithoutEmoji.slice(0, -1); // remove '…'
+            expect(withoutEllipsis).not.toEndWith('hell');  // not mid-word
+            expect(withoutEllipsis).not.toEndWith('worl');  // not mid-word
         });
 
         test('should fall back to "Idle" on generateTextWithSystemPrompt error', async () => {
@@ -323,7 +349,7 @@ describe('IdleStatusGenerator', () => {
                 await generator.generate();
 
                 const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
-                expect(userPromptArg).toBe('Status text (first person, max 128 chars):');
+                expect(userPromptArg).toBe('Status text (first person, under 50 chars):');
                 expect(userPromptArg).not.toContain('Recent conversation');
             });
 
@@ -338,7 +364,7 @@ describe('IdleStatusGenerator', () => {
                 await generator.generate();
 
                 const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
-                expect(userPromptArg).toBe('Status text (first person, max 128 chars):');
+                expect(userPromptArg).toBe('Status text (first person, under 50 chars):');
             });
 
             test('should use simple user prompt when getRecentContext returns empty string', async () => {
@@ -355,7 +381,7 @@ describe('IdleStatusGenerator', () => {
 
                 const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
                 // Empty string is falsy, so should use simple prompt
-                expect(userPromptArg).toBe('Status text (first person, max 128 chars):');
+                expect(userPromptArg).toBe('Status text (first person, under 50 chars):');
             });
 
             test('should replace {recentContext} placeholder with actual recent context', async () => {
@@ -424,7 +450,7 @@ describe('IdleStatusGenerator', () => {
 
                 const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
                 expect(userPromptArg).not.toContain('Last thoughts:');
-                expect(userPromptArg).toBe('Status text (first person, max 128 chars):');
+                expect(userPromptArg).toBe('Status text (first person, under 50 chars):');
             });
 
             test('should include both recent context and thinking context when both available', async () => {
@@ -482,7 +508,7 @@ describe('IdleStatusGenerator', () => {
 
                 const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
                 expect(userPromptArg).not.toContain('Current work:');
-                expect(userPromptArg).toBe('Status text (first person, max 128 chars):');
+                expect(userPromptArg).toBe('Status text (first person, under 50 chars):');
             });
 
             test('should order task context before recent conversation in prompt', async () => {

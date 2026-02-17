@@ -1127,6 +1127,150 @@ describe('DynamicStatusGenerator', () => {
                 // Reset system time
                 setSystemTime();
             });
+
+            it('should return fallback when debounced and Haiku is in-flight', async () => {
+                // Create a delayed mock that we can control
+                let resolveHaiku!: (value: string) => void;
+                const slowPromise = new Promise<string>((resolve) => {
+                    resolveHaiku = resolve;
+                });
+                mockGenerateText.mockReturnValueOnce(slowPromise);
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'thinking',
+                    userMessage: 'Test',
+                };
+
+                // Start first call (will be in-flight)
+                const firstCallPromise = generator.generateSynopsis(context);
+
+                // Second call while first is in-flight should return phase fallback, not stale cache
+                const second = await generator.generateSynopsis(context);
+                expect(second).toBe('Thinking...');
+
+                // Resolve the first call
+                resolveHaiku('Finally done thinking');
+                const first = await firstCallPromise;
+                expect(first).toBe('Finally done thinking');
+            });
+
+            it('should return fallback (not stale cache) when debounced with populated cache and Haiku in-flight', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'thinking',
+                    userMessage: 'Test',
+                };
+
+                // Step 1: Make a fast call to populate the cache
+                mockGenerateText.mockResolvedValueOnce('Stale cached status');
+                const first = await generator.generateSynopsis(context);
+                expect(first).toBe('Stale cached status');
+
+                // Step 2: Reset debounce time but keep cache, then start a slow call
+                resetDebounceState();
+                let resolveHaiku!: (value: string) => void;
+                const slowPromise = new Promise<string>((resolve) => {
+                    resolveHaiku = resolve;
+                });
+                mockGenerateText.mockReturnValueOnce(slowPromise);
+
+                const slowCallPromise = generator.generateSynopsis(context);
+
+                // Step 3: Third call while slow call is in-flight — should get fallback, NOT stale cache
+                const third = await generator.generateSynopsis(context);
+                expect(third).toBe('Thinking...'); // Phase fallback, NOT 'Stale cached status'
+
+                // Clean up
+                resolveHaiku('Fresh new status');
+                const slowResult = await slowCallPromise;
+                expect(slowResult).toBe('Fresh new status');
+            });
+
+            it('should reset haikuInFlight on error so subsequent debounced calls use cache not fallback', async () => {
+                const baseTime = 1000000;
+                setSystemTime(new Date(baseTime));
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'thinking',
+                    userMessage: 'Test',
+                };
+
+                // First call succeeds — populates cache
+                mockGenerateText.mockResolvedValueOnce('Cached from success');
+                const first = await generator.generateSynopsis(context);
+                expect(first).toBe('Cached from success');
+
+                // Advance time past debounce window to allow a second real call
+                setSystemTime(new Date(baseTime + 3000));
+
+                // Second call fails — finally block should still reset haikuInFlight
+                mockGenerateText.mockRejectedValueOnce(new Error('API error'));
+                const second = await generator.generateSynopsis(context);
+                expect(second).toBe('Thinking...'); // Error fallback
+
+                // Third call within debounce window of second call — should use cached status from first call
+                // If haikuInFlight were stuck true (finally didn't run), this would return 'Thinking...' instead
+                const third = await generator.generateSynopsis(context);
+                expect(third).toBe('Cached from success');
+                expect(mockGenerateText).toHaveBeenCalledTimes(2); // Only 2 real calls, third was debounced
+
+                setSystemTime();
+            });
+
+            it('should reset haikuInFlight via resetDebounceState', async () => {
+                // Use a system time small enough that Date.now() - 0 < HAIKU_DEBOUNCE_MS (2000)
+                // so the debounce window applies after resetDebounceState sets lastHaikuCall = 0.
+                // This kills the BooleanLiteral mutant: if resetDebounceState set haikuInFlight=true,
+                // the second call within the debounce window would return the fallback, not the API result.
+                setSystemTime(new Date(1000));
+
+                // Start a slow call to set haikuInFlight = true
+                let resolveHaiku!: (value: string) => void;
+                const slowPromise = new Promise<string>((resolve) => {
+                    resolveHaiku = resolve;
+                });
+                mockGenerateText.mockReturnValueOnce(slowPromise);
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'thinking',
+                    userMessage: 'Test',
+                };
+
+                // Start first call (sets haikuInFlight = true, lastHaikuCall = 1000)
+                const firstCallPromise = generator.generateSynopsis(context);
+
+                // Reset debounce state (should clear haikuInFlight AND set lastHaikuCall = 0)
+                resetDebounceState();
+
+                // At time=1000ms with lastHaikuCall=0: now - lastHaikuCall = 1000 - 0 = 1000 < 2000
+                // so the debounce window applies. If haikuInFlight is false (correct), we fall through
+                // to make a real API call. If haikuInFlight were true (mutant), we'd get 'Thinking...'.
+                mockGenerateText.mockResolvedValueOnce('After reset');
+                const result = await generator.generateSynopsis(context);
+                expect(result).toBe('After reset'); // Proves haikuInFlight was reset to false
+                expect(mockGenerateText).toHaveBeenCalledTimes(2);
+
+                // Clean up the pending promise
+                resolveHaiku('Done');
+                await firstCallPromise;
+
+                setSystemTime();
+            });
         });
 
         describe('logging', () => {
@@ -1467,6 +1611,205 @@ describe('DynamicStatusGenerator', () => {
                 expect(prompt).toContain(json);
                 expect(prompt).not.toContain(`${json}...`);
             });
+        });
+    });
+
+    describe('generateCatchUpSynopsis', () => {
+        describe('in-flight debounce behavior', () => {
+            it('should return fallback when catch-up debounced and Haiku is in-flight', async () => {
+                // Create a delayed mock that we can control
+                let resolveHaiku!: (value: string) => void;
+                const slowPromise = new Promise<string>((resolve) => {
+                    resolveHaiku = resolve;
+                });
+                mockGenerateText.mockReturnValueOnce(slowPromise);
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const catchUpContext = {
+                    totalUnread:         5,
+                    channelCount:        2,
+                    channelNames:        ['general', 'random'],
+                    topAuthors:          ['Craig', 'Alice'],
+                    timeSinceLastActive: '3 hours',
+                    timeOfDay:           'morning',
+                    dayOfWeek:           'Monday',
+                };
+
+                // Start first call (will be in-flight)
+                const firstCallPromise = generator.generateCatchUpSynopsis(catchUpContext);
+
+                // Second call while first is in-flight should return fallback
+                const second = await generator.generateCatchUpSynopsis(catchUpContext);
+                expect(second).toBe('Messages waiting...');
+
+                // Resolve the first call
+                resolveHaiku('Craig left me something!');
+                const first = await firstCallPromise;
+                expect(first).toBe('Craig left me something!');
+            });
+
+            it('should use cached catch-up status on subsequent debounced calls', async () => {
+                mockGenerateText.mockResolvedValueOnce('Craig left me something!');
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const catchUpContext = {
+                    totalUnread:         5,
+                    channelCount:        2,
+                    channelNames:        ['general', 'random'],
+                    topAuthors:          ['Craig', 'Alice'],
+                    timeSinceLastActive: '3 hours',
+                    timeOfDay:           'morning',
+                    dayOfWeek:           'Monday',
+                };
+
+                const first = await generator.generateCatchUpSynopsis(catchUpContext);
+                expect(first).toBe('Craig left me something!');
+
+                // Second debounced call should use cache, NOT in-flight fallback
+                // This kills the BlockStatement mutant on `haikuInFlight = false` in the finally block
+                mockGenerateText.mockResolvedValueOnce('Different status');
+                const second = await generator.generateCatchUpSynopsis(catchUpContext);
+                expect(second).toBe('Craig left me something!');
+                expect(mockGenerateText).toHaveBeenCalledTimes(1);
+            });
+
+            it('should make fresh API call when outside debounce window', async () => {
+                // This kills the ConditionalExpression mutant that turns the outer `if` to `if(true)`.
+                // With the mutant, ALL catch-up calls go through the debounce path; if cache is
+                // populated from the first call, the second call returns the stale cache even after
+                // the debounce window expires. Without the mutant, the condition is correctly false
+                // (now - lastHaikuCall >= 2000), so a fresh API call is made.
+                const baseTime = 1000000;
+                setSystemTime(new Date(baseTime));
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const catchUpContext = {
+                    totalUnread:         5,
+                    channelCount:        2,
+                    channelNames:        ['general', 'random'],
+                    topAuthors:          ['Craig', 'Alice'],
+                    timeSinceLastActive: '3 hours',
+                    timeOfDay:           'morning',
+                    dayOfWeek:           'Monday',
+                };
+
+                // First call at t=baseTime populates the cache
+                mockGenerateText.mockResolvedValueOnce('First catch-up status');
+                const first = await generator.generateCatchUpSynopsis(catchUpContext);
+                expect(first).toBe('First catch-up status');
+
+                // Advance past debounce window (3000ms > 2000ms threshold)
+                setSystemTime(new Date(baseTime + 3000));
+
+                // Second call should make a fresh API call (debounce window expired)
+                // With the mutant (if true), it would return cached 'First catch-up status'
+                // Without the mutant (correct), it makes a real API call and returns new value
+                mockGenerateText.mockResolvedValueOnce('Fresh catch-up status');
+                const second = await generator.generateCatchUpSynopsis(catchUpContext);
+                expect(second).toBe('Fresh catch-up status');
+                expect(mockGenerateText).toHaveBeenCalledTimes(2);
+
+                setSystemTime();
+            });
+        });
+    });
+
+    describe('cross-function haikuInFlight sharing', () => {
+        beforeEach(() => {
+            mockGenerateText.mockReset();
+            mockGenerateText.mockResolvedValue('Pondering deeply...');
+            resetDebounceState();
+        });
+
+        afterEach(() => {
+            resetDebounceState();
+            setSystemTime();
+        });
+
+        it('should return catch-up fallback when generateSynopsis is in-flight', async () => {
+            let resolveHaiku!: (value: string) => void;
+            const slowPromise = new Promise<string>((resolve) => {
+                resolveHaiku = resolve;
+            });
+            mockGenerateText.mockReturnValueOnce(slowPromise);
+
+            const generator = createDynamicStatusGenerator({
+                identityContext: 'Test identity',
+            });
+
+            const synopsisContext: SynopsisContext = {
+                phase:       'thinking',
+                userMessage: 'Test',
+            };
+
+            const catchUpContext = {
+                totalUnread:         5,
+                channelCount:        2,
+                channelNames:        ['general', 'random'],
+                topAuthors:          ['Craig', 'Alice'],
+                timeSinceLastActive: '3 hours',
+                timeOfDay:           'morning',
+                dayOfWeek:           'Monday',
+            };
+
+            // Start synopsis call (will be in-flight)
+            const synopsisPromise = generator.generateSynopsis(synopsisContext);
+
+            // Catch-up call while synopsis is in-flight should return catch-up fallback
+            const catchUp = await generator.generateCatchUpSynopsis(catchUpContext);
+            expect(catchUp).toBe('Messages waiting...');
+
+            // Clean up
+            resolveHaiku('Done');
+            await synopsisPromise;
+        });
+
+        it('should return synopsis fallback when generateCatchUpSynopsis is in-flight', async () => {
+            let resolveHaiku!: (value: string) => void;
+            const slowPromise = new Promise<string>((resolve) => {
+                resolveHaiku = resolve;
+            });
+            mockGenerateText.mockReturnValueOnce(slowPromise);
+
+            const generator = createDynamicStatusGenerator({
+                identityContext: 'Test identity',
+            });
+
+            const synopsisContext: SynopsisContext = {
+                phase:       'using_tool',
+                userMessage: 'Test',
+                toolName:    'Read',
+            };
+
+            const catchUpContext = {
+                totalUnread:         3,
+                channelCount:        1,
+                channelNames:        ['general'],
+                topAuthors:          ['Alice'],
+                timeSinceLastActive: '1 hour',
+                timeOfDay:           'afternoon',
+                dayOfWeek:           'Tuesday',
+            };
+
+            // Start catch-up call (will be in-flight)
+            const catchUpPromise = generator.generateCatchUpSynopsis(catchUpContext);
+
+            // Synopsis call while catch-up is in-flight should return phase fallback
+            const synopsis = await generator.generateSynopsis(synopsisContext);
+            expect(synopsis).toBe('Working...');
+
+            // Clean up
+            resolveHaiku('Done');
+            await catchUpPromise;
         });
     });
 });

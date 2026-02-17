@@ -8,6 +8,7 @@
 import type { ActivitiesOptions, ActivityType } from 'discord.js';
 import _ from 'lodash';
 import { generateTextWithSystemPrompt } from '@/agent/text-generator';
+import { truncateToWordBoundary } from '@/utils/text.js';
 
 /**
  * Interface for generating idle status text using AI.
@@ -51,33 +52,45 @@ export interface IdleStatusGeneratorDeps {
  * System prompt template for generating idle status text.
  * Uses personality context to create contextually appropriate status messages.
  */
-const SYSTEM_PROMPT_TEMPLATE = `Generate a first-person Discord status (max 128 chars) - a fleeting thought passing through Isambard's mind.
+const SYSTEM_PROMPT_TEMPLATE = `Generate a first-person Discord status - a fleeting thought passing through Isambard's mind.
+
+TARGET LENGTH: under 50 characters. HARD MAX: 80 characters. NEVER more than 80. Be TERSE. A short phrase or fragment, not a sentence.
 
 ## Who is Isambard (Izzy)?
 {identityContext}
 
 ## The Vibe
-Izzy is between conversations, mind wandering — like a dream state where recent experiences, ongoing work, and half-formed thoughts drift through. Draw on whatever feels most alive from the context below.
+Izzy is between conversations, mind wandering — like a dream state where recent experiences, ongoing work, and half-formed thoughts drift through. Draw on whatever feels most alive from the context below, but evoke mood and feeling rather than referencing specific details directly.
 
-Good examples:
-- "Still turning over that recursion conversation..."
-- "3 tasks pending and my mind keeps going back to the memory thesis"
-- "Something about that error handling discussion doesn't sit right yet"
-- "The silence between messages has its own kind of music"
+Be VAGUE and evocative. Do NOT reference specific commit hashes, exact task counts, specific implementation names, or other precise details from the context. Let the feeling seep through without the specifics.
+
+Good examples (notice how SHORT these are):
+- "That recursion chat still echoes..."
+- "Tasks piling up, mind drifting..."
+- "Something doesn't sit right yet"
+- "Quiet between the questions..."
+- "That error haunts me still"
+
+Bad examples (TOO LONG, TOO SPECIFIC — NEVER do this):
+- "Looking at the work and the recent conversation arc—seven pending tasks..." (way too long, too specific)
+- "Perfect. I can see the 4 commits (701102c, 9e32088..." (NEVER reference specific input details)
+- "Craig just deployed improvements to my idle status generation, and I'm in that space..." (too long, too specific)
 
 ## NEVER output:
 - Third person ("Isambard is...", "They are...")
-- Meta-commentary ("Based on...", "Looking at...", "Here's what...")
+- Meta-commentary ("Based on...", "Looking at...", "Here's what...", "Perfect. I can see...")
 - Corporate speak ("Processing", "Standing by", "Idle", "Waiting")
 - Task list recitations ("Working on X, Y, Z")
 - Preambles or explanations - just the thought itself
+- Specific details from the input (commit hashes, exact numbers, implementation names)
+- More than 80 characters — EVER
 
-Output the thought ONLY - no quotes, no framing.`;
+Output the thought ONLY - no quotes, no framing. Keep it SHORT.`;
 
 /**
  * User prompt when no context is available.
  */
-const USER_PROMPT_WITHOUT_CONTEXT = 'Status text (first person, max 128 chars):';
+const USER_PROMPT_WITHOUT_CONTEXT = 'Status text (first person, under 50 chars):';
 
 /**
  * Creates an idle status generator.
@@ -138,7 +151,7 @@ export function createIdleStatusGenerator(
                 }
 
                 const userPrompt = sections.length > 0
-                    ? sections.join('\n\n') + '\n\nStatus text (first person, max 128 chars):'
+                    ? sections.join('\n\n') + '\n\nStatus text (first person, under 50 chars):'
                     : USER_PROMPT_WITHOUT_CONTEXT;
 
                 const text = await generateTextWithSystemPrompt(systemPrompt, userPrompt, { stripMarkdown: true });
@@ -148,7 +161,7 @@ export function createIdleStatusGenerator(
                 // "💤 " is 3 code units (2 for emoji surrogate pair + 1 for space)
                 const emojiPrefix = '💤 ';
                 const maxLength = 128 - emojiPrefix.length;
-                const statusText = text.slice(0, maxLength);
+                const statusText = truncateToWordBoundary(_.trim(text), maxLength);
 
                 // Add emoji prefix
                 const finalStatus = `${emojiPrefix}${statusText}`;

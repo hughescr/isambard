@@ -53,6 +53,62 @@ export interface TaskListReaderOptions {
 }
 
 /**
+ * Parses a task file's content string and returns a validated Task, or undefined if invalid.
+ */
+function parseTaskFile(content: string): Task | undefined {
+    // Stryker disable BlockStatement: Error handling fallback - returns undefined on parse error
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- JSON.parse returns unknown, validated below
+        const parsed = JSON.parse(content);
+
+        // Validate task shape - check parsed is non-null and has required fields
+        // Stryker disable next-line OptionalChaining,ConditionalExpression,LogicalOperator: Shape validation tested via wrong-shape test case
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Validated with isString guards
+        if(!parsed || !_.isString(parsed.id)
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Validated with isString guards
+          || !_.isString(parsed.subject)
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument,@typescript-eslint/no-unsafe-member-access -- Validated with includes check
+          || !['pending', 'in_progress', 'completed'].includes(parsed.status)) {
+            return undefined;
+        }
+
+        return parsed as Task;
+    } catch{
+        return undefined;
+    }
+    // Stryker restore BlockStatement
+}
+
+/**
+ * Builds the summary sections array from a capped task list.
+ */
+function buildSummarySections(cappedTasks: Task[]): string[] {
+    // Stryker disable StringLiteral,ObjectLiteral: Summary text building is cosmetic formatting
+    const inProgressTasks = _.filter(cappedTasks, { status: 'in_progress' });
+    const pendingTasks = _.filter(cappedTasks, { status: 'pending' });
+    const completedTasks = _.filter(cappedTasks, { status: 'completed' });
+
+    const sections: string[] = [];
+
+    if(inProgressTasks.length > 0) {
+        const subjects = _.map(inProgressTasks, task => truncateSubject(task.subject));
+        sections.push(`Working on: ${subjects.join(', ')}`);
+    }
+
+    if(pendingTasks.length > 0) {
+        sections.push(`${pendingTasks.length} pending tasks`);
+    }
+
+    if(completedTasks.length > 0) {
+        const subjects = _.map(completedTasks, task => truncateSubject(task.subject));
+        sections.push(`Recently done: ${subjects.join(', ')}`);
+    }
+    // Stryker restore StringLiteral,ObjectLiteral
+
+    return sections;
+}
+
+/**
  * Creates a task list reader instance.
  *
  * @param options - Reader configuration
@@ -94,28 +150,18 @@ export function createTaskListReader(options: TaskListReaderOptions): TaskListRe
                 // Read and parse all task files
                 const tasks: Task[] = [];
                 for(const file of jsonFiles) {
+                    // Stryker disable BlockStatement: Per-file error handling — skip unreadable files
                     try {
                         const content = await readFileFn(join(taskDir, file.name), 'utf-8');
-                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- JSON.parse returns unknown, validated below
-                        const parsed = JSON.parse(content);
-
-                        // Validate task shape - check parsed is non-null and has required fields
-                        // Stryker disable next-line OptionalChaining,ConditionalExpression,LogicalOperator: Shape validation tested via wrong-shape test case
-                        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Validated with isString guards
-                        if(!parsed || !_.isString(parsed.id)
-                          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Validated with isString guards
-                          || !_.isString(parsed.subject)
-                          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument,@typescript-eslint/no-unsafe-member-access -- Validated with includes check
-                          || !['pending', 'in_progress', 'completed'].includes(parsed.status)) {
-                            // Skip files with wrong shape
-                            continue;
+                        const task = parseTaskFile(content);
+                        if(task !== undefined) {
+                            tasks.push(task);
                         }
-
-                        tasks.push(parsed as Task);
                     } catch{
-                        // Skip unparseable files
+                        // Skip unreadable files
                         continue;
                     }
+                    // Stryker restore BlockStatement
                 }
 
                 // Stryker disable next-line ConditionalExpression: Defensive early return — covered by relevantTasks.length check
@@ -150,28 +196,7 @@ export function createTaskListReader(options: TaskListReaderOptions): TaskListRe
                 // Stryker disable next-line ConditionalExpression: Hard cap constant
                 const cappedTasks = relevantTasks.slice(0, 10);
 
-                // Build summary sections
-                // Stryker disable StringLiteral,ObjectLiteral: Summary text building is cosmetic formatting
-                const inProgressTasks = _.filter(cappedTasks, { status: 'in_progress' });
-                const pendingTasks = _.filter(cappedTasks, { status: 'pending' });
-                const completedTasks = _.filter(cappedTasks, { status: 'completed' });
-
-                const sections: string[] = [];
-
-                if(inProgressTasks.length > 0) {
-                    const subjects = _.map(inProgressTasks, task => truncateSubject(task.subject));
-                    sections.push(`Working on: ${subjects.join(', ')}`);
-                }
-
-                if(pendingTasks.length > 0) {
-                    sections.push(`${pendingTasks.length} pending tasks`);
-                }
-
-                if(completedTasks.length > 0) {
-                    const subjects = _.map(completedTasks, task => truncateSubject(task.subject));
-                    sections.push(`Recently done: ${subjects.join(', ')}`);
-                }
-                // Stryker restore StringLiteral,ObjectLiteral
+                const sections = buildSummarySections(cappedTasks);
 
                 // Stryker disable next-line ConditionalExpression: Defensive guard — all tasks have a known status
                 if(sections.length === 0) {

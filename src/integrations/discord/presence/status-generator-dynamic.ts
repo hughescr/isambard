@@ -10,6 +10,10 @@ import { generateText } from '@/agent/text-generator.js';
 import { logger } from '@hughescr/logger';
 import { getToolDescription } from './types.js';
 import type { SynopsisContext, CatchUpSynopsisContext } from './types.js';
+import { truncateToWordBoundary, HARD_MAX_STATUS_LENGTH } from '@/utils/text.js';
+
+// Re-export for backwards compatibility with existing imports
+export { truncateToWordBoundary, HARD_MAX_STATUS_LENGTH };
 
 /**
  * Interface for generating dynamic status synopses.
@@ -41,42 +45,11 @@ export interface DynamicStatusGeneratorDeps {
     identityContext: string
 }
 
-export const HARD_MAX_STATUS_LENGTH = 80;
 const MAX_USER_MESSAGE_LENGTH = 200;
 const MAX_ACCUMULATED_TEXT_LENGTH = 150;
 const MAX_RESPONSE_FRAGMENT_LENGTH = 100;
 const MAX_TOOL_INPUT_LENGTH = 200;
 const MAX_THINKING_CONTENT_LENGTH = 500;
-
-/**
- * Truncates text to a maximum length, respecting word boundaries.
- *
- * If the text fits within maxLength, returns it unchanged.
- * Otherwise, finds the last space before maxLength and truncates there,
- * appending a unicode ellipsis (…).
- * If no space is found (single long word), hard truncates at maxLength-1
- * and appends the ellipsis.
- *
- * @param text - The text to truncate
- * @param maxLength - Maximum allowed length for the result
- * @returns Truncated text with ellipsis if needed
- */
-export function truncateToWordBoundary(text: string, maxLength: number): string {
-    if(text.length <= maxLength) {
-        return text;
-    }
-
-    // Find the last space before maxLength
-    const lastSpaceIndex = text.lastIndexOf(' ', maxLength - 1);
-
-    if(lastSpaceIndex > 0) {
-        // Truncate at word boundary and add ellipsis
-        return `${text.slice(0, lastSpaceIndex)}\u2026`;
-    }
-
-    // No space found - hard truncate at maxLength-1 + ellipsis
-    return `${text.slice(0, maxLength - 1)}\u2026`;
-}
 
 const FALLBACK_STATUSES: Record<SynopsisContext['phase'], string> = {
     thinking:   'Thinking...',
@@ -90,6 +63,8 @@ const FALLBACK_STATUSES: Record<SynopsisContext['phase'], string> = {
 let lastHaikuCall = 0;
 // Stryker disable next-line AssignmentOperator: Initial value irrelevant, first successful call always updates cache
 let cachedStatus: string | null = null;
+// Stryker disable next-line AssignmentOperator,BooleanLiteral: Initial value irrelevant, haikuInFlight is set before every API call
+let haikuInFlight = false;
 const HAIKU_DEBOUNCE_MS = 2000;
 
 /**
@@ -194,6 +169,8 @@ What thought flashes through your mind as you see what's waiting?`;
 export function resetDebounceState(): void {
     lastHaikuCall = 0;
     cachedStatus = null;
+    // Stryker disable next-line BooleanLiteral: resetDebounceState resets all module state atomically for test isolation
+    haikuInFlight = false;
 }
 
 /**
@@ -297,11 +274,21 @@ export function createDynamicStatusGenerator(
             // Rate limiting - check if we're within debounce window
             const now = Date.now();
             // Stryker disable next-line EqualityOperator: < vs <= boundary at exact debounce time is equivalent
-            if(now - lastHaikuCall < HAIKU_DEBOUNCE_MS && cachedStatus) {
-                logger.debug({ phase, msg: 'Haiku call debounced, using cached status' });
-                return cachedStatus;
+            if(now - lastHaikuCall < HAIKU_DEBOUNCE_MS) {
+                if(haikuInFlight) {
+                    // In-flight — return fallback to avoid stale data
+                    // Stryker disable next-line ObjectLiteral,StringLiteral: Debug logging for in-flight debounce diagnostics
+                    logger.debug({ phase, haikuInFlight, msg: 'Haiku call debounced, using phase fallback' });
+                    return FALLBACK_STATUSES[phase];
+                }
+                if(cachedStatus) {
+                    logger.debug({ phase, msg: 'Haiku call debounced, using cached status' });
+                    return cachedStatus;
+                }
+                // No cache and not in-flight — fall through to make real call
             }
 
+            haikuInFlight = true;
             try {
                 // Record timestamp for rate limiting before making API call.
                 // This ensures subsequent rapid calls see the updated timestamp.
@@ -334,6 +321,8 @@ export function createDynamicStatusGenerator(
                     msg: 'Failed to generate synopsis, using fallback',
                 });
                 return FALLBACK_STATUSES[phase];
+            } finally {
+                haikuInFlight = false;
             }
         },
 
@@ -341,14 +330,21 @@ export function createDynamicStatusGenerator(
         async generateCatchUpSynopsis(context: CatchUpSynopsisContext): Promise<string> {
             // Rate limiting - check if we're within debounce window
             const now = Date.now();
-            // Stryker disable ConditionalExpression,ArithmeticOperator,BlockStatement: Debounce logic with time calculation
-            // Stryker disable next-line EqualityOperator: < vs <= boundary at exact debounce time is equivalent
-            if(now - lastHaikuCall < HAIKU_DEBOUNCE_MS && cachedStatus) {
-                logger.debug({ msg: 'Haiku call debounced for catch-up, using cached status' });
-                return cachedStatus;
+            // Stryker disable next-line ArithmeticOperator,EqualityOperator: Time arithmetic boundary
+            if(now - lastHaikuCall < HAIKU_DEBOUNCE_MS) {
+                if(haikuInFlight) {
+                    // In-flight — return fallback to avoid stale data
+                    logger.debug({ haikuInFlight, msg: 'Haiku call debounced for catch-up, using fallback' });
+                    return 'Messages waiting...';
+                }
+                if(cachedStatus) {
+                    logger.debug({ msg: 'Haiku call debounced for catch-up, using cached status' });
+                    return cachedStatus;
+                }
+                // No cache and not in-flight — fall through to make real call
             }
-            // Stryker restore ConditionalExpression,ArithmeticOperator,BlockStatement
 
+            haikuInFlight = true;
             try {
                 // Record timestamp for rate limiting before making API call
                 lastHaikuCall = now;
@@ -391,6 +387,8 @@ export function createDynamicStatusGenerator(
                     msg: 'Failed to generate catch-up synopsis, using fallback',
                 });
                 return 'Messages waiting...';
+            } finally {
+                haikuInFlight = false;
             }
         },
         // Stryker restore StringLiteral,ObjectLiteral

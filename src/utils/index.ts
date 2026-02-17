@@ -21,3 +21,8 @@ export {
 } from './path-validator';
 
 export { PathSecurityError } from '@/errors';
+
+export {
+    truncateToWordBoundary,
+    HARD_MAX_STATUS_LENGTH
+} from './text.js';
