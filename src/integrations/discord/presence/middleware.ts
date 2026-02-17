@@ -100,7 +100,7 @@ export function createStatusMiddleware(
                 thinkingSynopsis = await dynamicStatusGenerator.generateSynopsis({
                     phase: 'thinking',
                     userMessage,
-                });
+                }) ?? undefined;
             } catch{
                 // Fallback handled by active generator - empty catch is intentional
             }

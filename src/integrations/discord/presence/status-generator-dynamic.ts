@@ -23,18 +23,18 @@ export interface DynamicStatusGenerator {
      * Generate a contextual status synopsis for the current activity.
      *
      * @param context - The current activity context
-     * @returns Promise resolving to a status string (max 40 chars)
+     * @returns Promise resolving to a status string (max 40 chars), or null if a Haiku call is in-flight or failed
      */
-    generateSynopsis(context: SynopsisContext): Promise<string>
+    generateSynopsis(context: SynopsisContext): Promise<string | null>
 
     /**
      * Generate a catch-up status based on inbox context.
      * Used when entering catch-up mode to show a rich, contextual status.
      *
      * @param context - The inbox state context
-     * @returns Promise resolving to a status string (max 40 chars)
+     * @returns Promise resolving to a status string (max 40 chars), or null if a Haiku call is in-flight or failed
      */
-    generateCatchUpSynopsis(context: CatchUpSynopsisContext): Promise<string>
+    generateCatchUpSynopsis(context: CatchUpSynopsisContext): Promise<string | null>
 }
 
 /**
@@ -51,13 +51,7 @@ const MAX_RESPONSE_FRAGMENT_LENGTH = 100;
 const MAX_TOOL_INPUT_LENGTH = 200;
 const MAX_THINKING_CONTENT_LENGTH = 500;
 
-const FALLBACK_STATUSES: Record<SynopsisContext['phase'], string> = {
-    thinking:   'Thinking...',
-    using_tool: 'Working...',
-    responding: 'Responding...',
-};
-
-// Rate limiting: minimum 2 seconds between Haiku calls
+// Rate limiting: minimum 2 seconds between Haiku calls (cooldown measured from call completion)
 // Module-level state shared across all generator instances
 // Stryker disable next-line AssignmentOperator: Initial value irrelevant, first call always sets lastHaikuCall = now
 let lastHaikuCall = 0;
@@ -65,7 +59,7 @@ let lastHaikuCall = 0;
 let cachedStatus: string | null = null;
 // Stryker disable next-line AssignmentOperator,BooleanLiteral: Initial value irrelevant, haikuInFlight is set before every API call
 let haikuInFlight = false;
-const HAIKU_DEBOUNCE_MS = 2000;
+const HAIKU_COOLDOWN_MS = 2000;
 
 /**
  * System prompt that establishes Isambard's identity for status generation.
@@ -163,13 +157,13 @@ What thought flashes through your mind as you see what's waiting?`;
 // Stryker restore StringLiteral
 
 /**
- * Resets the debounce state for testing purposes.
+ * Resets the cooldown state for testing purposes.
  * This allows tests to simulate time passing without actual delays.
  */
-export function resetDebounceState(): void {
+export function resetCooldownState(): void {
     lastHaikuCall = 0;
     cachedStatus = null;
-    // Stryker disable next-line BooleanLiteral: resetDebounceState resets all module state atomically for test isolation
+    // Stryker disable next-line BooleanLiteral: resetCooldownState resets all module state atomically for test isolation
     haikuInFlight = false;
 }
 
@@ -243,8 +237,8 @@ function buildPrompt(
  * Creates a dynamic status generator that uses Claude Haiku to generate
  * contextual status messages.
  *
- * The generator implements rate limiting (2 second debounce) to avoid
- * excessive API calls during rapid status updates.
+ * The generator implements rate limiting (2 second cooldown measured from call completion)
+ * to avoid excessive API calls during rapid status updates.
  *
  * @param deps - Dependencies including identity context
  * @returns DynamicStatusGenerator instance
@@ -268,32 +262,29 @@ export function createDynamicStatusGenerator(
     const { identityContext } = deps;
 
     return {
-        async generateSynopsis(context: SynopsisContext): Promise<string> {
+        async generateSynopsis(context: SynopsisContext): Promise<string | null> {
             const { phase } = context;
 
-            // Rate limiting - check if we're within debounce window
+            // Mutex: if a Haiku call is already in-flight, return null so caller skips update
+            if(haikuInFlight) {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Debug logging for in-flight diagnostics
+                logger.debug({ phase, haikuInFlight, msg: 'Haiku call in-flight, skipping synopsis' });
+                return null;
+            }
+
+            // Rate limiting - check if we're within cooldown window (measured from last call completion)
             const now = Date.now();
-            // Stryker disable next-line EqualityOperator: < vs <= boundary at exact debounce time is equivalent
-            if(now - lastHaikuCall < HAIKU_DEBOUNCE_MS) {
-                if(haikuInFlight) {
-                    // In-flight — return fallback to avoid stale data
-                    // Stryker disable next-line ObjectLiteral,StringLiteral: Debug logging for in-flight debounce diagnostics
-                    logger.debug({ phase, haikuInFlight, msg: 'Haiku call debounced, using phase fallback' });
-                    return FALLBACK_STATUSES[phase];
-                }
+            // Stryker disable next-line EqualityOperator: < vs <= boundary at exact cooldown time is equivalent
+            if(now - lastHaikuCall < HAIKU_COOLDOWN_MS) {
                 if(cachedStatus) {
-                    logger.debug({ phase, msg: 'Haiku call debounced, using cached status' });
+                    logger.debug({ phase, msg: 'Haiku call within cooldown, using cached status' });
                     return cachedStatus;
                 }
-                // No cache and not in-flight — fall through to make real call
+                // No cache — fall through to make real call
             }
 
             haikuInFlight = true;
             try {
-                // Record timestamp for rate limiting before making API call.
-                // This ensures subsequent rapid calls see the updated timestamp.
-                lastHaikuCall = now;
-
                 const prompt = buildPrompt(identityContext, context);
 
                 logger.debug({
@@ -306,9 +297,9 @@ export function createDynamicStatusGenerator(
                 const text = await generateText(prompt, { stripMarkdown: true });
                 const statusText = truncateToWordBoundary(_.trim(text), HARD_MAX_STATUS_LENGTH);
 
-                // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure fallback
+                // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure — return null so caller skips update
                 if(!statusText) {
-                    return FALLBACK_STATUSES[phase];
+                    return null;
                 }
 
                 cachedStatus = statusText;
@@ -318,37 +309,37 @@ export function createDynamicStatusGenerator(
                 logger.error({
                     error,
                     phase,
-                    msg: 'Failed to generate synopsis, using fallback',
+                    msg: 'Failed to generate synopsis',
                 });
-                return FALLBACK_STATUSES[phase];
+                return null;
             } finally {
+                // Record timestamp for cooldown AFTER call completion (not before)
+                lastHaikuCall = Date.now();
                 haikuInFlight = false;
             }
         },
 
         // Stryker disable StringLiteral,ObjectLiteral: Prompt template building and logging for status generation
-        async generateCatchUpSynopsis(context: CatchUpSynopsisContext): Promise<string> {
-            // Rate limiting - check if we're within debounce window
+        async generateCatchUpSynopsis(context: CatchUpSynopsisContext): Promise<string | null> {
+            // Mutex: if a Haiku call is already in-flight, return null so caller skips update
+            if(haikuInFlight) {
+                logger.debug({ haikuInFlight, msg: 'Haiku call in-flight for catch-up, skipping synopsis' });
+                return null;
+            }
+
+            // Rate limiting - check if we're within cooldown window (measured from last call completion)
             const now = Date.now();
             // Stryker disable next-line ArithmeticOperator,EqualityOperator: Time arithmetic boundary
-            if(now - lastHaikuCall < HAIKU_DEBOUNCE_MS) {
-                if(haikuInFlight) {
-                    // In-flight — return fallback to avoid stale data
-                    logger.debug({ haikuInFlight, msg: 'Haiku call debounced for catch-up, using fallback' });
-                    return 'Messages waiting...';
-                }
+            if(now - lastHaikuCall < HAIKU_COOLDOWN_MS) {
                 if(cachedStatus) {
-                    logger.debug({ msg: 'Haiku call debounced for catch-up, using cached status' });
+                    logger.debug({ msg: 'Haiku call within cooldown for catch-up, using cached status' });
                     return cachedStatus;
                 }
-                // No cache and not in-flight — fall through to make real call
+                // No cache — fall through to make real call
             }
 
             haikuInFlight = true;
             try {
-                // Record timestamp for rate limiting before making API call
-                lastHaikuCall = now;
-
                 // Build the prompt with context values
                 let prompt = SYSTEM_PROMPT;
                 prompt = _.replace(prompt, '{identityContext}', identityContext);
@@ -373,9 +364,9 @@ export function createDynamicStatusGenerator(
                 const text = await generateText(prompt, { stripMarkdown: true });
                 const statusText = truncateToWordBoundary(_.trim(text), HARD_MAX_STATUS_LENGTH);
 
-                // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure fallback
+                // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure — return null so caller skips update
                 if(!statusText) {
-                    return 'Messages waiting...';
+                    return null;
                 }
 
                 cachedStatus = statusText;
@@ -384,10 +375,12 @@ export function createDynamicStatusGenerator(
             } catch (error) {
                 logger.error({
                     error,
-                    msg: 'Failed to generate catch-up synopsis, using fallback',
+                    msg: 'Failed to generate catch-up synopsis',
                 });
-                return 'Messages waiting...';
+                return null;
             } finally {
+                // Record timestamp for cooldown AFTER call completion (not before)
+                lastHaikuCall = Date.now();
                 haikuInFlight = false;
             }
         },

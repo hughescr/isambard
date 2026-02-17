@@ -1055,6 +1055,94 @@ describe('PresenceManager', () => {
             expect(mockActiveGenerator.generate).not.toHaveBeenCalled();
         });
 
+        it('should fall back to idle generator when generateCatchUpSynopsis returns null (idle currentPhase)', async () => {
+            const mockDynamicGenerator = {
+                // eslint-disable-next-line lodash/prefer-constant -- mock requires async function
+                generateSynopsis:        mock(async () => 'Test dynamic status'),
+                // eslint-disable-next-line lodash/prefer-constant -- mock requires async function
+                generateCatchUpSynopsis: mock(async () => null),
+            };
+
+            const manager = new PresenceManager({
+                discordClient:          mockClient,
+                activeStatusGenerator:  mockActiveGenerator,
+                idleStatusGenerator:    mockIdleGenerator,
+                dynamicStatusGenerator: mockDynamicGenerator,
+                config,
+                logger:                 mockLogger,
+            });
+
+            // First go idle
+            await manager.updatePhase({ type: 'idle', since: new Date() });
+            const idleCallCountBefore = mockIdleGenerator.generate.mock.calls.length;
+
+            const catchUpContext = {
+                totalUnread:         3,
+                channelCount:        1,
+                channelNames:        ['general'],
+                topAuthors:          ['Sarah'],
+                timeSinceLastActive: '3 hours',
+                timeOfDay:           'morning',
+                dayOfWeek:           'Tuesday',
+            };
+
+            // Enter catch-up mode with idle currentPhase — dynamic generator returns null
+            manager.transitionPresenceDisplayMode('catching_up', catchUpContext);
+
+            // Wait for async status generation
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Should have called dynamic generator
+            expect(mockDynamicGenerator.generateCatchUpSynopsis).toHaveBeenCalledWith(catchUpContext);
+            // Should have fallen back to idle generator since dynamic returned null
+            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallCountBefore + 1);
+            // Should NOT have called formatStatus (null result means skip active status path)
+            expect(mockActiveGenerator.formatStatus).not.toHaveBeenCalled();
+        });
+
+        it('should fall back to idle generator when generateCatchUpSynopsis returns null (null currentPhase)', async () => {
+            const mockDynamicGenerator = {
+                // eslint-disable-next-line lodash/prefer-constant -- mock requires async function
+                generateSynopsis:        mock(async () => 'Test dynamic status'),
+                // eslint-disable-next-line lodash/prefer-constant -- mock requires async function
+                generateCatchUpSynopsis: mock(async () => null),
+            };
+
+            const manager = new PresenceManager({
+                discordClient:          mockClient,
+                activeStatusGenerator:  mockActiveGenerator,
+                idleStatusGenerator:    mockIdleGenerator,
+                dynamicStatusGenerator: mockDynamicGenerator,
+                config,
+                logger:                 mockLogger,
+            });
+
+            const catchUpContext = {
+                totalUnread:         5,
+                channelCount:        2,
+                channelNames:        ['general', 'DM'],
+                topAuthors:          ['Craig', 'Mike'],
+                timeSinceLastActive: '3 hours',
+                timeOfDay:           'afternoon',
+                dayOfWeek:           'Monday',
+            };
+
+            // Enter catch-up mode at startup (null currentPhase) — dynamic generator returns null
+            manager.transitionPresenceDisplayMode('catching_up', catchUpContext);
+
+            // Wait for async status generation
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Should have called dynamic generator
+            expect(mockDynamicGenerator.generateCatchUpSynopsis).toHaveBeenCalledWith(catchUpContext);
+            // Should have fallen back to idle generator since dynamic returned null
+            expect(mockIdleGenerator.generate).toHaveBeenCalled();
+            // Should NOT have called formatStatus (null result means skip active status path)
+            expect(mockActiveGenerator.formatStatus).not.toHaveBeenCalled();
+        });
+
         it('should handle error during async status generation gracefully', async () => {
             const errorDynamicGenerator = {
                 // eslint-disable-next-line lodash/prefer-constant -- mock requires async function

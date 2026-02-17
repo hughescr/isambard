@@ -206,13 +206,16 @@ export class PresenceManager {
                             // Use dynamic generator if catch-up context provided and generator available
                             if(catchUpContext && this.deps.dynamicStatusGenerator) {
                                 const statusText = await this.deps.dynamicStatusGenerator.generateCatchUpSynopsis(catchUpContext);
-                                const activity = this.deps.activeStatusGenerator.formatStatus(statusText, mode);
-                                await this.applyPresenceUpdate(activity);
-                            } else {
-                                // Fallback to idle generator
-                                const activity = await this.deps.idleStatusGenerator.generate();
-                                await this.applyPresenceUpdate(activity);
+                                // Stryker disable next-line ConditionalExpression: Null guard — fall through to idle generator when Haiku returns null
+                                if(statusText !== null) {
+                                    const activity = this.deps.activeStatusGenerator.formatStatus(statusText, mode);
+                                    await this.applyPresenceUpdate(activity);
+                                    return;
+                                }
                             }
+                            // Fallback to idle generator (no dynamic generator, no context, or null result)
+                            const activity = await this.deps.idleStatusGenerator.generate();
+                            await this.applyPresenceUpdate(activity);
                         } catch (error) {
                             // Stryker disable next-line ObjectLiteral,StringLiteral: Error logging content
                             this.deps.logger.error({ error, mode }, 'Failed to generate catch-up status');
@@ -244,13 +247,16 @@ export class PresenceManager {
                         // Use dynamic generator if catch-up context provided and generator available
                         if(catchUpContext && this.deps.dynamicStatusGenerator) {
                             const statusText = await this.deps.dynamicStatusGenerator.generateCatchUpSynopsis(catchUpContext);
-                            const activity = this.deps.activeStatusGenerator.formatStatus(statusText, mode);
-                            await this.applyPresenceUpdate(activity);
-                        } else {
-                            // Fallback to idle generator
-                            const activity = await this.deps.idleStatusGenerator.generate();
-                            await this.applyPresenceUpdate(activity);
+                            // Stryker disable next-line ConditionalExpression: Null guard — fall through to idle generator when Haiku returns null
+                            if(statusText !== null) {
+                                const activity = this.deps.activeStatusGenerator.formatStatus(statusText, mode);
+                                await this.applyPresenceUpdate(activity);
+                                return;
+                            }
                         }
+                        // Fallback to idle generator (no dynamic generator, no context, or null result)
+                        const activity = await this.deps.idleStatusGenerator.generate();
+                        await this.applyPresenceUpdate(activity);
                     } catch (error) {
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Error logging content
                         this.deps.logger.error({ error, mode }, 'Failed to generate catch-up status');

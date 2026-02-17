@@ -170,6 +170,10 @@ export function createStreamEventHandler(
                     if(completed) {
                         return; // Stale — handler already completed
                     }
+                    // Stryker disable next-line ConditionalExpression: Null guard — skip update when Haiku returns null (in-flight/failed)
+                    if(synopsis === null) {
+                        return; // Haiku in-flight or failed — skip presence update
+                    }
                     void safeUpdatePhase({
                         ...basePhase,
                         generatedStatus: synopsis,
@@ -312,6 +316,10 @@ export function createStreamEventHandler(
                                 // Stryker disable next-line ConditionalExpression: Staleness guard for async race condition
                                 if(completed) {
                                     return; // Stale — handler already completed
+                                }
+                                // Stryker disable next-line ConditionalExpression: Null guard — skip update when Haiku returns null (in-flight/failed)
+                                if(synopsis === null) {
+                                    return; // Haiku in-flight or failed — skip presence update
                                 }
                                 // Stryker disable next-line ObjectLiteral: All properties required for presence update
                                 void safeUpdatePhase({

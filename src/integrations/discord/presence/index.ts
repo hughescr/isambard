@@ -24,7 +24,7 @@ export {
 } from '@/errors';
 
 export { createActiveStatusGenerator } from './status-generator-active.js';
-export { createDynamicStatusGenerator, resetDebounceState } from './status-generator-dynamic.js';
+export { createDynamicStatusGenerator, resetCooldownState } from './status-generator-dynamic.js';
 export { createIdleStatusGenerator, type IdleStatusGeneratorDeps } from './status-generator-idle.js';
 export { PresenceManager, type PresenceManagerDeps } from './manager.js';
 export { createStatusMiddleware } from './middleware.js';

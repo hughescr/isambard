@@ -345,6 +345,63 @@ describe('StreamEventHandler', () => {
         });
     });
 
+    describe('Null synopsis handling', () => {
+        it('should NOT update phase when generateSynopsis returns null', async () => {
+            // Configure generateSynopsis to return null (simulating in-flight/failed Haiku call)
+            // eslint-disable-next-line lodash/prefer-constant -- Async function
+            mockDynamicStatusGenerator.generateSynopsis = mock(async () => null);
+
+            const { onStreamEvent } = createStreamEventHandler(baseDeps);
+
+            // Clear any setup calls
+            mockBotStateManager.updateActivityPhase.mockClear();
+
+            // Trigger responding phase (fires async synopsis via updatePhaseWithSynopsis)
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
+            await flushPromises();
+
+            // updateActivityPhase should NOT have been called — null means skip the update entirely
+            expect(mockBotStateManager.updateActivityPhase).not.toHaveBeenCalled();
+        });
+
+        it('should NOT update thinking phase when generateSynopsis returns null', async () => {
+            // Configure generateSynopsis to return null
+            // eslint-disable-next-line lodash/prefer-constant -- Async function
+            mockDynamicStatusGenerator.generateSynopsis = mock(async () => null);
+
+            const { onStreamEvent } = createStreamEventHandler(baseDeps);
+
+            // Send thinking content to trigger the thinking synopsis async path
+            onStreamEvent({
+                type:    'assistant',
+                message: {
+                    content: [
+                        { type: 'thinking', thinking: 'Some deep thought' },
+                    ],
+                },
+            } as unknown as AgentStreamEvent);
+
+            // Trigger thinking phase update with accumulated content
+            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+
+            // Clear mocks after the initial thinking transition (pre-generated synopsis path)
+            mockBotStateManager.updateActivityPhase.mockClear();
+
+            // Transition to responding to reset currentPhase
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
+            await flushPromises();
+            mockBotStateManager.updateActivityPhase.mockClear();
+
+            // Transition back to thinking with accumulated content — triggers the inline async block
+            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+            await flushPromises();
+
+            // updateActivityPhase should NOT have been called with thinking phase
+            // because null synopsis means skip the update
+            expect(mockBotStateManager.updateActivityPhase).not.toHaveBeenCalled();
+        });
+    });
+
     describe('Error handling', () => {
         it('should handle botStateManager.updateActivityPhase errors gracefully', async () => {
             // Configure botStateManager to throw

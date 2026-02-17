@@ -10,7 +10,7 @@ import { mockGenerateText, mockLogger } from '../../../../setup';
 // Import after mocking
 import {
     createDynamicStatusGenerator,
-    resetDebounceState,
+    resetCooldownState,
     truncateToWordBoundary,
     HARD_MAX_STATUS_LENGTH
 } from '@/integrations/discord/presence/status-generator-dynamic';
@@ -127,12 +127,12 @@ describe('DynamicStatusGenerator', () => {
             // Logger mocks may have been corrupted by another test modifying the logger object
             // This is a known issue with context-builder-loading.test.ts
         }
-        // Reset module-level debounce state between tests
-        resetDebounceState();
+        // Reset module-level cooldown state between tests
+        resetCooldownState();
     });
 
     afterEach(() => {
-        resetDebounceState();
+        resetCooldownState();
         // Reset system time in case any test used setSystemTime
         setSystemTime();
     });
@@ -354,8 +354,8 @@ describe('DynamicStatusGenerator', () => {
                 };
 
                 try {
-                    // Reset debounce state to allow call
-                    resetDebounceState();
+                    // Reset cooldown state to allow call
+                    resetCooldownState();
 
                     const generator = createDynamicStatusGenerator({
                         identityContext: 'Test identity',
@@ -853,7 +853,8 @@ describe('DynamicStatusGenerator', () => {
 
                 const result = await generator.generateSynopsis(context);
 
-                expect(result.length).toBeLessThanOrEqual(HARD_MAX_STATUS_LENGTH);
+                expect(result).not.toBeNull();
+                expect(result!.length).toBeLessThanOrEqual(HARD_MAX_STATUS_LENGTH);
             });
 
             it('should trim whitespace from output', async () => {
@@ -879,7 +880,7 @@ describe('DynamicStatusGenerator', () => {
         });
 
         describe('fallback behavior', () => {
-            it('should fall back to "Thinking..." on error for thinking phase', async () => {
+            it('should return null on error for thinking phase', async () => {
                 mockGenerateText.mockImplementation(() =>
                     Promise.reject(new Error('API error'))
                 );
@@ -895,10 +896,10 @@ describe('DynamicStatusGenerator', () => {
 
                 const result = await generator.generateSynopsis(context);
 
-                expect(result).toBe('Thinking...');
+                expect(result).toBeNull();
             });
 
-            it('should fall back to "Working..." on error for using_tool phase', async () => {
+            it('should return null on error for using_tool phase', async () => {
                 mockGenerateText.mockImplementation(() =>
                     Promise.reject(new Error('API error'))
                 );
@@ -915,10 +916,10 @@ describe('DynamicStatusGenerator', () => {
 
                 const result = await generator.generateSynopsis(context);
 
-                expect(result).toBe('Working...');
+                expect(result).toBeNull();
             });
 
-            it('should fall back to "Responding..." on error for responding phase', async () => {
+            it('should return null on error for responding phase', async () => {
                 mockGenerateText.mockImplementation(() =>
                     Promise.reject(new Error('API error'))
                 );
@@ -934,10 +935,10 @@ describe('DynamicStatusGenerator', () => {
 
                 const result = await generator.generateSynopsis(context);
 
-                expect(result).toBe('Responding...');
+                expect(result).toBeNull();
             });
 
-            it('should fall back to phase-specific status on empty response', async () => {
+            it('should return null on empty response', async () => {
                 mockGenerateText.mockImplementation(_constant(Promise.resolve('')));
 
                 const generator = createDynamicStatusGenerator({
@@ -951,10 +952,10 @@ describe('DynamicStatusGenerator', () => {
 
                 const result = await generator.generateSynopsis(context);
 
-                expect(result).toBe('Thinking...');
+                expect(result).toBeNull();
             });
 
-            it('should fall back to phase-specific status on whitespace-only response', async () => {
+            it('should return null on whitespace-only response', async () => {
                 mockGenerateText.mockImplementation(_constant(Promise.resolve('   ')));
 
                 const generator = createDynamicStatusGenerator({
@@ -968,12 +969,12 @@ describe('DynamicStatusGenerator', () => {
 
                 const result = await generator.generateSynopsis(context);
 
-                expect(result).toBe('Responding...');
+                expect(result).toBeNull();
             });
         });
 
-        describe('debouncing', () => {
-            it('should debounce rapid calls within 2 seconds', async () => {
+        describe('cooldown', () => {
+            it('should throttle rapid calls within 2 second cooldown', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -987,12 +988,12 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
                 expect(mockGenerateText).toHaveBeenCalledTimes(1);
 
-                // Second call within debounce window should be debounced
+                // Second call within cooldown window should use cache
                 await generator.generateSynopsis(context);
                 expect(mockGenerateText).toHaveBeenCalledTimes(1);
             });
 
-            it('should use cached status when debounced', async () => {
+            it('should use cached status when within cooldown', async () => {
                 mockGenerateText.mockImplementation(_constant(
                     Promise.resolve('First status')
                 ));
@@ -1018,7 +1019,7 @@ describe('DynamicStatusGenerator', () => {
                 expect(second).toBe('First status'); // Should use cached value
             });
 
-            it('should allow call after debounce period expires', async () => {
+            it('should allow call after cooldown period expires', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -1032,15 +1033,15 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
                 expect(mockGenerateText).toHaveBeenCalledTimes(1);
 
-                // Simulate time passing (reset debounce state to simulate 2+ seconds passing)
-                resetDebounceState();
+                // Simulate time passing (reset cooldown state to simulate 2+ seconds passing)
+                resetCooldownState();
 
                 // Now call should go through
                 await generator.generateSynopsis(context);
                 expect(mockGenerateText).toHaveBeenCalledTimes(2);
             });
 
-            it('should make real API call when within debounce window but cache is null', async () => {
+            it('should make real API call when within cooldown window but cache is null', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -1052,9 +1053,9 @@ describe('DynamicStatusGenerator', () => {
 
                 // First call fails, cache stays null
                 mockGenerateText.mockRejectedValueOnce(new Error('fail'));
-                await generator.generateSynopsis(context); // fails, fallback returned, cache stays null
+                await generator.generateSynopsis(context); // fails, null returned, cache stays null
 
-                // Second call within debounce window - should NOT use null cache
+                // Second call within cooldown window - should NOT use null cache
                 mockGenerateText.mockResolvedValueOnce('Success after fail');
                 const result = await generator.generateSynopsis(context);
 
@@ -1064,7 +1065,7 @@ describe('DynamicStatusGenerator', () => {
                 expect(mockGenerateText).toHaveBeenCalledTimes(2);
             });
 
-            it('should verify cache is updated and used on subsequent debounced calls', async () => {
+            it('should verify cache is updated and used on subsequent cooldown calls', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -1083,14 +1084,16 @@ describe('DynamicStatusGenerator', () => {
                 // Change mock to return different value
                 mockGenerateText.mockResolvedValue('Should not see this');
 
-                // Second call within debounce - should use cached value
+                // Second call within cooldown - should use cached value
                 const second = await generator.generateSynopsis(context);
                 expect(second).toBe('Cached successfully');
                 expect(mockGenerateText).toHaveBeenCalledTimes(1); // Only called once
             });
 
-            it('should call API when exactly at debounce boundary (2000ms)', async () => {
+            it('should call API when exactly at cooldown boundary (2000ms)', async () => {
                 // Use fake timers to test exact 2000ms boundary
+                // With post-completion cooldown, lastHaikuCall is set in `finally` after the await.
+                // Since mockGenerateText resolves immediately, lastHaikuCall = Date.now() at call time.
                 const baseTime = 1000000;
                 setSystemTime(new Date(baseTime));
 
@@ -1105,19 +1108,19 @@ describe('DynamicStatusGenerator', () => {
 
                 mockGenerateText.mockResolvedValue('First call');
 
-                // Call 1: t=0, should call API
+                // Call 1: t=baseTime, should call API. lastHaikuCall set to baseTime in finally.
                 await generator.generateSynopsis(context);
                 expect(mockGenerateText).toHaveBeenCalledTimes(1);
 
                 mockGenerateText.mockResolvedValue('Second call');
 
-                // Call 2: t=1999ms, should use cache (within debounce window)
+                // Call 2: t=baseTime+1999ms, should use cache (within cooldown window)
                 setSystemTime(new Date(baseTime + 1999));
                 const result1999 = await generator.generateSynopsis(context);
                 expect(result1999).toBe('First call');
                 expect(mockGenerateText).toHaveBeenCalledTimes(1);
 
-                // Call 3: t=2000ms, should call API again (exactly at boundary)
+                // Call 3: t=baseTime+2000ms, should call API again (exactly at boundary)
                 // This tests the < vs <= mutation: with <, 2000ms should make new call
                 setSystemTime(new Date(baseTime + 2000));
                 const result2000 = await generator.generateSynopsis(context);
@@ -1128,7 +1131,7 @@ describe('DynamicStatusGenerator', () => {
                 setSystemTime();
             });
 
-            it('should return fallback when debounced and Haiku is in-flight', async () => {
+            it('should return null when within cooldown and Haiku is in-flight', async () => {
                 // Create a delayed mock that we can control
                 let resolveHaiku!: (value: string) => void;
                 const slowPromise = new Promise<string>((resolve) => {
@@ -1148,9 +1151,9 @@ describe('DynamicStatusGenerator', () => {
                 // Start first call (will be in-flight)
                 const firstCallPromise = generator.generateSynopsis(context);
 
-                // Second call while first is in-flight should return phase fallback, not stale cache
+                // Second call while first is in-flight should return null so caller skips update
                 const second = await generator.generateSynopsis(context);
-                expect(second).toBe('Thinking...');
+                expect(second).toBeNull();
 
                 // Resolve the first call
                 resolveHaiku('Finally done thinking');
@@ -1158,7 +1161,7 @@ describe('DynamicStatusGenerator', () => {
                 expect(first).toBe('Finally done thinking');
             });
 
-            it('should return fallback (not stale cache) when debounced with populated cache and Haiku in-flight', async () => {
+            it('should return null (not stale cache) when within cooldown with populated cache and Haiku in-flight', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -1173,8 +1176,8 @@ describe('DynamicStatusGenerator', () => {
                 const first = await generator.generateSynopsis(context);
                 expect(first).toBe('Stale cached status');
 
-                // Step 2: Reset debounce time but keep cache, then start a slow call
-                resetDebounceState();
+                // Step 2: Reset cooldown time but keep cache, then start a slow call
+                resetCooldownState();
                 let resolveHaiku!: (value: string) => void;
                 const slowPromise = new Promise<string>((resolve) => {
                     resolveHaiku = resolve;
@@ -1183,9 +1186,9 @@ describe('DynamicStatusGenerator', () => {
 
                 const slowCallPromise = generator.generateSynopsis(context);
 
-                // Step 3: Third call while slow call is in-flight — should get fallback, NOT stale cache
+                // Step 3: Third call while slow call is in-flight — should get null, NOT stale cache
                 const third = await generator.generateSynopsis(context);
-                expect(third).toBe('Thinking...'); // Phase fallback, NOT 'Stale cached status'
+                expect(third).toBeNull(); // null, NOT 'Stale cached status'
 
                 // Clean up
                 resolveHaiku('Fresh new status');
@@ -1193,7 +1196,7 @@ describe('DynamicStatusGenerator', () => {
                 expect(slowResult).toBe('Fresh new status');
             });
 
-            it('should reset haikuInFlight on error so subsequent debounced calls use cache not fallback', async () => {
+            it('should reset haikuInFlight on error so subsequent cooldown calls use cache not null', async () => {
                 const baseTime = 1000000;
                 setSystemTime(new Date(baseTime));
 
@@ -1211,28 +1214,28 @@ describe('DynamicStatusGenerator', () => {
                 const first = await generator.generateSynopsis(context);
                 expect(first).toBe('Cached from success');
 
-                // Advance time past debounce window to allow a second real call
+                // Advance time past cooldown window to allow a second real call
                 setSystemTime(new Date(baseTime + 3000));
 
                 // Second call fails — finally block should still reset haikuInFlight
                 mockGenerateText.mockRejectedValueOnce(new Error('API error'));
                 const second = await generator.generateSynopsis(context);
-                expect(second).toBe('Thinking...'); // Error fallback
+                expect(second).toBeNull(); // Error returns null
 
-                // Third call within debounce window of second call — should use cached status from first call
-                // If haikuInFlight were stuck true (finally didn't run), this would return 'Thinking...' instead
+                // Third call within cooldown window of second call — should use cached status from first call
+                // If haikuInFlight were stuck true (finally didn't run), this would return null instead
                 const third = await generator.generateSynopsis(context);
                 expect(third).toBe('Cached from success');
-                expect(mockGenerateText).toHaveBeenCalledTimes(2); // Only 2 real calls, third was debounced
+                expect(mockGenerateText).toHaveBeenCalledTimes(2); // Only 2 real calls, third used cache
 
                 setSystemTime();
             });
 
-            it('should reset haikuInFlight via resetDebounceState', async () => {
-                // Use a system time small enough that Date.now() - 0 < HAIKU_DEBOUNCE_MS (2000)
-                // so the debounce window applies after resetDebounceState sets lastHaikuCall = 0.
-                // This kills the BooleanLiteral mutant: if resetDebounceState set haikuInFlight=true,
-                // the second call within the debounce window would return the fallback, not the API result.
+            it('should reset haikuInFlight via resetCooldownState', async () => {
+                // Use a system time small enough that Date.now() - 0 < HAIKU_COOLDOWN_MS (2000)
+                // so the cooldown window applies after resetCooldownState sets lastHaikuCall = 0.
+                // This kills the BooleanLiteral mutant: if resetCooldownState set haikuInFlight=true,
+                // the second call within the cooldown window would return null, not the API result.
                 setSystemTime(new Date(1000));
 
                 // Start a slow call to set haikuInFlight = true
@@ -1254,12 +1257,12 @@ describe('DynamicStatusGenerator', () => {
                 // Start first call (sets haikuInFlight = true, lastHaikuCall = 1000)
                 const firstCallPromise = generator.generateSynopsis(context);
 
-                // Reset debounce state (should clear haikuInFlight AND set lastHaikuCall = 0)
-                resetDebounceState();
+                // Reset cooldown state (should clear haikuInFlight AND set lastHaikuCall = 0)
+                resetCooldownState();
 
                 // At time=1000ms with lastHaikuCall=0: now - lastHaikuCall = 1000 - 0 = 1000 < 2000
-                // so the debounce window applies. If haikuInFlight is false (correct), we fall through
-                // to make a real API call. If haikuInFlight were true (mutant), we'd get 'Thinking...'.
+                // so the cooldown window applies. If haikuInFlight is false (correct), we fall through
+                // to make a real API call. If haikuInFlight were true (mutant), we'd get null.
                 mockGenerateText.mockResolvedValueOnce('After reset');
                 const result = await generator.generateSynopsis(context);
                 expect(result).toBe('After reset'); // Proves haikuInFlight was reset to false
@@ -1373,11 +1376,11 @@ describe('DynamicStatusGenerator', () => {
                 expect(mockLogger.error).toHaveBeenCalledWith({
                     error: testError,
                     phase: 'responding',
-                    msg:   'Failed to generate synopsis, using fallback',
+                    msg:   'Failed to generate synopsis',
                 });
             });
 
-            it('should log debug when call is debounced', async () => {
+            it('should log debug when call is within cooldown', async () => {
                 // Skip if mock is corrupted by another test
                 if(!isMockValid(mockLogger.debug)) {
                     return;
@@ -1396,16 +1399,16 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
                 mockLogger.debug.mockClear();
 
-                // Second call (debounced)
+                // Second call (within cooldown)
                 await generator.generateSynopsis(context);
 
                 expect(mockLogger.debug).toHaveBeenCalledWith({
                     phase: 'thinking',
-                    msg:   'Haiku call debounced, using cached status',
+                    msg:   'Haiku call within cooldown, using cached status',
                 });
             });
 
-            it('should not log info when using cached/debounced status', async () => {
+            it('should not log info when using cached/cooldown status', async () => {
                 // Skip if mock is corrupted by another test
                 if(!isMockValid(mockLogger.info)) {
                     return;
@@ -1424,7 +1427,7 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
                 mockLogger.info.mockClear();
 
-                // Second call (debounced)
+                // Second call (within cooldown)
                 await generator.generateSynopsis(context);
 
                 expect(mockLogger.info).not.toHaveBeenCalled();
@@ -1460,8 +1463,8 @@ describe('DynamicStatusGenerator', () => {
                     identityContext: 'Test identity',
                 });
 
-                // Reset debounce state to allow this call
-                resetDebounceState();
+                // Reset cooldown state to allow this call
+                resetCooldownState();
 
                 const context: SynopsisContext = {
                     phase:       'using_tool',
@@ -1483,8 +1486,8 @@ describe('DynamicStatusGenerator', () => {
                     identityContext: 'Test identity',
                 });
 
-                // Reset debounce state to allow this call
-                resetDebounceState();
+                // Reset cooldown state to allow this call
+                resetCooldownState();
 
                 const context: SynopsisContext = {
                     phase:       'responding',
@@ -1498,7 +1501,7 @@ describe('DynamicStatusGenerator', () => {
         });
 
         describe('multiple generators', () => {
-            it('should share debounce state across generators', async () => {
+            it('should share cooldown state across generators', async () => {
                 const generator1 = createDynamicStatusGenerator({
                     identityContext: 'Identity 1',
                 });
@@ -1515,7 +1518,7 @@ describe('DynamicStatusGenerator', () => {
                 await generator1.generateSynopsis(context);
                 expect(mockGenerateText).toHaveBeenCalledTimes(1);
 
-                // Second generator should be debounced due to shared state
+                // Second generator should be within cooldown due to shared state
                 await generator2.generateSynopsis(context);
                 expect(mockGenerateText).toHaveBeenCalledTimes(1);
             });
@@ -1615,8 +1618,8 @@ describe('DynamicStatusGenerator', () => {
     });
 
     describe('generateCatchUpSynopsis', () => {
-        describe('in-flight debounce behavior', () => {
-            it('should return fallback when catch-up debounced and Haiku is in-flight', async () => {
+        describe('in-flight cooldown behavior', () => {
+            it('should return null when catch-up is within cooldown and Haiku is in-flight', async () => {
                 // Create a delayed mock that we can control
                 let resolveHaiku!: (value: string) => void;
                 const slowPromise = new Promise<string>((resolve) => {
@@ -1641,9 +1644,9 @@ describe('DynamicStatusGenerator', () => {
                 // Start first call (will be in-flight)
                 const firstCallPromise = generator.generateCatchUpSynopsis(catchUpContext);
 
-                // Second call while first is in-flight should return fallback
+                // Second call while first is in-flight should return null
                 const second = await generator.generateCatchUpSynopsis(catchUpContext);
-                expect(second).toBe('Messages waiting...');
+                expect(second).toBeNull();
 
                 // Resolve the first call
                 resolveHaiku('Craig left me something!');
@@ -1651,7 +1654,7 @@ describe('DynamicStatusGenerator', () => {
                 expect(first).toBe('Craig left me something!');
             });
 
-            it('should use cached catch-up status on subsequent debounced calls', async () => {
+            it('should use cached catch-up status on subsequent cooldown calls', async () => {
                 mockGenerateText.mockResolvedValueOnce('Craig left me something!');
 
                 const generator = createDynamicStatusGenerator({
@@ -1671,7 +1674,7 @@ describe('DynamicStatusGenerator', () => {
                 const first = await generator.generateCatchUpSynopsis(catchUpContext);
                 expect(first).toBe('Craig left me something!');
 
-                // Second debounced call should use cache, NOT in-flight fallback
+                // Second cooldown call should use cache, NOT in-flight null
                 // This kills the BlockStatement mutant on `haikuInFlight = false` in the finally block
                 mockGenerateText.mockResolvedValueOnce('Different status');
                 const second = await generator.generateCatchUpSynopsis(catchUpContext);
@@ -1679,11 +1682,11 @@ describe('DynamicStatusGenerator', () => {
                 expect(mockGenerateText).toHaveBeenCalledTimes(1);
             });
 
-            it('should make fresh API call when outside debounce window', async () => {
+            it('should make fresh API call when outside cooldown window', async () => {
                 // This kills the ConditionalExpression mutant that turns the outer `if` to `if(true)`.
-                // With the mutant, ALL catch-up calls go through the debounce path; if cache is
+                // With the mutant, ALL catch-up calls go through the cooldown path; if cache is
                 // populated from the first call, the second call returns the stale cache even after
-                // the debounce window expires. Without the mutant, the condition is correctly false
+                // the cooldown window expires. Without the mutant, the condition is correctly false
                 // (now - lastHaikuCall >= 2000), so a fresh API call is made.
                 const baseTime = 1000000;
                 setSystemTime(new Date(baseTime));
@@ -1707,10 +1710,10 @@ describe('DynamicStatusGenerator', () => {
                 const first = await generator.generateCatchUpSynopsis(catchUpContext);
                 expect(first).toBe('First catch-up status');
 
-                // Advance past debounce window (3000ms > 2000ms threshold)
+                // Advance past cooldown window (3000ms > 2000ms threshold)
                 setSystemTime(new Date(baseTime + 3000));
 
-                // Second call should make a fresh API call (debounce window expired)
+                // Second call should make a fresh API call (cooldown window expired)
                 // With the mutant (if true), it would return cached 'First catch-up status'
                 // Without the mutant (correct), it makes a real API call and returns new value
                 mockGenerateText.mockResolvedValueOnce('Fresh catch-up status');
@@ -1720,6 +1723,35 @@ describe('DynamicStatusGenerator', () => {
 
                 setSystemTime();
             });
+
+            it('should make real API call when within cooldown window but cache is null for catch-up', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const catchUpContext = {
+                    totalUnread:         5,
+                    channelCount:        2,
+                    channelNames:        ['general', 'random'],
+                    topAuthors:          ['Craig', 'Alice'],
+                    timeSinceLastActive: '3 hours',
+                    timeOfDay:           'morning',
+                    dayOfWeek:           'Monday',
+                };
+
+                // First call fails, cache stays null
+                mockGenerateText.mockRejectedValueOnce(new Error('fail'));
+                await generator.generateCatchUpSynopsis(catchUpContext); // fails, null returned, cache stays null
+
+                // Second call within cooldown window - should NOT use null cache, should make real call
+                mockGenerateText.mockResolvedValueOnce('Success after fail');
+                const result = await generator.generateCatchUpSynopsis(catchUpContext);
+
+                // With cachedStatus mutation to if(true): would return null (cachedStatus)
+                // With original if(cachedStatus): makes real call since cachedStatus is null
+                expect(result).toBe('Success after fail');
+                expect(mockGenerateText).toHaveBeenCalledTimes(2);
+            });
         });
     });
 
@@ -1727,15 +1759,15 @@ describe('DynamicStatusGenerator', () => {
         beforeEach(() => {
             mockGenerateText.mockReset();
             mockGenerateText.mockResolvedValue('Pondering deeply...');
-            resetDebounceState();
+            resetCooldownState();
         });
 
         afterEach(() => {
-            resetDebounceState();
+            resetCooldownState();
             setSystemTime();
         });
 
-        it('should return catch-up fallback when generateSynopsis is in-flight', async () => {
+        it('should return null for catch-up when generateSynopsis is in-flight', async () => {
             let resolveHaiku!: (value: string) => void;
             const slowPromise = new Promise<string>((resolve) => {
                 resolveHaiku = resolve;
@@ -1764,16 +1796,16 @@ describe('DynamicStatusGenerator', () => {
             // Start synopsis call (will be in-flight)
             const synopsisPromise = generator.generateSynopsis(synopsisContext);
 
-            // Catch-up call while synopsis is in-flight should return catch-up fallback
+            // Catch-up call while synopsis is in-flight should return null
             const catchUp = await generator.generateCatchUpSynopsis(catchUpContext);
-            expect(catchUp).toBe('Messages waiting...');
+            expect(catchUp).toBeNull();
 
             // Clean up
             resolveHaiku('Done');
             await synopsisPromise;
         });
 
-        it('should return synopsis fallback when generateCatchUpSynopsis is in-flight', async () => {
+        it('should return null for synopsis when generateCatchUpSynopsis is in-flight', async () => {
             let resolveHaiku!: (value: string) => void;
             const slowPromise = new Promise<string>((resolve) => {
                 resolveHaiku = resolve;
@@ -1803,9 +1835,9 @@ describe('DynamicStatusGenerator', () => {
             // Start catch-up call (will be in-flight)
             const catchUpPromise = generator.generateCatchUpSynopsis(catchUpContext);
 
-            // Synopsis call while catch-up is in-flight should return phase fallback
+            // Synopsis call while catch-up is in-flight should return null
             const synopsis = await generator.generateSynopsis(synopsisContext);
-            expect(synopsis).toBe('Working...');
+            expect(synopsis).toBeNull();
 
             // Clean up
             resolveHaiku('Done');
