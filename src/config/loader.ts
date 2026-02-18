@@ -51,6 +51,7 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
         },
         agent: {
             oauthToken: resources.ClaudeCodeOAuthToken.value,
+            mainModel:  resources.IsambardMainModel.value,
         },
         discord: {
             botToken:      resources.DiscordBotToken.value,

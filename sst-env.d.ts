@@ -42,6 +42,10 @@ declare module "sst" {
       "type": "sst.sst.Secret"
       "value": string
     }
+    "IsambardMainModel": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
     "IsambardMemory": {
       "name": string
       "type": "sst.aws.Dynamo"

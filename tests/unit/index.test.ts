@@ -57,6 +57,7 @@ describe('createApp', () => {
                 },
                 agent: {
                     oauthToken: 'test-oauth-token-123',
+                    mainModel:  'sonnet',
                 },
                 caldav: {
                     url:      'https://caldav.example.com',
@@ -138,6 +139,7 @@ describe('createApp', () => {
                 },
                 agent: {
                     oauthToken: 'test-oauth-token-123',
+                    mainModel:  'sonnet',
                 },
                 caldav: {
                     url:      'https://caldav.example.com',
@@ -310,6 +312,7 @@ describe('createApp', () => {
                 },
                 agent: {
                     oauthToken: 'test-oauth-token-123',
+                    mainModel:  'sonnet',
                 },
                 caldav: {
                     url:      'https://caldav.example.com',
@@ -486,6 +489,7 @@ describe('createApp', () => {
                 },
                 agent: {
                     oauthToken: '', // Empty string (falsy)
+                    mainModel:  'sonnet',
                 },
                 caldav: {
                     url:      'https://caldav.example.com',
@@ -624,6 +628,7 @@ describe('createApp', () => {
                 },
                 agent: {
                     oauthToken: 'test-oauth-token-123', // Truthy
+                    mainModel:  'sonnet',
                 },
                 caldav: {
                     url:      'https://caldav.example.com',
@@ -764,6 +769,7 @@ describe('createApp', () => {
                 },
                 agent: {
                     oauthToken: 'test-oauth-token-123', // Truthy
+                    mainModel:  'sonnet',
                 },
                 caldav: {
                     url:      'https://caldav.example.com',
@@ -908,6 +914,7 @@ describe('createApp', () => {
                 },
                 agent: {
                     oauthToken: 'test-oauth-token-123', // Truthy
+                    mainModel:  'sonnet',
                 },
                 caldav: {
                     url:      'https://caldav.example.com',
@@ -1026,6 +1033,7 @@ describe('createApp', () => {
                 },
                 agent: {
                     oauthToken: 'test-oauth-token-123', // Truthy
+                    mainModel:  'sonnet',
                 },
                 caldav: {
                     url:      'https://caldav.example.com',
@@ -1108,6 +1116,7 @@ describe('createApp', () => {
                 },
                 agent: {
                     oauthToken: 'test-oauth-token-123',
+                    mainModel:  'sonnet',
                 },
                 caldav: {
                     url:      'https://caldav.example.com',
@@ -1193,6 +1202,7 @@ describe('createApp', () => {
                 },
                 agent: {
                     oauthToken: 'test-oauth-token-123',
+                    mainModel:  'sonnet',
                 },
                 caldav: {
                     url:      'https://caldav.example.com',
@@ -1274,6 +1284,7 @@ describe('createApp', () => {
                 },
                 agent: {
                     oauthToken: 'test-oauth-token-123',
+                    mainModel:  'sonnet',
                 },
                 caldav: {
                     url:      'https://caldav.example.com',
@@ -1450,6 +1461,7 @@ describe('createApp', () => {
                 },
                 agent: {
                     oauthToken: 'test-oauth-token-123',
+                    mainModel:  'sonnet',
                 },
                 caldav: {
                     url:      'https://caldav.example.com',

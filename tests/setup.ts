@@ -28,6 +28,7 @@ export const mockSstResource: Record<string, { value?: unknown, name?: string }>
     ClaudeCodeOAuthToken: { value: 'test-oauth-token' },
     DiscordHomeGuildId:   { value: 'test-guild-123' },
     DiscordApplicationId: { value: 'test-app-id' },
+    IsambardMainModel:    { value: 'sonnet' },
     IsambardMemory:       { name: 'IsambardMemory' },
     // Planned integrations (commented out - not yet implemented):
     // CaldavUrl:                     { value: 'https://caldav.icloud.com' },
@@ -48,6 +49,7 @@ export function resetMockSstResource(): void {
     mockSstResource.ClaudeCodeOAuthToken = { value: 'test-oauth-token' };
     mockSstResource.DiscordHomeGuildId = { value: 'test-guild-123' };
     mockSstResource.DiscordApplicationId = { value: 'test-app-id' };
+    mockSstResource.IsambardMainModel = { value: 'sonnet' };
     mockSstResource.IsambardMemory = { name: 'IsambardMemory' };
     // Planned integrations (commented out - not yet implemented):
     // mockSstResource.CaldavUrl = { value: 'https://caldav.icloud.com' };

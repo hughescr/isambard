@@ -130,6 +130,7 @@ export async function createApp(): Promise<App> {
         emailMcpServer:             emailSetup?.emailMcpServer,
         plugins,
         taskPersistenceCoordinator: storage.taskPersistenceCoordinator,
+        mainModel:                  config.agent.mainModel,
     });
 
     // Load identity

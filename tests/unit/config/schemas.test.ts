@@ -53,6 +53,42 @@ describe('agentConfigSchema', () => {
         const result = agentConfigSchema.safeParse(invalidConfig);
         expect(result.success).toBe(false);
     });
+
+    test('should default mainModel to "sonnet" when not provided', () => {
+        const config = {
+            oauthToken: 'test-token',
+        };
+
+        const result = agentConfigSchema.safeParse(config);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.mainModel).toBe('sonnet');
+            expect(result.data.mainModel).not.toBe('');
+        }
+    });
+
+    test('should accept a custom mainModel string', () => {
+        const config = {
+            oauthToken: 'test-token',
+            mainModel:  'opus',
+        };
+
+        const result = agentConfigSchema.safeParse(config);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.mainModel).toBe('opus');
+        }
+    });
+
+    test('should reject empty mainModel string', () => {
+        const config = {
+            oauthToken: 'test-token',
+            mainModel:  '',
+        };
+
+        const result = agentConfigSchema.safeParse(config);
+        expect(result.success).toBe(false);
+    });
 });
 
 describe('caldavConfigSchema', () => {

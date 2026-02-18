@@ -16,7 +16,6 @@ import { buildResumePrompt } from './resume-prompt-builder';
 import { buildMultimodalContent, hasImages } from './multimodal-message-builder';
 import type { TaskPersistenceCoordinator } from './task-persistence-coordinator';
 
-const CLAUDE_MODEL = 'opus';
 const MAX_AUTO_RESUME_ATTEMPTS = 3;
 
 // Stryker disable all: Configuration constants validated by integration tests
@@ -262,6 +261,8 @@ export interface ClaudeAgentOptions {
     plugins?:                    SdkPluginConfig[]
     /** Task persistence coordinator for maintaining tasks across sessions */
     taskPersistenceCoordinator?: TaskPersistenceCoordinator
+    /** Claude model to use (defaults to 'sonnet' if not provided; normally set from IsambardMainModel SST secret via config) */
+    mainModel?:                  string
 }
 
 /** Options for handleInput processing */
@@ -856,6 +857,7 @@ async function processStreamEvents(
 
 /**
  * Build query options for Agent SDK.
+ * @param mainModel Model name to use for this query
  * @param systemPrompt System prompt with core identity
  * @param memoryMcpServer Memory MCP server configuration
  * @param discordMcpServer Discord MCP server configuration
@@ -865,6 +867,7 @@ async function processStreamEvents(
  * @returns Query options object for Agent SDK
  */
 function buildQueryOptions(
+    mainModel: string,
     systemPrompt: string,
     memoryMcpServer: McpServerConfig | undefined,
     discordMcpServer: McpServerConfig | undefined,
@@ -874,7 +877,7 @@ function buildQueryOptions(
     options?: HandleInputOptions
 ) {
     return {
-        model:             CLAUDE_MODEL,
+        model:             mainModel,
         systemPrompt,
         tools:             EXPLICIT_TOOLS,
         agents:            EXPLICIT_AGENTS,
@@ -1110,6 +1113,7 @@ async function attemptAutoResume(
  * @param capturedSessionId - Session ID to resume (undefined if interrupted or no session)
  * @param wasInterrupted - Whether processing was interrupted
  * @param retryableQuery - Retryable query function for Claude API calls
+ * @param resolvedModel - Resolved model name for queries
  * @param systemPrompt - System prompt with core identity
  * @param memoryMcpServer - Memory MCP server configuration
  * @param discordMcpServer - Discord MCP server configuration
@@ -1125,6 +1129,7 @@ async function collectBackgroundTasks(
     capturedSessionId: string | undefined,
     wasInterrupted: boolean,
     retryableQuery: typeof import('@anthropic-ai/claude-agent-sdk').query,
+    resolvedModel: string,
     systemPrompt: string,
     memoryMcpServer: McpServerConfig | undefined,
     discordMcpServer: McpServerConfig | undefined,
@@ -1145,7 +1150,7 @@ async function collectBackgroundTasks(
     while(tracker.hasUncollectedBackgroundTasks() && autoResumeAttempts < MAX_AUTO_RESUME_ATTEMPTS) {
         autoResumeAttempts++;
         const uncollectedBefore = tracker.getProgress().uncollectedBackgroundTasks;
-        const queryOptions = buildQueryOptions(systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, options);
+        const queryOptions = buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, options);
         const resumeResult = await attemptAutoResume(
             tracker, updatedText, updatedSessionId,
             retryableQuery, queryOptions, options, taskPersistenceCoordinator
@@ -1162,7 +1167,9 @@ async function collectBackgroundTasks(
 }
 
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
-    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, taskPersistenceCoordinator } = options;
+    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, taskPersistenceCoordinator, mainModel } = options;
+    // Stryker disable next-line StringLiteral: Fallback model when secret not configured
+    const resolvedModel = mainModel ?? 'sonnet';
 
     // Load retry configuration
     const retryConfig = loadRetryConfig();
@@ -1218,7 +1225,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 // 6. Query with MCP servers, plugins, and sandboxed execution (with retry)
                 const response = retryableQuery({
                     prompt,
-                    options: buildQueryOptions(systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, options),
+                    options: buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, options),
                 });
 
                 // 7. Process stream events and track progress
@@ -1231,7 +1238,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 // 8. Auto-resume: collect background tasks
                 const resumeCollected = await collectBackgroundTasks(
                     tracker, lastAssistantText, capturedSessionId, wasInterrupted,
-                    retryableQuery, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, options, taskPersistenceCoordinator
+                    retryableQuery, resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, options, taskPersistenceCoordinator
                 );
                 lastAssistantText = resumeCollected.lastAssistantText;
                 capturedSessionId = resumeCollected.capturedSessionId;

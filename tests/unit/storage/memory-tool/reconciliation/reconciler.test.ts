@@ -102,8 +102,10 @@ describe('retryWithBackoff', () => {
         // maxAttempts=3: attempt 1 fails→delay(1), attempt 2 fails→delay(2), attempt 3 fails→done
         // Each retry cycle: flush microtasks so retryWithBackoff registers the timer, then fire it
         const resultPromise = retryWithBackoff(op, { baseDelayMs: 1, maxAttempts: 3 }, 'test');
-        await Promise.resolve(); jest.runOnlyPendingTimers(); // retry 1: delay(1)
-        await Promise.resolve(); jest.runOnlyPendingTimers(); // retry 2: delay(2)
+        await Promise.resolve();
+        jest.runOnlyPendingTimers(); // retry 1: delay(1)
+        await Promise.resolve();
+        jest.runOnlyPendingTimers(); // retry 2: delay(2)
         const result = await resultPromise;
         expect(result).toBeUndefined();
         expect(op).toHaveBeenCalledTimes(3);
@@ -128,8 +130,10 @@ describe('retryWithBackoff', () => {
         // maxAttempts=3: attempts 1→delay(10), 2→delay(20), 3→done
         // We verify: 3 total calls (no early return), delays were attempted
         const resultPromise = retryWithBackoff(op, { baseDelayMs: 10, maxAttempts: 3 }, 'test');
-        await Promise.resolve(); jest.runOnlyPendingTimers(); // retry 1: delay(10)
-        await Promise.resolve(); jest.runOnlyPendingTimers(); // retry 2: delay(20)
+        await Promise.resolve();
+        jest.runOnlyPendingTimers(); // retry 1: delay(10)
+        await Promise.resolve();
+        jest.runOnlyPendingTimers(); // retry 2: delay(20)
         await resultPromise;
         expect(op).toHaveBeenCalledTimes(3);
     });

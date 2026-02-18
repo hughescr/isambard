@@ -3,6 +3,7 @@
 
 // Claude Agent
 export const claudeCodeOAuthToken = new sst.Secret('ClaudeCodeOAuthToken');
+export const isambardMainModel = new sst.Secret('IsambardMainModel');
 
 // Discord
 export const discordBotToken = new sst.Secret('DiscordBotToken');

@@ -351,16 +351,37 @@ describe('createClaudeAgent', () => {
     });
 
     describe('Configuration constants', () => {
-        test('should use "sonnet" as CLAUDE_MODEL', async () => {
+        test('should use "sonnet" as CLAUDE_MODEL default (fallback)', async () => {
             const agent = createClaudeAgent({});
             await agent.handleInput([mockMessageContext]);
 
             expect(querySpy).toHaveBeenCalledTimes(1);
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            expect(queryParams.options.model).toBe('opus');
+            expect(queryParams.options.model).toBe('sonnet');
             // Verify model is not an empty string (kills StringLiteral mutant on line 14)
             expect(queryParams.options.model).not.toBe('');
+        });
+
+        test('should use mainModel option when provided', async () => {
+            const agent = createClaudeAgent({ mainModel: 'opus' });
+            await agent.handleInput([mockMessageContext]);
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            expect(queryParams.options.model).toBe('opus');
+            expect(queryParams.options.model).not.toBe('sonnet');
+        });
+
+        test('should fall back to CLAUDE_MODEL when mainModel is not provided', async () => {
+            const agent = createClaudeAgent({});
+            await agent.handleInput([mockMessageContext]);
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            expect(queryParams.options.model).toBe('sonnet');
         });
 
         test('should include all required tools in EXPLICIT_TOOLS', async () => {

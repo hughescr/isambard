@@ -18,6 +18,7 @@ function createMockResources(
         DiscordApplicationId: { value: 'app-id-456' },
         DiscordHomeGuildId:   { value: 'home-guild-123' },
         ClaudeCodeOAuthToken: { value: 'test-oauth-token-12345' },
+        IsambardMainModel:    { value: 'sonnet' },
         // Email secrets default to undefined (email config is optional)
         ImapHost:             { value: undefined },
         ImapPort:             { value: undefined },
@@ -69,6 +70,25 @@ describe.concurrent('loadConfig', () => {
 
             expect(config.app.nodeEnv).toBe('production');
             expect(config.app.port).toBe(8080);
+        });
+
+        test('should pass custom IsambardMainModel through to config.agent.mainModel', () => {
+            const resources = createMockResources({
+                IsambardMainModel: { value: 'opus' },
+            });
+            const config = loadConfig(resources);
+
+            expect(config.agent.mainModel).toBe('opus');
+            expect(config.agent.mainModel).not.toBe('sonnet');
+        });
+
+        test('should use default mainModel "sonnet" when IsambardMainModel value is undefined', () => {
+            const resources = createMockResources({
+                IsambardMainModel: { value: undefined },
+            });
+            const config = loadConfig(resources);
+
+            expect(config.agent.mainModel).toBe('sonnet');
         });
     });
 
