@@ -52,6 +52,7 @@ export const emailConfigSchema = z.object({
     fromEmailInformal:   z.string().email().optional(),
     adminDiscordUserId:  z.string().min(1),
     sendSoftLimitPerDay: z.number().int().positive().default(10),
+    imapDebug:           z.boolean().default(false),
     // Stryker restore BooleanLiteral,StringLiteral,ArithmeticOperator
 });
 

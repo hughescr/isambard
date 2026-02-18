@@ -81,6 +81,7 @@ describe('createApp', () => {
                     fromEmailInformal:   'izzy@rungie.com',
                     adminDiscordUserId:  '423276934781468692',
                     sendSoftLimitPerDay: 10,
+                    imapDebug:           false,
                 },
                 discord: {
                     botToken:      'bot-token-123',
@@ -163,6 +164,7 @@ describe('createApp', () => {
                     fromEmailInformal:   'izzy@rungie.com',
                     adminDiscordUserId:  '423276934781468692',
                     sendSoftLimitPerDay: 10,
+                    imapDebug:           false,
                 },
                 discord: {
                     botToken:      'bot-token-123',
@@ -336,6 +338,7 @@ describe('createApp', () => {
                     fromEmailInformal:   'izzy@rungie.com',
                     adminDiscordUserId:  '423276934781468692',
                     sendSoftLimitPerDay: 10,
+                    imapDebug:           false,
                 },
                 discord: {
                     botToken:      'bot-token-123',
@@ -513,6 +516,7 @@ describe('createApp', () => {
                     fromEmailInformal:   'izzy@rungie.com',
                     adminDiscordUserId:  '423276934781468692',
                     sendSoftLimitPerDay: 10,
+                    imapDebug:           false,
                 },
                 discord: {
                     botToken:      'bot-token-123',
@@ -652,6 +656,7 @@ describe('createApp', () => {
                     fromEmailInformal:   'izzy@rungie.com',
                     adminDiscordUserId:  '423276934781468692',
                     sendSoftLimitPerDay: 10,
+                    imapDebug:           false,
                 },
                 discord: {
                     botToken:      'bot-token-123',
@@ -793,6 +798,7 @@ describe('createApp', () => {
                     fromEmailInformal:   'izzy@rungie.com',
                     adminDiscordUserId:  '423276934781468692',
                     sendSoftLimitPerDay: 10,
+                    imapDebug:           false,
                 },
                 discord: {
                     botToken:      'bot-token-123',
@@ -938,6 +944,7 @@ describe('createApp', () => {
                     fromEmailInformal:   'izzy@rungie.com',
                     adminDiscordUserId:  '423276934781468692',
                     sendSoftLimitPerDay: 10,
+                    imapDebug:           false,
                 },
                 discord: {
                     botToken:      'bot-token-123',
@@ -1057,6 +1064,7 @@ describe('createApp', () => {
                     fromEmailInformal:   'izzy@rungie.com',
                     adminDiscordUserId:  '423276934781468692',
                     sendSoftLimitPerDay: 10,
+                    imapDebug:           false,
                 },
                 discord: {
                     botToken:      'bot-token-123',
@@ -1140,6 +1148,7 @@ describe('createApp', () => {
                     fromEmailInformal:   'izzy@rungie.com',
                     adminDiscordUserId:  '423276934781468692',
                     sendSoftLimitPerDay: 10,
+                    imapDebug:           false,
                 },
                 discord: {
                     botToken:      'bot-token-123',
@@ -1226,6 +1235,7 @@ describe('createApp', () => {
                     fromEmailInformal:   'izzy@rungie.com',
                     adminDiscordUserId:  '423276934781468692',
                     sendSoftLimitPerDay: 10,
+                    imapDebug:           false,
                 },
                 discord: {
                     botToken:      'bot-token-123',
@@ -1308,6 +1318,7 @@ describe('createApp', () => {
                     fromEmailInformal:   'izzy@rungie.com',
                     adminDiscordUserId:  '423276934781468692',
                     sendSoftLimitPerDay: 10,
+                    imapDebug:           false,
                 },
                 discord: {
                     botToken:      'bot-token-123',
@@ -1485,6 +1496,7 @@ describe('createApp', () => {
                     fromEmailInformal:   'izzy@rungie.com',
                     adminDiscordUserId:  '423276934781468692',
                     sendSoftLimitPerDay: 10,
+                    imapDebug:           false,
                 },
                 discord: {
                     botToken:      'bot-token-123',

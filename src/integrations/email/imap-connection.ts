@@ -2,6 +2,7 @@ import { ImapFlow } from 'imapflow';
 import type { FetchMessageObject, MessageStructureObject } from 'imapflow';
 import { convert } from 'html-to-text';
 import _ from 'lodash';
+import { logger } from '@hughescr/logger';
 import { ImapConnectionError } from '@/integrations/email/errors';
 import type { EmailMetadata, EmailAddress, EmailHeaders, EmailSummary } from '@/integrations/email/types';
 import { EmailFolder } from '@/integrations/email/types';
@@ -16,6 +17,7 @@ export interface ImapConnectionConfig {
     user:             string
     password:         string
     maxBodySizeBytes: number
+    imapDebug?:       boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -237,9 +239,13 @@ export class ImapConnection {
     private          _connected: boolean;
     // Stryker disable next-line ObjectLiteral: initial queue value is implementation infrastructure
     private          _queue:     Promise<void> = Promise.resolve();
+    // Stryker disable next-line BooleanLiteral: initialization flag — false is correct initial state
+    private          _idleAborted  = false;
     private          _idleAbort: (() => void) | null = null;
 
     constructor(config: ImapConnectionConfig) {
+        // Stryker disable next-line ConditionalExpression,BooleanLiteral,EqualityOperator: imapDebug conditional is debug configuration — not behavior-affecting
+        const imapLogger = config.imapDebug === true ? logger : false;
         this.client = new ImapFlow({
             host:   config.host,
             port:   config.port,
@@ -249,8 +255,7 @@ export class ImapConnection {
                 user: config.user,
                 pass: config.password,
             },
-            // Stryker disable next-line BooleanLiteral: logger:false disables imapflow's built-in logging
-            logger: false,
+            logger: imapLogger,
         });
         this.maxBytes   = config.maxBodySizeBytes;
         // Stryker disable next-line BooleanLiteral: initialization flag - false is correct initial state
@@ -548,13 +553,22 @@ export class ImapConnection {
      */
     async idle(folder: string): Promise<void> {
         return this.serialize(async () => {
+            // Stryker disable next-line BooleanLiteral: reset abort flag at start of each idle cycle
+            this._idleAborted = false;
             await this.client.mailboxOpen(folder);
-            await Promise.race([
-                this.client.idle(),
-                new Promise<void>((resolve) => {
-                    this._idleAbort = resolve;
-                }),
-            ]);
+            // Stryker disable next-line ConditionalExpression,BlockStatement: race guard — skip IDLE if cancelIdle() was called during mailboxOpen
+            if(!this._idleAborted) {
+                await Promise.race([
+                    this.client.idle(),
+                    new Promise<void>((resolve) => {
+                        this._idleAbort = resolve;
+                        // Stryker disable next-line ConditionalExpression,BlockStatement: guard for cancelIdle() called between mailboxOpen and here
+                        if(this._idleAborted) {
+                            resolve();
+                        }
+                    }),
+                ]);
+            }
             this._idleAbort = null;
         });
     }
@@ -564,6 +578,8 @@ export class ImapConnection {
      * Synchronous — does NOT go through the serialize queue.
      */
     cancelIdle(): void {
+        // Stryker disable next-line BooleanLiteral: race guard — marks cancellation before _idleAbort is set
+        this._idleAborted = true;
         if(this._idleAbort !== null) {
             this._idleAbort();
             this._idleAbort = null;

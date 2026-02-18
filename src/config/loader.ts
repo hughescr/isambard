@@ -96,6 +96,8 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
                 // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string must become undefined for optional fields
                 fromEmailInformal:  env.get('EMAIL_FROM_EMAIL_INFORMAL').asString() || undefined,
                 adminDiscordUserId: resources.AdminDiscordUserId.value,
+                // Stryker disable next-line LogicalOperator: ?? undefined is configuration wiring — not behavior-affecting
+                imapDebug:          env.get('EMAIL_IMAP_DEBUG').asBool() ?? undefined,
             }
             : undefined,
         // Planned integrations (commented out until implemented):

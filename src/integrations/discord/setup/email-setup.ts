@@ -72,6 +72,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         user:             emailConfig.user,
         password:         emailConfig.password,
         maxBodySizeBytes: emailConfig.maxBodySizeBytes,
+        imapDebug:        emailConfig.imapDebug,
     });
 
     // Create classifier, allowlist, counters
