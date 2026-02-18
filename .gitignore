@@ -49,6 +49,7 @@ neo4j_db/
 
 # Claude local config options
 .claude/settings.local.json
+.claude/agent-memory/
 .serena
 
 # SST
