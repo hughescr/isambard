@@ -2,6 +2,7 @@ import { Resource } from 'sst';
 import env from 'env-var';
 import { stat, mkdir } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
+import _ from 'lodash';
 import { loadConfig, loadDynamoDBConfig } from './config/loader';
 import { createClaudeAgent } from './agent/agent';
 import { loadPlugins } from './agent/plugin-loader';
@@ -18,6 +19,8 @@ import type { DiscordBot } from './integrations/discord/bot';
 import { resolveTimezone } from './utils/time';
 import { logger, setTimezone } from '@hughescr/logger';
 import { createCatchUpSignalAdapter } from './app/catchup-signal-adapter';
+import { setupEmail } from './integrations/discord/setup/email-setup';
+import type { EmailSetupResult } from './integrations/discord/setup/email-setup';
 
 export interface App {
     /**
@@ -69,13 +72,42 @@ export async function createApp(): Promise<App> {
 
     // Create infrastructure layers
     const storage = createStorageLayer(dynamoDBConfig, config.reconciliation);
-    const contextLayer = createContextLayer(storage.memoryBackend);
     const discordInfra = createDiscordInfrastructure({
         discordConfig: config.discord,
         docClient:     storage.docClient,
         tableName:     storage.tableName,
         memoryBackend: storage.memoryBackend,
     });
+
+    // Set up email integration if email config is present (conditional — non-fatal)
+    // Must happen before contextLayer so the email service can be wired into the perch prompt
+    let emailSetup: EmailSetupResult | undefined;
+    if(config.email) {
+        // Stryker disable BlockStatement: try-catch wraps email setup - error handling
+        try {
+            emailSetup = await setupEmail({
+                emailConfig:   config.email,
+                docClient:     storage.docClient,
+                tableName:     storage.tableName,
+                client:        discordInfra.discordClient,
+                botToken:      config.discord.botToken,
+                applicationId: config.discord.applicationId,
+            });
+        } catch (err) {
+            logger.error({
+                error: _.isError(err) ? err.message : String(err),
+                msg:   'Email integration setup failed, continuing without email',
+            });
+        }
+        // Stryker enable BlockStatement
+    }
+
+    // Build email service from emailSetup components (if available)
+    const emailService = emailSetup
+        ? { counterStore: emailSetup.counters, imap: emailSetup.imap }
+        : undefined;
+
+    const contextLayer = createContextLayer(storage.memoryBackend, emailService);
     const mcpServers = createMCPServers({
         memoryBackend:        storage.memoryBackend,
         messageSearchService: discordInfra.messageSearchService,
@@ -95,6 +127,7 @@ export async function createApp(): Promise<App> {
         memoryMcpServer:            mcpServers.memoryMcpServer,
         discordMcpServer:           mcpServers.discordMcpServer,
         inboxMcpServer:             mcpServers.inboxMcpServer,
+        emailMcpServer:             emailSetup?.emailMcpServer,
         plugins,
         taskPersistenceCoordinator: storage.taskPersistenceCoordinator,
     });
@@ -116,6 +149,7 @@ export async function createApp(): Promise<App> {
         eventDeltaTracker: contextLayer.eventDeltaTracker,
         contextBuilder:    contextLayer.contextBuilder,
         memoryBackend:     createCatchUpSignalAdapter(storage.memoryBackend),
+        emailSetup,
     });
 
     let isStopping = false;

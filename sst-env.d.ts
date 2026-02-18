@@ -6,6 +6,10 @@
 
 declare module "sst" {
   export interface Resource {
+    "AdminDiscordUserId": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
     "ClaudeCodeOAuthToken": {
       "type": "sst.sst.Secret"
       "value": string
@@ -19,6 +23,22 @@ declare module "sst" {
       "value": string
     }
     "DiscordHomeGuildId": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
+    "EmailPassword": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
+    "EmailUser": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
+    "ImapHost": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
+    "ImapPort": {
       "type": "sst.sst.Secret"
       "value": string
     }
@@ -36,6 +56,14 @@ declare module "sst" {
     }
     "Port": {
       "type": "sst.sst.Linkable"
+      "value": string
+    }
+    "SmtpHost": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
+    "SmtpPort": {
+      "type": "sst.sst.Secret"
       "value": string
     }
   }

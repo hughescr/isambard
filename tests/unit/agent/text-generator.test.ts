@@ -113,6 +113,26 @@ describe('generateText', () => {
             expect(result).toBe(expected);
         });
     });
+
+    describe('model option', () => {
+        test('should use haiku model when model is not specified', async () => {
+            await generateText('Test prompt');
+
+            expect(mockUnstableV2Prompt).toHaveBeenCalledWith(
+                'Test prompt',
+                expect.objectContaining({ model: 'haiku' })
+            );
+        });
+
+        test('should use specified model when model option is provided', async () => {
+            await generateText('Test prompt', { model: 'sonnet' });
+
+            expect(mockUnstableV2Prompt).toHaveBeenCalledWith(
+                'Test prompt',
+                expect.objectContaining({ model: 'sonnet' })
+            );
+        });
+    });
 });
 
 describe('generateTextWithSystemPrompt', () => {
@@ -210,6 +230,26 @@ describe('generateTextWithSystemPrompt', () => {
             const result = await generateTextWithSystemPrompt('System', 'User', { stripMarkdown: true });
 
             expect(result).toBe(expected);
+        });
+    });
+
+    describe('model option', () => {
+        test('should use haiku model when model is not specified', async () => {
+            await generateTextWithSystemPrompt('System', 'User');
+
+            expect(mockUnstableV2Prompt).toHaveBeenCalledWith(
+                expect.any(String),
+                expect.objectContaining({ model: 'haiku' })
+            );
+        });
+
+        test('should use specified model when model option is provided', async () => {
+            await generateTextWithSystemPrompt('System', 'User', { model: 'sonnet' });
+
+            expect(mockUnstableV2Prompt).toHaveBeenCalledWith(
+                expect.any(String),
+                expect.objectContaining({ model: 'sonnet' })
+            );
         });
     });
 });

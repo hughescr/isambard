@@ -80,14 +80,23 @@ describe('caldavConfigSchema', () => {
 });
 
 describe('emailConfigSchema', () => {
+    const validEmailBase = {
+        imapHost:           'imap.example.com',
+        imapPort:           993,
+        smtpHost:           'smtp.example.com',
+        smtpPort:           587,
+        user:               'user@example.com',
+        password:           'secure-password',
+        fromEmail:          'isambard@example.com',
+        fromEmailInformal:  'izzy@example.com',
+        adminDiscordUserId: '111111111111111111',
+    };
+
     test('should coerce ports from strings', () => {
         const configWithStringPorts = {
-            imapHost: 'imap.example.com',
+            ...validEmailBase,
             imapPort: '993',
-            smtpHost: 'smtp.example.com',
             smtpPort: '587',
-            user:     'user@example.com',
-            password: 'secure-password',
         };
 
         const result = emailConfigSchema.safeParse(configWithStringPorts);
@@ -102,12 +111,8 @@ describe('emailConfigSchema', () => {
 
     test('should reject port numbers greater than 65535', () => {
         const invalidConfig = {
-            imapHost: 'imap.example.com',
+            ...validEmailBase,
             imapPort: 70000,
-            smtpHost: 'smtp.example.com',
-            smtpPort: 587,
-            user:     'user@example.com',
-            password: 'secure-password',
         };
 
         const result = emailConfigSchema.safeParse(invalidConfig);
@@ -116,16 +121,195 @@ describe('emailConfigSchema', () => {
 
     test('should reject port numbers less than 1', () => {
         const invalidConfig = {
-            imapHost: 'imap.example.com',
-            imapPort: 993,
-            smtpHost: 'smtp.example.com',
+            ...validEmailBase,
             smtpPort: 0,
-            user:     'user@example.com',
-            password: 'secure-password',
         };
 
         const result = emailConfigSchema.safeParse(invalidConfig);
         expect(result.success).toBe(false);
+    });
+
+    test('should apply default useIdle = true when not provided', () => {
+        const result = emailConfigSchema.safeParse(validEmailBase);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.useIdle).toBe(true);
+        }
+    });
+
+    test('should ensure useIdle defaults to true not false', () => {
+        const result = emailConfigSchema.safeParse(validEmailBase);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.useIdle).not.toBe(false);
+        }
+    });
+
+    test('should apply default idleTimeoutMs = 1740000 when not provided', () => {
+        const result = emailConfigSchema.safeParse(validEmailBase);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.idleTimeoutMs).toBe(1_740_000);
+            expect(result.data.idleTimeoutMs).toBeGreaterThan(1_000_000);
+            expect(result.data.idleTimeoutMs).toBeLessThan(2_000_000);
+        }
+    });
+
+    test('should apply default pollFallbackMs = 300000 when not provided', () => {
+        const result = emailConfigSchema.safeParse(validEmailBase);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.pollFallbackMs).toBe(300_000);
+            expect(result.data.pollFallbackMs).toBeGreaterThan(0);
+            expect(result.data.pollFallbackMs).toBeLessThan(600_000);
+        }
+    });
+
+    test('should apply default maxBodySizeBytes = 50000 when not provided', () => {
+        const result = emailConfigSchema.safeParse(validEmailBase);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.maxBodySizeBytes).toBe(50_000);
+            expect(result.data.maxBodySizeBytes).toBeGreaterThan(0);
+            expect(result.data.maxBodySizeBytes).toBeLessThan(100_000);
+        }
+    });
+
+    test('should apply default fromName when not provided', () => {
+        const result = emailConfigSchema.safeParse(validEmailBase);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.fromName).toBe('Isambard (AI agent)');
+        }
+    });
+
+    test('should apply default fromNameInformal = Izzy when not provided', () => {
+        const result = emailConfigSchema.safeParse(validEmailBase);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.fromNameInformal).toBe('Izzy');
+            expect(result.data.fromNameInformal).not.toBe('');
+        }
+    });
+
+    test('should apply default sendSoftLimitPerDay = 10 when not provided', () => {
+        const result = emailConfigSchema.safeParse(validEmailBase);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.sendSoftLimitPerDay).toBe(10);
+            expect(result.data.sendSoftLimitPerDay).toBeGreaterThan(0);
+            expect(result.data.sendSoftLimitPerDay).toBeLessThan(100);
+        }
+    });
+
+    test('should reject invalid fromEmail address', () => {
+        const invalidConfig = {
+            ...validEmailBase,
+            fromEmail: 'not-an-email',
+        };
+
+        const result = emailConfigSchema.safeParse(invalidConfig);
+        expect(result.success).toBe(false);
+    });
+
+    test('should reject invalid fromEmailInformal address', () => {
+        const invalidConfig = {
+            ...validEmailBase,
+            fromEmailInformal: 'not-an-email',
+        };
+
+        const result = emailConfigSchema.safeParse(invalidConfig);
+        expect(result.success).toBe(false);
+    });
+
+    test('should accept fromEmail as undefined (optional SMTP field)', () => {
+        const configWithoutFromEmail = {
+            ...validEmailBase,
+            fromEmail: undefined,
+        };
+
+        const result = emailConfigSchema.safeParse(configWithoutFromEmail);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.fromEmail).toBeUndefined();
+        }
+    });
+
+    test('should accept fromEmailInformal as undefined (optional SMTP field)', () => {
+        const configWithoutFromEmailInformal = {
+            ...validEmailBase,
+            fromEmailInformal: undefined,
+        };
+
+        const result = emailConfigSchema.safeParse(configWithoutFromEmailInformal);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.fromEmailInformal).toBeUndefined();
+        }
+    });
+
+    test('should validate successfully without any SMTP fields', () => {
+        const configWithoutSmtp = {
+            imapHost:           'imap.example.com',
+            imapPort:           993,
+            user:               'user@example.com',
+            password:           'secure-password',
+            adminDiscordUserId: '111111111111111111',
+        };
+
+        const result = emailConfigSchema.safeParse(configWithoutSmtp);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.smtpHost).toBeUndefined();
+            expect(result.data.smtpPort).toBeUndefined();
+            expect(result.data.fromEmail).toBeUndefined();
+            expect(result.data.fromEmailInformal).toBeUndefined();
+        }
+    });
+
+    test('should require adminDiscordUserId (no default)', () => {
+        const configWithoutCraigDiscordUserId = {
+            ...validEmailBase,
+            adminDiscordUserId: undefined,
+        };
+
+        const result = emailConfigSchema.safeParse(configWithoutCraigDiscordUserId);
+        expect(result.success).toBe(false);
+    });
+
+    test('should reject empty adminDiscordUserId', () => {
+        const invalidConfig = {
+            ...validEmailBase,
+            adminDiscordUserId: '',
+        };
+
+        const result = emailConfigSchema.safeParse(invalidConfig);
+        expect(result.success).toBe(false);
+    });
+
+    test('should accept custom values for all optional fields', () => {
+        const fullConfig = {
+            ...validEmailBase,
+            useIdle:             false,
+            idleTimeoutMs:       900_000,
+            pollFallbackMs:      60_000,
+            maxBodySizeBytes:    25_000,
+            fromName:            'Isambard Bot',
+            fromNameInformal:    'Sam',
+            sendSoftLimitPerDay: 5,
+        };
+
+        const result = emailConfigSchema.safeParse(fullConfig);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.useIdle).toBe(false);
+            expect(result.data.idleTimeoutMs).toBe(900_000);
+            expect(result.data.pollFallbackMs).toBe(60_000);
+            expect(result.data.maxBodySizeBytes).toBe(25_000);
+            expect(result.data.fromName).toBe('Isambard Bot');
+            expect(result.data.fromNameInformal).toBe('Sam');
+            expect(result.data.sendSoftLimitPerDay).toBe(5);
+        }
     });
 });
 
@@ -231,12 +415,15 @@ describe('configSchema', () => {
                 password: 'secure-password',
             },
             email: {
-                imapHost: 'imap.example.com',
-                imapPort: 993,
-                smtpHost: 'smtp.example.com',
-                smtpPort: 587,
-                user:     'user@example.com',
-                password: 'secure-password',
+                imapHost:           'imap.example.com',
+                imapPort:           993,
+                smtpHost:           'smtp.example.com',
+                smtpPort:           587,
+                user:               'user@example.com',
+                password:           'secure-password',
+                fromEmail:          'isambard@example.com',
+                fromEmailInformal:  'izzy@example.com',
+                adminDiscordUserId: '111111111111111111',
             },
             discord: {
                 botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
@@ -247,12 +434,15 @@ describe('configSchema', () => {
                 clientId:     'abc123xyz789',
                 clientSecret: 'super-secret-key-12345',
             },
-        } as const;
+        };
 
         const result = configSchema.safeParse(validConfig);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data).toEqual(validConfig);
+            expect(result.data.email?.imapHost).toBe('imap.example.com');
+            expect(result.data.email?.fromEmail).toBe('isambard@example.com');
+            expect(result.data.email?.useIdle).toBe(true);
+            expect(result.data.email?.idleTimeoutMs).toBe(1_740_000);
         }
     });
 
@@ -272,12 +462,15 @@ describe('configSchema', () => {
                 password: 'secure-password',
             },
             email: {
-                imapHost: 'imap.example.com',
-                imapPort: 993,
-                smtpHost: 'smtp.example.com',
-                smtpPort: 587,
-                user:     'user@example.com',
-                password: 'secure-password',
+                imapHost:           'imap.example.com',
+                imapPort:           993,
+                smtpHost:           'smtp.example.com',
+                smtpPort:           587,
+                user:               'user@example.com',
+                password:           'secure-password',
+                fromEmail:          'isambard@example.com',
+                fromEmailInformal:  'izzy@example.com',
+                adminDiscordUserId: '111111111111111111',
             },
             discord: {
                 botToken:      'token',

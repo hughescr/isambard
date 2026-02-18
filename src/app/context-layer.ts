@@ -1,4 +1,4 @@
-import { createContextBuilder, type ContextBuilder } from '@/agent/context-builder';
+import { createContextBuilder, type ContextBuilder, type EmailService } from '@/agent/context-builder';
 import { EventDeltaTracker } from '@/agent/event-delta-tracker';
 import { summarizeEventBatches } from '@/agent/event-summarizer';
 import type { MemoryToolBackend } from '@/storage/memory-tool';
@@ -15,10 +15,11 @@ export interface ContextLayer {
  * Creates the context layer with context builder and event delta tracker.
  *
  * @param memoryBackend - Memory tool backend for context loading
+ * @param emailService  - Optional email service for perch inbox section
  * @returns Context layer components
  */
-export function createContextLayer(memoryBackend: MemoryToolBackend): ContextLayer {
-    const contextBuilder = createContextBuilder({ backend: memoryBackend, summarizeEventBatches });
+export function createContextLayer(memoryBackend: MemoryToolBackend, emailService?: EmailService): ContextLayer {
+    const contextBuilder = createContextBuilder({ backend: memoryBackend, summarizeEventBatches, emailService });
     const eventDeltaTracker = new EventDeltaTracker(contextBuilder);
 
     return { contextBuilder, eventDeltaTracker };

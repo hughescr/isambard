@@ -18,7 +18,6 @@ type ConfigKeys = Exclude<keyof SstResource,
   | 'DiscordMonitoredChannels' | 'DynamoDBEndpoint' | 'DynamoDBRegion' | 'DynamoDBTableName'
   // Planned integrations (not yet implemented):
   | 'CaldavUrl' | 'CaldavUsername' | 'CaldavPassword'
-  | 'ImapHost' | 'ImapPort' | 'SmtpHost' | 'SmtpPort' | 'EmailUser' | 'EmailPassword'
   | 'BoxClientId' | 'BoxClientSecret'
 >;
 
@@ -81,19 +80,28 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
                     : undefined,
             }
             : undefined,
+        email: resources.EmailUser.value
+            ? {
+                imapHost:           resources.ImapHost.value,
+                imapPort:           resources.ImapPort.value,
+                // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string must become undefined for optional fields
+                smtpHost:           resources.SmtpHost.value || undefined,
+                // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string must become undefined for optional fields
+                smtpPort:           resources.SmtpPort.value || undefined,
+                user:               resources.EmailUser.value,
+                password:           resources.EmailPassword.value,
+                // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string must become undefined for optional fields
+                fromEmail:          env.get('EMAIL_FROM_EMAIL').asString() || undefined,
+                // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string must become undefined for optional fields
+                fromEmailInformal:  env.get('EMAIL_FROM_EMAIL_INFORMAL').asString() || undefined,
+                adminDiscordUserId: resources.AdminDiscordUserId.value,
+            }
+            : undefined,
         // Planned integrations (commented out until implemented):
         // caldav: {
         //     url:      resources.CaldavUrl.value,
         //     username: resources.CaldavUsername.value,
         //     password: resources.CaldavPassword.value,
-        // },
-        // email: {
-        //     imapHost: resources.ImapHost.value,
-        //     imapPort: resources.ImapPort.value,
-        //     smtpHost: resources.SmtpHost.value,
-        //     smtpPort: resources.SmtpPort.value,
-        //     user:     resources.EmailUser.value,
-        //     password: resources.EmailPassword.value,
         // },
         // box: {
         //     clientId:     resources.BoxClientId.value,

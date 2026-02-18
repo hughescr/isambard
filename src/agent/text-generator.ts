@@ -13,6 +13,12 @@ export interface TextGeneratorOptions {
      * @default false
      */
     stripMarkdown?: boolean
+    /**
+     * Model to use for text generation.
+     * @default 'haiku'
+     */
+    // Stryker disable next-line StringLiteral: default model name is SDK configuration constant
+    model?:         string
 }
 
 /**
@@ -38,8 +44,8 @@ export async function generateText(
      * @see https://platform.claude.com/docs/en/agent-sdk/typescript-v2-preview#unstable-v2-prompt
      */
     const result = await unstable_v2_prompt(prompt, {
-        // Stryker disable next-line StringLiteral: Model name is SDK configuration constant
-        model: 'haiku',
+        // Stryker disable next-line StringLiteral: default model name is SDK configuration constant
+        model: options?.model ?? 'haiku',
     });
 
     // Clean up session file (fire-and-forget)
@@ -84,8 +90,8 @@ export async function generateTextWithSystemPrompt(
      * @see https://platform.claude.com/docs/en/agent-sdk/typescript-v2-preview#unstable-v2-prompt
      */
     const result = await unstable_v2_prompt(combinedPrompt, {
-        // Stryker disable next-line StringLiteral: Model name is SDK configuration constant
-        model: 'haiku',
+        // Stryker disable next-line StringLiteral: default model name is SDK configuration constant
+        model: options?.model ?? 'haiku',
     });
 
     // Clean up session file (fire-and-forget)

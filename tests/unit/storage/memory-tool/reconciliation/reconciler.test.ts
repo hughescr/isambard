@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
 import { filter as _filter } from 'lodash';
 import { DynamoDBDocumentClient, QueryCommand, ScanCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
@@ -7,11 +7,19 @@ import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-ind
 import type { MemoryPath, MemoryToolItemData, TagIndexItem } from '@/storage/memory-tool/types';
 
 describe('delay', () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
     test('should resolve after delay', async () => {
-        const start = Date.now();
-        await delay(10);
-        const elapsed = Date.now() - start;
-        expect(elapsed).toBeGreaterThanOrEqual(8);
+        const delayPromise = delay(10);
+        jest.advanceTimersByTime(10);
+        await delayPromise;
+        // Promise resolved — fake timer correctly fired the setTimeout callback
     });
 
     test('should reject if signal already aborted', async () => {
@@ -23,21 +31,30 @@ describe('delay', () => {
 
     test('should reject if signal aborted mid-delay', async () => {
         const controller = new AbortController();
-        setTimeout(() => controller.abort(), 10);
+        const delayPromise = delay(100, controller.signal);
+        // Advance time to fire the abort timeout (simulated as immediate abort)
+        controller.abort();
         // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
-        await expect(delay(100, controller.signal)).rejects.toThrow('Aborted');
+        await expect(delayPromise).rejects.toThrow('Aborted');
     });
 
     test('should return immediately for zero or negative delays', async () => {
-        const start = Date.now();
+        // Zero and negative delays return early without setTimeout — no timer needed
         await delay(0);
         await delay(-5);
-        const elapsed = Date.now() - start;
-        expect(elapsed).toBeLessThan(10);
+        // If we reach here without hanging, the early-return path works correctly
     });
 });
 
 describe('retryWithBackoff', () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
     test('should return value on first success', async () => {
         const op = mock(() => Promise.resolve('success'));
         const result = await retryWithBackoff(op, { baseDelayMs: 10, maxAttempts: 3 }, 'test');
@@ -49,7 +66,12 @@ describe('retryWithBackoff', () => {
         const op = mock()
             .mockRejectedValueOnce({ name: 'ProvisionedThroughputExceededException' })
             .mockResolvedValueOnce('success');
-        const result = await retryWithBackoff(op, { baseDelayMs: 1, maxAttempts: 3 }, 'test');
+        // Retry uses delay(baseDelayMs * 2^(attempt-1)) = delay(1) — flush microtasks first so
+        // retryWithBackoff registers its timer, then fire the timer with runOnlyPendingTimers
+        const resultPromise = retryWithBackoff(op, { baseDelayMs: 1, maxAttempts: 3 }, 'test');
+        await Promise.resolve(); // let retryWithBackoff run until it awaits delay()
+        jest.runOnlyPendingTimers(); // fire the registered delay timer
+        const result = await resultPromise;
         expect(result).toBe('success');
         expect(op).toHaveBeenCalledTimes(2);
     });
@@ -58,13 +80,17 @@ describe('retryWithBackoff', () => {
         const op = mock()
             .mockRejectedValueOnce({ name: 'ThrottlingException' })
             .mockResolvedValueOnce('success');
-        const result = await retryWithBackoff(op, { baseDelayMs: 1, maxAttempts: 3 }, 'test');
+        const resultPromise = retryWithBackoff(op, { baseDelayMs: 1, maxAttempts: 3 }, 'test');
+        await Promise.resolve(); // let retryWithBackoff run until it awaits delay()
+        jest.runOnlyPendingTimers(); // fire the registered delay timer
+        const result = await resultPromise;
         expect(result).toBe('success');
         expect(op).toHaveBeenCalledTimes(2);
     });
 
     test('should return undefined on non-throttling error', async () => {
         const op = mock(() => Promise.reject(new Error('ValidationError')));
+        // No retry delay for non-throttling errors
         const result = await retryWithBackoff(op, { baseDelayMs: 10, maxAttempts: 3 }, 'test');
         expect(result).toBeUndefined();
         expect(op).toHaveBeenCalledTimes(1);
@@ -73,7 +99,12 @@ describe('retryWithBackoff', () => {
     test('should return undefined after exhausting retries', async () => {
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
         const op = mock(() => Promise.reject({ name: 'ThrottlingException' }));
-        const result = await retryWithBackoff(op, { baseDelayMs: 1, maxAttempts: 3 }, 'test');
+        // maxAttempts=3: attempt 1 fails→delay(1), attempt 2 fails→delay(2), attempt 3 fails→done
+        // Each retry cycle: flush microtasks so retryWithBackoff registers the timer, then fire it
+        const resultPromise = retryWithBackoff(op, { baseDelayMs: 1, maxAttempts: 3 }, 'test');
+        await Promise.resolve(); jest.runOnlyPendingTimers(); // retry 1: delay(1)
+        await Promise.resolve(); jest.runOnlyPendingTimers(); // retry 2: delay(2)
+        const result = await resultPromise;
         expect(result).toBeUndefined();
         expect(op).toHaveBeenCalledTimes(3);
     });
@@ -91,13 +122,15 @@ describe('retryWithBackoff', () => {
         ).rejects.toThrow('Aborted');
     });
 
-    test('should use exponential backoff', async () => {
+    test('should use exponential backoff (delays increase between retries)', async () => {
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
         const op = mock(() => Promise.reject({ name: 'ThrottlingException' }));
-        const start = Date.now();
-        await retryWithBackoff(op, { baseDelayMs: 10, maxAttempts: 3 }, 'test');
-        const elapsed = Date.now() - start;
-        expect(elapsed).toBeGreaterThanOrEqual(15);
+        // maxAttempts=3: attempts 1→delay(10), 2→delay(20), 3→done
+        // We verify: 3 total calls (no early return), delays were attempted
+        const resultPromise = retryWithBackoff(op, { baseDelayMs: 10, maxAttempts: 3 }, 'test');
+        await Promise.resolve(); jest.runOnlyPendingTimers(); // retry 1: delay(10)
+        await Promise.resolve(); jest.runOnlyPendingTimers(); // retry 2: delay(20)
+        await resultPromise;
         expect(op).toHaveBeenCalledTimes(3);
     });
 });

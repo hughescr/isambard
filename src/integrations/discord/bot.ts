@@ -37,6 +37,7 @@ import { setupPerchSessionRunnerAndScheduler } from './setup/perch-setup';
 import { setupCatchUpSessionRunner, setupInboxAndCatchUp } from './setup/catchup-setup';
 import { setupCoordinatorIntegration } from './setup/coordinator-setup';
 import { setupMessageProcessing, initializeChannelRegistry, setupChannelCleanupHandlers } from './setup/event-handler-setup';
+import type { EmailSetupResult } from './setup/email-setup';
 
 /**
  * Global state for Discord client to survive Bun hot reload.
@@ -135,6 +136,12 @@ export interface DiscordBotOptions {
      * If provided, enables perch context feature (time header + recent focus + recent events).
      */
     contextBuilder?: ContextBuilder
+
+    /**
+     * Optional email setup result for email integration.
+     * If provided, wires in the IMAP listener lifecycle and email button/command routing.
+     */
+    emailSetup?: EmailSetupResult
 }
 
 /**
@@ -203,7 +210,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder } = options;
+    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup } = options;
 
     // Hot reload protection: Reuse existing client if available in global state
     // During Bun hot reload, the module is re-executed but global state persists.
@@ -328,11 +335,23 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             questionRegistry,
         });
 
-        // Register interaction handler for button clicks
+        // Register interaction handler for button clicks and slash commands
         // eslint-disable-next-line @typescript-eslint/no-misused-promises -- interactionCreate handler is async
         client.on('interactionCreate', async (interaction) => {
             if(interaction.isButton()) {
+                // Route email-* buttons to review handler
+                if(emailSetup && _.startsWith(interaction.customId, 'email-')) {
+                    await emailSetup.reviewHandler.handleButton(interaction);
+                    return;
+                }
                 await interactionHandler.handleButtonInteraction(interaction);
+            } else if(interaction.isChatInputCommand() && interaction.commandName === 'allowlist') {
+                if(emailSetup) {
+                    await emailSetup.allowlistHandler.handle(interaction);
+                } else {
+                    // Stryker disable next-line StringLiteral: error message is not behavior-affecting
+                    await interaction.reply({ content: 'Email integration is not currently available.', ephemeral: true });
+                }
             }
         });
 
@@ -473,6 +492,23 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 perchConfig:   options.perchConfig,
             });
         }
+
+        // Start email IMAP listener if email setup is provided
+        if(emailSetup) {
+            // Stryker disable BlockStatement: try-catch wraps email listener start - error handling
+            try {
+                await emailSetup.listener.start();
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                logger.info({ msg: 'Email IMAP listener started' });
+            } catch (err) {
+                logger.error({
+                    error: _.isError(err) ? err.message : String(err),
+                    msg:   'Failed to start email IMAP listener',
+                });
+                // Continue — email failure is non-fatal
+            }
+            // Stryker enable BlockStatement
+        }
     });
 
     return {
@@ -481,6 +517,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             await client.login(config.botToken);
         },
 
+        // eslint-disable-next-line complexity -- shutdown sequencing has inherent branching for each optional component
         async stop(): Promise<void> {
             // Stop coordinator if it exists
             if(coordinator) {
@@ -525,6 +562,19 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             // Stop rate limiter if it exists
             if(rateLimiter) {
                 rateLimiter.stop();
+            }
+            // Stop email IMAP listener if it exists
+            if(emailSetup) {
+                // Stryker disable BlockStatement: try-catch isolates email stop from Discord cleanup
+                try {
+                    await emailSetup.listener.stop();
+                } catch (err) {
+                    logger.error({
+                        error: _.isError(err) ? err.message : String(err),
+                        // Stryker disable next-line StringLiteral: log message is not behavior-affecting
+                        msg:   'Email listener stop failed during shutdown',
+                    });
+                }
             }
             // Remove all listeners before destroy to prevent memory leaks
             client.removeAllListeners();

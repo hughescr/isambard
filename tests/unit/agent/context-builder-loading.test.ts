@@ -2546,5 +2546,122 @@ describe('createContextBuilder loading methods', () => {
             expect(result).not.toContain('[truncated');
             expect(result).toContain(shortContent);
         });
+
+        // -------------------------------------------------------------------
+        // Email inbox section (emailService DI)
+        // -------------------------------------------------------------------
+
+        test('should skip inbox section when emailService is not provided', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            // No emailService passed
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).not.toContain('## Inbox');
+        });
+
+        test('should include inbox section when emailService provided and unread > 0', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => ({ total: 5, unread: 2 })),
+                },
+                imap: {
+                    listUnread: mock(async () => [
+                        { uid: 1, from: { name: 'Alice', address: 'alice@example.com' }, subject: 'Hello', date: new Date('2025-01-15T10:00:00.000Z') },
+                        { uid: 2, from: { address: 'bob@example.com' },                  subject: 'World', date: new Date('2025-01-15T11:00:00.000Z') },
+                    ]),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext(now);
+
+            expect(result).toContain('## Inbox');
+            expect(result).toContain('2 unread');
+            // Sender with name uses "Name <address>" format
+            expect(result).toContain('Alice <alice@example.com>');
+            // Sender without name uses plain address
+            expect(result).toContain('bob@example.com');
+            expect(result).toContain('Hello');
+            expect(result).toContain('World');
+        });
+
+        test('should skip inbox section when emailService provided but unread === 0', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => ({ total: 5, unread: 0 })),
+                },
+                imap: {
+                    listUnread: mock(async () => []),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).not.toContain('## Inbox');
+            // listUnread should NOT be called when unread count is 0
+            expect(emailService.imap.listUnread).not.toHaveBeenCalled();
+        });
+
+        test('should skip inbox section and log warning when emailService throws', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => {
+                        throw new Error('DynamoDB timeout');
+                    }),
+                },
+                imap: {
+                    listUnread: mock(async () => []),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            // Inbox section is skipped silently
+            expect(result).not.toContain('## Inbox');
+            // Warning is logged
+            expect(mockLogger.warn).toHaveBeenCalled();
+        });
+
+        test('should call listUnread with CleanInbox when unread > 0', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => ({ total: 3, unread: 1 })),
+                },
+                imap: {
+                    listUnread: mock(async () => [
+                        { uid: 10, from: { address: 'x@x.com' }, subject: 'Only', date: new Date('2025-01-15T09:00:00.000Z') },
+                    ]),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            await contextBuilder.buildPerchContext(now);
+
+            expect(emailService.imap.listUnread).toHaveBeenCalledWith('CleanInbox');
+        });
     });
 });

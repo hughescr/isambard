@@ -2340,4 +2340,441 @@ describe('createDiscordBot', () => {
             expect(startProcessingMessageSpy).not.toHaveBeenCalled();
         });
     });
+
+    describe('Email integration lifecycle', () => {
+        test('when listener.stop() throws, client.destroy() is still called', async () => {
+            const mockClient = {
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            const mockEmailSetup = {
+                listener:         { start: mock(async () => undefined), stop: mock(async () => { throw new Error('IMAP disconnect failed'); }) },
+                reviewHandler:    { handleButton: mock(async () => undefined) },
+                allowlistHandler: { handle: mock(async () => undefined) },
+                emailMcpServer:   {},
+                imap:             {},
+                counters:         {},
+            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+
+            const bot = createDiscordBot({
+                config: mockConfig,
+
+                channelRegistry: mockChannelRegistry,
+                emailSetup:      mockEmailSetup,
+            });
+
+            // stop() should not throw even though listener.stop() throws
+            await bot.stop();
+
+            // client.destroy() must still have been called
+            expect(mockClient.destroy).toHaveBeenCalledTimes(1);
+        });
+
+        test('/allowlist command replies with unavailable message when emailSetup is absent', async () => {
+            // Capture the interactionCreate handler
+            let interactionCreateHandler: ((interaction: unknown) => Promise<void>) | undefined;
+
+            const mockClient = {
+                on: mock((event: string, handler: (...args: unknown[]) => void) => {
+                    if(event === 'interactionCreate') {
+                        interactionCreateHandler = handler as (interaction: unknown) => Promise<void>;
+                    }
+                    return mockClient;
+                }),
+                once: mock((_event: string, _handler: (...args: unknown[]) => void) => {
+                    return mockClient;
+                }),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            // Mock channel registry functions
+            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                discovered: 0,
+                updated:    0,
+                errors:     [],
+            }));
+            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
+            // Create bot WITHOUT emailSetup
+            createDiscordBot({
+                config: mockConfig,
+
+                channelRegistry: mockChannelRegistry,
+            });
+
+            // Fire clientReady to register interactionCreate handler
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            expect(interactionCreateHandler).toBeDefined();
+
+            // Build a mock /allowlist ChatInputCommand interaction
+            const replyMock = mock(async (_opts: unknown) => undefined);
+            const mockInteraction = {
+                isButton:           mock(() => false),
+                isChatInputCommand: mock(() => true),
+                commandName:        'allowlist',
+                reply:              replyMock,
+            };
+
+            await interactionCreateHandler!(mockInteraction);
+
+            expect(replyMock).toHaveBeenCalledTimes(1);
+            expect(replyMock).toHaveBeenCalledWith(expect.objectContaining({
+                ephemeral: true,
+            }));
+        });
+
+        test('listener.start() is called on clientReady when emailSetup is present', async () => {
+            const mockClient = {
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            const mockEmailSetup = {
+                listener:         { start: mock(async () => undefined), stop: mock(async () => undefined) },
+                reviewHandler:    { handleButton: mock(async () => undefined) },
+                allowlistHandler: { handle: mock(async () => undefined) },
+                emailMcpServer:   {},
+                imap:             {},
+                counters:         {},
+            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+
+            createDiscordBot({
+                config: mockConfig,
+
+                channelRegistry: mockChannelRegistry,
+                emailSetup:      mockEmailSetup,
+            });
+
+            // listener.start() should NOT be called before clientReady fires
+            expect(mockEmailSetup.listener.start).not.toHaveBeenCalled();
+
+            // Fire clientReady handler
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            // listener.start() must be called once clientReady fires
+            expect(mockEmailSetup.listener.start).toHaveBeenCalledTimes(1);
+        });
+
+        test('listener.start() failure is non-fatal: clientReady completes and bot is stoppable', async () => {
+            const mockClient = {
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            const mockEmailSetup = {
+                listener:         { start: mock(async () => { throw new Error('IMAP connect failed'); }), stop: mock(async () => undefined) },
+                reviewHandler:    { handleButton: mock(async () => undefined) },
+                allowlistHandler: { handle: mock(async () => undefined) },
+                emailMcpServer:   {},
+                imap:             {},
+                counters:         {},
+            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+
+            const bot = createDiscordBot({
+                config: mockConfig,
+
+                channelRegistry: mockChannelRegistry,
+                emailSetup:      mockEmailSetup,
+            });
+
+            // Fire clientReady — listener.start() will throw, but clientReady must not throw
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                // Must not throw even though listener.start() throws
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            // Bot must still be stoppable
+            await bot.stop();
+            expect(mockClient.destroy).toHaveBeenCalledTimes(1);
+        });
+
+        test('email-* button interactions are routed to reviewHandler.handleButton()', async () => {
+            let interactionCreateHandler: ((interaction: unknown) => Promise<void>) | undefined;
+
+            const mockClient = {
+                on: mock((event: string, handler: (...args: unknown[]) => void) => {
+                    if(event === 'interactionCreate') {
+                        interactionCreateHandler = handler as (interaction: unknown) => Promise<void>;
+                    }
+                    return mockClient;
+                }),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            const handleButtonMock = mock(async () => undefined);
+            const mockEmailSetup = {
+                listener:         { start: mock(async () => undefined), stop: mock(async () => undefined) },
+                reviewHandler:    { handleButton: handleButtonMock },
+                allowlistHandler: { handle: mock(async () => undefined) },
+                emailMcpServer:   {},
+                imap:             {},
+                counters:         {},
+            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+
+            createDiscordBot({
+                config: mockConfig,
+
+                channelRegistry: mockChannelRegistry,
+                emailSetup:      mockEmailSetup,
+            });
+
+            // Fire clientReady to register interactionCreate handler
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            expect(interactionCreateHandler).toBeDefined();
+
+            // Build a mock email button interaction
+            const mockInteraction = {
+                isButton:           mock(() => true),
+                isChatInputCommand: mock(() => false),
+                customId:           'email-trash:42:Review',
+            };
+
+            await interactionCreateHandler!(mockInteraction);
+
+            // reviewHandler.handleButton() must have been called with the interaction
+            expect(handleButtonMock).toHaveBeenCalledTimes(1);
+            expect(handleButtonMock).toHaveBeenCalledWith(mockInteraction);
+        });
+
+        test('email-* button interactions do not fall through to default button handler', async () => {
+            let interactionCreateHandler: ((interaction: unknown) => Promise<void>) | undefined;
+
+            // Track all handlers for 'interactionCreate'
+            const mockClient = {
+                on: mock((event: string, handler: (...args: unknown[]) => void) => {
+                    if(event === 'interactionCreate') {
+                        interactionCreateHandler = handler as (interaction: unknown) => Promise<void>;
+                    }
+                    return mockClient;
+                }),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            const handleButtonMock = mock(async () => undefined);
+            // A reply mock would be called if the interaction fell through to the default handler
+            const replyMock = mock(async (_opts: unknown) => undefined);
+            const mockEmailSetup = {
+                listener:         { start: mock(async () => undefined), stop: mock(async () => undefined) },
+                reviewHandler:    { handleButton: handleButtonMock },
+                allowlistHandler: { handle: mock(async () => undefined) },
+                emailMcpServer:   {},
+                imap:             {},
+                counters:         {},
+            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+
+            createDiscordBot({
+                config: mockConfig,
+
+                channelRegistry: mockChannelRegistry,
+                emailSetup:      mockEmailSetup,
+            });
+
+            // Fire clientReady
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            expect(interactionCreateHandler).toBeDefined();
+
+            // email-* button must not call reply (which would be called by the fallback handler)
+            const mockInteraction = {
+                isButton:           mock(() => true),
+                isChatInputCommand: mock(() => false),
+                customId:           'email-approve:99:Approve',
+                reply:              replyMock,
+            };
+
+            await interactionCreateHandler!(mockInteraction);
+
+            expect(handleButtonMock).toHaveBeenCalledTimes(1);
+            // reply must NOT have been called — routing returned early
+            expect(replyMock).not.toHaveBeenCalled();
+        });
+
+        test('/allowlist command is routed to allowlistHandler.handle() when emailSetup is present', async () => {
+            let interactionCreateHandler: ((interaction: unknown) => Promise<void>) | undefined;
+
+            const mockClient = {
+                on: mock((event: string, handler: (...args: unknown[]) => void) => {
+                    if(event === 'interactionCreate') {
+                        interactionCreateHandler = handler as (interaction: unknown) => Promise<void>;
+                    }
+                    return mockClient;
+                }),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            const handleMock = mock(async () => undefined);
+            const mockEmailSetup = {
+                listener:         { start: mock(async () => undefined), stop: mock(async () => undefined) },
+                reviewHandler:    { handleButton: mock(async () => undefined) },
+                allowlistHandler: { handle: handleMock },
+                emailMcpServer:   {},
+                imap:             {},
+                counters:         {},
+            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+
+            createDiscordBot({
+                config: mockConfig,
+
+                channelRegistry: mockChannelRegistry,
+                emailSetup:      mockEmailSetup,
+            });
+
+            // Fire clientReady to register interactionCreate handler
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            expect(interactionCreateHandler).toBeDefined();
+
+            // Build a mock /allowlist ChatInputCommand interaction
+            const mockInteraction = {
+                isButton:           mock(() => false),
+                isChatInputCommand: mock(() => true),
+                commandName:        'allowlist',
+            };
+
+            await interactionCreateHandler!(mockInteraction);
+
+            expect(handleMock).toHaveBeenCalledTimes(1);
+            expect(handleMock).toHaveBeenCalledWith(mockInteraction);
+        });
+
+        test('non-email button interactions are NOT routed to reviewHandler when emailSetup present', async () => {
+            let interactionCreateHandler: ((interaction: unknown) => Promise<void>) | undefined;
+
+            const mockClient = {
+                on: mock((event: string, handler: (...args: unknown[]) => void) => {
+                    if(event === 'interactionCreate') {
+                        interactionCreateHandler = handler as (interaction: unknown) => Promise<void>;
+                    }
+                    return mockClient;
+                }),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            const handleButtonMock = mock(async () => undefined);
+            const mockEmailSetup = {
+                listener:         { start: mock(async () => undefined), stop: mock(async () => undefined) },
+                reviewHandler:    { handleButton: handleButtonMock },
+                allowlistHandler: { handle: mock(async () => undefined) },
+                emailMcpServer:   {},
+                imap:             {},
+                counters:         {},
+            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+
+            createDiscordBot({
+                config: mockConfig,
+
+                channelRegistry: mockChannelRegistry,
+                emailSetup:      mockEmailSetup,
+            });
+
+            // Fire clientReady
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            expect(interactionCreateHandler).toBeDefined();
+
+            // A button with a non-email customId must NOT go to reviewHandler
+            const mockInteraction = {
+                isButton:           mock(() => true),
+                isChatInputCommand: mock(() => false),
+                customId:           'question-confirm:99',
+                // reply is called by the default interactionHandler — we just verify reviewHandler is skipped
+                reply:              mock(async (_opts: unknown) => undefined),
+            };
+
+            await interactionCreateHandler!(mockInteraction);
+
+            expect(handleButtonMock).not.toHaveBeenCalled();
+        });
+    });
 });

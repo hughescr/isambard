@@ -256,6 +256,8 @@ export interface ClaudeAgentOptions {
     discordMcpServer?:           McpServerConfig
     /** Inbox MCP server instance for inbox management */
     inboxMcpServer?:             McpServerConfig
+    /** Email MCP server instance for email inbox access */
+    emailMcpServer?:             McpServerConfig
     /** Plugins to load (from plugin-loader.ts) */
     plugins?:                    SdkPluginConfig[]
     /** Task persistence coordinator for maintaining tasks across sessions */
@@ -326,8 +328,8 @@ export interface ClaudeAgent {
 /**
  * Builds the mcpServers configuration object based on provided servers.
  */
-function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, specialMode?: 'catchup' | 'perching'): Record<string, McpServerConfig> | undefined {
-    if(!memoryMcpServer && !discordMcpServer && !inboxMcpServer) {
+function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, emailMcpServer?: McpServerConfig, specialMode?: 'catchup' | 'perching'): Record<string, McpServerConfig> | undefined {
+    if(!memoryMcpServer && !discordMcpServer && !inboxMcpServer && !emailMcpServer) {
         return undefined;
     }
 
@@ -344,13 +346,17 @@ function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: M
     if(inboxMcpServer && specialMode === 'catchup') {
         servers.inbox = inboxMcpServer;
     }
+    // Stryker disable next-line ConditionalExpression: Truthiness check for optional parameter
+    if(emailMcpServer) {
+        servers.email = emailMcpServer;
+    }
     return servers;
 }
 
 /**
  * Builds the allowedTools list based on which MCP servers are configured.
  */
-function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, specialMode?: 'catchup' | 'perching'): string[] {
+function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, emailMcpServer?: McpServerConfig, specialMode?: 'catchup' | 'perching'): string[] {
     const baseTools = [
         // Memory MCP tools (auto-approved)
         'mcp__memory__*',
@@ -389,6 +395,11 @@ function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: 
 
     if(inboxMcpServer && specialMode === 'catchup') {
         tools.push('mcp__inbox__*');
+    }
+
+    // Stryker disable next-line ConditionalExpression: Truthiness check for optional parameter
+    if(emailMcpServer) {
+        tools.push('mcp__email__*');
     }
 
     return tools;
@@ -858,6 +869,7 @@ function buildQueryOptions(
     memoryMcpServer: McpServerConfig | undefined,
     discordMcpServer: McpServerConfig | undefined,
     inboxMcpServer: McpServerConfig | undefined,
+    emailMcpServer: McpServerConfig | undefined,
     plugins: SdkPluginConfig[] | undefined,
     options?: HandleInputOptions
 ) {
@@ -866,10 +878,10 @@ function buildQueryOptions(
         systemPrompt,
         tools:             EXPLICIT_TOOLS,
         agents:            EXPLICIT_AGENTS,
-        mcpServers:        buildMcpServers(memoryMcpServer, discordMcpServer, inboxMcpServer, options?.specialMode),
+        mcpServers:        buildMcpServers(memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, options?.specialMode),
         plugins:           plugins && plugins.length > 0 ? plugins : undefined,
         permissionMode:    'acceptEdits' as const,
-        allowedTools:      buildAllowedTools(discordMcpServer, inboxMcpServer, options?.specialMode),
+        allowedTools:      buildAllowedTools(discordMcpServer, inboxMcpServer, emailMcpServer, options?.specialMode),
         maxThinkingTokens: 10000,
         // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Configuration values - mutations don't change behavior
         compactionControl: {
@@ -1117,6 +1129,7 @@ async function collectBackgroundTasks(
     memoryMcpServer: McpServerConfig | undefined,
     discordMcpServer: McpServerConfig | undefined,
     inboxMcpServer: McpServerConfig | undefined,
+    emailMcpServer: McpServerConfig | undefined,
     plugins: SdkPluginConfig[] | undefined,
     options: HandleInputOptions | undefined,
     taskPersistenceCoordinator: TaskPersistenceCoordinator | undefined
@@ -1132,7 +1145,7 @@ async function collectBackgroundTasks(
     while(tracker.hasUncollectedBackgroundTasks() && autoResumeAttempts < MAX_AUTO_RESUME_ATTEMPTS) {
         autoResumeAttempts++;
         const uncollectedBefore = tracker.getProgress().uncollectedBackgroundTasks;
-        const queryOptions = buildQueryOptions(systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, options);
+        const queryOptions = buildQueryOptions(systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, options);
         const resumeResult = await attemptAutoResume(
             tracker, updatedText, updatedSessionId,
             retryableQuery, queryOptions, options, taskPersistenceCoordinator
@@ -1149,7 +1162,7 @@ async function collectBackgroundTasks(
 }
 
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
-    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, taskPersistenceCoordinator } = options;
+    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, taskPersistenceCoordinator } = options;
 
     // Load retry configuration
     const retryConfig = loadRetryConfig();
@@ -1205,7 +1218,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 // 6. Query with MCP servers, plugins, and sandboxed execution (with retry)
                 const response = retryableQuery({
                     prompt,
-                    options: buildQueryOptions(systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, options),
+                    options: buildQueryOptions(systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, options),
                 });
 
                 // 7. Process stream events and track progress
@@ -1218,7 +1231,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 // 8. Auto-resume: collect background tasks
                 const resumeCollected = await collectBackgroundTasks(
                     tracker, lastAssistantText, capturedSessionId, wasInterrupted,
-                    retryableQuery, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, plugins, options, taskPersistenceCoordinator
+                    retryableQuery, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, options, taskPersistenceCoordinator
                 );
                 lastAssistantText = resumeCollected.lastAssistantText;
                 capturedSessionId = resumeCollected.capturedSessionId;

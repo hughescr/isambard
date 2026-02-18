@@ -1,0 +1,108 @@
+import { z } from 'zod';
+
+// Email folder enum (WildDuck top-level folders, '/' separator)
+// Stryker disable next-line all: Enum values are configuration
+export const EmailFolder = {
+    Inbox:      'INBOX',
+    CleanInbox: 'CleanInbox',
+    Quarantine: 'Quarantine',
+    Review:     'Review',
+    Junk:       'Junk',
+    Trash:      'Trash',
+    Archive:    'Archive',
+} as const;
+export type EmailFolder = typeof EmailFolder[keyof typeof EmailFolder];
+
+// Classifier verdict
+// Stryker disable next-line all: Enum values are configuration
+export const ClassifierVerdictType = {
+    Safe:      'safe',
+    Spam:      'spam',
+    Uncertain: 'uncertain',
+    Unsafe:    'unsafe',
+} as const;
+export type ClassifierVerdictType = typeof ClassifierVerdictType[keyof typeof ClassifierVerdictType];
+
+export const classifierVerdictSchema = z.object({
+    verdict:    z.enum(['safe', 'spam', 'uncertain', 'unsafe']),
+    confidence: z.number().min(0).max(1),
+    reason:     z.string(),
+    category:   z.string().optional(),
+});
+export type ClassifierVerdict = z.infer<typeof classifierVerdictSchema>;
+
+// Email identity mode for From header
+// Stryker disable next-line all: Enum values are configuration
+export const EmailIdentity = {
+    Formal:   'formal',
+    Informal: 'informal',
+} as const;
+export type EmailIdentity = typeof EmailIdentity[keyof typeof EmailIdentity];
+
+// Email metadata (from IMAP FETCH)
+export interface EmailMetadata {
+    /** IMAP UID */
+    uid:            number
+    /** Message-ID header */
+    messageId:      string
+    /** From header (parsed) */
+    from:           EmailAddress
+    /** To header (parsed) */
+    to:             EmailAddress[]
+    /** CC header (parsed, may be empty) */
+    cc:             EmailAddress[]
+    /** Subject */
+    subject:        string
+    /** Date header */
+    date:           Date
+    /** Plain text body (truncated at maxBodySizeBytes) */
+    bodyText:       string
+    /** Whether message has attachments */
+    hasAttachments: boolean
+    /** Selected headers map */
+    headers:        EmailHeaders
+}
+
+// Parsed email address
+export interface EmailAddress {
+    name?:   string
+    address: string
+}
+
+// Selected headers we expose
+export interface EmailHeaders {
+    messageId?:             string
+    inReplyTo?:             string
+    authenticationResults?: string
+    xRspamdReport?:         string
+    xRspamdScore?:          string
+}
+
+// Allowlist entry stored in DynamoDB
+export interface AllowlistEntry {
+    email:   string
+    name?:   string
+    notes?:  string
+    addedAt: string
+    addedBy: string
+}
+
+// Email counters from DynamoDB
+export interface EmailCounters {
+    total:  number
+    unread: number
+}
+
+// Email summary for perch/inbox display
+export interface EmailSummary {
+    uid:     number
+    from:    EmailAddress
+    subject: string
+    date:    Date
+}
+
+// Auth check result
+export interface AuthCheckResult {
+    spfPass:  boolean
+    dkimPass: boolean
+}

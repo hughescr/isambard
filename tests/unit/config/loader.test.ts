@@ -18,18 +18,20 @@ function createMockResources(
         DiscordApplicationId: { value: 'app-id-456' },
         DiscordHomeGuildId:   { value: 'home-guild-123' },
         ClaudeCodeOAuthToken: { value: 'test-oauth-token-12345' },
+        // Email secrets default to undefined (email config is optional)
+        ImapHost:             { value: undefined },
+        ImapPort:             { value: undefined },
+        SmtpHost:             { value: undefined },
+        SmtpPort:             { value: undefined },
+        EmailUser:            { value: undefined },
+        EmailPassword:        { value: undefined },
+        AdminDiscordUserId:   { value: undefined },
         // Planned integrations (not yet implemented):
-        // CaldavUrl:                     { value: 'https://caldav.example.com' },
-        // CaldavUsername:                { value: 'user' },
-        // CaldavPassword:                { value: 'password' },
-        // ImapHost:                      { value: 'mail.example.com' },
-        // ImapPort:                      { value: '993' },
-        // SmtpHost:                      { value: 'mail.example.com' },
-        // SmtpPort:                      { value: '587' },
-        // EmailUser:                     { value: 'user@example.com' },
-        // EmailPassword:                 { value: 'emailpass' },
-        // BoxClientId:                   { value: 'box-client-id' },
-        // BoxClientSecret:               { value: 'box-secret' },
+        // CaldavUrl:          { value: 'https://caldav.example.com' },
+        // CaldavUsername:     { value: 'user' },
+        // CaldavPassword:     { value: 'password' },
+        // BoxClientId:        { value: 'box-client-id' },
+        // BoxClientSecret:    { value: 'box-secret' },
     };
     return { ...defaults, ...overrides };
 }
@@ -239,6 +241,107 @@ describe.concurrent('loadConfig', () => {
             expect(configWithDebug.app.logLevel).toBe('debug');
         });
     });
+
+    describe('Email Config', () => {
+        test('should return email = undefined when EmailUser is not set', () => {
+            const resources = createMockResources();
+            const config = loadConfig(resources);
+
+            expect(config.email).toBeUndefined();
+        });
+
+        test('should load email config when EmailUser is set', () => {
+            const resources = createMockResources({
+                ImapHost:           { value: 'imap.rungie.com' },
+                ImapPort:           { value: '993' },
+                SmtpHost:           { value: 'smtp.rungie.com' },
+                SmtpPort:           { value: '587' },
+                EmailUser:          { value: 'user@rungie.com' },
+                EmailPassword:      { value: 'secret-password' },
+                AdminDiscordUserId: { value: '111111111111111111' },
+            });
+            const config = loadConfig(resources);
+
+            expect(config.email).toBeDefined();
+            expect(config.email?.imapHost).toBe('imap.rungie.com');
+            expect(config.email?.imapPort).toBe(993);
+            expect(config.email?.smtpHost).toBe('smtp.rungie.com');
+            expect(config.email?.smtpPort).toBe(587);
+            expect(config.email?.user).toBe('user@rungie.com');
+        });
+
+        test('should apply schema defaults when email secrets are set', () => {
+            const resources = createMockResources({
+                ImapHost:           { value: 'imap.rungie.com' },
+                ImapPort:           { value: '993' },
+                SmtpHost:           { value: 'smtp.rungie.com' },
+                SmtpPort:           { value: '587' },
+                EmailUser:          { value: 'user@rungie.com' },
+                EmailPassword:      { value: 'secret-password' },
+                AdminDiscordUserId: { value: '111111111111111111' },
+            });
+            const config = loadConfig(resources);
+
+            expect(config.email?.useIdle).toBe(true);
+            expect(config.email?.idleTimeoutMs).toBe(1_740_000);
+            expect(config.email?.pollFallbackMs).toBe(300_000);
+            expect(config.email?.maxBodySizeBytes).toBe(50_000);
+            expect(config.email?.fromName).toBe('Isambard (AI agent)');
+            expect(config.email?.fromNameInformal).toBe('Izzy');
+            expect(config.email?.sendSoftLimitPerDay).toBe(10);
+        });
+
+        test('should produce undefined fromEmail and fromEmailInformal when env vars not set', () => {
+            const resources = createMockResources({
+                ImapHost:           { value: 'imap.rungie.com' },
+                ImapPort:           { value: '993' },
+                SmtpHost:           { value: 'smtp.rungie.com' },
+                SmtpPort:           { value: '587' },
+                EmailUser:          { value: 'user@rungie.com' },
+                EmailPassword:      { value: 'secret-password' },
+                AdminDiscordUserId: { value: '111111111111111111' },
+            });
+            const config = loadConfig(resources);
+
+            // fromEmail and fromEmailInformal are optional — undefined when env var not set
+            expect(config.email?.fromEmail).toBeUndefined();
+            expect(config.email?.fromEmailInformal).toBeUndefined();
+        });
+
+        test('should apply default adminDiscordUserId when not set', () => {
+            const resources = createMockResources({
+                ImapHost:           { value: 'imap.rungie.com' },
+                ImapPort:           { value: '993' },
+                SmtpHost:           { value: 'smtp.rungie.com' },
+                SmtpPort:           { value: '587' },
+                EmailUser:          { value: 'user@rungie.com' },
+                EmailPassword:      { value: 'secret-password' },
+                AdminDiscordUserId: { value: '111111111111111111' },
+            });
+            const config = loadConfig(resources);
+
+            expect(config.email?.adminDiscordUserId).toBe('111111111111111111');
+            expect(config.email?.adminDiscordUserId.length).toBeGreaterThan(0);
+        });
+
+        test('should treat empty-string SmtpHost as undefined (optional field)', () => {
+            const resources = createMockResources({
+                ImapHost:           { value: 'imap.rungie.com' },
+                ImapPort:           { value: '993' },
+                SmtpHost:           { value: '' },
+                SmtpPort:           { value: '' },
+                EmailUser:          { value: 'user@rungie.com' },
+                EmailPassword:      { value: 'secret-password' },
+                AdminDiscordUserId: { value: '111111111111111111' },
+            });
+            const config = loadConfig(resources);
+
+            // Empty strings for optional fields should be treated as undefined, not fail validation
+            expect(config.email).toBeDefined();
+            expect(config.email?.smtpHost).toBeUndefined();
+            expect(config.email?.smtpPort).toBeUndefined();
+        });
+    });
 });
 
 // Perch Config tests run sequentially (not concurrent) because they mutate process.env
@@ -384,6 +487,52 @@ describe('loadConfig - Perch Config', () => {
         const config = loadConfig(resources);
         expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
         expect(config.perch?.testMode?.forceSlot).toBeUndefined();
+    });
+});
+
+// Email from-address env var tests run sequentially (not concurrent) because they mutate process.env
+describe('loadConfig - Email from-address env vars', () => {
+    const emailResources = () => createMockResources({
+        ImapHost:           { value: 'imap.rungie.com' },
+        ImapPort:           { value: '993' },
+        SmtpHost:           { value: 'smtp.rungie.com' },
+        SmtpPort:           { value: '587' },
+        EmailUser:          { value: 'user@rungie.com' },
+        EmailPassword:      { value: 'secret-password' },
+        AdminDiscordUserId: { value: '111111111111111111' },
+    });
+
+    afterEach(() => {
+        delete process.env.EMAIL_FROM_EMAIL;
+        delete process.env.EMAIL_FROM_EMAIL_INFORMAL;
+    });
+
+    test('should pass through non-empty EMAIL_FROM_EMAIL to config.email.fromEmail', () => {
+        process.env.EMAIL_FROM_EMAIL = 'izzy@example.com';
+        const config = loadConfig(emailResources());
+
+        expect(config.email?.fromEmail).toBe('izzy@example.com');
+    });
+
+    test('should produce undefined fromEmail when EMAIL_FROM_EMAIL is empty string', () => {
+        process.env.EMAIL_FROM_EMAIL = '';
+        const config = loadConfig(emailResources());
+
+        expect(config.email?.fromEmail).toBeUndefined();
+    });
+
+    test('should pass through non-empty EMAIL_FROM_EMAIL_INFORMAL to config.email.fromEmailInformal', () => {
+        process.env.EMAIL_FROM_EMAIL_INFORMAL = 'izzy-informal@example.com';
+        const config = loadConfig(emailResources());
+
+        expect(config.email?.fromEmailInformal).toBe('izzy-informal@example.com');
+    });
+
+    test('should produce undefined fromEmailInformal when EMAIL_FROM_EMAIL_INFORMAL is empty string', () => {
+        process.env.EMAIL_FROM_EMAIL_INFORMAL = '';
+        const config = loadConfig(emailResources());
+
+        expect(config.email?.fromEmailInformal).toBeUndefined();
     });
 });
 

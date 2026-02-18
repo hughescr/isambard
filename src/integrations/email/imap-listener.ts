@@ -1,0 +1,213 @@
+import _ from 'lodash';
+import { logger } from '@hughescr/logger';
+import { EmailFolder } from '@/integrations/email/types';
+import type { EmailMetadata } from '@/integrations/email/types';
+import type { ImapConnection } from '@/integrations/email/imap-connection';
+import type { EmailProcessor } from '@/integrations/email/email-processor';
+import type { EmailCounterStore } from '@/integrations/email/email-counters';
+
+// ---------------------------------------------------------------------------
+// Public interface
+// ---------------------------------------------------------------------------
+
+export interface ImapListenerConfig {
+    // Stryker disable next-line BooleanLiteral: useIdle flag is configuration
+    useIdle:        boolean
+    // Stryker disable next-line NumericLiteral: IDLE timeout is configuration constant (RFC 2177 limit)
+    idleTimeoutMs:  number
+    // Stryker disable next-line NumericLiteral: Poll fallback interval is configuration constant
+    pollFallbackMs: number
+}
+
+const MAX_EMAILS_PER_POLL = 20;
+
+// ---------------------------------------------------------------------------
+// ImapListener class
+// ---------------------------------------------------------------------------
+
+export class ImapListener {
+    private readonly imap:                 ImapConnection;
+    private readonly processor:            EmailProcessor;
+    private readonly counters:             EmailCounterStore;
+    private readonly config:               ImapListenerConfig;
+    private          timer:                ReturnType<typeof setTimeout> | null;
+    private          lastUid:              number;
+    private          _running:             boolean;
+    private          _pollFallbackResolve: (() => void) | null;
+
+    constructor(imap: ImapConnection, processor: EmailProcessor, counters: EmailCounterStore, config: ImapListenerConfig) {
+        this.imap                 = imap;
+        this.processor            = processor;
+        this.counters             = counters;
+        this.config               = config;
+        this.timer                = null;
+        this.lastUid              = 0;
+        // Stryker disable next-line BooleanLiteral: initialization flag — false is correct initial state
+        this._running             = false;
+        this._pollFallbackResolve = null;
+    }
+
+    /** Whether the listener is currently active. */
+    get running(): boolean {
+        return this._running;
+    }
+
+    /**
+     * Connect, verify folders, fetch any existing unprocessed messages,
+     * and start the polling loop or IDLE loop.
+     */
+    async start(): Promise<void> {
+        await this.imap.connect();
+        // Stryker disable BlockStatement: try-catch ensures disconnect on startup failure
+        try {
+            await this.imap.ensureFolders();
+            // Stryker disable next-line BooleanLiteral: setting running=true after successful connect
+            this._running = true;
+
+            // Sync counters from IMAP on startup (best-effort — failures are logged and ignored)
+            // Stryker disable BlockStatement: try-catch wraps counter sync — best-effort startup initialization
+            try {
+                const { total, unread } = await this.imap.getMailboxCounts(EmailFolder.CleanInbox);
+                await this.counters.reset(total, unread);
+            } catch (syncErr) {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                logger.warn({ error: _.isError(syncErr) ? syncErr.message : String(syncErr), msg: 'Failed to sync email counters on startup' });
+            }
+
+            // Fetch and process any messages that arrived before this session
+            await this.fetchAndProcess();
+
+            // Stryker disable next-line ConditionalExpression: useIdle controls IDLE vs polling mode
+            if(this.config.useIdle) {
+                void this.idleLoop();
+            } else {
+                this.scheduleNextPoll();
+            }
+        } catch (err) {
+            // Stryker disable next-line BooleanLiteral: resetting running=false on startup failure
+            this._running = false;
+            await this.imap.disconnect();
+            throw err;
+        }
+    }
+
+    /** Stop polling/IDLE and disconnect. */
+    async stop(): Promise<void> {
+        if(!this._running) {
+            return;
+        }
+        if(this.timer !== null) {
+            clearTimeout(this.timer);
+            this.timer = null;
+        }
+        // Stryker disable BlockStatement: resolving pollFallbackDelay on stop() — needed for loop exit cleanup
+        if(this._pollFallbackResolve !== null) {
+            this._pollFallbackResolve();
+            this._pollFallbackResolve = null;
+        }
+        // Stryker disable next-line BooleanLiteral: setting running=false before disconnect
+        this._running = false;
+        this.imap.cancelIdle();
+        await this.imap.disconnect();
+    }
+
+    // ---------------------------------------------------------------------------
+    // Internal helpers
+    // ---------------------------------------------------------------------------
+
+    private scheduleNextPoll(): void {
+        this.timer = setTimeout(() => {
+            void this.poll();
+        }, this.config.pollFallbackMs);
+    }
+
+    private async idleLoop(): Promise<void> {
+        while(this._running) {
+            // Set a timer to cancel IDLE before the RFC 2177 29-minute limit
+            const idleTimer = setTimeout(() => {
+                this.imap.cancelIdle();
+            }, this.config.idleTimeoutMs);
+
+            // Stryker disable BlockStatement: try-catch wraps IDLE cycle — error handling
+            try {
+                await this.imap.idle(EmailFolder.Inbox);
+                clearTimeout(idleTimer);
+                if(!this._running) {
+                    break;
+                }
+                await this.fetchAndProcess();
+            } catch (err) {
+                clearTimeout(idleTimer);
+                logger.warn({
+                    error: _.isError(err) ? err.message : String(err),
+                    msg:   'IDLE failed, falling back to poll interval',
+                });
+                await this.pollFallbackDelay();
+            }
+        }
+    }
+
+    private pollFallbackDelay(): Promise<void> {
+        return new Promise<void>((resolve) => {
+            this._pollFallbackResolve = resolve;
+            this.timer                = setTimeout(() => {
+                this.timer                = null;
+                this._pollFallbackResolve = null;
+                resolve();
+            }, this.config.pollFallbackMs);
+        });
+    }
+
+    private async poll(): Promise<void> {
+        // Stryker disable BlockStatement: try-catch wraps poll cycle — error handling
+        try {
+            await this.fetchAndProcess();
+        } catch (err) {
+            logger.warn({
+                error: _.isError(err) ? err.message : String(err),
+                msg:   'Poll cycle failed, will retry',
+            });
+        }
+        if(this._running) {
+            this.scheduleNextPoll();
+        }
+    }
+
+    private async fetchAndProcess(): Promise<void> {
+        const emails = await this.imap.fetchNewMessages(EmailFolder.Inbox, this.lastUid);
+
+        // Stryker disable next-line ConditionalExpression,EqualityOperator: batch cap rate-limits processing to MAX_EMAILS_PER_POLL; > vs >= is equivalent when length === cap (slice(0, n) of n-element array = all n)
+        const toProcess = emails.length > MAX_EMAILS_PER_POLL ? emails.slice(0, MAX_EMAILS_PER_POLL) : emails;
+        if(emails.length > MAX_EMAILS_PER_POLL) {
+            // Stryker disable ObjectLiteral,StringLiteral: log message content is not behavior-affecting
+            logger.warn({
+                total:     emails.length,
+                processed: MAX_EMAILS_PER_POLL,
+                msg:       'Email batch cap reached; remaining emails will be processed next poll',
+            });
+            // Stryker enable ObjectLiteral,StringLiteral
+        }
+
+        for(const email of toProcess) {
+            await this.processOne(email);
+        }
+
+        // Stryker disable next-line ConditionalExpression,EqualityOperator: guard is an optimization; max() ?? lastUid is equivalent for empty arrays
+        if(toProcess.length > 0) {
+            this.lastUid = _(toProcess).map('uid').max() ?? this.lastUid;
+        }
+    }
+
+    private async processOne(email: EmailMetadata): Promise<void> {
+        // Stryker disable BlockStatement: try-catch wraps single email processing — error handling
+        try {
+            await this.processor.processEmail(email);
+        } catch (err) {
+            logger.warn({
+                uid:   email.uid,
+                error: _.isError(err) ? err.message : String(err),
+                msg:   'Failed to process email, continuing',
+            });
+        }
+    }
+}

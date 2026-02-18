@@ -578,6 +578,17 @@ describe('createClaudeAgent', () => {
             expect(queryParams.options.mcpServers.memory).toEqual(mockMemoryServer);
             expect(queryParams.options.mcpServers.discord).toEqual(mockDiscordServer);
         });
+
+        test('should configure email MCP server when provided', async () => {
+            const mockEmailServer = { command: 'node', args: ['email-server.js'] };
+            const agent = createClaudeAgent({ emailMcpServer: mockEmailServer });
+            await agent.handleInput([mockMessageContext]);
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            expect(queryParams.options.mcpServers).toBeDefined();
+            expect(queryParams.options.mcpServers.email).toEqual(mockEmailServer);
+        });
     });
 
     describe('Allowed tools configuration', () => {
@@ -656,6 +667,46 @@ describe('createClaudeAgent', () => {
                 'Bash(bun typecheck)',
                 'Bash(ls:*)',
                 'mcp__discord__*',
+            ]);
+        });
+
+        test('should include email tools when email MCP server provided', async () => {
+            const mockEmailServer = { command: 'node', args: ['email-server.js'] };
+            const agent = createClaudeAgent({ emailMcpServer: mockEmailServer });
+            await agent.handleInput([mockMessageContext]);
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const queryParams = querySpy.mock.calls[0][0];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
+            const allowedTools = queryParams.options.allowedTools;
+
+            // Verify exact array contents with email tools included
+            expect(allowedTools).toEqual([
+                'mcp__memory__*',
+                'Read',
+                'Glob',
+                'Grep',
+                'WebFetch',
+                'WebSearch',
+                'TaskCreate',
+                'TaskUpdate',
+                'TaskGet',
+                'TaskList',
+                'EnterPlanMode',
+                'ExitPlanMode',
+                'Task',
+                'TaskOutput',
+                'TaskStop',
+                // Skills
+                'Skill',
+                // Bash commands (specific safe commands only)
+                'Bash(git:*)',
+                'Bash(bun run:*)',
+                'Bash(bun test:*)',
+                'Bash(bun lint:*)',
+                'Bash(bun typecheck)',
+                'Bash(ls:*)',
+                'mcp__email__*',
             ]);
         });
     });
