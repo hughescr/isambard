@@ -120,6 +120,18 @@ describe('buildAllowlistCommand()', () => {
         expect(emailOpt).toBeDefined();
         expect(emailOpt?.required).toBe(true);
     });
+
+    test('sets contexts to Guild, BotDM, and PrivateChannel', () => {
+        const cmd = buildAllowlistCommand();
+        const json = cmd.toJSON();
+        expect(json.contexts).toEqual([0, 1, 2]);
+    });
+
+    test('sets integration types to GuildInstall only', () => {
+        const cmd = buildAllowlistCommand();
+        const json = cmd.toJSON();
+        expect(json.integration_types).toEqual([0]);
+    });
 });
 
 describe('AllowlistCommandHandler - permission check', () => {
