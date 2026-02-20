@@ -17,7 +17,7 @@ describe.concurrent('EmailFolder', () => {
         expect(EmailFolder.Trash).toBe('Trash');
         expect(EmailFolder.Archive).toBe('Archive');
         expect(EmailFolder.Drafts).toBe('Drafts');
-        expect(EmailFolder.Sent).toBe('Sent');
+        expect(EmailFolder.Sent).toBe('Sent Mail');
     });
 
     test('should have exactly the expected keys', () => {

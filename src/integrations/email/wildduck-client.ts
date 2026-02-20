@@ -3,6 +3,7 @@ import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import { WildDuckError, WildDuckAuthError } from '@/integrations/email/errors';
 export { WildDuckError, WildDuckAuthError } from '@/integrations/email/errors';
+import { SPECIAL_USE_FLAGS } from '@/integrations/email/imap-connection';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -97,8 +98,9 @@ interface AuthResponse {
 }
 
 interface MailboxEntry {
-    id:   string
-    path: string
+    id:          string
+    path:        string
+    specialUse?: string
 }
 
 interface MailboxListResponse {
@@ -348,6 +350,15 @@ export class WildDuckClient {
         for(const mailbox of response.results) {
             this.mailboxMap.set(mailbox.id, mailbox.path);
             this.reverseMailboxMap.set(mailbox.path, mailbox.id);
+            // Also map the logical folder name (e.g. 'Sent Mail') via specialUse flag
+            // so that resolveMailboxId() works regardless of server-specific path names
+            // (e.g. '[Gmail]/Sent Mail' vs 'Sent Mail')
+            if(mailbox.specialUse) {
+                const logicalName = SPECIAL_USE_FLAGS[mailbox.specialUse];
+                if(logicalName) {
+                    this.reverseMailboxMap.set(logicalName, mailbox.id);
+                }
+            }
         }
     }
 

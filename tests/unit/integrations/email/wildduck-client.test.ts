@@ -31,13 +31,28 @@ const AUTH_RESPONSE = {
 const MAILBOX_RESPONSE = {
     success: true,
     results: [
-        { id: 'mbx-inbox',      path: 'INBOX' },
+        { id: 'mbx-inbox',      path: 'INBOX',      specialUse: '\\Inbox' },
         { id: 'mbx-clean',      path: 'CleanInbox' },
-        { id: 'mbx-archive',    path: 'Archive' },
-        { id: 'mbx-sent',       path: 'Sent' },
-        { id: 'mbx-junk',       path: 'Junk' },
-        { id: 'mbx-trash',      path: 'Trash' },
-        { id: 'mbx-drafts',     path: 'Drafts' },
+        { id: 'mbx-archive',    path: 'Archive',     specialUse: '\\Archive' },
+        { id: 'mbx-sent',       path: 'Sent Mail',   specialUse: '\\Sent' },
+        { id: 'mbx-junk',       path: 'Junk',        specialUse: '\\Junk' },
+        { id: 'mbx-trash',      path: 'Trash',       specialUse: '\\Trash' },
+        { id: 'mbx-drafts',     path: 'Drafts',      specialUse: '\\Drafts' },
+        { id: 'mbx-quarantine', path: 'Quarantine' },
+    ],
+};
+
+// Mailbox response where server paths differ from logical folder names (e.g. Gmail-style)
+const NONSTANDARD_MAILBOX_RESPONSE = {
+    success: true,
+    results: [
+        { id: 'mbx-inbox',      path: 'INBOX',                  specialUse: '\\Inbox' },
+        { id: 'mbx-clean',      path: 'CleanInbox' },
+        { id: 'mbx-archive',    path: '[Gmail]/All Mail',        specialUse: '\\Archive' },
+        { id: 'mbx-sent',       path: '[Gmail]/Sent Mail',       specialUse: '\\Sent' },
+        { id: 'mbx-junk',       path: '[Gmail]/Spam',            specialUse: '\\Junk' },
+        { id: 'mbx-trash',      path: '[Gmail]/Trash',           specialUse: '\\Trash' },
+        { id: 'mbx-drafts',     path: '[Gmail]/Drafts',          specialUse: '\\Drafts' },
         { id: 'mbx-quarantine', path: 'Quarantine' },
     ],
 };
@@ -975,7 +990,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await client.updateMessageMetadata('Sent', 7, METADATA);
+            await client.updateMessageMetadata('Sent Mail', 7, METADATA);
 
             const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
             expect(url).toBe('https://wildduck-api.example.com/users/me/mailboxes/mbx-sent/messages/7');
@@ -987,7 +1002,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await client.updateMessageMetadata('Sent', 7, METADATA);
+            await client.updateMessageMetadata('Sent Mail', 7, METADATA);
 
             const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
             const body = JSON.parse(options.body as string) as { metaData: typeof METADATA };
@@ -999,7 +1014,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await client.updateMessageMetadata('Sent', 7, METADATA);
+            await client.updateMessageMetadata('Sent Mail', 7, METADATA);
 
             const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
             expect((options.headers as Record<string, string>)['Content-Type']).toBe('application/json');
@@ -1010,7 +1025,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await client.updateMessageMetadata('Sent', 7, METADATA);
+            await client.updateMessageMetadata('Sent Mail', 7, METADATA);
 
             const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
             expect((options.headers as Record<string, string>)['X-Access-Token']).toBe('test-auth-token');
@@ -1021,7 +1036,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.updateMessageMetadata('Sent', 7, METADATA)).resolves.toBeUndefined();
+            await expect(client.updateMessageMetadata('Sent Mail', 7, METADATA)).resolves.toBeUndefined();
         });
 
         test('throws WildDuckError when mailboxPath not in map', async () => {
@@ -1037,7 +1052,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'new-token' }));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await client.updateMessageMetadata('Sent', 7, METADATA);
+            await client.updateMessageMetadata('Sent Mail', 7, METADATA);
 
             expect(mockFetch).toHaveBeenCalledTimes(3);
         });
@@ -1049,7 +1064,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await client.updateMessageMetadata('Sent', 7, METADATA);
+            await client.updateMessageMetadata('Sent Mail', 7, METADATA);
 
             const [_url, options] = mockFetch.mock.calls[2] as [string, RequestInit];
             expect((options.headers as Record<string, string>)['X-Access-Token']).toBe('refreshed-token');
@@ -1060,7 +1075,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
 
-            await expect(client.updateMessageMetadata('Sent', 7, METADATA)).rejects.toThrow(WildDuckError);
+            await expect(client.updateMessageMetadata('Sent Mail', 7, METADATA)).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckAuthError when re-auth fails after 401', async () => {
@@ -1069,7 +1084,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.updateMessageMetadata('Sent', 7, METADATA)).rejects.toThrow(WildDuckAuthError);
+            await expect(client.updateMessageMetadata('Sent Mail', 7, METADATA)).rejects.toThrow(WildDuckAuthError);
         });
     });
 
@@ -1090,7 +1105,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse(MESSAGE_RESPONSE));
 
-            await client.getMessage('Sent', 42);
+            await client.getMessage('Sent Mail', 42);
 
             const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
             expect(url).toBe('https://wildduck-api.example.com/users/me/mailboxes/mbx-sent/messages/42');
@@ -1102,7 +1117,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse(MESSAGE_RESPONSE));
 
-            await client.getMessage('Sent', 42);
+            await client.getMessage('Sent Mail', 42);
 
             const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
             expect((options.headers as Record<string, string>)['X-Access-Token']).toBe('test-auth-token');
@@ -1113,7 +1128,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse(MESSAGE_RESPONSE));
 
-            const msg = await client.getMessage('Sent', 42);
+            const msg = await client.getMessage('Sent Mail', 42);
 
             expect(msg).not.toBeNull();
             expect(msg?.id).toBe(42);
@@ -1127,7 +1142,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Message not found' }, 404));
 
-            const msg = await client.getMessage('Sent', 42);
+            const msg = await client.getMessage('Sent Mail', 42);
 
             expect(msg).toBeNull();
         });
@@ -1145,7 +1160,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'new-token' }));
             mockFetch.mockResolvedValueOnce(makeJsonResponse(MESSAGE_RESPONSE));
 
-            const msg = await client.getMessage('Sent', 42);
+            const msg = await client.getMessage('Sent Mail', 42);
 
             expect(mockFetch).toHaveBeenCalledTimes(3);
             expect(msg?.id).toBe(42);
@@ -1158,7 +1173,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
             mockFetch.mockResolvedValueOnce(makeJsonResponse(MESSAGE_RESPONSE));
 
-            await client.getMessage('Sent', 42);
+            await client.getMessage('Sent Mail', 42);
 
             const [_url, options] = mockFetch.mock.calls[2] as [string, RequestInit];
             expect((options.headers as Record<string, string>)['X-Access-Token']).toBe('refreshed-token');
@@ -1169,7 +1184,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
 
-            await expect(client.getMessage('Sent', 42)).rejects.toThrow(WildDuckError);
+            await expect(client.getMessage('Sent Mail', 42)).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckAuthError when re-auth fails after 401', async () => {
@@ -1178,7 +1193,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.getMessage('Sent', 42)).rejects.toThrow(WildDuckAuthError);
+            await expect(client.getMessage('Sent Mail', 42)).rejects.toThrow(WildDuckAuthError);
         });
     });
 
@@ -1213,6 +1228,111 @@ describe('WildDuckClient', () => {
         test('should return undefined before init()', () => {
             const client = new WildDuckClient(CLIENT_OPTIONS);
             expect(client.getMailboxId('CleanInbox')).toBeUndefined();
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // specialUse-based mailbox resolution
+    // -----------------------------------------------------------------------
+    describe('specialUse-based mailbox resolution', () => {
+        async function makeClientWithNonstandardPaths(): Promise<WildDuckClient> {
+            mockFetch
+                .mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE))
+                .mockResolvedValueOnce(makeJsonResponse(NONSTANDARD_MAILBOX_RESPONSE));
+            const client = new WildDuckClient(CLIENT_OPTIONS);
+            await client.init();
+            mockFetch.mockClear();
+            return client;
+        }
+
+        test('resolves logical folder name via specialUse when server path differs', async () => {
+            // 'Sent Mail' logical name resolves via \\Sent flag, even though actual path is '[Gmail]/Sent Mail'
+            const client = await makeClientWithNonstandardPaths();
+            expect(client.getMailboxId('Sent Mail')).toBe('mbx-sent');
+        });
+
+        test('resolves Drafts via \\Drafts specialUse flag', async () => {
+            const client = await makeClientWithNonstandardPaths();
+            expect(client.getMailboxId('Drafts')).toBe('mbx-drafts');
+        });
+
+        test('resolves Junk via \\Junk specialUse flag', async () => {
+            const client = await makeClientWithNonstandardPaths();
+            expect(client.getMailboxId('Junk')).toBe('mbx-junk');
+        });
+
+        test('resolves Trash via \\Trash specialUse flag', async () => {
+            const client = await makeClientWithNonstandardPaths();
+            expect(client.getMailboxId('Trash')).toBe('mbx-trash');
+        });
+
+        test('resolves Archive via \\Archive specialUse flag', async () => {
+            const client = await makeClientWithNonstandardPaths();
+            expect(client.getMailboxId('Archive')).toBe('mbx-archive');
+        });
+
+        test('resolves INBOX via \\Inbox specialUse flag', async () => {
+            const client = await makeClientWithNonstandardPaths();
+            expect(client.getMailboxId('INBOX')).toBe('mbx-inbox');
+        });
+
+        test('can call getMessage with logical folder name when path differs', async () => {
+            const client = await makeClientWithNonstandardPaths();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({
+                success:  true,
+                id:       99,
+                subject:  'Test',
+                from:     { address: 'sender@example.com', name: 'Sender' },
+                metaData: {},
+            }));
+
+            const msg = await client.getMessage('Sent Mail', 99);
+
+            const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
+            // Should use the WildDuck mailbox ID (mbx-sent), not the server path
+            expect(url).toContain('mbx-sent');
+            expect(msg?.id).toBe(99);
+        });
+
+        test('path mapping still works for non-special folders (no specialUse)', async () => {
+            const client = await makeClientWithNonstandardPaths();
+            // CleanInbox has no specialUse, still resolves by path
+            expect(client.getMailboxId('CleanInbox')).toBe('mbx-clean');
+        });
+
+        test('specialUse mapping does not conflict with path mapping when both are valid', async () => {
+            // Standard paths — both path and specialUse resolve to the same mailbox
+            const client = await makeInitializedClient();
+            expect(client.getMailboxId('Sent Mail')).toBe('mbx-sent');
+            expect(client.getMailboxId('Drafts')).toBe('mbx-drafts');
+        });
+
+        test('mailboxes without specialUse are still accessible by path', async () => {
+            const client = await makeClientWithNonstandardPaths();
+            // Quarantine has no specialUse, so path '[Gmail]/...'-style would break it,
+            // but Quarantine path IS 'Quarantine' so it maps directly
+            expect(client.getMailboxId('Quarantine')).toBe('mbx-quarantine');
+        });
+
+        test('unknown specialUse value does not create spurious map entries', async () => {
+            // Mailbox with a specialUse value not in SPECIAL_USE_FLAGS should not pollute the map
+            mockFetch
+                .mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE))
+                .mockResolvedValueOnce(makeJsonResponse({
+                    success: true,
+                    results: [
+                        { id: 'mbx-custom', path: 'CustomFolder', specialUse: '\\Custom' },
+                    ],
+                }));
+            const client = new WildDuckClient(CLIENT_OPTIONS);
+            await client.init();
+            mockFetch.mockClear();
+
+            // The path-based lookup works
+            expect(client.getMailboxId('CustomFolder')).toBe('mbx-custom');
+            // But no spurious 'undefined' key is added (\\Custom is not in SPECIAL_USE_FLAGS)
+            expect(client.getMailboxId('undefined')).toBeUndefined();
         });
     });
 

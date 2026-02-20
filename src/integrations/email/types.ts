@@ -11,7 +11,7 @@ export const EmailFolder = {
     Junk:       'Junk',
     Trash:      'Trash',
     Archive:    'Archive',
-    Sent:       'Sent',
+    Sent:       'Sent Mail',
 } as const;
 export type EmailFolder = typeof EmailFolder[keyof typeof EmailFolder];
 

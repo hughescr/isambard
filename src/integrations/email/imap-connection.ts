@@ -33,9 +33,9 @@ const REQUIRED_FOLDERS = _.values(EmailFolder);
  * Standard IMAP flags per RFC 6154.
  */
 // Stryker disable StringLiteral,ObjectLiteral: specialUse flag strings and folder values are IMAP RFC 6154 configuration
-const SPECIAL_USE_FLAGS: Record<string, string> = {
+export const SPECIAL_USE_FLAGS: Record<string, string> = {
     '\\Inbox':   'INBOX',
-    '\\Sent':    'Sent',
+    '\\Sent':    'Sent Mail',
     '\\Drafts':  'Drafts',
     '\\Junk':    'Junk',
     '\\Trash':   'Trash',
@@ -47,19 +47,19 @@ const SPECIAL_USE_FLAGS: Record<string, string> = {
  * Fallback IMAP path to use when no specialUse flag resolves a folder.
  * Custom folders (CleanInbox, Quarantine, Review) are always hardcoded.
  */
-// Stryker disable StringLiteral: fallback path strings are IMAP server configuration constants
+// Stryker disable StringLiteral,ObjectLiteral: fallback path strings and object literal are IMAP server configuration constants
 const FOLDER_FALLBACK_PATHS: Record<string, string> = {
-    INBOX:      'INBOX',
-    Sent:       'Sent Mail',   // WildDuck uses 'Sent Mail'
-    Drafts:     'Drafts',
-    Junk:       'Junk',
-    Trash:      'Trash',
-    Archive:    'Archive',
-    CleanInbox: 'CleanInbox',
-    Quarantine: 'Quarantine',
-    Review:     'Review',
+    INBOX:       'INBOX',
+    'Sent Mail': 'Sent Mail',  // WildDuck uses 'Sent Mail'
+    Drafts:      'Drafts',
+    Junk:        'Junk',
+    Trash:       'Trash',
+    Archive:     'Archive',
+    CleanInbox:  'CleanInbox',
+    Quarantine:  'Quarantine',
+    Review:      'Review',
 };
-// Stryker restore StringLiteral
+// Stryker restore StringLiteral,ObjectLiteral
 
 /** Header names we extract and expose. */
 // Stryker disable StringLiteral: HEADER_NAMES entries are configuration constants

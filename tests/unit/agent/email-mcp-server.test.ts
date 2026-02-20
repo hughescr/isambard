@@ -1354,7 +1354,7 @@ describe('createEmailMCPServer', () => {
             const params = mockSearch.mock.calls[0]?.[0];
             expect(params.mailboxes).toContain('CleanInbox');
             expect(params.mailboxes).toContain('Archive');
-            expect(params.mailboxes).not.toContain('Sent');
+            expect(params.mailboxes).not.toContain('Sent Mail');
             expect(params.mailboxes).not.toContain('Junk');
             expect(params.mailboxes).not.toContain('Trash');
             expect(params.mailboxes).not.toContain('Drafts');
@@ -1370,7 +1370,7 @@ describe('createEmailMCPServer', () => {
             const params = mockSearch.mock.calls[0]?.[0];
             expect(params.mailboxes).toContain('CleanInbox');
             expect(params.mailboxes).toContain('Archive');
-            expect(params.mailboxes).not.toContain('Sent');
+            expect(params.mailboxes).not.toContain('Sent Mail');
             expect(params.mailboxes).not.toContain('Junk');
             expect(params.mailboxes).not.toContain('Trash');
             expect(params.mailboxes).not.toContain('Drafts');
@@ -1386,7 +1386,7 @@ describe('createEmailMCPServer', () => {
             const params = mockSearch.mock.calls[0]?.[0];
             expect(params.mailboxes).toContain('CleanInbox');
             expect(params.mailboxes).toContain('Archive');
-            expect(params.mailboxes).toContain('Sent');
+            expect(params.mailboxes).toContain('Sent Mail');
             expect(params.mailboxes).toContain('Junk');
             expect(params.mailboxes).toContain('Trash');
             expect(params.mailboxes).toContain('Drafts');

@@ -1061,7 +1061,7 @@ describe('ImapConnection', () => {
             await connection.connect();
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
-            await expect(connection.ensureFolders()).rejects.toThrow('Sent');
+            await expect(connection.ensureFolders()).rejects.toThrow('Sent Mail');
         });
 
         test('custom folders (CleanInbox, Quarantine, Review) always use hardcoded names', async () => {
@@ -1153,7 +1153,7 @@ describe('ImapConnection', () => {
             await connection.connect();
             await connection.ensureFolders();
 
-            await connection.fetchMessage('Sent', 42);
+            await connection.fetchMessage('Sent Mail', 42);
 
             expect(mockMailboxOpen).toHaveBeenCalledWith('Sent Mail');
         });
@@ -1164,7 +1164,7 @@ describe('ImapConnection', () => {
             await connection.connect();
             await connection.ensureFolders();
 
-            await connection.moveMessage(42, 'INBOX', 'Sent');
+            await connection.moveMessage(42, 'INBOX', 'Sent Mail');
 
             expect(mockMessageMove).toHaveBeenCalledWith(42, 'Sent Mail', expect.objectContaining({ uid: true }));
         });
@@ -1175,7 +1175,7 @@ describe('ImapConnection', () => {
             await connection.connect();
             await connection.ensureFolders();
 
-            await connection.appendMessage('Sent', Buffer.from('raw message'));
+            await connection.appendMessage('Sent Mail', Buffer.from('raw message'));
 
             expect(mockMailboxOpen).toHaveBeenCalledWith('Sent Mail');
             expect(mockAppend).toHaveBeenCalledWith('Sent Mail', expect.any(Buffer));
@@ -1187,7 +1187,7 @@ describe('ImapConnection', () => {
             await connection.connect();
             await connection.ensureFolders();
 
-            await connection.getMailboxCounts('Sent');
+            await connection.getMailboxCounts('Sent Mail');
 
             expect(mockStatus).toHaveBeenCalledWith('Sent Mail', expect.objectContaining({ messages: true, unseen: true }));
         });
@@ -1198,7 +1198,7 @@ describe('ImapConnection', () => {
             await connection.connect();
             await connection.ensureFolders();
 
-            await connection.idle('Sent');
+            await connection.idle('Sent Mail');
 
             expect(mockMailboxOpen).toHaveBeenCalledWith('Sent Mail');
         });
@@ -1208,10 +1208,65 @@ describe('ImapConnection', () => {
             setupFetchOnePair(makePlainFetchResult(), '1', PLAIN_BODY_CONTENT);
             await connection.connect();
 
-            await connection.fetchMessage('Sent', 42);
+            await connection.fetchMessage('Sent Mail', 42);
 
-            // Before ensureFolders() is called, 'Sent' is passed through as-is
-            expect(mockMailboxOpen).toHaveBeenCalledWith('Sent');
+            // Before ensureFolders() is called, 'Sent Mail' is passed through as-is
+            expect(mockMailboxOpen).toHaveBeenCalledWith('Sent Mail');
+        });
+
+        // -------------------------------------------------------------------
+        // Non-identity folder mapping — server path differs from EmailFolder
+        // -------------------------------------------------------------------
+
+        // Gmail-style fixture where the Sent folder has a vendor-prefixed server path
+        const gmailFolders = [
+            { path: 'INBOX',                  specialUse: '\\Inbox'   },
+            { path: 'CleanInbox'                                       },  // custom, no flag
+            { path: 'Drafts',                 specialUse: '\\Drafts'  },
+            { path: 'Quarantine'                                       },  // custom, no flag
+            { path: 'Review'                                           },  // custom, no flag
+            { path: 'Junk',                   specialUse: '\\Junk'    },
+            { path: 'Trash',                  specialUse: '\\Trash'   },
+            { path: 'Archive',                specialUse: '\\Archive' },
+            { path: '[Gmail]/Sent Mail',      specialUse: '\\Sent'    },  // Gmail uses a vendor-prefixed path
+        ];
+
+        test('fetchMessage uses actual server path after ensureFolders() — [Gmail]/Sent Mail non-identity mapping', async () => {
+            // The logical folder name is 'Sent Mail' (EmailFolder.Sent) but the server path is '[Gmail]/Sent Mail'.
+            // ensureFolders() must store the server path; resolveFolder() must translate the logical name.
+            mockList.mockImplementation(() => Promise.resolve(gmailFolders));
+            setupFetchOnePair(makePlainFetchResult(), '1', PLAIN_BODY_CONTENT);
+            await connection.connect();
+            await connection.ensureFolders();
+
+            await connection.fetchMessage('Sent Mail', 42);
+
+            // The IMAP call must use the server's actual path, NOT the logical 'Sent Mail'
+            expect(mockMailboxOpen).toHaveBeenCalledWith('[Gmail]/Sent Mail');
+        });
+
+        test('moveMessage uses actual server path for toFolder after ensureFolders() — [Gmail]/Sent Mail non-identity mapping', async () => {
+            mockList.mockImplementation(() => Promise.resolve(gmailFolders));
+            mockMessageMove.mockImplementation(() => Promise.resolve({}));
+            await connection.connect();
+            await connection.ensureFolders();
+
+            await connection.moveMessage(42, 'INBOX', 'Sent Mail');
+
+            // The destination path passed to IMAP must be the server path, not the logical name
+            expect(mockMessageMove).toHaveBeenCalledWith(42, '[Gmail]/Sent Mail', expect.objectContaining({ uid: true }));
+        });
+
+        test('appendMessage uses actual server path after ensureFolders() — [Gmail]/Sent Mail non-identity mapping', async () => {
+            mockList.mockImplementation(() => Promise.resolve(gmailFolders));
+            mockAppend.mockImplementation(() => Promise.resolve({ uid: 99 }));
+            await connection.connect();
+            await connection.ensureFolders();
+
+            await connection.appendMessage('Sent Mail', Buffer.from('raw message'));
+
+            expect(mockMailboxOpen).toHaveBeenCalledWith('[Gmail]/Sent Mail');
+            expect(mockAppend).toHaveBeenCalledWith('[Gmail]/Sent Mail', expect.any(Buffer));
         });
     });
 

@@ -25,10 +25,10 @@ import type { SendRateLimiter } from '@/integrations/email/send-rate-limiter';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { sanitizeFilename, deduplicateFilename } from '@/utils/filename';
 
-// Regex for Mailbox:UID format — e.g., "CleanInbox:42" or "Archive:15"
-// Matches EmailFolder enum values which all start with an uppercase letter.
+// Regex for Mailbox:UID format — e.g., "CleanInbox:42", "Sent Mail:7", "INBOX.Sub:15"
+// Allows any non-empty mailbox name (including spaces, dots, slashes) followed by colon and digits.
 // Stryker disable next-line Regex,StringLiteral: Regex pattern is a configuration constant for parsing
-const MAILBOX_UID_REGEX = /^[A-Z][a-zA-Z]*:\d+$/;
+const MAILBOX_UID_REGEX = /^.+:\d+$/;
 
 // Regex for Drafts:UID format — used for draft management tools
 // Stryker disable next-line Regex,StringLiteral: Regex pattern is a configuration constant for parsing
