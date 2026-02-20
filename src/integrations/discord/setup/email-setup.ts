@@ -5,6 +5,7 @@ import { logger } from '@hughescr/logger';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { EmailConfig } from '@/config/schemas';
+import { type ChannelId, createChannelId } from '@/integrations/discord/types';
 import { ImapConnection } from '@/integrations/email/imap-connection';
 import { EmailClassifier } from '@/integrations/email/classifier';
 import { EmailAllowlist } from '@/integrations/email/allowlist';
@@ -46,6 +47,8 @@ export interface EmailSetupResult {
     counters:                EmailCounterStore
     outboundApprovalHandler: OutboundApprovalHandler
     wildDuckClient:          WildDuckClient
+    /** Discord channel ID for the admin email channel, used to auto-mute it at startup */
+    adminChannelId:          ChannelId
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +268,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         counters,
         outboundApprovalHandler,
         wildDuckClient,
+        adminChannelId: createChannelId(emailConfig.adminDiscordChannelId),
     };
 }
 

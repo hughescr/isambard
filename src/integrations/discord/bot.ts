@@ -276,7 +276,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // Register clientReady handler for messageCreate setup
     // This runs after the client is authenticated and ready
     // Use .once() to ensure this setup only runs once, even on reconnects
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- clientReady handler must be async; needs refactoring to reduce complexity
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises, complexity -- clientReady handler must be async; complexity added by admin channel mute; needs refactoring to reduce
     client.once('clientReady', async (readyClient: Client): Promise<void> => {
         // Log that the bot is ready (preserving functionality from removed logging handler)
         createReadyHandler()(readyClient);
@@ -453,6 +453,23 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         // Initialize channel registry BEFORE setting up message handlers
         // Pass rateLimiter for error notification (may be undefined if not created yet)
         await initializeChannelRegistry(readyClient, channelRegistry, responseRouter, rateLimiter);
+
+        // Mute admin email channel so Craig's messages there don't reach Izzy
+        if(emailSetup?.adminChannelId) {
+            // Stryker disable BlockStatement: try-catch wraps admin channel mute - non-fatal startup step
+            try {
+                await channelRegistry.muteChannel(emailSetup.adminChannelId);
+                // Stryker disable next-line ObjectLiteral,StringLiteral: log message is not behavior-affecting
+                logger.info({ msg: 'Admin email channel muted in channel registry' });
+            } catch (err) {
+                logger.warn({
+                    error: _.isError(err) ? err.message : String(err),
+                    // Stryker disable next-line StringLiteral: log message is not behavior-affecting
+                    msg:   'Failed to mute admin email channel — messages there may reach Izzy',
+                });
+            }
+            // Stryker enable BlockStatement
+        }
 
         // Create message coordinator if agent is provided (MUST be before setupMessageProcessing)
         if(agent) {

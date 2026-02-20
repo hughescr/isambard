@@ -37,6 +37,7 @@ describe('createDiscordBot', () => {
         getUnmutedChannels: mock(() => Promise.resolve([])),
         upsertChannel:      mock(() => Promise.resolve()),
         getAllChannels:     mock(() => []),
+        muteChannel:        mock(async () => undefined),
     } as unknown as ChannelRegistryManager;
 
     const mockLogger: Logger = {
@@ -2976,6 +2977,157 @@ describe('createDiscordBot', () => {
             expect(replyMock).toHaveBeenCalledWith(expect.objectContaining({
                 ephemeral: true,
             }));
+        });
+
+        test('muteChannel is called with adminChannelId on clientReady when emailSetup has adminChannelId', async () => {
+            const mockClient = {
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            const adminChannelId = createChannelId('admin-channel-123');
+            const mockEmailSetup = {
+                listener:         { start: mock(async () => undefined), stop: mock(async () => undefined) },
+                reviewHandler:    { handleButton: mock(async () => undefined) },
+                allowlistHandler: { handle: mock(async () => undefined) },
+                emailMcpServer:   {},
+                imap:             {},
+                counters:         {},
+                adminChannelId,
+            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+
+            const muteChannelMock = mock(async () => undefined);
+            const channelRegistryWithMute = {
+                ...mockChannelRegistry,
+                muteChannel: muteChannelMock,
+            } as unknown as ChannelRegistryManager;
+
+            createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: channelRegistryWithMute,
+                emailSetup:      mockEmailSetup,
+            });
+
+            // muteChannel must NOT be called before clientReady fires
+            expect(muteChannelMock).not.toHaveBeenCalled();
+
+            // Fire clientReady handler
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            // muteChannel must be called once with the adminChannelId
+            expect(muteChannelMock).toHaveBeenCalledTimes(1);
+            expect(muteChannelMock).toHaveBeenCalledWith(adminChannelId);
+        });
+
+        test('muteChannel failure is non-fatal: clientReady completes and bot is stoppable', async () => {
+            const mockClient = {
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            const adminChannelId = createChannelId('admin-channel-456');
+            const mockEmailSetup = {
+                listener:         { start: mock(async () => undefined), stop: mock(async () => undefined) },
+                reviewHandler:    { handleButton: mock(async () => undefined) },
+                allowlistHandler: { handle: mock(async () => undefined) },
+                emailMcpServer:   {},
+                imap:             {},
+                counters:         {},
+                adminChannelId,
+            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+
+            const muteChannelMock = mock(async () => {
+                throw new Error('DynamoDB unreachable');
+            });
+            const channelRegistryWithMute = {
+                ...mockChannelRegistry,
+                muteChannel: muteChannelMock,
+            } as unknown as ChannelRegistryManager;
+
+            const bot = createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: channelRegistryWithMute,
+                emailSetup:      mockEmailSetup,
+            });
+
+            // Fire clientReady — muteChannel will throw, but clientReady must not throw
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                // Must not throw even though muteChannel throws
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            // Bot must still be stoppable after mute failure
+            await bot.stop();
+            expect(mockClient.destroy).toHaveBeenCalledTimes(1);
+        });
+
+        test('muteChannel is NOT called when emailSetup has no adminChannelId', async () => {
+            const mockClient = {
+                on:                 mock(() => mockClient),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            const mockEmailSetup = {
+                listener:         { start: mock(async () => undefined), stop: mock(async () => undefined) },
+                reviewHandler:    { handleButton: mock(async () => undefined) },
+                allowlistHandler: { handle: mock(async () => undefined) },
+                emailMcpServer:   {},
+                imap:             {},
+                counters:         {},
+                // no adminChannelId
+            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+
+            const muteChannelMock = mock(async () => undefined);
+            const channelRegistryWithMute = {
+                ...mockChannelRegistry,
+                muteChannel: muteChannelMock,
+            } as unknown as ChannelRegistryManager;
+
+            createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: channelRegistryWithMute,
+                emailSetup:      mockEmailSetup,
+            });
+
+            // Fire clientReady handler
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            // muteChannel must NOT be called when adminChannelId is absent
+            expect(muteChannelMock).not.toHaveBeenCalled();
         });
     });
 });
