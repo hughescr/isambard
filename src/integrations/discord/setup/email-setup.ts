@@ -13,7 +13,7 @@ import { EmailCounterStore } from '@/integrations/email/email-counters';
 import { EmailProcessor } from '@/integrations/email/email-processor';
 import { ImapListener } from '@/integrations/email/imap-listener';
 import { ReviewHandler } from '@/integrations/email/review-handler';
-import { buildReviewEmbed, buildUnsafeAlert } from '@/integrations/email/review-embed-builder';
+import { buildReviewEmbed, buildUnsafeAlert, buildRestrictedAccessEmbed } from '@/integrations/email/review-embed-builder';
 import { AllowlistCommandHandler, buildAllowlistCommand } from '@/integrations/email/allowlist-commands';
 import { EmailFolder } from '@/integrations/email/types';
 import { WildDuckClient } from '@/integrations/email/wildduck-client';
@@ -232,11 +232,12 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Create email MCP server for Claude agent
     // Stryker disable ObjectLiteral,BlockStatement,StringLiteral: MCP server options and admin notification callback are integration wiring - not unit testable
     const emailMcpServer = createEmailMCPServer(imap, counters, {
-        sendAdminNotification: async (msg) => {
+        sendAdminNotification: async ({ mailboxName, uid, reference }) => {
             try {
+                const { embed, actionRow } = buildRestrictedAccessEmbed(mailboxName, uid, reference);
                 const channel = await client.channels.fetch(emailConfig.adminDiscordChannelId);
                 if(channel && 'send' in channel) {
-                    await channel.send(msg);
+                    await channel.send({ embeds: [embed], components: [actionRow] });
                 }
             } catch (err) {
                 logger.error({

@@ -41,6 +41,12 @@ const DRAFTS_UID_REGEX = /^Drafts:\d+$/;
 const ACCESSIBLE_MAILBOXES: ReadonlySet<string> = new Set([EmailFolder.CleanInbox, EmailFolder.Archive]);
 
 /**
+ * Mailboxes readable by getEmailContent (superset of ACCESSIBLE_MAILBOXES: also includes Drafts).
+ */
+// Stryker disable next-line ArrayDeclaration: Readable mailboxes are configuration
+const READABLE_MAILBOXES: ReadonlySet<string> = new Set([EmailFolder.CleanInbox, EmailFolder.Archive, EmailFolder.Drafts]);
+
+/**
  * Parse a Mailbox:UID string into its mailbox name and numeric UID.
  * Assumes the string has already been validated against MAILBOX_UID_REGEX.
  */
@@ -51,12 +57,15 @@ function parseMailboxUid(message: string): { mailboxName: string, uid: number } 
     return { mailboxName, uid };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Notification payload matches discord.js MessageCreateOptions
-type AdminNotification = Record<string, any>;
+export interface RestrictedMailboxNotification {
+    mailboxName: string
+    uid:         number
+    reference:   string
+}
 
 export interface EmailMCPServerOptions {
     /** Optional callback to send an admin notification (e.g., Discord channel message) */
-    sendAdminNotification?: (msg: AdminNotification) => Promise<void>
+    sendAdminNotification?: (params: RestrictedMailboxNotification) => Promise<void>
     /** WildDuck HTTP client for email search and sending */
     wildDuckClient:         WildDuckClient
     /** Optional rate limiter for outbound email sends */
@@ -131,7 +140,7 @@ async function buildAttachments(filePaths: string[]): Promise<WildDuckAttachment
  * - Fetching full email content by Mailbox:UID reference and marking as read
  * - Archiving emails by moving them from their current mailbox to Archive
  *
- * Access control: getEmailContent only allows CleanInbox and Archive.
+ * Access control: getEmailContent allows CleanInbox, Archive, and Drafts.
  * Access to restricted mailboxes (Quarantine, Junk, Trash, etc.) triggers
  * an admin notification and returns an error.
  *
@@ -333,16 +342,14 @@ export function createEmailMCPServer(
                     try {
                         const { mailboxName, uid } = parseMailboxUid(args.message);
 
-                        // Access control: only CleanInbox and Archive are directly accessible
-                        if(!ACCESSIBLE_MAILBOXES.has(mailboxName)) {
+                        // Access control: CleanInbox, Archive, and Drafts are directly readable
+                        if(!READABLE_MAILBOXES.has(mailboxName)) {
                             // Send admin notification (fire-and-forget)
                             if(sendAdminNotification) {
                                 // Stryker disable BlockStatement: try-catch guards notification failure from breaking access control response
                                 try {
-                                    // Stryker disable next-line ObjectLiteral,StringLiteral: Notification message content is not behavior-affecting
-                                    await sendAdminNotification({
-                                        content: `Agent requested access to restricted mailbox **${mailboxName}** (UID ${uid}, reference: \`${args.message}\`). This requires admin review.`,
-                                    });
+                                    // Stryker disable next-line ObjectLiteral: Notification params are configuration
+                                    await sendAdminNotification({ mailboxName, uid, reference: args.message });
                                 } catch (notifErr) {
                                     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                                     logger.warn({ error: _.isError(notifErr) ? notifErr.message : String(notifErr), msg: 'Failed to send restricted mailbox notification' });

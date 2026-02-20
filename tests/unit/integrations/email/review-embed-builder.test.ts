@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import _ from 'lodash';
 import type { APIButtonComponentWithCustomId } from 'discord.js';
-import { buildReviewEmbed, buildUnsafeAlert, buildOutboundApprovalEmbed } from '@/integrations/email/review-embed-builder';
+import { buildReviewEmbed, buildUnsafeAlert, buildOutboundApprovalEmbed, buildRestrictedAccessEmbed } from '@/integrations/email/review-embed-builder';
 import type { EmailMetadata, ClassifierVerdict } from '@/integrations/email/types';
 
 // ---------------------------------------------------------------------------
@@ -336,5 +336,63 @@ describe('buildOutboundApprovalEmbed', () => {
         const result = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42, cc: [] });
         const field  = _.find(result.embed.toJSON().fields, { name: 'Cc' });
         expect(field).toBeUndefined();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// buildRestrictedAccessEmbed
+// ---------------------------------------------------------------------------
+describe('buildRestrictedAccessEmbed', () => {
+    test('should set title to Restricted Mailbox Access Requested', () => {
+        const { embed } = buildRestrictedAccessEmbed('Quarantine', 42, 'Quarantine:42');
+        const data = embed.toJSON();
+        expect(data.title).toBe('Restricted Mailbox Access Requested');
+    });
+
+    test('should set color to yellow (0xFFCC00)', () => {
+        const { embed } = buildRestrictedAccessEmbed('Quarantine', 42, 'Quarantine:42');
+        const data = embed.toJSON();
+        expect(data.color).toBe(0xFFCC00);
+    });
+
+    test('should include mailbox name as field', () => {
+        const { embed } = buildRestrictedAccessEmbed('Quarantine', 42, 'Quarantine:42');
+        const data = embed.toJSON();
+        const mailboxField = _.find(data.fields, { name: 'Mailbox' });
+        expect(mailboxField?.value).toBe('Quarantine');
+    });
+
+    test('should include UID as field', () => {
+        const { embed } = buildRestrictedAccessEmbed('Quarantine', 42, 'Quarantine:42');
+        const data = embed.toJSON();
+        const uidField = _.find(data.fields, { name: 'UID' });
+        expect(uidField?.value).toBe('42');
+    });
+
+    test('should include reference as field', () => {
+        const { embed } = buildRestrictedAccessEmbed('Quarantine', 42, 'Quarantine:42');
+        const data = embed.toJSON();
+        const refField = _.find(data.fields, { name: 'Reference' });
+        expect(refField?.value).toBe('Quarantine:42');
+    });
+
+    test('should create action row with Move to CleanInbox button', () => {
+        const { actionRow } = buildRestrictedAccessEmbed('Quarantine', 42, 'Quarantine:42');
+        const buttons = actionRow.components;
+        expect(buttons).toHaveLength(1);
+        expect((buttons[0].toJSON() as APIButtonComponentWithCustomId).label).toBe('Move to CleanInbox');
+    });
+
+    test('should set button customId to email-allow:{uid}:{mailboxName}', () => {
+        const { actionRow } = buildRestrictedAccessEmbed('Quarantine', 42, 'Quarantine:42');
+        const buttons = actionRow.components;
+        expect((buttons[0].toJSON() as APIButtonComponentWithCustomId).custom_id).toBe('email-allow:42:Quarantine');
+    });
+
+    test('should set button style to Success', () => {
+        const { actionRow } = buildRestrictedAccessEmbed('Quarantine', 42, 'Quarantine:42');
+        const buttons = actionRow.components;
+        // ButtonStyle.Success = 3
+        expect((buttons[0].toJSON() as APIButtonComponentWithCustomId).style).toBe(3);
     });
 });

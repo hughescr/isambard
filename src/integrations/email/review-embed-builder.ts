@@ -17,6 +17,7 @@ export interface ReviewEmbedResult {
 const ORANGE             = 0xFF8C00;
 const RED                = 0xFF0000;
 const BLUE               = 0x0055FF;
+const YELLOW             = 0xFFCC00;
 const BODY_TRUNCATE_LENGTH = 500;
 
 /**
@@ -122,6 +123,36 @@ export function buildUnsafeAlert(email: EmailMetadata, verdict: ClassifierVerdic
             // Stryker disable next-line StringLiteral: Button label is UI configuration
             .setLabel('Allow + Allowlist')
             .setStyle(ButtonStyle.Primary)
+    );
+
+    return { embed, actionRow };
+}
+
+/**
+ * Build a notification embed for restricted mailbox access requests.
+ * Returns a yellow embed with mailbox/uid/reference fields and a 'Move to CleanInbox' button.
+ */
+export function buildRestrictedAccessEmbed(mailboxName: string, uid: number, reference: string): ReviewEmbedResult {
+    const embed = new EmbedBuilder()
+        // Stryker disable next-line StringLiteral: UI label is configuration
+        .setTitle('Restricted Mailbox Access Requested')
+        .setColor(YELLOW)
+        .addFields(
+            // Stryker disable next-line StringLiteral,BooleanLiteral: Field name and inline layout are UI configuration
+            { name: 'Mailbox',   value: mailboxName, inline: true },
+            // Stryker disable next-line StringLiteral,BooleanLiteral: Field name and inline layout are UI configuration
+            { name: 'UID',       value: String(uid), inline: true },
+            // Stryker disable next-line StringLiteral,BooleanLiteral: Field name and inline layout are UI configuration
+            { name: 'Reference', value: reference,   inline: true }
+        );
+
+    const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+            // Stryker disable next-line StringLiteral: Button customId is UI configuration
+            .setCustomId(`email-allow:${uid}:${mailboxName}`)
+            // Stryker disable next-line StringLiteral: Button label is UI configuration
+            .setLabel('Move to CleanInbox')
+            .setStyle(ButtonStyle.Success)
     );
 
     return { embed, actionRow };

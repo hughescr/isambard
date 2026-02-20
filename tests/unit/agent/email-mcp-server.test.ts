@@ -2,7 +2,7 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import _ from 'lodash';
 import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
-import { createEmailMCPServer } from '../../../src/agent/email-mcp-server';
+import { createEmailMCPServer, type RestrictedMailboxNotification } from '../../../src/agent/email-mcp-server';
 import type { ImapConnection } from '../../../src/integrations/email/imap-connection';
 import type { EmailCounterStore } from '../../../src/integrations/email/email-counters';
 import type { WildDuckClient, WildDuckSearchParams } from '../../../src/integrations/email/wildduck-client';
@@ -321,6 +321,17 @@ describe('createEmailMCPServer', () => {
             expect(mockImap.fetchMessage).toHaveBeenCalledWith('Archive', 15);
         });
 
+        test('should allow access to Drafts mailbox', async () => {
+            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const handler = getToolHandler(server, 'getEmailContent');
+
+            const result: CallToolResult = await handler({ message: 'Drafts:4' });
+
+            expect(result.isError).toBeUndefined();
+            expect(mockImap.fetchMessage).toHaveBeenCalledWith('Drafts', 4);
+            expect(mockSendAdminNotification).not.toHaveBeenCalled();
+        });
+
         test('should deny access to Quarantine mailbox and send admin notification', async () => {
             const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck, sendAdminNotification: mockSendAdminNotification });
             const handler = getToolHandler(server, 'getEmailContent');
@@ -391,12 +402,11 @@ describe('createEmailMCPServer', () => {
 
             await handler({ message: 'Quarantine:42' });
 
-            const callArg = mockSendAdminNotification.mock.calls[0]?.[0] as { content?: string };
+            const callArg = mockSendAdminNotification.mock.calls[0]?.[0] as RestrictedMailboxNotification;
             expect(callArg).toBeDefined();
-            // Notification should mention the message reference and mailbox
-            const notifText = JSON.stringify(callArg);
-            expect(notifText).toContain('Quarantine');
-            expect(notifText).toContain('42');
+            expect(callArg.mailboxName).toBe('Quarantine');
+            expect(callArg.uid).toBe(42);
+            expect(callArg.reference).toBe('Quarantine:42');
         });
 
         test('should handle missing email error gracefully', async () => {
