@@ -301,7 +301,8 @@ describe.concurrent('loadConfig', () => {
             expect(config.email?.idleTimeoutMs).toBe(1_740_000);
             expect(config.email?.pollFallbackMs).toBe(300_000);
             expect(config.email?.maxBodySizeBytes).toBe(50_000);
-            expect(config.email?.sendSoftLimitPerDay).toBe(10);
+            expect(config.email?.sendReservoirCapacity).toBe(24);
+            expect(config.email?.sendReservoirRefillRatePerHour).toBe(1);
         });
 
         test('should load adminDiscordUserId when set', () => {

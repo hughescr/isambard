@@ -13,27 +13,10 @@ import { logger } from '@hughescr/logger';
  * For AI-readable display only.
  */
 // Stryker disable next-line ConditionalExpression,StringLiteral: all branches tested via getEmailContent/replyToEmail/checkInbox tests
-function formatAddress(addr: { name?: string, address: string }): string {
+function formatAddressForDisplay(addr: { name?: string, address: string }): string {
     return addr.name ? `${addr.name} <${addr.address}>` : addr.address;
 }
 
-/**
- * Extract the first bare email address from a raw RFC 2822 address header value.
- * Handles 'Name <email>' format and bare 'email' format.
- * For display-only use — NOT a full RFC 2822 parser.
- */
-function extractEmailFromHeader(header: string): string {
-    // Try 'Name <email>' or '<email>' format first
-    const angleMatch = /<([^>@\s]+@[^>@\s]+)>/.exec(header);
-    // Stryker disable next-line ConditionalExpression: angle-bracket form vs bare address fallback
-    if(angleMatch) {
-        return _.toLower(_.trim(angleMatch[1]));
-    }
-    // Fall back to first whitespace-delimited token containing '@'
-    const bareMatch = /\S+@\S+/.exec(header);
-    // Stryker disable next-line ConditionalExpression: bare address vs last-resort fallback
-    return bareMatch ? _.toLower(_.trim(bareMatch[0])) : _.toLower(_.trim(header));
-}
 import type { ImapConnection } from '@/integrations/email/imap-connection';
 import type { EmailCounterStore } from '@/integrations/email/email-counters';
 import { EmailFolder } from '@/integrations/email/types';
@@ -81,7 +64,7 @@ export interface EmailMCPServerOptions {
     /** Optional email allowlist for outbound recipient gating */
     allowlist?:             EmailAllowlist
     /** Optional callback to send outbound approval request to admin */
-    sendApprovalRequest?:   (to: string, subject: string, draftUid: number, cc?: string[]) => Promise<void>
+    sendApprovalRequest?:   (to: string, subject: string, draftUid: number) => Promise<void>
 }
 
 // Stryker disable ObjectLiteral,StringLiteral: MIME type map is a configuration constant
@@ -124,7 +107,12 @@ async function buildAttachments(filePaths: string[]): Promise<WildDuckAttachment
 
     const result: WildDuckAttachment[] = [];
     for(const filePath of filePaths) {
-        const data        = await readFile(filePath);
+        let data: Buffer;
+        try {
+            data = await readFile(filePath);
+        } catch{
+            throw new Error(`Attachment file not found: ${filePath}`);
+        }
         const filename    = basename(filePath);
         const ext         = _.toLower(extname(filePath)).slice(1);
         // Stryker disable next-line StringLiteral: fallback MIME type is specification constant
@@ -178,11 +166,9 @@ export function createEmailMCPServer(
     const { sendAdminNotification, wildDuckClient, rateLimiter, allowlist, sendApprovalRequest } = options;
 
     // Cache for formal/informal addresses loaded lazily from WildDuck.
-    let formalAddress:          string | undefined;
-    let informalAddress:        string | undefined;
-    let formalRawAddress:       string | undefined;
-    let informalRawAddress:     string | undefined;
-    let addressesLoaded         = false;
+    let formalAddress:         string | undefined;
+    let informalAddress:       string | undefined;
+    let addressesLoaded        = false;
     let addressLoadingPromise:  Promise<void> | null = null;
 
     /**
@@ -204,14 +190,12 @@ export function createEmailMCPServer(
                 // Stryker disable next-line ConditionalExpression,BlockStatement: conditional assignment
                 if(formal) {
                     // Stryker disable next-line StringLiteral: address format is RFC 5322 convention
-                    formalAddress    = formal.name ? `${formal.name} <${formal.address}>` : formal.address;
-                    formalRawAddress = formal.address;
+                    formalAddress = formal.name ? `${formal.name} <${formal.address}>` : formal.address;
                 }
                 // Stryker disable next-line ConditionalExpression,BlockStatement: conditional assignment
                 if(informal) {
                     // Stryker disable next-line StringLiteral: address format is RFC 5322 convention
-                    informalAddress    = informal.name ? `${informal.name} <${informal.address}>` : informal.address;
-                    informalRawAddress = informal.address;
+                    informalAddress = informal.name ? `${informal.name} <${informal.address}>` : informal.address;
                 }
                 // Stryker disable next-line BooleanLiteral: addressesLoaded = true prevents infinite re-loading
                 addressesLoaded = true;
@@ -240,12 +224,10 @@ export function createEmailMCPServer(
         subject: string,
         rateLimitWarning: string,
         successMessage: string,
-        cc?: string[],
         isAllowedOverride?: boolean
     ): Promise<string> {
-        // replyAll mode (cc provided) always requires admin approval — never fast-path
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,BooleanLiteral: cc presence gates always-approve; ?? false default unreachable when allowlist always provided
-        const isAllowed = isAllowedOverride ?? (cc === undefined && (allowlist?.isAllowed(toAddress) ?? false));
+        // Stryker disable next-line ConditionalExpression,EqualityOperator,BooleanLiteral: isAllowedOverride false forces approval path; ?? false default unreachable when allowlist always provided
+        const isAllowed = isAllowedOverride ?? (allowlist?.isAllowed(toAddress) ?? false);
 
         if(isAllowed) {
             await wildDuckClient.submitMessage(EmailFolder.Drafts, draftUid);
@@ -258,7 +240,7 @@ export function createEmailMCPServer(
         if(sendApprovalRequest) {
             // Stryker disable BlockStatement: try-catch wraps approval notification — failure sets IMAP flag and informs Izzy
             try {
-                await sendApprovalRequest(toAddress, subject, draftUid, cc);
+                await sendApprovalRequest(toAddress, subject, draftUid);
             } catch (notifErr) {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.warn({ error: _.isError(notifErr) ? notifErr.message : String(notifErr), msg: 'Failed to send outbound approval request' });
@@ -306,7 +288,7 @@ export function createEmailMCPServer(
                             messages: _.map(messages, m => ({
                                 // Stryker disable next-line StringLiteral: MailboxName is configuration constant
                                 uid:     `${EmailFolder.CleanInbox}:${m.uid}`,
-                                from:    formatAddress(m.from),
+                                from:    formatAddressForDisplay(m.from),
                                 subject: m.subject,
                                 date:    m.date.toISOString(),
                             })),
@@ -427,12 +409,12 @@ export function createEmailMCPServer(
                             }
                         }
 
-                        const toList = _(email.to).map(formatAddress).join(', ');
+                        const toList = _(email.to).map(formatAddressForDisplay).join(', ');
                         // Stryker disable ConditionalExpression: line !== undefined is a defensive runtime guard; undefined used as sentinel to omit absent CC line
                         const lines = _.filter([
-                            `From: ${formatAddress(email.from)}`,
+                            `From: ${formatAddressForDisplay(email.from)}`,
                             `To: ${toList}`,
-                            email.cc.length > 0 ? `Cc: ${_(email.cc).map(formatAddress).join(', ')}` : undefined,
+                            email.cc.length > 0 ? `Cc: ${_(email.cc).map(formatAddressForDisplay).join(', ')}` : undefined,
                             `Subject: ${email.subject}`,
                             `Date: ${email.date.toISOString()}`,
                             '',
@@ -657,11 +639,10 @@ export function createEmailMCPServer(
                         // Stryker disable next-line StringLiteral: initial empty string for rateLimitWarning
                         let rateLimitWarning = '';
                         if(rateLimiter) {
-                            const limitCheck = rateLimiter.check();
                             // Stryker disable next-line ConditionalExpression,BlockStatement: rate limit warning is informational only
-                            if(!limitCheck.allowed) {
+                            if(rateLimiter.isAtLimit()) {
                                 // Stryker disable next-line StringLiteral: Warning message is configuration
-                                rateLimitWarning = ` Warning: daily send limit (${limitCheck.limit}) reached (${limitCheck.count} sent today).`;
+                                rateLimitWarning = ` Warning: send rate limit reached (${rateLimiter.tokensRemaining()} tokens remaining).`;
                             }
                         }
 
@@ -686,7 +667,7 @@ export function createEmailMCPServer(
                         // Stryker disable next-line ConditionalExpression,EqualityOperator,BooleanLiteral: all-recipients allowlist check; ?? false unreachable when allowlist always provided
                         const isAllAllowed = _.every(toAddresses, addr => allowlist?.isAllowed(addr) ?? false);
                         const toStr        = toAddresses.join(', ');
-                        const text         = await submitOrRequestApproval(uid, toStr, args.subject, rateLimitWarning, 'Sent successfully.', undefined, isAllAllowed);
+                        const text         = await submitOrRequestApproval(uid, toStr, args.subject, rateLimitWarning, 'Sent successfully.', isAllAllowed);
                         return {
                             content: [{ type: 'text' as const, text }],
                         };
@@ -752,24 +733,29 @@ export function createEmailMCPServer(
                             };
                         }
 
-                        // Fetch original message to get sender address for allowlist check
-                        const original = await imap.fetchMessage(mailboxName, originalUid);
+                        // Fetch original message from WildDuck to get pre-parsed sender address fields
+                        const original = await wildDuckClient.getMessage(mailboxName, originalUid);
+                        if(!original) {
+                            return {
+                                // Stryker disable next-line StringLiteral: Error message is configuration
+                                content: [{ type: 'text' as const, text: `Cannot reply: message '${args.message}' not found.` }],
+                                isError: true,
+                            };
+                        }
 
-                        // Determine recipient address for allowlist check
-                        // Stryker disable next-line ConditionalExpression: replyTo header needs address extraction; fall back to from address
-                        const primaryTo = original.headers.replyTo
-                            ? extractEmailFromHeader(original.headers.replyTo)
-                            : original.from.address;
+                        // Determine recipient address for allowlist check using WildDuck pre-parsed fields.
+                        // Prefer replyTo address; fall back to from address.
+                        // Stryker disable next-line ConditionalExpression,StringLiteral: replyTo presence determines address source; ?? '' is defensive fallback when from absent (impossible in practice)
+                        const primaryTo = original.replyTo?.address ?? original.from?.address ?? '';
 
                         // Check rate limit — warn but don't block
                         // Stryker disable next-line StringLiteral: initial empty string for rateLimitWarning
                         let rateLimitWarning = '';
                         if(rateLimiter) {
-                            const limitCheck = rateLimiter.check();
                             // Stryker disable next-line ConditionalExpression,BlockStatement: rate limit warning is informational only
-                            if(!limitCheck.allowed) {
+                            if(rateLimiter.isAtLimit()) {
                                 // Stryker disable next-line StringLiteral: Warning message is configuration
-                                rateLimitWarning = ` Warning: daily send limit (${limitCheck.limit}) reached (${limitCheck.count} sent today).`;
+                                rateLimitWarning = ` Warning: send rate limit reached (${rateLimiter.tokensRemaining()} tokens remaining).`;
                             }
                         }
 
@@ -783,24 +769,15 @@ export function createEmailMCPServer(
                             };
                         }
 
-                        // Build CC list for replyAll mode — extracted from original email's CC field
-                        // Izzy's own address (the sender) must be excluded from CC to avoid self-CC on replies.
-                        // Stryker disable next-line ConditionalExpression,EqualityOperator: identity selection between formal/informal raw address
-                        const primaryAddress = args.identity === 'informal' ? informalRawAddress : formalRawAddress;
-                        // Stryker disable next-line StringLiteral: 'address' prop shorthand string is not behavior-affecting
-                        const ccFromOriginal = _(original.cc).map('address').filter(addr => addr !== primaryAddress).value();
-                        // Stryker disable next-line ConditionalExpression,EqualityOperator,ArrayDeclaration: cc only populated for replyAll mode
-                        const ccAddresses: string[] | undefined = args.mode === 'replyAll' ? ccFromOriginal : undefined;
-
                         // Build attachments from file paths (Stryker disabled — disk I/O)
                         const attachments = await buildAttachments(args.attachments ?? []);
 
-                        // Upload to Drafts with WildDuck reference for threading
-                        // WildDuck handles all threading headers and recipient calculation via reference object
+                        // Upload to Drafts with WildDuck reference for threading.
+                        // WildDuck derives all recipients (To, Cc) from the reference object automatically.
                         const uid = await wildDuckClient.uploadMessage(EmailFolder.Drafts, {
                             from,
-                            // Stryker disable next-line StringLiteral: Re: prefix is RFC 5322 reply subject convention
-                            subject:   `Re: ${original.subject}`,
+                            // Stryker disable next-line StringLiteral,LogicalOperator: Re: prefix is RFC 5322 reply subject convention; ?? '' is defensive fallback when subject absent
+                            subject:   `Re: ${original.subject ?? ''}`,
                             text:      args.body,
                             reference: {
                                 // Stryker disable next-line ConditionalExpression: replyAll vs reply action
@@ -816,10 +793,12 @@ export function createEmailMCPServer(
                             draft: true,
                         });
 
-                        // For replyAll, always require admin approval (pass cc to force approval path).
+                        // For replyAll, always require admin approval (isAllowedOverride = false).
                         // For plain reply, check allowlist for primary recipient.
-                        // Stryker disable next-line StringLiteral: Result message is configuration
-                        const text = await submitOrRequestApproval(uid, primaryTo, `Re: ${original.subject}`, rateLimitWarning, `Reply sent to ${primaryTo}.`, ccAddresses);
+                        // Stryker disable next-line ConditionalExpression,EqualityOperator,BooleanLiteral: replyAll forces approval path; plain reply uses allowlist
+                        const isAllowedOverride: boolean | undefined = args.mode === 'replyAll' ? false : undefined;
+                        // Stryker disable next-line StringLiteral,LogicalOperator: Result message is configuration; ?? '' is defensive fallback when subject absent
+                        const text = await submitOrRequestApproval(uid, primaryTo, `Re: ${original.subject ?? ''}`, rateLimitWarning, `Reply sent to ${primaryTo}.`, isAllowedOverride);
                         return {
                             content: [{ type: 'text' as const, text }],
                         };

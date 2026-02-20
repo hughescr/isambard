@@ -1591,8 +1591,9 @@ describe('createEmailMCPServer', () => {
                 updateMessageMetadata: mock(async () => { /* intentionally empty */ }),
             } as unknown as WildDuckClient;
             mockRateLimiter = {
-                check:     mock(_.constant({ allowed: true, count: 1, limit: 50 })),
-                increment: mock(_.noop),
+                isAtLimit:       mock(_.constant(false)),
+                tokensRemaining: mock(_.constant(23)),
+                increment:       mock(_.noop),
             } as unknown as SendRateLimiter;
             mockAllowlist = {
                 isAllowed: mock(_.constant(false)),
@@ -1700,7 +1701,7 @@ describe('createEmailMCPServer', () => {
 
             await handler({ to: 'bob@example.com', subject: 'Test', body: 'Body', identity: 'formal' });
 
-            expect(mockSendApprovalRequest).toHaveBeenCalledWith('bob@example.com', 'Test', 99, undefined);
+            expect(mockSendApprovalRequest).toHaveBeenCalledWith('bob@example.com', 'Test', 99);
         });
 
         test('should accept an array of to addresses and upload all to WildDuck', async () => {
@@ -1767,12 +1768,13 @@ describe('createEmailMCPServer', () => {
 
             await handler({ to: ['alice@example.com', 'bob@example.com'], subject: 'Hi', body: 'Hello', identity: 'formal' });
 
-            expect(mockSendApprovalRequest).toHaveBeenCalledWith('alice@example.com, bob@example.com', 'Hi', 99, undefined);
+            expect(mockSendApprovalRequest).toHaveBeenCalledWith('alice@example.com, bob@example.com', 'Hi', 99);
         });
 
         test('should include rate limit warning when over limit', async () => {
-            mockAllowlist.isAllowed = mock(_.constant(true));
-            mockRateLimiter.check   = mock(_.constant({ allowed: false, count: 10, limit: 10 }));
+            mockAllowlist.isAllowed        = mock(_.constant(true));
+            mockRateLimiter.isAtLimit      = mock(_.constant(true));
+            mockRateLimiter.tokensRemaining = mock(_.constant(0));
 
             const server = createEmailMCPServer(mockImap, mockCounters, {
                 wildDuckClient: mockWildDuck,
@@ -1784,7 +1786,7 @@ describe('createEmailMCPServer', () => {
             const result: CallToolResult = await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', identity: 'formal' });
 
             expect(result.isError).toBeUndefined();
-            expect(getText(result)).toContain('daily send limit');
+            expect(getText(result)).toContain('send rate limit reached');
         });
 
         test('should handle uploadMessage error gracefully', async () => {
@@ -1870,8 +1872,8 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should not include rate limit warning in result when limit is not reached', async () => {
-            mockAllowlist.isAllowed = mock(_.constant(true));
-            mockRateLimiter.check   = mock(_.constant({ allowed: true, count: 1, limit: 50 }));
+            mockAllowlist.isAllowed   = mock(_.constant(true));
+            mockRateLimiter.isAtLimit = mock(_.constant(false));
 
             const server = createEmailMCPServer(mockImap, mockCounters, {
                 wildDuckClient: mockWildDuck,
@@ -1884,7 +1886,7 @@ describe('createEmailMCPServer', () => {
 
             // When limit is NOT reached, result text should not contain warning
             const text = getText(result);
-            expect(text).not.toContain('daily send limit');
+            expect(text).not.toContain('send rate limit reached');
             expect(text).toContain('Sent successfully');
         });
 
@@ -1938,26 +1940,25 @@ describe('createEmailMCPServer', () => {
         let mockSubmitMessage:    ReturnType<typeof mock>;
         let mockGetMailboxId:     ReturnType<typeof mock>;
 
+        // WildDuck-format original email fixture (pre-parsed address fields)
         const originalEmail = {
-            uid:            42,
-            messageId:      '<original@example.com>',
-            from:           { name: 'Alice', address: 'alice@example.com' },
-            to:             [{ address: 'me@example.com' }],
-            cc:             [],
-            subject:        'Re: Hello',
-            date:           new Date('2025-01-15T10:00:00Z'),
-            bodyText:       'Original body.',
-            hasAttachments: false,
-            headers:        { inReplyTo: undefined },
-            attachments:    [],
+            id:      42,
+            subject: 'Re: Hello',
+            from:    { name: 'Alice', address: 'alice@example.com' },
+            to:      [{ address: 'me@example.com' }],
+            cc:      [],
+            text:    'Original body.',
         };
 
+        let mockGetMessage: ReturnType<typeof mock>;
+
         beforeEach(() => {
-            mockImap.fetchMessage = mock(_.constant(Promise.resolve(originalEmail)));
-            mockUploadMessage     = mock(_.constant(Promise.resolve(88)));
-            mockSubmitMessage     = mock(async () => { /* intentionally empty */ });
-            mockGetMailboxId      = mock(_.constant('mbx-clean'));
+            mockGetMessage    = mock(async () => originalEmail);
+            mockUploadMessage = mock(_.constant(Promise.resolve(88)));
+            mockSubmitMessage = mock(async () => { /* intentionally empty */ });
+            mockGetMailboxId  = mock(_.constant('mbx-clean'));
             mockWildDuck = {
+                getMessage:       mockGetMessage,
                 uploadMessage:    mockUploadMessage,
                 submitMessage:    mockSubmitMessage,
                 getUserAddresses: mock(async () => [
@@ -1967,8 +1968,9 @@ describe('createEmailMCPServer', () => {
                 getMailboxId: mockGetMailboxId,
             } as unknown as WildDuckClient;
             mockRateLimiter = {
-                check:     mock(_.constant({ allowed: true, count: 0, limit: 50 })),
-                increment: mock(_.noop),
+                isAtLimit:       mock(_.constant(false)),
+                tokensRemaining: mock(_.constant(24)),
+                increment:       mock(_.noop),
             } as unknown as SendRateLimiter;
             mockAllowlist = {
                 isAllowed: mock(_.constant(true)),
@@ -1989,7 +1991,7 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('Quarantine');
             expect(getText(result)).toContain('Restricted mailboxes require admin review');
             expect(mockUploadMessage).not.toHaveBeenCalled();
-            expect(mockImap.fetchMessage).not.toHaveBeenCalled();
+            expect(mockGetMessage).not.toHaveBeenCalled();
         });
 
         test('should deny reply to message in Junk mailbox', async () => {
@@ -2004,7 +2006,7 @@ describe('createEmailMCPServer', () => {
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('Access denied');
             expect(getText(result)).toContain('Junk');
-            expect(mockImap.fetchMessage).not.toHaveBeenCalled();
+            expect(mockGetMessage).not.toHaveBeenCalled();
         });
 
         test('should deny reply to message in Drafts mailbox', async () => {
@@ -2019,7 +2021,7 @@ describe('createEmailMCPServer', () => {
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('Access denied');
             expect(getText(result)).toContain('Drafts');
-            expect(mockImap.fetchMessage).not.toHaveBeenCalled();
+            expect(mockGetMessage).not.toHaveBeenCalled();
         });
 
         test('should allow reply to message in CleanInbox mailbox', async () => {
@@ -2044,7 +2046,7 @@ describe('createEmailMCPServer', () => {
             const result: CallToolResult = await handler({ message: 'Archive:8', body: 'Reply', mode: 'reply', identity: 'formal' });
 
             expect(result.isError).toBeUndefined();
-            expect(mockImap.fetchMessage).toHaveBeenCalledWith('Archive', 8);
+            expect(mockGetMessage).toHaveBeenCalledWith('Archive', 8);
         });
 
         test('should upload and submit reply immediately when sender is allowlisted', async () => {
@@ -2135,10 +2137,11 @@ describe('createEmailMCPServer', () => {
             expect(mockSubmitMessage).not.toHaveBeenCalled();
         });
 
-        test('should handle fetchMessage error gracefully', async () => {
-            mockImap.fetchMessage = mock(async () => {
-                throw new Error('Message not found');
+        test('should handle getMessage error gracefully', async () => {
+            mockGetMessage = mock(async () => {
+                throw new Error('getMessage failed');
             });
+            mockWildDuck.getMessage = mockGetMessage;
 
             const server = createEmailMCPServer(mockImap, mockCounters, {
                 wildDuckClient: mockWildDuck,
@@ -2149,11 +2152,28 @@ describe('createEmailMCPServer', () => {
             const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
 
             expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('Message not found');
+            expect(getText(result)).toContain('getMessage failed');
+        });
+
+        test('should return error when getMessage returns null', async () => {
+            mockGetMessage = mock(_.constant(Promise.resolve(null)));
+            mockWildDuck.getMessage = mockGetMessage;
+
+            const server = createEmailMCPServer(mockImap, mockCounters, {
+                wildDuckClient: mockWildDuck,
+                allowlist:      mockAllowlist,
+            });
+            const handler = getToolHandler(server, 'replyToEmail');
+
+            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+
+            expect(result.isError).toBe(true);
+            expect(getText(result)).toContain('not found');
         });
 
         test('should include rate limit warning in reply when over limit', async () => {
-            mockRateLimiter.check = mock(_.constant({ allowed: false, count: 50, limit: 50 }));
+            mockRateLimiter.isAtLimit       = mock(_.constant(true));
+            mockRateLimiter.tokensRemaining = mock(_.constant(0));
 
             const server = createEmailMCPServer(mockImap, mockCounters, {
                 wildDuckClient: mockWildDuck,
@@ -2165,11 +2185,11 @@ describe('createEmailMCPServer', () => {
             const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
 
             expect(result.isError).toBeUndefined();
-            expect(getText(result)).toContain('daily send limit');
+            expect(getText(result)).toContain('send rate limit reached');
         });
 
         test('should not include rate limit warning in reply result when limit is not reached', async () => {
-            mockRateLimiter.check = mock(_.constant({ allowed: true, count: 1, limit: 50 }));
+            mockRateLimiter.isAtLimit = mock(_.constant(false));
 
             const server = createEmailMCPServer(mockImap, mockCounters, {
                 wildDuckClient: mockWildDuck,
@@ -2182,7 +2202,7 @@ describe('createEmailMCPServer', () => {
 
             // When limit is NOT reached, result text should not contain warning
             const text = getText(result);
-            expect(text).not.toContain('daily send limit');
+            expect(text).not.toContain('send rate limit reached');
         });
 
         test('should NOT store metaData with to address in upload payload (to is a message field)', async () => {
@@ -2201,12 +2221,13 @@ describe('createEmailMCPServer', () => {
             expect((payload.metaData as Record<string, unknown> | undefined)?.to).toBeUndefined();
         });
 
-        test('should extract bare email from replyTo display-name format for allowlist check', async () => {
-            // Bug A: replyTo = "John Smith <john@example.com>" should use john@example.com for allowlist
-            mockImap.fetchMessage = mock(_.constant(Promise.resolve({
+        test('should use replyTo.address from WildDuck message for allowlist check when replyTo present', async () => {
+            // WildDuck provides pre-parsed replyTo with .address — no regex needed
+            mockGetMessage = mock(async () => ({
                 ...originalEmail,
-                headers: { replyTo: 'John Smith <john@example.com>' },
-            })));
+                replyTo: { address: 'john@example.com', name: 'John Smith' },
+            }));
+            mockWildDuck.getMessage = mockGetMessage;
             mockAllowlist.isAllowed = mock(_.constant(true));
 
             const server = createEmailMCPServer(mockImap, mockCounters, {
@@ -2217,18 +2238,18 @@ describe('createEmailMCPServer', () => {
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
 
-            // Should succeed (allowlist check should use bare address john@example.com)
+            // Should succeed using the pre-parsed replyTo.address
             expect(result.isError).toBeUndefined();
-            // The allowlist should have been called with the bare email address
             expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('john@example.com');
         });
 
-        test('should extract bare email from replyTo bare address format', async () => {
-            // Bug A: replyTo = "john@example.com" should use john@example.com directly
-            mockImap.fetchMessage = mock(_.constant(Promise.resolve({
+        test('should fall back to from.address when replyTo is absent in WildDuck message', async () => {
+            // When WildDuck message has no replyTo, use from.address
+            mockGetMessage = mock(async () => ({
                 ...originalEmail,
-                headers: { replyTo: 'john@example.com' },
-            })));
+                // no replyTo field
+            }));
+            mockWildDuck.getMessage = mockGetMessage;
             mockAllowlist.isAllowed = mock(_.constant(true));
 
             const server = createEmailMCPServer(mockImap, mockCounters, {
@@ -2239,58 +2260,17 @@ describe('createEmailMCPServer', () => {
 
             await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
 
-            expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('john@example.com');
-        });
-
-        test('should extract bare email from replyTo with surrounding context text', async () => {
-            // Tests the bare-address regex path: input has non-angle-bracket text around the address
-            // Verifies /\S+@\S+/ extracts only the email token, not surrounding whitespace/text
-            mockImap.fetchMessage = mock(_.constant(Promise.resolve({
-                ...originalEmail,
-                // No angle brackets, but has surrounding text — exercises the /\S+@\S+/ regex
-                headers: { replyTo: 'reply to: john@example.com (main)' },
-            })));
-            mockAllowlist.isAllowed = mock(_.constant(true));
-
-            const server = createEmailMCPServer(mockImap, mockCounters, {
-                wildDuckClient: mockWildDuck,
-                allowlist:      mockAllowlist,
-            });
-            const handler = getToolHandler(server, 'replyToEmail');
-
-            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
-
-            // Must extract 'john@example.com', NOT the full header string
-            expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('john@example.com');
-        });
-
-        test('should fall back to from.address when replyTo header is absent', async () => {
-            // Bug A: replyTo absent → use original.from.address
-            mockImap.fetchMessage = mock(_.constant(Promise.resolve({
-                ...originalEmail,
-                headers: {},
-            })));
-            mockAllowlist.isAllowed = mock(_.constant(true));
-
-            const server = createEmailMCPServer(mockImap, mockCounters, {
-                wildDuckClient: mockWildDuck,
-                allowlist:      mockAllowlist,
-            });
-            const handler = getToolHandler(server, 'replyToEmail');
-
-            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
-
-            // from.address is 'alice@example.com' per originalEmail
+            // from.address is 'alice@example.com'
             expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('alice@example.com');
         });
 
-        test('should pass allowlist check for allowlisted replyTo address with display name', async () => {
-            // Bug A: allowlist has 'john@example.com', replyTo is "John Smith <john@example.com>"
-            // Without fix, allowlist.isAllowed("John Smith <john@example.com>") would fail
-            mockImap.fetchMessage = mock(_.constant(Promise.resolve({
+        test('should pass allowlist check for allowlisted replyTo.address from WildDuck', async () => {
+            // WildDuck provides pre-parsed address — allowlist check uses the address field directly
+            mockGetMessage = mock(async () => ({
                 ...originalEmail,
-                headers: { replyTo: 'John Smith <john@example.com>' },
-            })));
+                replyTo: { address: 'john@example.com', name: 'John Smith' },
+            }));
+            mockWildDuck.getMessage = mockGetMessage;
             // Allowlist allows only the bare address
             mockAllowlist.isAllowed = mock((addr: string) => addr === 'john@example.com');
 
@@ -2302,7 +2282,7 @@ describe('createEmailMCPServer', () => {
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
 
-            // Should have been submitted (isAllowed returned true)
+            // Should have been submitted (isAllowed returned true for john@example.com)
             expect(result.isError).toBeUndefined();
             expect(mockSubmitMessage).toHaveBeenCalledTimes(1);
         });
@@ -2360,32 +2340,30 @@ describe('createEmailMCPServer', () => {
     });
 
     describe('replyToEmail tool - replyAll mode always requires approval', () => {
-        let mockWildDuckReplyAll:         WildDuckClient;
-        let mockAllowlistReplyAll:        EmailAllowlist;
-        let mockUploadMessageReplyAll:    ReturnType<typeof mock>;
-        let mockSubmitMessageReplyAll:    ReturnType<typeof mock>;
+        let mockWildDuckReplyAll:            WildDuckClient;
+        let mockAllowlistReplyAll:           EmailAllowlist;
+        let mockUploadMessageReplyAll:       ReturnType<typeof mock>;
+        let mockSubmitMessageReplyAll:       ReturnType<typeof mock>;
         let mockSendApprovalRequestReplyAll: ReturnType<typeof mock>;
+        let mockGetMessageReplyAll:          ReturnType<typeof mock>;
 
+        // WildDuck-format original email fixture for replyAll tests
         const originalEmailWithCc = {
-            uid:            42,
-            messageId:      '<original@example.com>',
-            from:           { name: 'Alice', address: 'alice@example.com' },
-            to:             [{ address: 'me@example.com' }],
-            cc:             [{ address: 'bob@example.com' }],
-            subject:        'Group Discussion',
-            date:           new Date('2025-01-15T10:00:00Z'),
-            bodyText:       'Original body.',
-            hasAttachments: false,
-            headers:        {},
-            attachments:    [],
+            id:      42,
+            subject: 'Group Discussion',
+            from:    { name: 'Alice', address: 'alice@example.com' },
+            to:      [{ address: 'me@example.com' }],
+            cc:      [{ address: 'bob@example.com' }],
+            text:    'Original body.',
         };
 
         beforeEach(() => {
-            mockImap.fetchMessage = mock(_.constant(Promise.resolve(originalEmailWithCc)));
+            mockGetMessageReplyAll       = mock(async () => originalEmailWithCc);
             mockUploadMessageReplyAll    = mock(_.constant(Promise.resolve(88)));
             mockSubmitMessageReplyAll    = mock(async () => { /* intentionally empty */ });
             mockSendApprovalRequestReplyAll = mock(async () => { /* intentionally empty */ });
             mockWildDuckReplyAll = {
+                getMessage:       mockGetMessageReplyAll,
                 uploadMessage:    mockUploadMessageReplyAll,
                 submitMessage:    mockSubmitMessageReplyAll,
                 getUserAddresses: mock(async () => [
@@ -2416,7 +2394,7 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('pending admin approval');
         });
 
-        test('replyAll should pass cc recipients to sendApprovalRequest', async () => {
+        test('replyAll should call sendApprovalRequest with (to, subject, uid) — WildDuck derives recipients via reference', async () => {
             const server = createEmailMCPServer(mockImap, mockCounters, {
                 wildDuckClient:      mockWildDuckReplyAll,
                 allowlist:           mockAllowlistReplyAll,
@@ -2426,12 +2404,12 @@ describe('createEmailMCPServer', () => {
 
             await handler({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', identity: 'formal' });
 
-            // sendApprovalRequest is called with (to, subject, uid, cc)
-            const callArgs = mockSendApprovalRequestReplyAll.mock.calls[0] as [string, string, number, string[] | undefined];
-            expect(callArgs?.[3]).toBeDefined();
+            // sendApprovalRequest is called with (to, subject, uid) — no cc parameter
+            const callArgs = mockSendApprovalRequestReplyAll.mock.calls[0] as [string, string, number];
+            expect(callArgs).toHaveLength(3);
         });
 
-        test('replyAll should pass cc recipients to sendApprovalRequest (not in metaData)', async () => {
+        test('replyAll upload payload should not contain cc (WildDuck derives recipients from reference object)', async () => {
             const server = createEmailMCPServer(mockImap, mockCounters, {
                 wildDuckClient:      mockWildDuckReplyAll,
                 allowlist:           mockAllowlistReplyAll,
@@ -2442,42 +2420,9 @@ describe('createEmailMCPServer', () => {
             await handler({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', identity: 'formal' });
 
             const [_folder, payload] = mockUploadMessageReplyAll.mock.calls[0] as [string, Record<string, unknown>];
-            // metaData should NOT contain cc (stored as message field via WildDuck reference)
+            // cc should NOT be in the upload payload — WildDuck derives it from the reference
+            expect(payload.cc).toBeUndefined();
             expect((payload.metaData as Record<string, unknown> | undefined)?.cc).toBeUndefined();
-        });
-
-        test('replyAll should filter primaryAddress (Izzy\'s own address) out of CC — she is the sender', async () => {
-            // Set up an original email where CC includes Izzy's own formal address
-            mockImap.fetchMessage = mock(_.constant(Promise.resolve({
-                uid:            42,
-                messageId:      '<original@example.com>',
-                from:           { name: 'Alice', address: 'alice@example.com' },
-                to:             [{ address: 'me@example.com' }],
-                // Izzy's own address ('formal@example.com') appears in CC — should be filtered out
-                cc:             [{ address: 'formal@example.com' }, { address: 'bob@example.com' }],
-                subject:        'Group Discussion',
-                date:           new Date('2025-01-15T10:00:00Z'),
-                bodyText:       'Original body.',
-                hasAttachments: false,
-                headers:        {},
-                attachments:    [],
-            })));
-
-            const server = createEmailMCPServer(mockImap, mockCounters, {
-                wildDuckClient:      mockWildDuckReplyAll,
-                allowlist:           mockAllowlistReplyAll,
-                sendApprovalRequest: mockSendApprovalRequestReplyAll,
-            });
-            const handler = getToolHandler(server, 'replyToEmail');
-
-            await handler({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', identity: 'formal' });
-
-            // sendApprovalRequest must not pass Izzy's address in cc
-            const callArgs = mockSendApprovalRequestReplyAll.mock.calls[0] as [string, string, number, string[] | undefined];
-            const ccPassedToApproval = callArgs?.[3];
-            expect(ccPassedToApproval).toBeDefined();
-            expect(ccPassedToApproval).not.toContain('formal@example.com');
-            expect(ccPassedToApproval).toContain('bob@example.com');
         });
     });
 

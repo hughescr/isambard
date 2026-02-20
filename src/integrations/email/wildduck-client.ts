@@ -79,6 +79,8 @@ export interface WildDuckMessage {
     from?:     { address: string, name?: string }
     to?:       { address: string, name?: string }[]
     cc?:       { address: string, name?: string }[]
+    /** Pre-parsed Reply-To address from WildDuck API */
+    replyTo?:  { address: string, name?: string }
     text?:     string
     html?:     string
     metaData?: Record<string, unknown>

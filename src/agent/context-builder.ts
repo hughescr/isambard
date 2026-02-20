@@ -364,6 +364,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         for(const uid of uids) {
             // Stryker disable next-line StringLiteral: EmailFolder.Drafts is configuration constant
             const msg    = await wdc.getMessage('Drafts', uid);
+            // Stryker disable next-line ArrayDeclaration: defensive fallback for missing to field — equivalent to empty address list
             const toStr  = _(msg?.to ?? []).map('address').join(', ');
             const subject = msg?.subject ?? '(no subject)';
             // Stryker disable next-line StringLiteral: Cosmetic line format

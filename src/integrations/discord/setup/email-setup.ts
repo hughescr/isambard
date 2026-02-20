@@ -160,7 +160,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
 
     // Create rate limiter for outbound email
     // Stryker disable next-line ObjectLiteral: SendRateLimiter config object is integration wiring
-    const rateLimiter = new SendRateLimiter({ softLimit: emailConfig.sendSoftLimitPerDay });
+    const rateLimiter = new SendRateLimiter({ capacity: emailConfig.sendReservoirCapacity, refillRatePerHour: emailConfig.sendReservoirRefillRatePerHour });
 
     // Build sendApprovalRequest callback (posts approval embed to #admin channel)
     // Retries up to 3 times on transient failures. Propagates error to caller after exhaustion.

@@ -2705,7 +2705,12 @@ describe('createContextBuilder loading methods', () => {
                 },
                 imap: {
                     listUnread:   mock(async () => []),
-                    searchByFlag: mock(async () => [99]),
+                    searchByFlag: mock(async (_folder: string, flag: string) => {
+                        if(flag === '\\SendRejectedByAdmin') {
+                            return [99];
+                        }
+                        return []; // No gave-up drafts — isolate subject to rejection line only
+                    }),
                 },
                 wildDuckClient: {
                     getMessage: mock(async () => ({
@@ -2725,7 +2730,8 @@ describe('createContextBuilder loading methods', () => {
 
             expect(result).toContain('Messages You Attempted to Send (Rejected by Admin)');
             expect(result).toContain('bob@example.com');
-            expect(result).toContain('Hi there');
+            // Verify subject appears in rejection line: Subject: "Hi there" (not just anywhere)
+            expect(result).toContain('Subject: "Hi there"');
             expect(result).toContain('Inappropriate content');
         });
 
@@ -3005,6 +3011,94 @@ describe('createContextBuilder loading methods', () => {
 
             expect(result).toContain('CRITICAL');
             expect(result).toContain('(no subject)');
+        });
+
+        test('should join multiple to-addresses with comma-space in gave-up section', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                },
+                imap: {
+                    listUnread:   mock(async () => []),
+                    searchByFlag: mock(async (_folder: string, flag: string) => {
+                        if(flag === '\\DiscordNotifyGaveUp') {
+                            return [400];
+                        }
+                        return [];
+                    }),
+                },
+                wildDuckClient: {
+                    getMessage: mock(async () => ({
+                        id:      400,
+                        subject: 'Multi-recipient draft',
+                        to:      [{ address: 'alice@example.com' }, { address: 'bob@example.com' }],
+                    })),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            // Both addresses must appear joined with ", " (not run together)
+            expect(result).toContain('alice@example.com, bob@example.com');
+        });
+
+        test('should join both sections with double newline when both are present', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                },
+                imap: {
+                    listUnread:   mock(async () => []),
+                    searchByFlag: mock(async (_folder: string, flag: string) => {
+                        if(flag === '\\SendRejectedByAdmin') {
+                            return [500];
+                        }
+                        if(flag === '\\DiscordNotifyGaveUp') {
+                            return [501];
+                        }
+                        return [];
+                    }),
+                },
+                wildDuckClient: {
+                    getMessage: mock(async (_folder: string, uid: number) => {
+                        if(uid === 500) {
+                            return {
+                                id:       500,
+                                subject:  'Rejected subject',
+                                to:       [{ address: 'carol@example.com' }],
+                                metaData: { rejectedAt: '2024-01-01T00:00:00.000Z', reason: 'Spam' },
+                            };
+                        }
+                        return {
+                            id:      501,
+                            subject: 'GaveUp subject',
+                            to:      [{ address: 'dave@example.com' }],
+                        };
+                    }),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            // Both section headers must be present
+            expect(result).toContain('Messages You Attempted to Send (Rejected by Admin)');
+            expect(result).toContain('CRITICAL');
+            // Sections must be separated by double newline (not concatenated)
+            expect(result).toContain('## Messages You Attempted to Send (Rejected by Admin)');
+            const rejectedIdx = result.indexOf('## Messages You Attempted to Send (Rejected by Admin)');
+            const criticalIdx = result.indexOf('## CRITICAL');
+            const between = result.slice(rejectedIdx, criticalIdx);
+            expect(between).toContain('\n\n');
         });
     });
 });

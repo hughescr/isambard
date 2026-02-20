@@ -206,13 +206,21 @@ describe('emailConfigSchema', () => {
         }
     });
 
-    test('should apply default sendSoftLimitPerDay = 10 when not provided', () => {
+    test('should apply default sendReservoirCapacity = 24 when not provided', () => {
         const result = emailConfigSchema.safeParse(validEmailBase);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data.sendSoftLimitPerDay).toBe(10);
-            expect(result.data.sendSoftLimitPerDay).toBeGreaterThan(0);
-            expect(result.data.sendSoftLimitPerDay).toBeLessThan(100);
+            expect(result.data.sendReservoirCapacity).toBe(24);
+            expect(result.data.sendReservoirCapacity).toBeGreaterThan(0);
+        }
+    });
+
+    test('should apply default sendReservoirRefillRatePerHour = 1 when not provided', () => {
+        const result = emailConfigSchema.safeParse(validEmailBase);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.sendReservoirRefillRatePerHour).toBe(1);
+            expect(result.data.sendReservoirRefillRatePerHour).toBeGreaterThan(0);
         }
     });
 
@@ -239,11 +247,12 @@ describe('emailConfigSchema', () => {
     test('should accept custom values for all optional fields', () => {
         const fullConfig = {
             ...validEmailBase,
-            useIdle:             false,
-            idleTimeoutMs:       900_000,
-            pollFallbackMs:      60_000,
-            maxBodySizeBytes:    25_000,
-            sendSoftLimitPerDay: 5,
+            useIdle:                        false,
+            idleTimeoutMs:                  900_000,
+            pollFallbackMs:                 60_000,
+            maxBodySizeBytes:               25_000,
+            sendReservoirCapacity:          48,
+            sendReservoirRefillRatePerHour: 2,
         };
 
         const result = emailConfigSchema.safeParse(fullConfig);
@@ -253,7 +262,8 @@ describe('emailConfigSchema', () => {
             expect(result.data.idleTimeoutMs).toBe(900_000);
             expect(result.data.pollFallbackMs).toBe(60_000);
             expect(result.data.maxBodySizeBytes).toBe(25_000);
-            expect(result.data.sendSoftLimitPerDay).toBe(5);
+            expect(result.data.sendReservoirCapacity).toBe(48);
+            expect(result.data.sendReservoirRefillRatePerHour).toBe(2);
         }
     });
 

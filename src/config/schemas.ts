@@ -35,20 +35,21 @@ const portSchema = z.coerce.number().int().min(1).max(65535);
 
 // Email config
 export const emailConfigSchema = z.object({
-    imapHost:              z.string().min(1),
-    imapPort:              portSchema,
-    user:                  z.string().min(1),
-    password:              z.string().min(1),
+    imapHost:                       z.string().min(1),
+    imapPort:                       portSchema,
+    user:                           z.string().min(1),
+    password:                       z.string().min(1),
     // Stryker disable BooleanLiteral,StringLiteral,ArithmeticOperator: Default values are configuration
-    useIdle:               z.boolean().default(true),
-    idleTimeoutMs:         z.number().int().positive().default(1_740_000),  // 29 min (RFC 2177)
-    pollFallbackMs:        z.number().int().positive().default(300_000),    // 5 min
-    maxBodySizeBytes:      z.number().int().positive().default(50_000),
-    adminDiscordUserId:    z.string().min(1),
-    adminDiscordChannelId: z.string().min(1),
-    wildDuckApiUrl:        z.string().url(),
-    sendSoftLimitPerDay:   z.number().int().positive().default(10),
-    imapDebug:             z.boolean().default(false),
+    useIdle:                        z.boolean().default(true),
+    idleTimeoutMs:                  z.number().int().positive().default(1_740_000),  // 29 min (RFC 2177)
+    pollFallbackMs:                 z.number().int().positive().default(300_000),    // 5 min
+    maxBodySizeBytes:               z.number().int().positive().default(50_000),
+    adminDiscordUserId:             z.string().min(1),
+    adminDiscordChannelId:          z.string().min(1),
+    wildDuckApiUrl:                 z.string().url(),
+    sendReservoirCapacity:          z.number().int().positive().default(24),
+    sendReservoirRefillRatePerHour: z.number().positive().default(1),
+    imapDebug:                      z.boolean().default(false),
     // Stryker restore BooleanLiteral,StringLiteral,ArithmeticOperator
 });
 
