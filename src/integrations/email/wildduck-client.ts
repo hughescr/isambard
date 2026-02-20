@@ -61,9 +61,9 @@ export interface WildDuckAttachment {
 }
 
 export interface WildDuckUploadPayload {
-    from:             string
-    to?:              string[]
-    cc?:              string[]
+    from:             { name?: string, address: string }
+    to?:              { name?: string, address: string }[]
+    cc?:              { name?: string, address: string }[]
     subject:          string
     text:             string
     reference?:       WildDuckMessageReference
@@ -520,8 +520,9 @@ export class WildDuckClient {
         }
 
         if(!response.ok) {
+            const body = await response.text();
             // Stryker disable next-line StringLiteral: Error message is configuration
-            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}`);
+            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${body ? `: ${body}` : ''}`);
         }
 
         return response.json() as Promise<T>;
@@ -547,8 +548,9 @@ export class WildDuckClient {
         }
 
         if(!response.ok) {
+            const body = await response.text();
             // Stryker disable next-line StringLiteral: Error message is configuration
-            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}`);
+            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${body ? `: ${body}` : ''}`);
         }
 
         return response.json() as Promise<T>;

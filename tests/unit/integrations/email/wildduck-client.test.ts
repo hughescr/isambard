@@ -64,6 +64,9 @@ function statusText(status: number): string {
     if(status === 200) {
         return 'OK';
     }
+    if(status === 400) {
+        return 'Bad Request';
+    }
     if(status === 401) {
         return 'Unauthorized';
     }
@@ -76,6 +79,17 @@ function makeJsonResponse(body: unknown, status = 200): Response {
         status,
         statusText: statusText(status),
         json:       async () => body,
+        text:       async () => JSON.stringify(body),
+    } as unknown as Response;
+}
+
+function makeErrorResponseWithBody(body: string, status = 400): Response {
+    return {
+        ok:         false,
+        status,
+        statusText: statusText(status),
+        json:       async () => { throw new Error('Not JSON'); },
+        text:       async () => body,
     } as unknown as Response;
 }
 
@@ -781,8 +795,8 @@ describe('WildDuckClient', () => {
         const UPLOAD_RESPONSE = { success: true, id: 42, uid: 42 };
 
         const BASE_PAYLOAD = {
-            from:    'Isambard <isambard@rungie.com>',
-            to:      ['recipient@example.com'],
+            from:    { name: 'Isambard', address: 'isambard@rungie.com' },
+            to:      [{ address: 'recipient@example.com' }],
             subject: 'Hello',
             text:    'Body text',
         };
@@ -830,7 +844,7 @@ describe('WildDuckClient', () => {
 
             const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
             const body = JSON.parse(options.body as string) as typeof BASE_PAYLOAD;
-            expect(body.from).toBe('Isambard <isambard@rungie.com>');
+            expect(body.from).toEqual({ name: 'Isambard', address: 'isambard@rungie.com' });
             expect(body.subject).toBe('Hello');
             expect(body.text).toBe('Body text');
         });
@@ -1444,6 +1458,59 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
             await expect(client.deleteMessage('Drafts', 42)).rejects.toThrow(WildDuckAuthError);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // Error body included in WildDuckError message
+    // -----------------------------------------------------------------------
+    describe('error body included in WildDuckError', () => {
+        test('makeRequest includes response body in WildDuckError message when body is non-empty', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('{"error":"validation failed"}', 400));
+
+            await expect(client.search({})).rejects.toThrow('validation failed');
+        });
+
+        test('makeRequest does not append colon when body is empty string', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('', 400));
+
+            let caughtError: unknown;
+            try {
+                await client.search({});
+            } catch (err) {
+                caughtError = err;
+            }
+            expect(caughtError).toBeInstanceOf(WildDuckError);
+            expect((caughtError as WildDuckError).message).not.toContain(':Bad Request:');
+            expect((caughtError as WildDuckError).message).toMatch(/400 Bad Request$/);
+        });
+
+        test('makeRequestNullable includes response body in WildDuckError message when body is non-empty', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('{"error":"mailbox not found"}', 400));
+
+            await expect(client.getMessage('Drafts', 42)).rejects.toThrow('mailbox not found');
+        });
+
+        test('makeRequestNullable does not append colon when body is empty string', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('', 400));
+
+            let caughtError: unknown;
+            try {
+                await client.getMessage('Drafts', 42);
+            } catch (err) {
+                caughtError = err;
+            }
+            expect(caughtError).toBeInstanceOf(WildDuckError);
+            expect((caughtError as WildDuckError).message).not.toContain(':Bad Request:');
+            expect((caughtError as WildDuckError).message).toMatch(/400 Bad Request$/);
         });
     });
 

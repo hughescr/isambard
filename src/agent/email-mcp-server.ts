@@ -158,6 +158,16 @@ const ALL_SEARCH_MAILBOXES: readonly string[] = [
     EmailFolder.Review,
 ];
 
+// Stryker disable ObjectLiteral,StringLiteral: emailAddressSchema is a configuration constant for address parsing
+const emailAddressSchema = z.union([
+    z.string().email(),
+    z.object({
+        name:          z.string(),
+        email_address: z.string().email(),
+    }),
+]);
+// Stryker restore ObjectLiteral,StringLiteral
+
 export function createEmailMCPServer(
     imap: ImapConnection,
     counters: EmailCounterStore,
@@ -166,8 +176,8 @@ export function createEmailMCPServer(
     const { sendAdminNotification, wildDuckClient, rateLimiter, allowlist, sendApprovalRequest } = options;
 
     // Cache for formal/informal addresses loaded lazily from WildDuck.
-    let formalAddress:         string | undefined;
-    let informalAddress:       string | undefined;
+    let formalAddress:         { name?: string, address: string } | undefined;
+    let informalAddress:       { name?: string, address: string } | undefined;
     let addressesLoaded        = false;
     let addressLoadingPromise:  Promise<void> | null = null;
 
@@ -189,13 +199,11 @@ export function createEmailMCPServer(
                 const informal  = _.find(addresses, addr => _.includes(addr.tags, 'informal'));
                 // Stryker disable next-line ConditionalExpression,BlockStatement: conditional assignment
                 if(formal) {
-                    // Stryker disable next-line StringLiteral: address format is RFC 5322 convention
-                    formalAddress = formal.name ? `${formal.name} <${formal.address}>` : formal.address;
+                    formalAddress = { address: formal.address, ...(formal.name ? { name: formal.name } : {}) };
                 }
                 // Stryker disable next-line ConditionalExpression,BlockStatement: conditional assignment
                 if(informal) {
-                    // Stryker disable next-line StringLiteral: address format is RFC 5322 convention
-                    informalAddress = informal.name ? `${informal.name} <${informal.address}>` : informal.address;
+                    informalAddress = { address: informal.address, ...(informal.name ? { name: informal.name } : {}) };
                 }
                 // Stryker disable next-line BooleanLiteral: addressesLoaded = true prevents infinite re-loading
                 addressesLoaded = true;
@@ -597,13 +605,11 @@ export function createEmailMCPServer(
                 'Send an outbound email. If all recipients are on the allowlist, sends immediately. Otherwise, saves to Drafts and requests admin approval via Discord.',
                 // Stryker restore StringLiteral
                 {
-                    // Stryker disable StringLiteral: describe() is documentation only
-                    to: z.union([
-                        z.email(),
-                        // Stryker disable next-line MethodExpression: .min(1) is a schema constraint; removing it would allow empty arrays but Zod validation at schema level is not tested by mutation
-                        z.array(z.email()).min(1),
-                    ]).describe('Recipient email address or array of addresses'),
-                    // Stryker restore StringLiteral
+                    // Stryker disable StringLiteral,ObjectLiteral: emailAddressSchema is a configuration constant for address parsing
+                    to: z.union([emailAddressSchema, z.array(emailAddressSchema).min(1)])
+                        // Stryker disable next-line StringLiteral: describe() is documentation only
+                        .describe('Recipient email: plain address string or {name, email_address} object, or array of either'),
+                    // Stryker restore StringLiteral,ObjectLiteral
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     subject:     z.string().describe('Email subject'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
@@ -622,8 +628,7 @@ export function createEmailMCPServer(
                         // Resolve from address based on identity
                         // Stryker disable next-line ConditionalExpression: identity selection between formal/informal addresses
                         const fromAddress = args.identity === 'informal' ? informalAddress : formalAddress;
-                        // Stryker disable next-line BooleanLiteral,StringLiteral: fallback from address when identity not resolved
-                        const from = fromAddress ?? '';
+                        const from = fromAddress;
 
                         if(!from) {
                             return {
@@ -632,9 +637,14 @@ export function createEmailMCPServer(
                             };
                         }
 
-                        // Normalize to to an array
-                        // Stryker disable next-line ConditionalExpression: normalize single string or array of strings
-                        const toAddresses = _.isArray(args.to) ? args.to : [args.to];
+                        // Normalize to to an array of address objects
+                        const toArr = _.castArray(args.to);
+                        const toAddresses = _.map(toArr, (addr) => {
+                            if(_.isString(addr)) {
+                                return { address: addr };
+                            }
+                            return { name: addr.name, address: addr.email_address };
+                        });
 
                         // Check rate limit — warn but don't block
                         // Stryker disable next-line StringLiteral: initial empty string for rateLimitWarning
@@ -666,8 +676,8 @@ export function createEmailMCPServer(
 
                         // Fast-path only when ALL recipients are allowlisted (cc is undefined for sendEmail)
                         // Stryker disable next-line ConditionalExpression,EqualityOperator,BooleanLiteral: all-recipients allowlist check; ?? false unreachable when allowlist always provided
-                        const isAllAllowed = _.every(toAddresses, addr => allowlist?.isAllowed(addr) ?? false);
-                        const toStr        = toAddresses.join(', ');
+                        const isAllAllowed = _.every(toAddresses, addr => allowlist?.isAllowed(addr.address) ?? false);
+                        const toStr        = _.map(toAddresses, 'address').join(', ');
                         const text         = await submitOrRequestApproval(uid, toStr, args.subject, rateLimitWarning, 'Sent successfully.', undefined, isAllAllowed);
                         return {
                             content: [{ type: 'text' as const, text }],
@@ -713,8 +723,7 @@ export function createEmailMCPServer(
                         // Resolve from address based on identity
                         // Stryker disable next-line ConditionalExpression,EqualityOperator: identity selection between formal/informal addresses
                         const fromAddress = args.identity === 'informal' ? informalAddress : formalAddress;
-                        // Stryker disable next-line BooleanLiteral,StringLiteral: fallback from address when identity not resolved
-                        const from = fromAddress ?? '';
+                        const from = fromAddress;
 
                         if(!from) {
                             return {
@@ -865,9 +874,9 @@ export function createEmailMCPServer(
                     subject:  z.string().optional().describe('New subject line (leave blank to keep original)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     body:     z.string().optional().describe('New plain text body (leave blank to keep original)'),
-                    // Stryker disable StringLiteral,MethodExpression: describe() is documentation only; .min(1) is schema constraint not tested via mutation
-                    to:       z.union([z.email(), z.array(z.email()).min(1)]).optional().describe('New To address(es) (leave blank to keep original)'),
-                    // Stryker restore StringLiteral,MethodExpression
+                    // Stryker disable StringLiteral,MethodExpression,ObjectLiteral: describe() is documentation only; .min(1) is schema constraint not tested via mutation
+                    to:       z.union([emailAddressSchema, z.array(emailAddressSchema).min(1)]).optional().describe('New To address(es) (leave blank to keep original)'),
+                    // Stryker restore StringLiteral,MethodExpression,ObjectLiteral
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     identity: z.enum(['formal', 'informal']).optional().describe('Email identity to use (leave blank to keep original)'),
                 },
@@ -894,16 +903,23 @@ export function createEmailMCPServer(
                         const subject = args.subject ?? original.subject ?? '';
                         const body    = args.body ?? original.text ?? '';
 
-                        // Normalize args.to: undefined → use original recipients; string → wrap in array
-                        // Stryker disable next-line ConditionalExpression: args.to present → normalize to string[]; absent → use original recipients
-                        const argToAddresses: string[] | undefined = args.to ? _.castArray(args.to) : undefined;
-                        const toAddresses    = argToAddresses ?? _(original.to ?? []).map('address').compact().value();
+                        // Normalize args.to: undefined → use original recipients; structured/plain string → address objects
+                        // Stryker disable next-line ConditionalExpression: args.to present → normalize to address objects; absent → use original recipients
+                        const argToArr = args.to ? _.castArray(args.to) : undefined;
+                        const argToAddresses = argToArr
+                            ? _.map(argToArr, (addr) => {
+                                if(_.isString(addr)) {
+                                    return { address: addr };
+                                }
+                                return { name: addr.name, address: addr.email_address };
+                            })
+                            : undefined;
+                        const toAddresses    = argToAddresses ?? (original.to ?? []);
 
                         // Resolve from address
                         // Stryker disable next-line ConditionalExpression: identity selection between formal/informal addresses
                         const fromAddress = args.identity === 'informal' ? informalAddress : formalAddress;
-                        // Stryker disable next-line BooleanLiteral,StringLiteral: fallback from address when identity not resolved
-                        const from = fromAddress ?? '';
+                        const from = fromAddress;
 
                         if(!from) {
                             return {
@@ -929,7 +945,7 @@ export function createEmailMCPServer(
                         const amendResult = await submitOrRequestApproval(
                             newUid,
                             // Stryker disable next-line StringLiteral: join separator is cosmetic formatting — tested via multi-recipient amend test
-                            toAddresses.join(', '),
+                            _.map(toAddresses, 'address').join(', '),
                             subject,
                             // Stryker disable next-line StringLiteral: empty string — no rate limit warning for amend (rate limiter not called on approval path)
                             '',

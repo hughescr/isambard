@@ -1633,7 +1633,7 @@ describe('createEmailMCPServer', () => {
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect(_folder).toBe('Drafts');
-            expect(payload.to).toEqual(['alice@example.com']);
+            expect(payload.to).toEqual([{ address: 'alice@example.com' }]);
             expect(payload.subject).toBe('Test Subject');
             expect(payload.text).toBe('Test Body');
             expect(payload.draft).toBe(true);
@@ -1651,7 +1651,8 @@ describe('createEmailMCPServer', () => {
             await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', identity: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
-            expect(payload.from).toContain('formal@example.com');
+            expect((payload.from as { address: string }).address).toBe('formal@example.com');
+            expect((payload.from as { name: string }).name).toBe('Izzy Formal');
         });
 
         test('should use informalAddress from getUserAddresses for informal identity', async () => {
@@ -1666,7 +1667,78 @@ describe('createEmailMCPServer', () => {
             await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', identity: 'informal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
-            expect(payload.from).toContain('informal@example.com');
+            expect((payload.from as { address: string }).address).toBe('informal@example.com');
+            expect((payload.from as { name: string }).name).toBe('Izzy Informal');
+        });
+
+        test('should pass structured to object { name, email_address } to uploadMessage as { name, address }', async () => {
+            mockAllowlist.isAllowed = mock(_.constant(true));
+
+            const server = createEmailMCPServer(mockImap, mockCounters, {
+                wildDuckClient: mockWildDuck,
+                allowlist:      mockAllowlist,
+            });
+            const handler = getToolHandler(server, 'sendEmail');
+
+            await handler({ to: { name: 'Craig', email_address: 'craig@rungie.com' }, subject: 'Hi', body: 'Hello', identity: 'formal' });
+
+            const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload.to).toEqual([{ name: 'Craig', address: 'craig@rungie.com' }]);
+        });
+
+        test('should pass plain string to as { address } object', async () => {
+            mockAllowlist.isAllowed = mock(_.constant(true));
+
+            const server = createEmailMCPServer(mockImap, mockCounters, {
+                wildDuckClient: mockWildDuck,
+                allowlist:      mockAllowlist,
+            });
+            const handler = getToolHandler(server, 'sendEmail');
+
+            await handler({ to: 'craig@rungie.com', subject: 'Hi', body: 'Hello', identity: 'formal' });
+
+            const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload.to).toEqual([{ address: 'craig@rungie.com' }]);
+        });
+
+        test('should handle array with mixed structured and plain string to addresses', async () => {
+            mockAllowlist.isAllowed = mock(_.constant(true));
+
+            const server = createEmailMCPServer(mockImap, mockCounters, {
+                wildDuckClient: mockWildDuck,
+                allowlist:      mockAllowlist,
+            });
+            const handler = getToolHandler(server, 'sendEmail');
+
+            await handler({
+                to:       [{ name: 'Craig', email_address: 'craig@rungie.com' }, 'other@example.com'],
+                subject:  'Hi',
+                body:     'Hello',
+                identity: 'formal',
+            });
+
+            const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload.to).toEqual([
+                { name: 'Craig', address: 'craig@rungie.com' },
+                { address: 'other@example.com' },
+            ]);
+        });
+
+        test('should check allowlist using address field from structured to object', async () => {
+            const mockIsAllowed = mock((addr: string) => addr === 'craig@rungie.com');
+            mockAllowlist.isAllowed = mockIsAllowed;
+
+            const server = createEmailMCPServer(mockImap, mockCounters, {
+                wildDuckClient: mockWildDuck,
+                allowlist:      mockAllowlist,
+            });
+            const handler = getToolHandler(server, 'sendEmail');
+
+            const result: CallToolResult = await handler({ to: { name: 'Craig', email_address: 'craig@rungie.com' }, subject: 'Hi', body: 'Hello', identity: 'formal' });
+
+            expect(result.isError).toBeUndefined();
+            expect(getText(result)).toContain('Sent successfully');
+            expect(mockIsAllowed).toHaveBeenCalledWith('craig@rungie.com');
         });
 
         test('should upload to WildDuck Drafts and NOT submit when recipient not on allowlist', async () => {
@@ -1718,7 +1790,7 @@ describe('createEmailMCPServer', () => {
             expect(result.isError).toBeUndefined();
             expect(getText(result)).toContain('Sent successfully');
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
-            expect(payload.to).toEqual(['alice@example.com', 'bob@example.com']);
+            expect(payload.to).toEqual([{ address: 'alice@example.com' }, { address: 'bob@example.com' }]);
         });
 
         test('should route to approval when array to has any recipient not on allowlist', async () => {
@@ -1929,6 +2001,16 @@ describe('createEmailMCPServer', () => {
             // Second call — getUserAddresses should NOT be called again (addressesLoaded = true)
             await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', identity: 'formal' });
             expect(mockGetUserAddresses).toHaveBeenCalledTimes(1);
+        });
+
+        test('should reject empty array for to via input schema (min(1) constraint)', async () => {
+            const server  = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Accessing private MCP SDK internals
+            const toolDef = (server.instance as any)._registeredTools.sendEmail as { inputSchema: { safeParseAsync: (args: unknown) => Promise<{ success: boolean }> } };
+
+            const result = await toolDef.inputSchema.safeParseAsync({ to: [], subject: 'Hi', body: 'Hello' });
+
+            expect(result.success).toBe(false);
         });
     });
 
@@ -2576,7 +2658,7 @@ describe('createEmailMCPServer', () => {
             expect(payload.text).toBe('Original body text');
         });
 
-        test('should accept amended to address', async () => {
+        test('should accept amended to address as plain string', async () => {
             const server = createEmailMCPServer(mockImap, mockCounters, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
@@ -2586,7 +2668,20 @@ describe('createEmailMCPServer', () => {
             await handler({ message: 'Drafts:42', to: 'new-to@example.com' });
 
             const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
-            expect(payload.to).toEqual(['new-to@example.com']);
+            expect(payload.to).toEqual([{ address: 'new-to@example.com' }]);
+        });
+
+        test('should accept amended to as structured address object', async () => {
+            const server = createEmailMCPServer(mockImap, mockCounters, {
+                wildDuckClient:      mockWildDuckAmend,
+                sendApprovalRequest: mockSendApprovalRequest,
+            });
+            const handler = getToolHandler(server, 'amendAndResubmitDraft');
+
+            await handler({ message: 'Drafts:42', to: { name: 'Craig', email_address: 'craig@rungie.com' } });
+
+            const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload.to).toEqual([{ name: 'Craig', address: 'craig@rungie.com' }]);
         });
 
         test('should accept amended to as array of addresses', async () => {
@@ -2599,10 +2694,10 @@ describe('createEmailMCPServer', () => {
             await handler({ message: 'Drafts:42', to: ['addr1@example.com', 'addr2@example.com'] });
 
             const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
-            expect(payload.to).toEqual(['addr1@example.com', 'addr2@example.com']);
+            expect(payload.to).toEqual([{ address: 'addr1@example.com' }, { address: 'addr2@example.com' }]);
         });
 
-        test('should keep original to addresses when not provided', async () => {
+        test('should keep original to addresses when not provided (already address objects from WildDuck)', async () => {
             const server = createEmailMCPServer(mockImap, mockCounters, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
@@ -2612,7 +2707,8 @@ describe('createEmailMCPServer', () => {
             await handler({ message: 'Drafts:42' });
 
             const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
-            expect(payload.to).toEqual(['original-to@example.com']);
+            // original.to is [{ address: 'original-to@example.com' }] from WildDuck — used directly
+            expect(payload.to).toEqual([{ address: 'original-to@example.com' }]);
         });
 
         test('should call sendApprovalRequest with new UID after re-upload', async () => {
@@ -2728,7 +2824,8 @@ describe('createEmailMCPServer', () => {
             await handler({ message: 'Drafts:42', identity: 'formal' });
 
             const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
-            expect(payload.from).toContain('formal@example.com');
+            expect((payload.from as { address: string }).address).toBe('formal@example.com');
+            expect((payload.from as { name: string }).name).toBe('Izzy Formal');
         });
 
         test('should use informal from address when identity is informal', async () => {
@@ -2741,7 +2838,8 @@ describe('createEmailMCPServer', () => {
             await handler({ message: 'Drafts:42', identity: 'informal' });
 
             const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
-            expect(payload.from).toContain('informal@example.com');
+            expect((payload.from as { address: string }).address).toBe('informal@example.com');
+            expect((payload.from as { name: string }).name).toBe('Izzy Informal');
         });
 
         test('should upload with draft flag set to true', async () => {
