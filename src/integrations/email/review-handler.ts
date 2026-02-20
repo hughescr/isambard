@@ -3,7 +3,6 @@ import { EmbedBuilder } from 'discord.js';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
-import type { EmailCounterStore } from '@/integrations/email/email-counters';
 import type { ImapConnection } from '@/integrations/email/imap-connection';
 import { EmailFolder } from '@/integrations/email/types';
 
@@ -12,7 +11,6 @@ const RED   = 0xFF0000;
 
 export interface ReviewHandlerDeps {
     imap:               ImapConnection
-    counters:           EmailCounterStore
     allowlist:          EmailAllowlist
     adminDiscordUserId: string
 }
@@ -23,13 +21,11 @@ export interface ReviewHandlerDeps {
  */
 export class ReviewHandler {
     private readonly imap:               ImapConnection;
-    private readonly counters:           EmailCounterStore;
     private readonly allowlist:          EmailAllowlist;
     private readonly adminDiscordUserId: string;
 
     constructor(deps: ReviewHandlerDeps) {
         this.imap               = deps.imap;
-        this.counters           = deps.counters;
         this.allowlist          = deps.allowlist;
         this.adminDiscordUserId = deps.adminDiscordUserId;
     }
@@ -134,15 +130,6 @@ export class ReviewHandler {
 
     private async handleAllow(interaction: ButtonInteraction, uid: number, sourceFolder: string): Promise<void> {
         await this.imap.moveMessage(uid, sourceFolder, EmailFolder.CleanInbox);
-        // Stryker disable BlockStatement: try-catch wraps counter sync — best-effort, allow action completes regardless
-        try {
-            // Stryker disable next-line StringLiteral: EmailFolder.CleanInbox is configuration constant
-            const { total, unread } = await this.imap.getMailboxCounts(EmailFolder.CleanInbox);
-            await this.counters.reset(total, unread);
-        } catch (countErr) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.warn({ error: _.isError(countErr) ? countErr.message : String(countErr), msg: 'Failed to sync counters after allow' });
-        }
 
         const updatedEmbed = new EmbedBuilder()
             // Stryker disable next-line StringLiteral: UI label is configuration
@@ -160,15 +147,6 @@ export class ReviewHandler {
         const email = await this.imap.fetchMessage(sourceFolder, uid);
 
         await this.imap.moveMessage(uid, sourceFolder, EmailFolder.CleanInbox);
-        // Stryker disable BlockStatement: try-catch wraps counter sync — best-effort, allowlist action completes regardless
-        try {
-            // Stryker disable next-line StringLiteral: EmailFolder.CleanInbox is configuration constant
-            const { total, unread } = await this.imap.getMailboxCounts(EmailFolder.CleanInbox);
-            await this.counters.reset(total, unread);
-        } catch (countErr) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.warn({ error: _.isError(countErr) ? countErr.message : String(countErr), msg: 'Failed to sync counters after allowlist' });
-        }
 
         const updatedEmbed = new EmbedBuilder()
             // Stryker disable next-line StringLiteral: UI label is configuration

@@ -2570,8 +2570,9 @@ describe('createContextBuilder loading methods', () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => ({ total: 5, unread: 2 })),
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 5, unseen: 2 })),
+                    getMessage:       mock(_.constant(Promise.resolve(null))),
                 },
                 imap: {
                     listUnread: mock(async () => [
@@ -2603,8 +2604,9 @@ describe('createContextBuilder loading methods', () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => ({ total: 5, unread: 0 })),
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 5, unseen: 0 })),
+                    getMessage:       mock(_.constant(Promise.resolve(null))),
                 },
                 imap: {
                     listUnread: mock(async () => []),
@@ -2625,10 +2627,11 @@ describe('createContextBuilder loading methods', () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => {
-                        throw new Error('DynamoDB timeout');
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => {
+                        throw new Error('WildDuck timeout');
                     }),
+                    getMessage: mock(_.constant(Promise.resolve(null))),
                 },
                 imap: {
                     listUnread: mock(async () => []),
@@ -2651,8 +2654,9 @@ describe('createContextBuilder loading methods', () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => ({ total: 3, unread: 1 })),
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 3, unseen: 1 })),
+                    getMessage:       mock(_.constant(Promise.resolve(null))),
                 },
                 imap: {
                     listUnread: mock(async () => [
@@ -2664,6 +2668,7 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend, emailService });
             await contextBuilder.buildPerchContext(now);
 
+            expect(emailService.wildDuckClient.getMailboxCounts).toHaveBeenCalledWith('CleanInbox');
             expect(emailService.imap.listUnread).toHaveBeenCalledWith('CleanInbox');
         });
 
@@ -2674,8 +2679,9 @@ describe('createContextBuilder loading methods', () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => ({ total: 3, unread: 1 })),
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 3, unseen: 1 })),
+                    getMessage:       mock(_.constant(Promise.resolve(null))),
                 },
                 imap: {
                     listUnread: mock(async () => [
@@ -2700,8 +2706,17 @@ describe('createContextBuilder loading methods', () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
+                    getMessage:       mock(async () => ({
+                        id:       99,
+                        subject:  'Hi there',
+                        to:       [{ address: 'bob@example.com' }],
+                        metaData: {
+                            rejectedAt: '2024-01-01T00:00:00.000Z',
+                            reason:     'Inappropriate content',
+                        },
+                    })),
                 },
                 imap: {
                     listUnread:   mock(async () => []),
@@ -2711,17 +2726,6 @@ describe('createContextBuilder loading methods', () => {
                         }
                         return []; // No gave-up drafts — isolate subject to rejection line only
                     }),
-                },
-                wildDuckClient: {
-                    getMessage: mock(async () => ({
-                        id:       99,
-                        subject:  'Hi there',
-                        to:       [{ address: 'bob@example.com' }],
-                        metaData: {
-                            rejectedAt: '2024-01-01T00:00:00.000Z',
-                            reason:     'Inappropriate content',
-                        },
-                    })),
                 },
             };
 
@@ -2741,15 +2745,13 @@ describe('createContextBuilder loading methods', () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
+                    getMessage:       mock(_.constant(Promise.resolve(null))),
                 },
                 imap: {
                     listUnread:   mock(async () => []),
                     searchByFlag: mock(async () => []),
-                },
-                wildDuckClient: {
-                    getMessage: mock(_.constant(Promise.resolve(null))),
                 },
             };
 
@@ -2759,21 +2761,20 @@ describe('createContextBuilder loading methods', () => {
             expect(result).not.toContain('Messages You Attempted to Send');
         });
 
-        test('should skip rejected drafts section when wildDuckClient is not provided', async () => {
+        test('should skip rejected drafts section when imap has no searchByFlag (only)', async () => {
             backend.getStateItemsScored = mock(async () => []);
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] }));
 
-            const mockSearchByFlag = mock(async () => [99]);
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
+                    getMessage:       mock(_.constant(Promise.resolve(null))),
                 },
                 imap: {
-                    listUnread:   mock(async () => []),
-                    searchByFlag: mockSearchByFlag,
+                    listUnread: mock(async () => []),
+                    // no searchByFlag
                 },
-                // no wildDuckClient
             };
 
             const contextBuilder = createContextBuilder({ backend, emailService });
@@ -2788,15 +2789,13 @@ describe('createContextBuilder loading methods', () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
+                    getMessage:       mock(_.constant(Promise.resolve(null))),
                 },
                 imap: {
                     listUnread: mock(async () => []),
                     // no searchByFlag
-                },
-                wildDuckClient: {
-                    getMessage: mock(_.constant(Promise.resolve(null))),
                 },
             };
 
@@ -2812,15 +2811,9 @@ describe('createContextBuilder loading methods', () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
-                },
-                imap: {
-                    listUnread:   mock(async () => []),
-                    searchByFlag: mock(async () => [55]),
-                },
                 wildDuckClient: {
-                    getMessage: mock(async () => ({
+                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
+                    getMessage:       mock(async () => ({
                         id:       55,
                         subject:  'Test',
                         to:       [{ address: 'alice@example.com' }],
@@ -2828,6 +2821,10 @@ describe('createContextBuilder loading methods', () => {
                             // no rejectedAt — this is a pending draft
                         },
                     })),
+                },
+                imap: {
+                    listUnread:   mock(async () => []),
+                    searchByFlag: mock(async () => [55]),
                 },
             };
 
@@ -2843,17 +2840,15 @@ describe('createContextBuilder loading methods', () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
+                    getMessage:       mock(_.constant(Promise.resolve(null))),
                 },
                 imap: {
                     listUnread:   mock(async () => []),
                     searchByFlag: mock(async () => {
                         throw new Error('IMAP flag search failed');
                     }),
-                },
-                wildDuckClient: {
-                    getMessage: mock(_.constant(Promise.resolve(null))),
                 },
             };
 
@@ -2874,8 +2869,13 @@ describe('createContextBuilder loading methods', () => {
 
             let _searchByFlagCallCount = 0;
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
+                    getMessage:       mock(async () => ({
+                        id:      101,
+                        subject: 'Urgent email',
+                        to:      [{ address: 'frank@example.com' }],
+                    })),
                 },
                 imap: {
                     listUnread:   mock(async () => []),
@@ -2886,13 +2886,6 @@ describe('createContextBuilder loading methods', () => {
                         }
                         return []; // No rejected-by-admin drafts
                     }),
-                },
-                wildDuckClient: {
-                    getMessage: mock(async () => ({
-                        id:      101,
-                        subject: 'Urgent email',
-                        to:      [{ address: 'frank@example.com' }],
-                    })),
                 },
             };
 
@@ -2912,15 +2905,13 @@ describe('createContextBuilder loading methods', () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
+                    getMessage:       mock(_.constant(Promise.resolve(null))),
                 },
                 imap: {
                     listUnread:   mock(async () => []),
                     searchByFlag: mock(async () => []),
-                },
-                wildDuckClient: {
-                    getMessage: mock(_.constant(Promise.resolve(null))),
                 },
             };
 
@@ -2936,23 +2927,9 @@ describe('createContextBuilder loading methods', () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
-                },
-                imap: {
-                    listUnread:   mock(async () => []),
-                    searchByFlag: mock(async (_folder: string, flag: string) => {
-                        if(flag === 'SendRejectedByAdmin') {
-                            return [200];
-                        }
-                        if(flag === 'DiscordNotifyGaveUp') {
-                            return [201];
-                        }
-                        return [];
-                    }),
-                },
                 wildDuckClient: {
-                    getMessage: mock(async (_folder: string, uid: number) => {
+                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
+                    getMessage:       mock(async (_folder: string, uid: number) => {
                         if(uid === 200) {
                             return {
                                 id:       200,
@@ -2966,6 +2943,18 @@ describe('createContextBuilder loading methods', () => {
                             subject: 'Failed notify email',
                             to:      [{ address: 'henry@example.com' }],
                         };
+                    }),
+                },
+                imap: {
+                    listUnread:   mock(async () => []),
+                    searchByFlag: mock(async (_folder: string, flag: string) => {
+                        if(flag === 'SendRejectedByAdmin') {
+                            return [200];
+                        }
+                        if(flag === 'DiscordNotifyGaveUp') {
+                            return [201];
+                        }
+                        return [];
                     }),
                 },
             };
@@ -2985,8 +2974,13 @@ describe('createContextBuilder loading methods', () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
+                    getMessage:       mock(async () => ({
+                        id: 300,
+                        to: [{ address: 'iris@example.com' }],
+                        // no subject
+                    })),
                 },
                 imap: {
                     listUnread:   mock(async () => []),
@@ -2996,13 +2990,6 @@ describe('createContextBuilder loading methods', () => {
                         }
                         return [];
                     }),
-                },
-                wildDuckClient: {
-                    getMessage: mock(async () => ({
-                        id: 300,
-                        to: [{ address: 'iris@example.com' }],
-                        // no subject
-                    })),
                 },
             };
 
@@ -3019,8 +3006,13 @@ describe('createContextBuilder loading methods', () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
+                    getMessage:       mock(async () => ({
+                        id:      400,
+                        subject: 'Multi-recipient draft',
+                        to:      [{ address: 'alice@example.com' }, { address: 'bob@example.com' }],
+                    })),
                 },
                 imap: {
                     listUnread:   mock(async () => []),
@@ -3030,13 +3022,6 @@ describe('createContextBuilder loading methods', () => {
                         }
                         return [];
                     }),
-                },
-                wildDuckClient: {
-                    getMessage: mock(async () => ({
-                        id:      400,
-                        subject: 'Multi-recipient draft',
-                        to:      [{ address: 'alice@example.com' }, { address: 'bob@example.com' }],
-                    })),
                 },
             };
 
@@ -3053,23 +3038,9 @@ describe('createContextBuilder loading methods', () => {
             backend.listByLayer = mock(async () => ({ items: [] }));
 
             const emailService = {
-                counterStore: {
-                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
-                },
-                imap: {
-                    listUnread:   mock(async () => []),
-                    searchByFlag: mock(async (_folder: string, flag: string) => {
-                        if(flag === 'SendRejectedByAdmin') {
-                            return [500];
-                        }
-                        if(flag === 'DiscordNotifyGaveUp') {
-                            return [501];
-                        }
-                        return [];
-                    }),
-                },
                 wildDuckClient: {
-                    getMessage: mock(async (_folder: string, uid: number) => {
+                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
+                    getMessage:       mock(async (_folder: string, uid: number) => {
                         if(uid === 500) {
                             return {
                                 id:       500,
@@ -3083,6 +3054,18 @@ describe('createContextBuilder loading methods', () => {
                             subject: 'GaveUp subject',
                             to:      [{ address: 'dave@example.com' }],
                         };
+                    }),
+                },
+                imap: {
+                    listUnread:   mock(async () => []),
+                    searchByFlag: mock(async (_folder: string, flag: string) => {
+                        if(flag === 'SendRejectedByAdmin') {
+                            return [500];
+                        }
+                        if(flag === 'DiscordNotifyGaveUp') {
+                            return [501];
+                        }
+                        return [];
                     }),
                 },
             };

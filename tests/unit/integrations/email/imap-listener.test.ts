@@ -2,7 +2,6 @@ import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:t
 import { mockLogger } from '../../../setup';
 import type { ImapConnection } from '@/integrations/email/imap-connection';
 import type { EmailProcessor } from '@/integrations/email/email-processor';
-import type { EmailCounterStore } from '@/integrations/email/email-counters';
 import type { EmailMetadata } from '@/integrations/email/types';
 import type { ImapListenerConfig } from '@/integrations/email/imap-listener';
 import { ImapListener, MAX_NOTIFY_ATTEMPTS } from '@/integrations/email/imap-listener';
@@ -37,7 +36,6 @@ function makeImap(overrides: Partial<{
     disconnect:       ReturnType<typeof mock>
     ensureFolders:    ReturnType<typeof mock>
     fetchNewMessages: ReturnType<typeof mock>
-    getMailboxCounts: ReturnType<typeof mock>
     idle:             ReturnType<typeof mock>
     cancelIdle:       ReturnType<typeof mock>
     searchByFlag:     ReturnType<typeof mock>
@@ -48,7 +46,6 @@ function makeImap(overrides: Partial<{
     disconnect:       ReturnType<typeof mock>
     ensureFolders:    ReturnType<typeof mock>
     fetchNewMessages: ReturnType<typeof mock>
-    getMailboxCounts: ReturnType<typeof mock>
     idle:             ReturnType<typeof mock>
     cancelIdle:       ReturnType<typeof mock>
     searchByFlag:     ReturnType<typeof mock>
@@ -58,36 +55,21 @@ function makeImap(overrides: Partial<{
     const disconnect       = overrides.disconnect       ?? mock(async () => undefined);
     const ensureFolders    = overrides.ensureFolders    ?? mock(async () => undefined);
     const fetchNewMessages = overrides.fetchNewMessages ?? mock(async () => []);
-    const getMailboxCounts = overrides.getMailboxCounts ?? mock(async () => ({ total: 3, unread: 1 }));
     const idle             = overrides.idle             ?? mock(async () => undefined);
     const cancelIdle       = overrides.cancelIdle       ?? mock(() => undefined);
     const searchByFlag     = overrides.searchByFlag     ?? mock(async () => []);
     const setFlag          = overrides.setFlag          ?? mock(async () => undefined);
 
     return {
-        conn: { connect, disconnect, ensureFolders, fetchNewMessages, getMailboxCounts, idle, cancelIdle, searchByFlag, setFlag } as unknown as ImapConnection,
+        conn: { connect, disconnect, ensureFolders, fetchNewMessages, idle, cancelIdle, searchByFlag, setFlag } as unknown as ImapConnection,
         connect,
         disconnect,
         ensureFolders,
         fetchNewMessages,
-        getMailboxCounts,
         idle,
         cancelIdle,
         searchByFlag,
         setFlag,
-    };
-}
-
-function makeCounters(overrides: Partial<{
-    reset: ReturnType<typeof mock>
-}> = {}): {
-    store: EmailCounterStore
-    reset: ReturnType<typeof mock>
-} {
-    const reset = overrides.reset ?? mock(async () => undefined);
-    return {
-        store: { reset } as unknown as EmailCounterStore,
-        reset,
     };
 }
 
@@ -150,7 +132,7 @@ describe('ImapListener', () => {
             const { conn, connect, ensureFolders, fetchNewMessages } = makeImap();
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
 
             expect(connect).toHaveBeenCalledTimes(1);
@@ -167,7 +149,7 @@ describe('ImapListener', () => {
             });
             const { processor, processEmail } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
 
             expect(fetchNewMessages).toHaveBeenCalledWith('INBOX', 0);
@@ -182,7 +164,7 @@ describe('ImapListener', () => {
             const { conn } = makeImap();
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
 
             // After start, a timer should be pending
@@ -195,7 +177,7 @@ describe('ImapListener', () => {
             const { conn } = makeImap();
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             expect(listener.running).toBe(false);
             await listener.start();
             expect(listener.running).toBe(true);
@@ -210,7 +192,7 @@ describe('ImapListener', () => {
             });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
             await expect(listener.start()).rejects.toThrow('Folder setup failed');
@@ -224,7 +206,7 @@ describe('ImapListener', () => {
             });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
             await expect(listener.start()).rejects.toThrow('Fetch failed on startup');
@@ -238,7 +220,7 @@ describe('ImapListener', () => {
             });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             expect(listener.running).toBe(false);
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
@@ -251,47 +233,10 @@ describe('ImapListener', () => {
             const { conn, disconnect } = makeImap();
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
 
             expect(disconnect).not.toHaveBeenCalled();
-
-            await listener.stop();
-        });
-
-        test('syncs counters from IMAP on startup via getMailboxCounts and counters.reset()', async () => {
-            const getMailboxCounts = mock(async () => ({ total: 10, unread: 3 }));
-            const { conn }         = makeImap({ getMailboxCounts });
-            const { processor }    = makeProcessor();
-            const counters         = makeCounters();
-
-            const listener = new ImapListener(conn, processor, counters.store, DEFAULT_CONFIG);
-            await listener.start();
-
-            expect(getMailboxCounts).toHaveBeenCalledWith('CleanInbox');
-            expect(counters.reset).toHaveBeenCalledWith(10, 3);
-
-            await listener.stop();
-        });
-
-        test('start() succeeds even when counter sync throws (best-effort)', async () => {
-            const getMailboxCounts = mock(async () => {
-                throw new Error('IMAP counts failed');
-            });
-            const { conn }         = makeImap({ getMailboxCounts });
-            const { processor }    = makeProcessor();
-            const counters         = makeCounters();
-
-            const listener = new ImapListener(conn, processor, counters.store, DEFAULT_CONFIG);
-            // Should NOT throw
-            await listener.start();
-
-            expect(listener.running).toBe(true);
-            expect(counters.reset).not.toHaveBeenCalled();
-            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining matcher
-                msg: expect.stringContaining('sync email counters'),
-            }));
 
             await listener.stop();
         });
@@ -317,14 +262,14 @@ describe('ImapListener', () => {
             const { conn } = makeImap({ fetchNewMessages });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
 
             // Fire start() without awaiting — it blocks on the second fetch
             const startPromise = listener.start();
 
-            // Flush many microtasks: connect → ensureFolders → getMailboxCounts → reset →
+            // Flush many microtasks: connect → ensureFolders →
             // fetchAndProcess #1 (25 emails, cap hit, processes 20) → fetchAndProcess #2 (blocks)
-            // Need enough ticks: ~4 setup + 1 fetch + 20 process + 1 second fetch = ~30+
+            // Need enough ticks: ~3 setup + 1 fetch + 20 process + 1 second fetch = ~30+
             for(let i = 0; i < 60; i++) {
                 await Promise.resolve();
             }
@@ -353,7 +298,7 @@ describe('ImapListener', () => {
             const { conn, disconnect } = makeImap();
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
 
             expect(jest.getTimerCount()).toBe(1);
@@ -367,7 +312,7 @@ describe('ImapListener', () => {
             const { conn } = makeImap();
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
             await listener.stop();
 
@@ -378,7 +323,7 @@ describe('ImapListener', () => {
             const { conn, disconnect } = makeImap();
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.stop();
 
             expect(disconnect).not.toHaveBeenCalled();
@@ -401,7 +346,7 @@ describe('ImapListener', () => {
             const { conn }                    = makeImap({ fetchNewMessages });
             const { processor, processEmail } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start(); // Initial fetch: email 10 processed, lastUid=10
 
             // Trigger poll timer and await async work
@@ -420,7 +365,7 @@ describe('ImapListener', () => {
             const { conn, fetchNewMessages } = makeImap();
             const { processor, processEmail } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start(); // Initial fetch returns [] (default mock)
 
             expect(processEmail).toHaveBeenCalledTimes(0);
@@ -454,7 +399,7 @@ describe('ImapListener', () => {
             });
             const processor = { processEmail } as unknown as EmailProcessor;
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             // Should not throw
             await listener.start();
 
@@ -481,7 +426,7 @@ describe('ImapListener', () => {
             const { conn } = makeImap({ fetchNewMessages });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
 
             // Trigger poll — it should throw internally and be caught
@@ -518,7 +463,7 @@ describe('ImapListener', () => {
             const { conn } = makeImap({ fetchNewMessages });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
             // Initial fetch complete, timer scheduled
 
@@ -558,7 +503,7 @@ describe('ImapListener', () => {
             const { conn } = makeImap({ fetchNewMessages });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
 
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
@@ -584,7 +529,7 @@ describe('ImapListener', () => {
             const { conn } = makeImap({ fetchNewMessages });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
 
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
@@ -608,7 +553,7 @@ describe('ImapListener', () => {
             const { conn }                    = makeImap({ fetchNewMessages });
             const { processor, processEmail } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
 
             // First batch: 20 processed (UIDs 1-20), lastUid=20; immediately re-polls since cap hit
@@ -634,7 +579,7 @@ describe('ImapListener', () => {
             const { conn }      = makeImap({ fetchNewMessages });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
 
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
@@ -651,7 +596,7 @@ describe('ImapListener', () => {
             const { conn }      = makeImap({ fetchNewMessages });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
 
             // Verify no batch cap warning was emitted (processed === 20 indicates a batch cap warning)
@@ -667,7 +612,7 @@ describe('ImapListener', () => {
             const { conn }                    = makeImap({ fetchNewMessages });
             const { processor, processEmail } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
 
             // All 20 should be processed (no capping)
@@ -704,7 +649,7 @@ describe('ImapListener', () => {
             const { conn }                    = makeImap({ fetchNewMessages });
             const { processor, processEmail } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start(); // fetch #1: empty
 
             // Fire poll timer — fetch #2 (25 emails) triggers immediate re-fetch (fetch #3)
@@ -753,7 +698,7 @@ describe('ImapListener', () => {
             const { conn }      = makeImap({ idle, cancelIdle, fetchNewMessages });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, IDLE_CONFIG);
+            const listener = new ImapListener(conn, processor, IDLE_CONFIG);
             await listener.start();
             // Let idleLoop run: idle() #1 resolves → fetchAndProcess (cap hit) → re-fetchAndProcess → idle() #2
             // Multiple flushAsync() calls are needed for the full async chain to settle
@@ -781,7 +726,7 @@ describe('ImapListener', () => {
             const { conn }      = makeImap({ fetchNewMessages });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start(); // fetch #1
 
             // Fire poll timer — fetch #2 (5 emails, no cap) should NOT trigger immediate re-fetch
@@ -814,7 +759,7 @@ describe('ImapListener', () => {
             const { conn }   = makeImap({ idle, cancelIdle });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, IDLE_CONFIG);
+            const listener = new ImapListener(conn, processor, IDLE_CONFIG);
             await listener.start();
 
             // Let the void idleLoop() enter idle()
@@ -837,7 +782,7 @@ describe('ImapListener', () => {
             const { conn }   = makeImap({ idle, cancelIdle });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, IDLE_CONFIG);
+            const listener = new ImapListener(conn, processor, IDLE_CONFIG);
             await listener.start();
             await flushAsync();
 
@@ -881,7 +826,7 @@ describe('ImapListener', () => {
             const { conn }      = makeImap({ idle, cancelIdle, fetchNewMessages });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, IDLE_CONFIG);
+            const listener = new ImapListener(conn, processor, IDLE_CONFIG);
             await listener.start();
             // Flush: idleLoop enters first idle() → resolves → fetchAndProcess → enters second idle()
             await flushAsync();
@@ -904,7 +849,7 @@ describe('ImapListener', () => {
             const { conn }   = makeImap({ idle, cancelIdle, disconnect });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, IDLE_CONFIG);
+            const listener = new ImapListener(conn, processor, IDLE_CONFIG);
             await listener.start();
             await flushAsync();
 
@@ -928,7 +873,7 @@ describe('ImapListener', () => {
             const { processor } = makeProcessor();
 
             const config   = { ...IDLE_CONFIG, idleTimeoutMs: 29 * 60 * 1000 };
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             await listener.start();
             await flushAsync();
 
@@ -965,7 +910,7 @@ describe('ImapListener', () => {
             const { conn }      = makeImap({ idle, cancelIdle });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             await listener.start();
             await flushAsync();
 
@@ -1001,7 +946,7 @@ describe('ImapListener', () => {
             const { conn }         = makeImap({ idle, cancelIdle, disconnect, fetchNewMessages });
             const { processor }    = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, IDLE_CONFIG);
+            const listener = new ImapListener(conn, processor, IDLE_CONFIG);
             await listener.start();
             await flushAsync();
 
@@ -1030,7 +975,7 @@ describe('ImapListener', () => {
             const { conn }   = makeImap({ idle, cancelIdle, disconnect });
             const { processor } = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             await listener.start();
             await flushAsync();
 
@@ -1059,7 +1004,7 @@ describe('ImapListener', () => {
             const { conn, idle } = makeImap();
             const { processor }  = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
             await flushAsync();
 
@@ -1072,7 +1017,7 @@ describe('ImapListener', () => {
             const { conn, cancelIdle } = makeImap();
             const { processor }        = makeProcessor();
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
             await listener.stop();
 
@@ -1112,7 +1057,7 @@ describe('ImapListener', () => {
             const { processor }          = makeProcessor();
 
             // No onSendApprovalRequest in config
-            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            const listener = new ImapListener(conn, processor, DEFAULT_CONFIG);
             await listener.start();
 
             expect(searchByFlag).not.toHaveBeenCalled();
@@ -1128,7 +1073,7 @@ describe('ImapListener', () => {
             const config = { ...DEFAULT_CONFIG, onSendApprovalRequest };
             // no wildDuckClient
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             await listener.start();
 
             expect(searchByFlag).not.toHaveBeenCalled();
@@ -1145,7 +1090,7 @@ describe('ImapListener', () => {
             const onSendApprovalRequest = mock(async () => undefined);
             const config                = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             await listener.start();
 
             expect(searchByFlag).toHaveBeenCalledWith('Drafts', 'DiscordNotifyFailed');
@@ -1171,7 +1116,7 @@ describe('ImapListener', () => {
             const onSendApprovalRequest = mock(async () => undefined);
             const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             await listener.start();
 
             expect(getMessage).toHaveBeenCalledWith('Drafts', uid);
@@ -1199,7 +1144,7 @@ describe('ImapListener', () => {
             const onSendApprovalRequest = mock(async () => undefined);
             const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             await listener.start();
 
             expect(getMessage).toHaveBeenCalledWith('Drafts', uid);
@@ -1224,7 +1169,7 @@ describe('ImapListener', () => {
             const onSendApprovalRequest = mock(async () => undefined);
             const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             await listener.start();
 
             expect(getMessage).toHaveBeenCalledWith('Drafts', uid);
@@ -1248,7 +1193,7 @@ describe('ImapListener', () => {
             const onSendApprovalRequest = mock(async () => undefined);
             const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             await listener.start();
 
             expect(getMessage).toHaveBeenCalledWith('Drafts', uid);
@@ -1278,7 +1223,7 @@ describe('ImapListener', () => {
             });
             const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             await listener.start();
 
             // Error propagated → DiscordNotifyFailed flag is NOT cleared (notification still pending)
@@ -1307,7 +1252,7 @@ describe('ImapListener', () => {
             });
             const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             await listener.start();
 
             // Did NOT transition flags (below MAX_NOTIFY_ATTEMPTS)
@@ -1338,7 +1283,7 @@ describe('ImapListener', () => {
             });
             const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             await listener.start();
 
             // Transitions GaveUp and clears Failed via wildDuckClient.updateMessageFlags
@@ -1374,7 +1319,7 @@ describe('ImapListener', () => {
             });
             const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             await listener.start();
 
             // null metaData → attempts defaults to 2, which is < MAX_NOTIFY_ATTEMPTS (5), so increment (no flag transition)
@@ -1395,7 +1340,7 @@ describe('ImapListener', () => {
             const onSendApprovalRequest = mock(async () => undefined);
             const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             // Should not throw
             await listener.start();
 
@@ -1427,7 +1372,7 @@ describe('ImapListener', () => {
             });
             const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             // Should not throw
             await listener.start();
 
@@ -1464,7 +1409,7 @@ describe('ImapListener', () => {
             const onSendApprovalRequest = mock(async () => undefined);
             const config = { ...IDLE_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             await listener.start();
             // searchByFlag called once during start() (after backlog drain)
             const callsAfterStart = searchByFlag.mock.calls.length;
@@ -1491,7 +1436,7 @@ describe('ImapListener', () => {
             const onSendApprovalRequest = mock(async () => undefined);
             const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
 
-            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            const listener = new ImapListener(conn, processor, config);
             await listener.start();
 
             // searchByFlag called once during start() (after backlog drain)

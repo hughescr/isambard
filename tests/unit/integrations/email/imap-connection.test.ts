@@ -1164,17 +1164,6 @@ describe('ImapConnection', () => {
             expect(mockAppend).toHaveBeenCalledWith('Sent Mail', expect.any(Buffer));
         });
 
-        test('getMailboxCounts uses resolved path after ensureFolders() — Sent -> Sent Mail', async () => {
-            mockList.mockImplementation(() => Promise.resolve(allFolders));
-            mockStatus.mockImplementation(() => Promise.resolve({ messages: 5, unseen: 1 }));
-            await connection.connect();
-            await connection.ensureFolders();
-
-            await connection.getMailboxCounts('Sent Mail');
-
-            expect(mockStatus).toHaveBeenCalledWith('Sent Mail', expect.objectContaining({ messages: true, unseen: true }));
-        });
-
         test('idle uses resolved path after ensureFolders() — Sent -> Sent Mail', async () => {
             mockList.mockImplementation(() => Promise.resolve(allFolders));
             mockIdle.mockImplementation(() => Promise.resolve());
@@ -2634,115 +2623,6 @@ describe('ImapConnection', () => {
 
             // client.idle() should NOT have been called since _idleAborted was true
             expect(mockIdle).not.toHaveBeenCalled();
-        });
-    });
-
-    // -------------------------------------------------------------------
-    // getMailboxCounts
-    // -------------------------------------------------------------------
-    describe('getMailboxCounts()', () => {
-        test('calls client.status() with messages and unseen true, returns both counts', async () => {
-            mockStatus.mockImplementation(() => Promise.resolve({ messages: 20, unseen: 5 }));
-            await connection.connect();
-
-            const result = await connection.getMailboxCounts('CleanInbox');
-
-            expect(mockStatus).toHaveBeenCalledWith('CleanInbox', { messages: true, unseen: true });
-            expect(result).toEqual({ total: 20, unread: 5 });
-        });
-
-        test('returns { total: 0, unread: 0 } when status fields are undefined', async () => {
-            mockStatus.mockImplementation(() => Promise.resolve({}));
-            await connection.connect();
-
-            const result = await connection.getMailboxCounts('CleanInbox');
-
-            expect(result).toEqual({ total: 0, unread: 0 });
-        });
-
-        test('returns 0 for total when messages field is undefined', async () => {
-            mockStatus.mockImplementation(() => Promise.resolve({ unseen: 3 }));
-            await connection.connect();
-
-            const result = await connection.getMailboxCounts('CleanInbox');
-
-            expect(result.total).toBe(0);
-            expect(result.unread).toBe(3);
-        });
-
-        test('returns 0 for unread when unseen field is undefined', async () => {
-            mockStatus.mockImplementation(() => Promise.resolve({ messages: 7 }));
-            await connection.connect();
-
-            const result = await connection.getMailboxCounts('CleanInbox');
-
-            expect(result.total).toBe(7);
-            expect(result.unread).toBe(0);
-        });
-
-        test('wraps non-ImapConnectionError as ImapConnectionError', async () => {
-            mockStatus.mockImplementation(() => Promise.reject(new Error('STATUS failed')));
-            await connection.connect();
-
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
-            await expect(connection.getMailboxCounts('CleanInbox')).rejects.toBeInstanceOf(ImapConnectionError);
-        });
-
-        test('error message includes folder context', async () => {
-            mockStatus.mockImplementation(() => Promise.reject(new Error('oops')));
-            await connection.connect();
-
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
-            await expect(connection.getMailboxCounts('MyFolder')).rejects.toThrow('getMailboxCounts failed (folder=MyFolder)');
-        });
-
-        test('re-throws ImapConnectionError without wrapping', async () => {
-            mockStatus.mockImplementation(() => Promise.reject(
-                new ImapConnectionError('inner-getmailboxcounts-unique-token')
-            ));
-            await connection.connect();
-
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
-            await expect(connection.getMailboxCounts('CleanInbox')).rejects.toThrow('inner-getmailboxcounts-unique-token');
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
-            await expect(connection.getMailboxCounts('CleanInbox')).rejects.not.toThrow('getMailboxCounts failed');
-        });
-
-        test('goes through serialize queue — waits for prior operation', async () => {
-            const order: string[] = [];
-            let blockResolve!: () => void;
-
-            mockMailboxOpen
-                .mockImplementationOnce(() => {
-                    order.push('listUnread-start');
-                    return new Promise<unknown>((resolve) => {
-                        blockResolve = () => {
-                            order.push('listUnread-done');
-                            resolve({ path: 'CleanInbox' });
-                        };
-                    });
-                });
-            mockSearch.mockImplementation(() => Promise.resolve([]));
-            mockStatus.mockImplementation(() => {
-                order.push('status-start');
-                return Promise.resolve({ messages: 8, unseen: 2 });
-            });
-            await connection.connect();
-
-            const p1 = connection.listUnread('CleanInbox');
-            const p2 = connection.getMailboxCounts('CleanInbox');
-
-            await Promise.resolve();
-            await Promise.resolve();
-
-            expect(order).toContain('listUnread-start');
-            expect(order).not.toContain('status-start');
-
-            blockResolve();
-            await p1;
-            await p2;
-
-            expect(order).toEqual(['listUnread-start', 'listUnread-done', 'status-start']);
         });
     });
 

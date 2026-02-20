@@ -18,7 +18,6 @@ function formatAddressForDisplay(addr: { name?: string, address: string }): stri
 }
 
 import type { ImapConnection } from '@/integrations/email/imap-connection';
-import type { EmailCounterStore } from '@/integrations/email/email-counters';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient, WildDuckAttachment } from '@/integrations/email/wildduck-client';
 import type { SendRateLimiter } from '@/integrations/email/send-rate-limiter';
@@ -144,7 +143,7 @@ async function buildAttachments(filePaths: string[]): Promise<WildDuckAttachment
  * Access to restricted mailboxes (Quarantine, Junk, Trash, etc.) triggers
  * an admin notification and returns an error.
  *
- * This server wraps ImapConnection and EmailCounterStore for use with the Claude Agent SDK.
+ * This server wraps ImapConnection for use with the Claude Agent SDK.
  */
 /**
  * Mailboxes searched when mailbox='all-regular' (or omitted).
@@ -179,7 +178,6 @@ const emailAddressSchema = z.union([
 
 export function createEmailMCPServer(
     imap: ImapConnection,
-    counters: EmailCounterStore,
     options: EmailMCPServerOptions
 ) {
     const { sendAdminNotification, wildDuckClient, rateLimiter, allowlist, sendApprovalRequest } = options;
@@ -296,13 +294,13 @@ export function createEmailMCPServer(
                 async (): Promise<CallToolResult> => {
                     // Stryker disable BlockStatement: try-catch wraps IMAP operations - error handling
                     try {
-                        const [countersData, messages] = await Promise.all([
-                            counters.getCounters(),
+                        const [countsData, messages] = await Promise.all([
+                            wildDuckClient.getMailboxCounts(EmailFolder.CleanInbox),
                             // Stryker disable next-line StringLiteral: EmailFolder.CleanInbox is configuration constant
                             imap.listUnread(EmailFolder.CleanInbox),
                         ]);
                         const result = {
-                            counters: countersData,
+                            counters: { total: countsData.total, unread: countsData.unseen },
                             messages: _.map(messages, m => ({
                                 // Stryker disable next-line StringLiteral: MailboxName is configuration constant
                                 uid:     `${EmailFolder.CleanInbox}:${m.uid}`,
@@ -331,7 +329,7 @@ export function createEmailMCPServer(
             // Stryker disable StringLiteral: Tool name and description are MCP server configuration
             tool(
                 'getEmailContent',
-                'Fetch the full content of an email by UID. Marks the email as read and decrements the unread counter.',
+                'Fetch the full content of an email by UID. Marks the email as read.',
                 // Stryker restore StringLiteral
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
@@ -365,18 +363,6 @@ export function createEmailMCPServer(
 
                         const email = await imap.fetchMessage(mailboxName, uid);
                         await imap.setFlag(uid, mailboxName, '\\Seen');
-                        // Sync counters with real IMAP state (fire-and-forget; email content returned immediately)
-                        void (async () => {
-                            // Stryker disable BlockStatement: try-catch wraps counter sync — best-effort, email content returned regardless
-                            try {
-                                // Stryker disable next-line StringLiteral: EmailFolder.CleanInbox is configuration constant
-                                const { total, unread } = await imap.getMailboxCounts(EmailFolder.CleanInbox);
-                                await counters.reset(total, unread);
-                            } catch (countErr) {
-                                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                                logger.warn({ error: _.isError(countErr) ? countErr.message : String(countErr), msg: 'Failed to sync counters after read' });
-                            }
-                        })();
 
                         // Save attachments to disk (keyed by sha1 of messageId).
                         // Message-ID is always present: RFC 5322 requires MDAs to add one if missing,
@@ -461,7 +447,7 @@ export function createEmailMCPServer(
             // Stryker disable StringLiteral: Tool name and description are MCP server configuration
             tool(
                 'archiveEmail',
-                'Move an email from CleanInbox to Archive. Decrements the total email counter.',
+                'Move an email from CleanInbox to Archive.',
                 // Stryker restore StringLiteral
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
@@ -483,18 +469,6 @@ export function createEmailMCPServer(
 
                         // Stryker disable next-line StringLiteral: EmailFolder values are configuration constants
                         await imap.moveMessage(uid, mailboxName, EmailFolder.Archive);
-                        // Sync counters with real IMAP state (fire-and-forget; archive completes immediately)
-                        void (async () => {
-                            // Stryker disable BlockStatement: try-catch wraps counter sync — best-effort, archive completes regardless
-                            try {
-                                // Stryker disable next-line StringLiteral: EmailFolder.CleanInbox is configuration constant
-                                const { total, unread } = await imap.getMailboxCounts(EmailFolder.CleanInbox);
-                                await counters.reset(total, unread);
-                            } catch (countErr) {
-                                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                                logger.warn({ error: _.isError(countErr) ? countErr.message : String(countErr), msg: 'Failed to sync counters after archive' });
-                            }
-                        })();
                         return {
                             content: [{ type: 'text' as const, text: `Email UID ${uid} archived successfully.` }],
                         };

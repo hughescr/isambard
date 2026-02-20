@@ -4,7 +4,6 @@ import _ from 'lodash';
 import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
 import { createEmailMCPServer, type RestrictedMailboxNotification } from '../../../src/agent/email-mcp-server';
 import type { ImapConnection } from '../../../src/integrations/email/imap-connection';
-import type { EmailCounterStore } from '../../../src/integrations/email/email-counters';
 import type { WildDuckClient, WildDuckSearchParams } from '../../../src/integrations/email/wildduck-client';
 import type { SendRateLimiter } from '../../../src/integrations/email/send-rate-limiter';
 import type { EmailAllowlist } from '../../../src/integrations/email/allowlist';
@@ -12,7 +11,6 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 describe('createEmailMCPServer', () => {
     let mockImap: ImapConnection;
-    let mockCounters: EmailCounterStore;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock send function
     let mockSendAdminNotification: ReturnType<typeof mock<(msg: any) => Promise<void>>>;
     let mockWildDuck: WildDuckClient;
@@ -36,6 +34,7 @@ describe('createEmailMCPServer', () => {
             uploadMessage:    mock(_.constant(Promise.resolve(1))),
             submitMessage:    mock(async () => { /* intentionally empty */ }),
             getMailboxId:     mock(_.constant(undefined)),
+            getMailboxCounts: mock(async () => ({ total: 5, unseen: 2 })),
         } as unknown as WildDuckClient;
 
         mockImap = {
@@ -53,15 +52,9 @@ describe('createEmailMCPServer', () => {
                 headers:        {},
                 attachments:    [],
             })),
-            setFlag:          mock(async () => { /* intentionally empty */ }),
-            moveMessage:      mock(async () => { /* intentionally empty */ }),
-            getMailboxCounts: mock(async () => ({ total: 5, unread: 1 })),
+            setFlag:     mock(async () => { /* intentionally empty */ }),
+            moveMessage: mock(async () => { /* intentionally empty */ }),
         } as unknown as ImapConnection;
-
-        mockCounters = {
-            getCounters: mock(async () => ({ total: 5, unread: 2 })),
-            reset:       mock(async () => { /* intentionally empty */ }),
-        } as unknown as EmailCounterStore;
     });
 
     afterEach(() => {
@@ -86,7 +79,7 @@ describe('createEmailMCPServer', () => {
 
     describe('createEmailMCPServer function', () => {
         test('should create MCP server with correct properties', () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
 
             expect(server).toBeDefined();
             expect(server.name).toBe('email');
@@ -98,10 +91,10 @@ describe('createEmailMCPServer', () => {
 
         test.each([
             ['checkInbox',      'Check CleanInbox for unread emails. Returns counter state and list of unread message summaries.'],
-            ['getEmailContent', 'Fetch the full content of an email by UID. Marks the email as read and decrements the unread counter.'],
-            ['archiveEmail',    'Move an email from CleanInbox to Archive. Decrements the total email counter.'],
+            ['getEmailContent', 'Fetch the full content of an email by UID. Marks the email as read.'],
+            ['archiveEmail',    'Move an email from CleanInbox to Archive.'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
             const toolDef = (server.instance as any)._registeredTools[toolName] as { description: string };
 
@@ -113,7 +106,7 @@ describe('createEmailMCPServer', () => {
             ['getEmailContent', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
             ['archiveEmail',    { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
         ])('should have %s tool with correct annotations', (toolName, expectedAnnotations) => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment -- Accessing registered tools
             const toolDef = (server.instance as any)._registeredTools[toolName];
 
@@ -124,13 +117,13 @@ describe('createEmailMCPServer', () => {
 
     describe('checkInbox tool', () => {
         test('should return counters and message list when there are unread messages', async () => {
-            mockCounters.getCounters = mock(async () => ({ total: 10, unread: 3 }));
+            mockWildDuck.getMailboxCounts = mock(async () => ({ total: 10, unseen: 3 }));
             mockImap.listUnread = mock(async () => [
                 { uid: 1, from: { name: 'Alice', address: 'alice@example.com' }, subject: 'Hello', date: new Date('2025-01-01T10:00:00.000Z') },
                 { uid: 2, from: { address: 'bob@example.com' },                  subject: 'World', date: new Date('2025-01-01T11:00:00.000Z') },
             ]);
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'checkInbox');
 
             const result: CallToolResult = await handler({});
@@ -154,10 +147,10 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should return empty messages list when no unread messages', async () => {
-            mockCounters.getCounters = mock(async () => ({ total: 5, unread: 0 }));
+            mockWildDuck.getMailboxCounts = mock(async () => ({ total: 5, unseen: 0 }));
             mockImap.listUnread = mock(async () => []);
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'checkInbox');
 
             const result: CallToolResult = await handler({});
@@ -177,7 +170,7 @@ describe('createEmailMCPServer', () => {
                 throw new Error('IMAP connection failed');
             });
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'checkInbox');
 
             const result: CallToolResult = await handler({});
@@ -186,18 +179,18 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('Error: IMAP connection failed');
         });
 
-        test('should handle counter error gracefully', async () => {
-            mockCounters.getCounters = mock(async () => {
-                throw new Error('DynamoDB timeout');
+        test('should handle WildDuck getMailboxCounts error gracefully', async () => {
+            mockWildDuck.getMailboxCounts = mock(async () => {
+                throw new Error('WildDuck timeout');
             });
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'checkInbox');
 
             const result: CallToolResult = await handler({});
 
             expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('Error: DynamoDB timeout');
+            expect(getText(result)).toContain('Error: WildDuck timeout');
         });
 
         test('should handle non-Error IMAP failure gracefully', async () => {
@@ -206,7 +199,7 @@ describe('createEmailMCPServer', () => {
                 throw 'IMAP error string';
             });
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'checkInbox');
 
             const result: CallToolResult = await handler({});
@@ -216,7 +209,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should call listUnread with CleanInbox folder', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'checkInbox');
 
             await handler({});
@@ -229,7 +222,7 @@ describe('createEmailMCPServer', () => {
                 { uid: 42, from: { address: 'test@example.com' }, subject: 'Test', date: new Date('2025-01-01T00:00:00.000Z') },
             ]);
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'checkInbox');
 
             const result: CallToolResult = await handler({});
@@ -255,7 +248,7 @@ describe('createEmailMCPServer', () => {
                 attachments:    [],
             }));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:42' });
@@ -268,10 +261,8 @@ describe('createEmailMCPServer', () => {
             expect(text).toContain('Let us meet at noon.');
         });
 
-        test('should mark email as Seen and sync counters from IMAP using Mailbox:UID', async () => {
-            mockImap.getMailboxCounts = mock(async () => ({ total: 8, unread: 3 }));
-
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+        test('should mark email as Seen using Mailbox:UID', async () => {
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             await handler({ message: 'CleanInbox:42' });
@@ -280,39 +271,8 @@ describe('createEmailMCPServer', () => {
             expect(mockImap.setFlag).toHaveBeenCalledWith(42, 'CleanInbox', '\\Seen');
         });
 
-        test('should still return email content when getMailboxCounts fails (fire-and-forget)', async () => {
-            mockImap.getMailboxCounts = mock(async () => {
-                throw new Error('IMAP STATUS failed');
-            });
-
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
-            const handler = getToolHandler(server, 'getEmailContent');
-
-            const result: CallToolResult = await handler({ message: 'CleanInbox:42' });
-
-            // Email content returned despite counter sync failure
-            expect(result.isError).toBeUndefined();
-            expect(getText(result)).toContain('From:');
-        });
-
-        test('should still return email content when reset fails (fire-and-forget)', async () => {
-            mockImap.getMailboxCounts = mock(async () => ({ total: 4, unread: 2 }));
-            mockCounters.reset = mock(async () => {
-                throw new Error('DynamoDB error');
-            });
-
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
-            const handler = getToolHandler(server, 'getEmailContent');
-
-            const result: CallToolResult = await handler({ message: 'CleanInbox:42' });
-
-            // Email content returned despite counter sync failure
-            expect(result.isError).toBeUndefined();
-            expect(getText(result)).toContain('From:');
-        });
-
         test('should return email content from Archive mailbox', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'Archive:15' });
@@ -322,7 +282,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should allow access to Drafts mailbox', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'Drafts:4' });
@@ -333,7 +293,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should deny access to Quarantine mailbox and send admin notification', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck, sendAdminNotification: mockSendAdminNotification });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck, sendAdminNotification: mockSendAdminNotification });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'Quarantine:7' });
@@ -347,7 +307,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should deny access to Junk mailbox and send admin notification', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck, sendAdminNotification: mockSendAdminNotification });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck, sendAdminNotification: mockSendAdminNotification });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'Junk:99' });
@@ -359,7 +319,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should deny access to Trash mailbox and send admin notification', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck, sendAdminNotification: mockSendAdminNotification });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck, sendAdminNotification: mockSendAdminNotification });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'Trash:3' });
@@ -372,7 +332,7 @@ describe('createEmailMCPServer', () => {
 
         test('should deny access and not crash when sendAdminNotification is not configured', async () => {
             // No sendAdminNotification provided
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'Quarantine:7' });
@@ -386,7 +346,7 @@ describe('createEmailMCPServer', () => {
             mockSendAdminNotification = mock(async () => {
                 throw new Error('Discord channel send failed');
             });
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck, sendAdminNotification: mockSendAdminNotification });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck, sendAdminNotification: mockSendAdminNotification });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'Quarantine:7' });
@@ -397,7 +357,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should include message reference in admin notification', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck, sendAdminNotification: mockSendAdminNotification });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck, sendAdminNotification: mockSendAdminNotification });
             const handler = getToolHandler(server, 'getEmailContent');
 
             await handler({ message: 'Quarantine:42' });
@@ -414,7 +374,7 @@ describe('createEmailMCPServer', () => {
                 throw new Error('Message UID 99 not found in CleanInbox');
             });
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:99' });
@@ -429,7 +389,7 @@ describe('createEmailMCPServer', () => {
                 throw { code: 'IMAP_ERR' };
             });
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:1' });
@@ -453,7 +413,7 @@ describe('createEmailMCPServer', () => {
                 attachments:    [],
             }));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:1' });
@@ -478,7 +438,7 @@ describe('createEmailMCPServer', () => {
                 attachments:    [],
             }));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:1' });
@@ -504,7 +464,7 @@ describe('createEmailMCPServer', () => {
                 attachments:    [],
             }));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:1' });
@@ -531,7 +491,7 @@ describe('createEmailMCPServer', () => {
                 attachments:    [],
             }));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:1' });
@@ -555,7 +515,7 @@ describe('createEmailMCPServer', () => {
                 attachments:    [],
             }));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:1' });
@@ -579,7 +539,7 @@ describe('createEmailMCPServer', () => {
                 attachments:    [],
             }));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:1' });
@@ -606,7 +566,7 @@ describe('createEmailMCPServer', () => {
                 attachments:    [],
             }));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:1' });
@@ -630,7 +590,7 @@ describe('createEmailMCPServer', () => {
                 attachments:    [],
             }));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:1' });
@@ -655,7 +615,7 @@ describe('createEmailMCPServer', () => {
                 attachments:    [],
             }));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:1' });
@@ -680,7 +640,7 @@ describe('createEmailMCPServer', () => {
                 attachments:    [],
             }));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:1' });
@@ -705,7 +665,7 @@ describe('createEmailMCPServer', () => {
                 attachments:    [],
             }));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:1' });
@@ -733,7 +693,7 @@ describe('createEmailMCPServer', () => {
                 attachments:    [],
             }));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:1' });
@@ -753,7 +713,7 @@ describe('createEmailMCPServer', () => {
     describe('getEmailContent attachment saving', () => {
         test('should not write files when email has no attachments', async () => {
             // Default mockImap.fetchMessage returns attachments: []
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:1' });
@@ -785,7 +745,7 @@ describe('createEmailMCPServer', () => {
             mockFsPromises.mkdir.mockResolvedValueOnce(undefined);
             mockFsPromises.writeFile.mockResolvedValueOnce(undefined);
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:42' });
@@ -824,7 +784,7 @@ describe('createEmailMCPServer', () => {
             // access resolves (file exists)
             mockFsPromises.access.mockResolvedValueOnce(undefined);
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:42' });
@@ -862,7 +822,7 @@ describe('createEmailMCPServer', () => {
             mockFsPromises.access.mockRejectedValueOnce(new Error('ENOENT'));
             mockFsPromises.access.mockRejectedValueOnce(new Error('ENOENT'));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:10' });
@@ -897,7 +857,7 @@ describe('createEmailMCPServer', () => {
             }));
             mockFsPromises.access.mockRejectedValueOnce(new Error('ENOENT'));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             await handler({ message: 'CleanInbox:99' });
@@ -925,7 +885,7 @@ describe('createEmailMCPServer', () => {
             }));
             mockFsPromises.access.mockRejectedValueOnce(new Error('ENOENT'));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:77' });
@@ -950,7 +910,7 @@ describe('createEmailMCPServer', () => {
             }));
             mockFsPromises.access.mockRejectedValueOnce(new Error('ENOENT'));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:50' });
@@ -987,7 +947,7 @@ describe('createEmailMCPServer', () => {
             mockFsPromises.access.mockRejectedValueOnce(new Error('ENOENT'));
             mockFsPromises.access.mockRejectedValueOnce(new Error('ENOENT'));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:55' });
@@ -1028,7 +988,7 @@ describe('createEmailMCPServer', () => {
             mockFsPromises.access.mockRejectedValueOnce(new Error('ENOENT'));
             mockFsPromises.access.mockRejectedValueOnce(new Error('ENOENT'));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:56' });
@@ -1066,7 +1026,7 @@ describe('createEmailMCPServer', () => {
             // mkdir fails
             mockFsPromises.mkdir.mockRejectedValueOnce(new Error('EACCES: permission denied'));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:42' });
@@ -1101,7 +1061,7 @@ describe('createEmailMCPServer', () => {
             mockFsPromises.mkdir.mockResolvedValueOnce(undefined);
             mockFsPromises.writeFile.mockRejectedValueOnce(new Error('disk full'));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:43' });
@@ -1139,7 +1099,7 @@ describe('createEmailMCPServer', () => {
             mockFsPromises.mkdir.mockResolvedValueOnce(undefined);
             mockFsPromises.writeFile.mockResolvedValueOnce(undefined);
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'getEmailContent');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:44' });
@@ -1156,7 +1116,7 @@ describe('createEmailMCPServer', () => {
 
     describe('archiveEmail tool', () => {
         test('should move email and sync counters from IMAP using Mailbox:UID format', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'archiveEmail');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:7' });
@@ -1173,7 +1133,7 @@ describe('createEmailMCPServer', () => {
                 throw new Error('Move failed: folder not found');
             });
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'archiveEmail');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:7' });
@@ -1188,7 +1148,7 @@ describe('createEmailMCPServer', () => {
                 throw 'Network timeout';
             });
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'archiveEmail');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:3' });
@@ -1197,49 +1157,8 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('Network timeout');
         });
 
-        test('should not sync counter when move fails', async () => {
-            mockImap.moveMessage = mock(async () => {
-                throw new Error('Move failed');
-            });
-
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
-            const handler = getToolHandler(server, 'archiveEmail');
-
-            await handler({ message: 'CleanInbox:7' });
-
-            expect(mockCounters.reset).not.toHaveBeenCalled();
-        });
-
-        test('should still return success when getMailboxCounts fails after archive (fire-and-forget)', async () => {
-            mockImap.getMailboxCounts = mock(async () => {
-                throw new Error('IMAP STATUS failed');
-            });
-
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
-            const handler = getToolHandler(server, 'archiveEmail');
-
-            const result: CallToolResult = await handler({ message: 'CleanInbox:7' });
-
-            expect(result.isError).toBeUndefined();
-            expect(getText(result)).toContain('archived');
-        });
-
-        test('should still return success when reset fails after archive (fire-and-forget)', async () => {
-            mockCounters.reset = mock(async () => {
-                throw new Error('DynamoDB error');
-            });
-
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
-            const handler = getToolHandler(server, 'archiveEmail');
-
-            const result: CallToolResult = await handler({ message: 'CleanInbox:7' });
-
-            expect(result.isError).toBeUndefined();
-            expect(getText(result)).toContain('archived');
-        });
-
         test('should archive from any accessible mailbox (not just CleanInbox)', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'archiveEmail');
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:15' });
@@ -1249,7 +1168,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should deny archive from Quarantine mailbox', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'archiveEmail');
 
             const result: CallToolResult = await handler({ message: 'Quarantine:7' });
@@ -1262,7 +1181,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should deny archive from Junk mailbox', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'archiveEmail');
 
             const result: CallToolResult = await handler({ message: 'Junk:3' });
@@ -1274,7 +1193,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should deny archive from Trash mailbox', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'archiveEmail');
 
             const result: CallToolResult = await handler({ message: 'Trash:5' });
@@ -1286,7 +1205,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should deny archive from Drafts mailbox', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'archiveEmail');
 
             const result: CallToolResult = await handler({ message: 'Drafts:2' });
@@ -1298,7 +1217,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should allow archive from Archive mailbox', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'archiveEmail');
 
             const result: CallToolResult = await handler({ message: 'Archive:8' });
@@ -1325,7 +1244,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should be registered on the MCP server', () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
 
             const toolDef = getRegisteredTool(server, 'searchEmail') as { description: string };
 
@@ -1334,7 +1253,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should have readOnlyHint annotation', () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
 
             const toolDef = getRegisteredTool(server, 'searchEmail') as { annotations: Record<string, unknown> };
 
@@ -1345,7 +1264,7 @@ describe('createEmailMCPServer', () => {
             mockSearch = mock(async () => []);
             mockWildDuck = { search: mockSearch } as unknown as WildDuckClient;
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             const result: CallToolResult = await handler({});
@@ -1355,7 +1274,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should search CleanInbox and Archive when no mailbox specified (all-regular default)', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             await handler({});
@@ -1372,7 +1291,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test("should search CleanInbox and Archive when mailbox is 'all-regular'", async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             await handler({ mailbox: 'all-regular' });
@@ -1388,7 +1307,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test("should search all folders when mailbox is 'all'", async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             await handler({ mailbox: 'all' });
@@ -1405,7 +1324,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should search only specified mailbox when a specific folder name is provided', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             await handler({ mailbox: 'Archive' });
@@ -1415,7 +1334,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should pass correspondent to search query', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             await handler({ correspondent: 'alice@example.com' });
@@ -1425,7 +1344,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should pass content to search query', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             await handler({ content: 'invoice' });
@@ -1435,7 +1354,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should pass before date to search query', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             await handler({ before: '2025-01-15T00:00:00.000Z' });
@@ -1445,7 +1364,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should pass since date to search query', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             await handler({ since: '2025-01-01T00:00:00.000Z' });
@@ -1455,7 +1374,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should pass header to search query', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             await handler({ header: { name: 'X-Custom', value: 'test' } });
@@ -1482,7 +1401,7 @@ describe('createEmailMCPServer', () => {
                 },
             ]);
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             const result: CallToolResult = await handler({});
@@ -1505,7 +1424,7 @@ describe('createEmailMCPServer', () => {
                 },
             ]);
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             const result: CallToolResult = await handler({});
@@ -1526,7 +1445,7 @@ describe('createEmailMCPServer', () => {
                 },
             ]);
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             const result: CallToolResult = await handler({});
@@ -1539,7 +1458,7 @@ describe('createEmailMCPServer', () => {
                 throw new Error('WildDuck API unavailable');
             });
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             const result: CallToolResult = await handler({});
@@ -1554,7 +1473,7 @@ describe('createEmailMCPServer', () => {
                 throw 'connection refused';
             });
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             const result: CallToolResult = await handler({});
@@ -1568,7 +1487,7 @@ describe('createEmailMCPServer', () => {
                 throw new Error('Search failed');
             });
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             await handler({});
@@ -1615,7 +1534,7 @@ describe('createEmailMCPServer', () => {
         test('should upload to Drafts and submit immediately when recipient is on allowlist', async () => {
             mockAllowlist.isAllowed = mock(_.constant(true));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 rateLimiter:    mockRateLimiter,
                 allowlist:      mockAllowlist,
@@ -1634,7 +1553,7 @@ describe('createEmailMCPServer', () => {
         test('should upload to Drafts with correct payload for formal identity', async () => {
             mockAllowlist.isAllowed = mock(_.constant(true));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -1653,7 +1572,7 @@ describe('createEmailMCPServer', () => {
         test('should NOT include flags field in sendEmail upload payload', async () => {
             mockAllowlist.isAllowed = mock(_.constant(true));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -1668,7 +1587,7 @@ describe('createEmailMCPServer', () => {
         test('should use formalAddress from getUserAddresses for formal identity', async () => {
             mockAllowlist.isAllowed = mock(_.constant(true));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -1684,7 +1603,7 @@ describe('createEmailMCPServer', () => {
         test('should use informalAddress from getUserAddresses for informal identity', async () => {
             mockAllowlist.isAllowed = mock(_.constant(true));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -1700,7 +1619,7 @@ describe('createEmailMCPServer', () => {
         test('should pass structured to object { name, email_address } to uploadMessage as { name, address }', async () => {
             mockAllowlist.isAllowed = mock(_.constant(true));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -1715,7 +1634,7 @@ describe('createEmailMCPServer', () => {
         test('should pass plain string to as { address } object', async () => {
             mockAllowlist.isAllowed = mock(_.constant(true));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -1730,7 +1649,7 @@ describe('createEmailMCPServer', () => {
         test('should handle array with mixed structured and plain string to addresses', async () => {
             mockAllowlist.isAllowed = mock(_.constant(true));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -1754,7 +1673,7 @@ describe('createEmailMCPServer', () => {
             const mockIsAllowed = mock((addr: string) => addr === 'craig@rungie.com');
             mockAllowlist.isAllowed = mockIsAllowed;
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -1770,7 +1689,7 @@ describe('createEmailMCPServer', () => {
         test('should upload to WildDuck Drafts and NOT submit when recipient not on allowlist', async () => {
             mockAllowlist.isAllowed = mock(_.constant(false));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuck,
                 allowlist:           mockAllowlist,
                 sendApprovalRequest: mockSendApprovalRequest,
@@ -1790,7 +1709,7 @@ describe('createEmailMCPServer', () => {
             mockUploadMessage        = mock(_.constant(Promise.resolve(99)));
             mockWildDuck.uploadMessage = mockUploadMessage;
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuck,
                 allowlist:           mockAllowlist,
                 sendApprovalRequest: mockSendApprovalRequest,
@@ -1805,7 +1724,7 @@ describe('createEmailMCPServer', () => {
         test('should accept an array of to addresses and upload all to WildDuck', async () => {
             mockAllowlist.isAllowed = mock(_.constant(true));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -1822,7 +1741,7 @@ describe('createEmailMCPServer', () => {
         test('should route to approval when array to has any recipient not on allowlist', async () => {
             mockAllowlist.isAllowed = mock((addr: string) => addr === 'alice@example.com');
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuck,
                 allowlist:           mockAllowlist,
                 sendApprovalRequest: mockSendApprovalRequest,
@@ -1839,7 +1758,7 @@ describe('createEmailMCPServer', () => {
         test('should fast-path when all addresses in array are allowlisted', async () => {
             mockAllowlist.isAllowed = mock(_.constant(true));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -1857,7 +1776,7 @@ describe('createEmailMCPServer', () => {
             mockUploadMessage        = mock(_.constant(Promise.resolve(99)));
             mockWildDuck.uploadMessage = mockUploadMessage;
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuck,
                 allowlist:           mockAllowlist,
                 sendApprovalRequest: mockSendApprovalRequest,
@@ -1874,7 +1793,7 @@ describe('createEmailMCPServer', () => {
             mockRateLimiter.isAtLimit      = mock(_.constant(true));
             mockRateLimiter.tokensRemaining = mock(_.constant(0));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 rateLimiter:    mockRateLimiter,
                 allowlist:      mockAllowlist,
@@ -1893,7 +1812,7 @@ describe('createEmailMCPServer', () => {
                 throw new Error('WildDuck upload failed');
             });
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -1911,7 +1830,7 @@ describe('createEmailMCPServer', () => {
                 throw new Error('Discord unavailable');
             });
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuck,
                 allowlist:           mockAllowlist,
                 sendApprovalRequest: mockSendApprovalRequest,
@@ -1937,7 +1856,7 @@ describe('createEmailMCPServer', () => {
             });
             (mockWildDuck.updateMessageFlags as ReturnType<typeof mock>).mockRejectedValue(new Error('WildDuck flag failed'));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuck,
                 allowlist:           mockAllowlist,
                 sendApprovalRequest: mockSendApprovalRequest,
@@ -1954,7 +1873,7 @@ describe('createEmailMCPServer', () => {
         test('should NOT store metaData with to address in upload payload (to is a message field)', async () => {
             mockAllowlist.isAllowed = mock(_.constant(false));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -1971,7 +1890,7 @@ describe('createEmailMCPServer', () => {
             mockAllowlist.isAllowed   = mock(_.constant(true));
             mockRateLimiter.isAtLimit = mock(_.constant(false));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 rateLimiter:    mockRateLimiter,
                 allowlist:      mockAllowlist,
@@ -1994,7 +1913,7 @@ describe('createEmailMCPServer', () => {
             mockWildDuck.getUserAddresses = mockGetUserAddresses;
             mockAllowlist.isAllowed = mock(_.constant(true));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2012,7 +1931,7 @@ describe('createEmailMCPServer', () => {
         test('should NOT retry getUserAddresses on second sendEmail call after first call succeeds', async () => {
             mockAllowlist.isAllowed = mock(_.constant(true));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2028,7 +1947,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should reject empty array for to via input schema (min(1) constraint)', async () => {
-            const server  = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuck });
+            const server  = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuck });
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Accessing private MCP SDK internals
             const toolDef = (server.instance as any)._registeredTools.sendEmail as { inputSchema: { safeParseAsync: (args: unknown) => Promise<{ success: boolean }> } };
 
@@ -2084,7 +2003,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should deny reply to message in Quarantine mailbox', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2101,7 +2020,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should deny reply to message in Junk mailbox', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2116,7 +2035,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should deny reply to message in Drafts mailbox', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2131,7 +2050,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should allow reply to message in CleanInbox mailbox', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2143,7 +2062,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should allow reply to message in Archive mailbox', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2156,7 +2075,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should upload and submit reply immediately when sender is allowlisted', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 rateLimiter:    mockRateLimiter,
                 allowlist:      mockAllowlist,
@@ -2172,7 +2091,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should build reference object with reply action for reply mode', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2186,7 +2105,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should build reference object with replyAll action for replyAll mode', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2199,7 +2118,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should NOT include flags field in replyToEmail upload payload', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2212,7 +2131,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should call getMailboxId with mailbox name to resolve mailbox ID', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2227,7 +2146,7 @@ describe('createEmailMCPServer', () => {
             mockGetMailboxId = mock(_.constant('mbx-clean-resolved'));
             mockWildDuck.getMailboxId = mockGetMailboxId;
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2242,7 +2161,7 @@ describe('createEmailMCPServer', () => {
         test('should upload to Drafts and NOT submit when recipient not on allowlist', async () => {
             mockAllowlist.isAllowed = mock(_.constant(false));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2262,7 +2181,7 @@ describe('createEmailMCPServer', () => {
             });
             mockWildDuck.getMessage = mockGetMessage;
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2278,7 +2197,7 @@ describe('createEmailMCPServer', () => {
             mockGetMessage = mock(_.constant(Promise.resolve(null)));
             mockWildDuck.getMessage = mockGetMessage;
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2294,7 +2213,7 @@ describe('createEmailMCPServer', () => {
             mockRateLimiter.isAtLimit       = mock(_.constant(true));
             mockRateLimiter.tokensRemaining = mock(_.constant(0));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 rateLimiter:    mockRateLimiter,
                 allowlist:      mockAllowlist,
@@ -2310,7 +2229,7 @@ describe('createEmailMCPServer', () => {
         test('should not include rate limit warning in reply result when limit is not reached', async () => {
             mockRateLimiter.isAtLimit = mock(_.constant(false));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 rateLimiter:    mockRateLimiter,
                 allowlist:      mockAllowlist,
@@ -2327,7 +2246,7 @@ describe('createEmailMCPServer', () => {
         test('should NOT store metaData with to address in upload payload (to is a message field)', async () => {
             mockAllowlist.isAllowed = mock(_.constant(false));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2349,7 +2268,7 @@ describe('createEmailMCPServer', () => {
             mockWildDuck.getMessage = mockGetMessage;
             mockAllowlist.isAllowed = mock(_.constant(true));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2371,7 +2290,7 @@ describe('createEmailMCPServer', () => {
             mockWildDuck.getMessage = mockGetMessage;
             mockAllowlist.isAllowed = mock(_.constant(true));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2393,7 +2312,7 @@ describe('createEmailMCPServer', () => {
             // Allowlist allows only the bare address
             mockAllowlist.isAllowed = mock((addr: string) => addr === 'john@example.com');
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2411,7 +2330,7 @@ describe('createEmailMCPServer', () => {
             mockGetMailboxId = mock(_.constant(undefined));
             mockWildDuck.getMailboxId = mockGetMailboxId;
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2427,7 +2346,7 @@ describe('createEmailMCPServer', () => {
         test('should return error from sendEmail when getUserAddresses returns empty array (no sender address)', async () => {
             mockWildDuck.getUserAddresses = mock(async () => []);
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2444,7 +2363,7 @@ describe('createEmailMCPServer', () => {
         test('should return error from replyToEmail when getUserAddresses returns empty array (no sender address)', async () => {
             mockWildDuck.getUserAddresses = mock(async () => []);
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuck,
                 allowlist:      mockAllowlist,
             });
@@ -2497,7 +2416,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('replyAll should always route to approval even when primary recipient is on allowlist', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckReplyAll,
                 allowlist:           mockAllowlistReplyAll,
                 sendApprovalRequest: mockSendApprovalRequestReplyAll,
@@ -2519,7 +2438,7 @@ describe('createEmailMCPServer', () => {
             const subject   = `Re: ${originalEmailWithCc.subject}`;
             const uid       = 88;
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckReplyAll,
                 allowlist:           mockAllowlistReplyAll,
                 sendApprovalRequest: mockSendApprovalRequestReplyAll,
@@ -2533,7 +2452,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('replyAll upload payload should not contain cc (WildDuck derives recipients from reference object)', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckReplyAll,
                 allowlist:           mockAllowlistReplyAll,
                 sendApprovalRequest: mockSendApprovalRequestReplyAll,
@@ -2561,7 +2480,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should delete draft and return success message', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuckDelete });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuckDelete });
             const handler = getToolHandler(server, 'deleteDraft');
 
             const result: CallToolResult = await handler({ message: 'Drafts:42' });
@@ -2573,7 +2492,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should parse UID from Drafts:UID format', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuckDelete });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuckDelete });
             const handler = getToolHandler(server, 'deleteDraft');
 
             await handler({ message: 'Drafts:99' });
@@ -2587,7 +2506,7 @@ describe('createEmailMCPServer', () => {
             });
             mockWildDuckDelete.deleteMessage = mockDeleteMessage;
 
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuckDelete });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuckDelete });
             const handler = getToolHandler(server, 'deleteDraft');
 
             const result: CallToolResult = await handler({ message: 'Drafts:42' });
@@ -2598,7 +2517,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should have destructiveHint: true annotation', () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, { wildDuckClient: mockWildDuckDelete });
+            const server = createEmailMCPServer(mockImap, { wildDuckClient: mockWildDuckDelete });
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment -- Accessing registered tools
             const toolDef = (server.instance as any)._registeredTools.deleteDraft;
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking tool annotations
@@ -2639,7 +2558,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should read original draft, amend, and re-upload with replacePrevious', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });
@@ -2658,7 +2577,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should keep original subject when not provided', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });
@@ -2671,7 +2590,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should NOT include flags field in amendAndResubmitDraft upload payload', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });
@@ -2684,7 +2603,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should apply amended body text', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });
@@ -2697,7 +2616,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should keep original body when not provided', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });
@@ -2710,7 +2629,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should accept amended to address as plain string', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });
@@ -2723,7 +2642,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should accept amended to as structured address object', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });
@@ -2736,7 +2655,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should accept amended to as array of addresses', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });
@@ -2749,7 +2668,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should keep original to addresses when not provided (already address objects from WildDuck)', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });
@@ -2763,7 +2682,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should call sendApprovalRequest with new UID after re-upload', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });
@@ -2775,7 +2694,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should join multiple to addresses with ", " separator in sendApprovalRequest', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });
@@ -2792,7 +2711,7 @@ describe('createEmailMCPServer', () => {
             mockGetMessageAmend = mock(async () => null);
             mockWildDuckAmend.getMessage = mockGetMessageAmend;
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuckAmend,
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
@@ -2809,7 +2728,7 @@ describe('createEmailMCPServer', () => {
             });
             mockWildDuckAmend.getMessage = mockGetMessageAmend;
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuckAmend,
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
@@ -2826,7 +2745,7 @@ describe('createEmailMCPServer', () => {
                 throw new Error('Discord unavailable');
             });
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });
@@ -2850,7 +2769,7 @@ describe('createEmailMCPServer', () => {
             });
             (mockWildDuckAmend.updateMessageFlags as ReturnType<typeof mock>).mockRejectedValue(new Error('WildDuck flag failed'));
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });
@@ -2864,7 +2783,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should use formal from address when identity is formal', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });
@@ -2878,7 +2797,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should use informal from address when identity is informal', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });
@@ -2892,7 +2811,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should upload with draft flag set to true and no explicit flags field', async () => {
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });
@@ -2911,7 +2830,7 @@ describe('createEmailMCPServer', () => {
             mockGetUserAddresses = mock(async () => []);
             mockWildDuckAmend.getUserAddresses = mockGetUserAddresses;
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient: mockWildDuckAmend,
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
@@ -2926,7 +2845,7 @@ describe('createEmailMCPServer', () => {
             mockGetMessageAmend = mock(async () => ({ id: 42, to: [{ address: 'original-to@example.com' }] }));
             mockWildDuckAmend.getMessage = mockGetMessageAmend;
 
-            const server = createEmailMCPServer(mockImap, mockCounters, {
+            const server = createEmailMCPServer(mockImap, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
             });

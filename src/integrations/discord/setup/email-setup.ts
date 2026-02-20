@@ -9,7 +9,6 @@ import { type ChannelId, createChannelId } from '@/integrations/discord/types';
 import { ImapConnection } from '@/integrations/email/imap-connection';
 import { EmailClassifier } from '@/integrations/email/classifier';
 import { EmailAllowlist } from '@/integrations/email/allowlist';
-import { EmailCounterStore } from '@/integrations/email/email-counters';
 import { EmailProcessor } from '@/integrations/email/email-processor';
 import { ImapListener } from '@/integrations/email/imap-listener';
 import { ReviewHandler } from '@/integrations/email/review-handler';
@@ -44,7 +43,6 @@ export interface EmailSetupResult {
     allowlistHandler:        AllowlistCommandHandler
     emailMcpServer:          McpServerConfig
     imap:                    ImapConnection
-    counters:                EmailCounterStore
     outboundApprovalHandler: OutboundApprovalHandler
     wildDuckClient:          WildDuckClient
     /** Discord channel ID for the admin email channel, used to auto-mute it at startup */
@@ -59,7 +57,7 @@ export interface EmailSetupResult {
  * Initialize all email integration components and register the /allowlist slash command.
  *
  * Creates:
- * - IMAP connection, classifier, allowlist, counters
+ * - IMAP connection, classifier, allowlist
  * - EmailProcessor with Discord DM callbacks for uncertain/unsafe verdicts
  * - ImapListener (NOT started — caller starts it after Discord client ready)
  * - ReviewHandler for button interactions
@@ -84,10 +82,9 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         imapDebug:        emailConfig.imapDebug,
     });
 
-    // Create classifier, allowlist, counters
+    // Create classifier, allowlist
     const classifier = new EmailClassifier();
     const allowlist  = new EmailAllowlist(docClient, tableName);
-    const counters   = new EmailCounterStore(docClient, tableName);
 
     // Load allowlist from DynamoDB into memory cache
     await allowlist.load();
@@ -95,7 +92,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Create processor with Discord admin channel callbacks
     // Stryker disable ObjectLiteral,BlockStatement,ArrayDeclaration,StringLiteral: EmailProcessor config and callbacks are integration wiring - not unit testable
     const processor = new EmailProcessor(
-        { allowlist, classifier, counters, imap },
+        { allowlist, classifier, imap },
         {
             onSafe: async (email, _verdict) => {
                 try {
@@ -146,7 +143,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
 
     // Create review handler (handles email-* button interactions)
     // Stryker disable next-line ObjectLiteral: ReviewHandler config object is integration wiring
-    const reviewHandler = new ReviewHandler({ imap, counters, allowlist, adminDiscordUserId: emailConfig.adminDiscordUserId });
+    const reviewHandler = new ReviewHandler({ imap, allowlist, adminDiscordUserId: emailConfig.adminDiscordUserId });
 
     // Create allowlist command handler (handles /allowlist interactions)
     const allowlistHandler = new AllowlistCommandHandler(allowlist, emailConfig.adminDiscordUserId);
@@ -214,7 +211,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Create listener (not started yet — started in clientReady handler)
     // Must be created after sendApprovalRequest and wildDuckClient are defined.
     // Stryker disable next-line ObjectLiteral: ImapListener config object is integration wiring
-    const listener = new ImapListener(imap, processor, counters, {
+    const listener = new ImapListener(imap, processor, {
         useIdle:               emailConfig.useIdle,
         idleTimeoutMs:         emailConfig.idleTimeoutMs,
         pollFallbackMs:        emailConfig.pollFallbackMs,
@@ -231,7 +228,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
 
     // Create email MCP server for Claude agent
     // Stryker disable ObjectLiteral,BlockStatement,StringLiteral,ArrayDeclaration: MCP server options and admin notification callback are integration wiring - not unit testable
-    const emailMcpServer = createEmailMCPServer(imap, counters, {
+    const emailMcpServer = createEmailMCPServer(imap, {
         sendAdminNotification: async ({ mailboxName, uid, reference }) => {
             try {
                 const { embed, actionRow } = buildRestrictedAccessEmbed(mailboxName, uid, reference);
@@ -266,7 +263,6 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         allowlistHandler,
         emailMcpServer,
         imap,
-        counters,
         outboundApprovalHandler,
         wildDuckClient,
         adminChannelId: createChannelId(emailConfig.adminDiscordChannelId),

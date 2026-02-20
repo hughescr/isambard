@@ -1586,6 +1586,94 @@ describe('WildDuckClient', () => {
     });
 
     // -----------------------------------------------------------------------
+    // getMailboxCounts()
+    // -----------------------------------------------------------------------
+    describe('getMailboxCounts()', () => {
+        const MAILBOX_INFO_RESPONSE = { success: true, total: 15, unseen: 3 };
+
+        test('calls GET /users/me/mailboxes/{mailboxId} with correct URL', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_INFO_RESPONSE));
+
+            await client.getMailboxCounts('CleanInbox');
+
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+            const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect(url).toBe('https://wildduck-api.example.com/users/me/mailboxes/mbx-clean');
+        });
+
+        test('sends auth token header', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_INFO_RESPONSE));
+
+            await client.getMailboxCounts('CleanInbox');
+
+            const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect((options.headers as Record<string, string>)['X-Access-Token']).toBe('test-auth-token');
+        });
+
+        test('returns total and unseen from response', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_INFO_RESPONSE));
+
+            const result = await client.getMailboxCounts('CleanInbox');
+
+            expect(result).toEqual({ total: 15, unseen: 3 });
+        });
+
+        test('throws WildDuckError when mailboxPath not in map', async () => {
+            const client = await makeInitializedClient();
+
+            await expect(client.getMailboxCounts('NonExistentFolder')).rejects.toThrow(WildDuckError);
+        });
+
+        test('retries on 401 by re-authenticating', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'new-token' }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_INFO_RESPONSE));
+
+            await client.getMailboxCounts('CleanInbox');
+
+            expect(mockFetch).toHaveBeenCalledTimes(3);
+        });
+
+        test('uses new token on retry after 401', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_INFO_RESPONSE));
+
+            await client.getMailboxCounts('CleanInbox');
+
+            const [_url, options] = mockFetch.mock.calls[2] as [string, RequestInit];
+            expect((options.headers as Record<string, string>)['X-Access-Token']).toBe('refreshed-token');
+        });
+
+        test('throws WildDuckError on non-2xx non-401 error', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
+
+            await expect(client.getMailboxCounts('CleanInbox')).rejects.toThrow(WildDuckError);
+        });
+
+        test('throws WildDuckAuthError when re-auth fails after 401', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+
+            await expect(client.getMailboxCounts('CleanInbox')).rejects.toThrow(WildDuckAuthError);
+        });
+    });
+
+    // -----------------------------------------------------------------------
     // keyword in SearchCriteria
     // -----------------------------------------------------------------------
     describe('search() with keyword criteria', () => {

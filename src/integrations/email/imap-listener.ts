@@ -4,7 +4,6 @@ import { EmailFolder } from '@/integrations/email/types';
 import type { EmailMetadata } from '@/integrations/email/types';
 import type { ImapConnection } from '@/integrations/email/imap-connection';
 import type { EmailProcessor } from '@/integrations/email/email-processor';
-import type { EmailCounterStore } from '@/integrations/email/email-counters';
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -38,17 +37,15 @@ const MAX_EMAILS_PER_POLL = 20;
 export class ImapListener {
     private readonly imap:                 ImapConnection;
     private readonly processor:            EmailProcessor;
-    private readonly counters:             EmailCounterStore;
     private readonly config:               ImapListenerConfig;
     private          timer:                ReturnType<typeof setTimeout> | null;
     private          lastUid:              number;
     private          _running:             boolean;
     private          _pollFallbackResolve: (() => void) | null;
 
-    constructor(imap: ImapConnection, processor: EmailProcessor, counters: EmailCounterStore, config: ImapListenerConfig) {
+    constructor(imap: ImapConnection, processor: EmailProcessor, config: ImapListenerConfig) {
         this.imap                 = imap;
         this.processor            = processor;
-        this.counters             = counters;
         this.config               = config;
         this.timer                = null;
         this.lastUid              = 0;
@@ -73,16 +70,6 @@ export class ImapListener {
             await this.imap.ensureFolders();
             // Stryker disable next-line BooleanLiteral: setting running=true after successful connect
             this._running = true;
-
-            // Sync counters from IMAP on startup (best-effort — failures are logged and ignored)
-            // Stryker disable BlockStatement: try-catch wraps counter sync — best-effort startup initialization
-            try {
-                const { total, unread } = await this.imap.getMailboxCounts(EmailFolder.CleanInbox);
-                await this.counters.reset(total, unread);
-            } catch (syncErr) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                logger.warn({ error: _.isError(syncErr) ? syncErr.message : String(syncErr), msg: 'Failed to sync email counters on startup' });
-            }
 
             // Fetch and process any messages that arrived before this session
             // Re-fetch immediately while there are more messages (batch cap was hit)

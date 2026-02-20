@@ -703,30 +703,6 @@ export class ImapConnection {
         });
     }
 
-    /** Get the real total and unread counts for a folder using IMAP STATUS command. */
-    async getMailboxCounts(folder: string): Promise<{ total: number, unread: number }> {
-        return this.serialize(async () => {
-            // Stryker disable BlockStatement: try-catch wraps IMAP status - error handling
-            try {
-                // Stryker disable next-line ObjectLiteral,BooleanLiteral: STATUS query options are API configuration constants
-                const status = await this.client.status(this.resolveFolder(folder), { messages: true, unseen: true });
-                return {
-                    total:  (status as { messages?: number }).messages ?? 0,
-                    unread: (status as { unseen?: number }).unseen   ?? 0,
-                };
-            } catch (err) {
-                if(err instanceof ImapConnectionError) {
-                    throw err;
-                }
-                throw new ImapConnectionError(
-                    `getMailboxCounts failed (folder=${folder}): ${_.isError(err) ? err.message : String(err)}`,
-                    // Stryker disable next-line ObjectLiteral,StringLiteral: Error cause wrapping is not behavior-affecting
-                    { cause: String(err) }
-                );
-            }
-        });
-    }
-
     /**
      * Enter IDLE mode on the given folder.
      * Resolves when new mail arrives or when cancelIdle() is called.

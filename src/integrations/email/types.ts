@@ -102,12 +102,6 @@ export interface AllowlistEntry {
     addedBy: string
 }
 
-// Email counters from DynamoDB
-export interface EmailCounters {
-    total:  number
-    unread: number
-}
-
 // Email summary for perch/inbox display
 export interface EmailSummary {
     uid:     number

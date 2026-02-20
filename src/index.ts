@@ -104,7 +104,7 @@ export async function createApp(): Promise<App> {
 
     // Build email service from emailSetup components (if available)
     const emailService = emailSetup
-        ? { counterStore: emailSetup.counters, imap: emailSetup.imap, wildDuckClient: emailSetup.wildDuckClient }
+        ? { imap: emailSetup.imap, wildDuckClient: emailSetup.wildDuckClient }
         : undefined;
 
     const contextLayer = createContextLayer(storage.memoryBackend, emailService);

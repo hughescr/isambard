@@ -5,14 +5,12 @@ import { EmailFolder } from '@/integrations/email/types';
 import type { EmailMetadata, ClassifierVerdict } from '@/integrations/email/types';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import type { EmailClassifier } from '@/integrations/email/classifier';
-import type { EmailCounterStore } from '@/integrations/email/email-counters';
 import type { ImapConnection } from '@/integrations/email/imap-connection';
 import { EmailProcessingError } from '@/integrations/email/errors';
 
 export interface EmailProcessorDeps {
     allowlist:  EmailAllowlist
     classifier: EmailClassifier
-    counters:   EmailCounterStore
     imap:       ImapConnection
 }
 
@@ -34,14 +32,12 @@ export interface ProcessingResult {
 export class EmailProcessor {
     private readonly allowlist:  EmailAllowlist;
     private readonly classifier: EmailClassifier;
-    private readonly counters:   EmailCounterStore;
     private readonly imap:       ImapConnection;
     private readonly callbacks:  ProcessEmailCallbacks;
 
     constructor(deps: EmailProcessorDeps, callbacks: ProcessEmailCallbacks = {}) {
         this.allowlist  = deps.allowlist;
         this.classifier = deps.classifier;
-        this.counters   = deps.counters;
         this.imap       = deps.imap;
         this.callbacks  = callbacks;
     }
@@ -79,15 +75,6 @@ export class EmailProcessor {
             // Stryker enable StringLiteral,ObjectLiteral
         }
         // Stryker restore BlockStatement
-        // Stryker disable BlockStatement: try-catch wraps counter sync — best-effort, email routed regardless
-        try {
-            // Stryker disable next-line StringLiteral: EmailFolder.CleanInbox is configuration constant
-            const { total, unread } = await this.imap.getMailboxCounts(EmailFolder.CleanInbox);
-            await this.counters.reset(total, unread);
-        } catch (countErr) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.warn({ error: _.isError(countErr) ? countErr.message : String(countErr), msg: 'Failed to sync counters after inbox delivery' });
-        }
         // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Log message content is not behavior-affecting
         logger.info({
             uid:               email.uid,
@@ -132,18 +119,6 @@ export class EmailProcessor {
             );
         }
         // Stryker restore BlockStatement
-
-        if(destination === EmailFolder.CleanInbox) {
-            // Stryker disable BlockStatement: try-catch wraps counter sync — best-effort, email routed regardless
-            try {
-                // Stryker disable next-line StringLiteral: EmailFolder.CleanInbox is configuration constant
-                const { total, unread } = await this.imap.getMailboxCounts(EmailFolder.CleanInbox);
-                await this.counters.reset(total, unread);
-            } catch (countErr) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                logger.warn({ error: _.isError(countErr) ? countErr.message : String(countErr), msg: 'Failed to sync counters after inbox delivery' });
-            }
-        }
 
         await this.invokeCallback(email, verdict);
 

@@ -135,6 +135,12 @@ interface SearchResponse {
     results: SearchResultEntry[]
 }
 
+interface MailboxInfoResponse {
+    success: boolean
+    total:   number
+    unseen:  number
+}
+
 // ---------------------------------------------------------------------------
 // WildDuckClient
 // ---------------------------------------------------------------------------
@@ -316,6 +322,24 @@ export class WildDuckClient {
     }
 
     /**
+     * Get mailbox message counts (total and unseen).
+     * Retries once on 401 by re-authenticating.
+     */
+    async getMailboxCounts(mailboxPath: string): Promise<{ total: number, unseen: number }> {
+        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
+        try {
+            return await this.doGetMailboxCounts(mailboxPath);
+        } catch (err) {
+            if(err instanceof WildDuckAuthError) {
+                await this.authenticate();
+                return this.doGetMailboxCounts(mailboxPath);
+            }
+            throw err;
+        }
+        // Stryker restore BlockStatement
+    }
+
+    /**
      * Look up the WildDuck internal mailbox ID for a given mailbox path.
      * Returns undefined if the mailbox path is not found in the current map.
      */
@@ -461,6 +485,16 @@ export class WildDuckClient {
     private async doGetUserAddresses(): Promise<WildDuckAddress[]> {
         const response = await this.makeRequest<AddressListResponse>('/users/me/addresses', { method: 'GET' });
         return response.results;
+    }
+
+    private async doGetMailboxCounts(mailboxPath: string): Promise<{ total: number, unseen: number }> {
+        const mailboxId = this.resolveMailboxId(mailboxPath);
+        const response = await this.makeRequest<MailboxInfoResponse>(
+            `/users/me/mailboxes/${mailboxId}`,
+            // Stryker disable next-line ObjectLiteral,StringLiteral: HTTP method config — GET is fetch default (equivalent mutant)
+            { method: 'GET' }
+        );
+        return { total: response.total, unseen: response.unseen };
     }
 
     private resolveMailboxId(mailboxPath: string): string {

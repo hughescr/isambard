@@ -2,7 +2,6 @@ import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { mockLogger } from '../../../setup';
 import { ReviewHandler } from '@/integrations/email/review-handler';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
-import type { EmailCounterStore } from '@/integrations/email/email-counters';
 import type { ImapConnection } from '@/integrations/email/imap-connection';
 import type { EmailMetadata } from '@/integrations/email/types';
 import type { ButtonInteraction, InteractionUpdateOptions } from 'discord.js';
@@ -58,30 +57,16 @@ function makeInteraction(customId: string, userId: string = CRAIG_ID): {
 }
 
 function makeImap(email?: EmailMetadata): {
-    conn:             ImapConnection
-    moveMessage:      ReturnType<typeof mock>
-    fetchMessage:     ReturnType<typeof mock>
-    getMailboxCounts: ReturnType<typeof mock>
+    conn:         ImapConnection
+    moveMessage:  ReturnType<typeof mock>
+    fetchMessage: ReturnType<typeof mock>
 } {
-    const moveMessage      = mock(async () => undefined);
-    const fetchMessage     = mock(async () => email ?? makeEmail());
-    const getMailboxCounts = mock(async () => ({ total: 5, unread: 2 }));
+    const moveMessage  = mock(async () => undefined);
+    const fetchMessage = mock(async () => email ?? makeEmail());
     return {
-        conn: { moveMessage, fetchMessage, getMailboxCounts } as unknown as ImapConnection,
+        conn: { moveMessage, fetchMessage } as unknown as ImapConnection,
         moveMessage,
         fetchMessage,
-        getMailboxCounts,
-    };
-}
-
-function makeCounters(): {
-    store: EmailCounterStore
-    reset: ReturnType<typeof mock>
-} {
-    const reset = mock(async () => undefined);
-    return {
-        store: { reset } as unknown as EmailCounterStore,
-        reset,
     };
 }
 
@@ -113,9 +98,8 @@ describe('ReviewHandler.handleButton()', () => {
     describe('auth check', () => {
         test('rejects non-Craig user with ephemeral reply and no IMAP calls', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction, reply, editReply, deferUpdate } = makeInteraction('email-trash:42:Review', 'other-user-id');
 
             await handler.handleButton(interaction);
@@ -131,9 +115,8 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('allows Craig user to proceed normally', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction, reply, deferUpdate } = makeInteraction('email-trash:42:Review', CRAIG_ID);
 
             await handler.handleButton(interaction);
@@ -146,9 +129,8 @@ describe('ReviewHandler.handleButton()', () => {
         test('uses the configured adminDiscordUserId, not a hardcoded constant', async () => {
             const customUserId = 'custom-user-id-99999';
             const imap         = makeImap();
-            const counters     = makeCounters();
             const allowlist    = makeAllowlist();
-            const handler      = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: customUserId });
+            const handler      = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: customUserId });
 
             // Custom configured user should be allowed
             const { interaction: allowedInteraction, reply: allowedReply } = makeInteraction('email-trash:42:Review', customUserId);
@@ -172,9 +154,8 @@ describe('ReviewHandler.handleButton()', () => {
     describe('email-trash button', () => {
         test('moves email from Review to Trash', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction } = makeInteraction('email-trash:42:Review');
 
             await handler.handleButton(interaction);
@@ -184,9 +165,8 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('moves email from Quarantine to Trash', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction } = makeInteraction('email-trash:42:Quarantine');
 
             await handler.handleButton(interaction);
@@ -196,9 +176,8 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('calls deferUpdate immediately and updates embed with red color and Trashed title', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction, deferUpdate, editReply } = makeInteraction('email-trash:42:Review');
 
             await handler.handleButton(interaction);
@@ -212,16 +191,14 @@ describe('ReviewHandler.handleButton()', () => {
             expect(embedData.color).toBe(0xFF0000);
         });
 
-        test('does not call reset or addEntry', async () => {
+        test('does not call addEntry', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction } = makeInteraction('email-trash:42:Review');
 
             await handler.handleButton(interaction);
 
-            expect(counters.reset).not.toHaveBeenCalled();
             expect(allowlist.addEntry).not.toHaveBeenCalled();
         });
     });
@@ -233,9 +210,8 @@ describe('ReviewHandler.handleButton()', () => {
     describe('email-junk button', () => {
         test('moves email from Review to Junk', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction } = makeInteraction('email-junk:42:Review');
 
             await handler.handleButton(interaction);
@@ -245,9 +221,8 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('calls deferUpdate immediately and updates embed with red color and Junked title', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction, deferUpdate, editReply } = makeInteraction('email-junk:42:Review');
 
             await handler.handleButton(interaction);
@@ -261,16 +236,14 @@ describe('ReviewHandler.handleButton()', () => {
             expect(embedData.color).toBe(0xFF0000);
         });
 
-        test('does not call reset or addEntry', async () => {
+        test('does not call addEntry', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction } = makeInteraction('email-junk:42:Review');
 
             await handler.handleButton(interaction);
 
-            expect(counters.reset).not.toHaveBeenCalled();
             expect(allowlist.addEntry).not.toHaveBeenCalled();
         });
     });
@@ -282,9 +255,8 @@ describe('ReviewHandler.handleButton()', () => {
     describe('email-allow button', () => {
         test('moves email from Review to CleanInbox', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction } = makeInteraction('email-allow:42:Review');
 
             await handler.handleButton(interaction);
@@ -294,9 +266,8 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('moves email from Quarantine to CleanInbox', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction } = makeInteraction('email-allow:42:Quarantine');
 
             await handler.handleButton(interaction);
@@ -304,24 +275,10 @@ describe('ReviewHandler.handleButton()', () => {
             expect(imap.moveMessage).toHaveBeenCalledWith(42, 'Quarantine', 'CleanInbox');
         });
 
-        test('syncs counters from IMAP', async () => {
-            const imap      = makeImap();
-            const counters  = makeCounters();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
-            const { interaction } = makeInteraction('email-allow:42:Review');
-
-            await handler.handleButton(interaction);
-
-            expect(imap.getMailboxCounts).toHaveBeenCalledWith('CleanInbox');
-            expect(counters.reset).toHaveBeenCalledTimes(1);
-        });
-
         test('calls deferUpdate immediately and updates embed with green color and Allowed title', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction, deferUpdate, editReply } = makeInteraction('email-allow:42:Review');
 
             await handler.handleButton(interaction);
@@ -337,9 +294,8 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('does not call addEntry', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction } = makeInteraction('email-allow:42:Review');
 
             await handler.handleButton(interaction);
@@ -355,9 +311,8 @@ describe('ReviewHandler.handleButton()', () => {
     describe('email-allowlist button', () => {
         test('fetches email to get sender address from Review folder', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction } = makeInteraction('email-allowlist:42:Review');
 
             await handler.handleButton(interaction);
@@ -367,9 +322,8 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('moves email from Review to CleanInbox', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction } = makeInteraction('email-allowlist:42:Review');
 
             await handler.handleButton(interaction);
@@ -377,25 +331,11 @@ describe('ReviewHandler.handleButton()', () => {
             expect(imap.moveMessage).toHaveBeenCalledWith(42, 'Review', 'CleanInbox');
         });
 
-        test('syncs counters from IMAP', async () => {
-            const imap      = makeImap();
-            const counters  = makeCounters();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
-            const { interaction } = makeInteraction('email-allowlist:42:Review');
-
-            await handler.handleButton(interaction);
-
-            expect(imap.getMailboxCounts).toHaveBeenCalledWith('CleanInbox');
-            expect(counters.reset).toHaveBeenCalledTimes(1);
-        });
-
         test('adds sender to allowlist with name when present', async () => {
             const email     = makeEmail({ from: { name: 'Alice Sender', address: 'alice@example.com' } });
             const imap      = makeImap(email);
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction } = makeInteraction('email-allowlist:42:Review');
 
             await handler.handleButton(interaction);
@@ -410,9 +350,8 @@ describe('ReviewHandler.handleButton()', () => {
         test('adds sender to allowlist without name when absent', async () => {
             const email     = makeEmail({ from: { address: 'alice@example.com' } });
             const imap      = makeImap(email);
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction } = makeInteraction('email-allowlist:42:Review');
 
             await handler.handleButton(interaction);
@@ -424,9 +363,8 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('calls deferUpdate immediately and updates embed with green color and allowlist title', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction, deferUpdate, editReply } = makeInteraction('email-allowlist:42:Review');
 
             await handler.handleButton(interaction);
@@ -443,12 +381,11 @@ describe('ReviewHandler.handleButton()', () => {
         test('allowlist write fails after successful move: editReply shows recovery message', async () => {
             const email     = makeEmail({ from: { name: 'Alice Sender', address: 'alice@example.com' } });
             const imap      = makeImap(email);
-            const counters  = makeCounters();
             const addEntry  = mock(async () => {
                 throw new Error('DynamoDB write failed');
             });
             const allowlist = { list: { addEntry } as unknown as EmailAllowlist, addEntry };
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction, editReply } = makeInteraction('email-allowlist:42:Review');
 
             await handler.handleButton(interaction);
@@ -474,9 +411,8 @@ describe('ReviewHandler.handleButton()', () => {
     describe('invalid folder in customId', () => {
         test('replies with error for invalid folder and no IMAP calls', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction, reply, editReply, deferUpdate } = makeInteraction('email-trash:42:InvalidFolder');
 
             await handler.handleButton(interaction);
@@ -492,9 +428,8 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('replies with error when folder part is missing', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction, reply, editReply, deferUpdate } = makeInteraction('email-trash:42');
 
             await handler.handleButton(interaction);
@@ -516,9 +451,8 @@ describe('ReviewHandler.handleButton()', () => {
     describe('invalid UID in customId', () => {
         test('ignores email-trash button with missing UID part', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction, editReply } = makeInteraction('email-trash');
 
             await handler.handleButton(interaction);
@@ -529,9 +463,8 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('ignores email-allow button with non-numeric UID', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction, editReply } = makeInteraction('email-allow:notanumber:Review');
 
             await handler.handleButton(interaction);
@@ -548,24 +481,21 @@ describe('ReviewHandler.handleButton()', () => {
     describe('unknown button prefix', () => {
         test('ignores buttons that do not match email-* pattern', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction, editReply } = makeInteraction('question:abc:opt1');
 
             await handler.handleButton(interaction);
 
             expect(imap.moveMessage).not.toHaveBeenCalled();
-            expect(counters.reset).not.toHaveBeenCalled();
             expect(allowlist.addEntry).not.toHaveBeenCalled();
             expect(editReply).not.toHaveBeenCalled();
         });
 
         test('ignores email-unknown button', async () => {
             const imap      = makeImap();
-            const counters  = makeCounters();
             const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ imap: imap.conn, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ imap: imap.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction, editReply } = makeInteraction('email-unknown:42:Review');
 
             await handler.handleButton(interaction);
@@ -585,9 +515,8 @@ describe('ReviewHandler.handleButton()', () => {
             });
             const fetchMessage = mock(async () => makeEmail());
             const imap         = { moveMessage, fetchMessage } as unknown as ImapConnection;
-            const counters     = makeCounters();
             const allowlist    = makeAllowlist();
-            const handler      = new ReviewHandler({ imap, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler      = new ReviewHandler({ imap, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const { interaction, editReply, deferUpdate } = makeInteraction('email-trash:42:Review');
 
             await handler.handleButton(interaction);
@@ -605,9 +534,8 @@ describe('ReviewHandler.handleButton()', () => {
             });
             const fetchMessage = mock(async () => makeEmail());
             const imap         = { moveMessage, fetchMessage } as unknown as ImapConnection;
-            const counters     = makeCounters();
             const allowlist    = makeAllowlist();
-            const handler      = new ReviewHandler({ imap, counters: counters.store, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler      = new ReviewHandler({ imap, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
             const deferUpdate  = mock(async () => ({}));
             const editReply    = mock(async () => {
                 throw new Error('editReply failure');

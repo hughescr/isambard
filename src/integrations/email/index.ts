@@ -1,6 +1,5 @@
 export * from './types';
 export * from './auth-checker';
-export * from './email-counters';
 export * from './errors';
 export * from './classifier-prompt';
 export * from './classifier';

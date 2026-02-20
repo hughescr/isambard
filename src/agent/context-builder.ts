@@ -13,9 +13,6 @@ import type { MemoryPath, MemoryToolItemData } from '../storage/memory-tool/type
 import { createMemoryPath, createLayerName } from '../storage/memory-tool/types';
 import { formatShortRelativeTime, formatTimeHeader } from '../utils/time';
 import type { SummarizeEventBatchesFn } from './event-summarizer';
-import type { EmailCounters } from '@/integrations/email/types';
-
-export type { EmailCounters };
 
 /** Summary of a single unread email (subset of EmailMetadata, kept DI-friendly) */
 export interface UnreadEmailSummary {
@@ -23,11 +20,6 @@ export interface UnreadEmailSummary {
     from:    { name?: string, address: string }
     subject: string
     date:    Date
-}
-
-/** Minimal interface for querying email counters */
-export interface EmailCounterService {
-    getCounters: () => Promise<EmailCounters>
 }
 
 /** Minimal interface for listing unread messages and searching by flag */
@@ -38,14 +30,14 @@ export interface ImapService {
 
 /** Minimal interface for retrieving message metadata from WildDuck */
 export interface WildDuckService {
-    getMessage: (mailboxPath: string, uid: number) => Promise<{ id: number, subject?: string, to?: { address: string, name?: string }[], metaData?: Record<string, unknown> } | null>
+    getMessage:       (mailboxPath: string, uid: number) => Promise<{ id: number, subject?: string, to?: { address: string, name?: string }[], metaData?: Record<string, unknown> } | null>
+    getMailboxCounts: (mailboxPath: string) => Promise<{ total: number, unseen: number }>
 }
 
 /** Combined email service dependency for perch inbox section */
 export interface EmailService {
-    counterStore:    EmailCounterService
-    imap:            ImapService
-    wildDuckClient?: WildDuckService
+    imap:           ImapService
+    wildDuckClient: WildDuckService
 }
 
 export interface RecentEventsResult {
@@ -304,8 +296,8 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         }
         // Stryker disable BlockStatement: try-catch guards email errors from breaking perch context
         try {
-            const counters = await emailService.counterStore.getCounters();
-            if(counters.unread > 0) {
+            const counts = await emailService.wildDuckClient.getMailboxCounts('CleanInbox');
+            if(counts.unseen > 0) {
                 const summaries = await emailService.imap.listUnread('CleanInbox');
                 // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for inboxLines
                 const inboxLines: string[] = [];
@@ -317,7 +309,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                     inboxLines.push(`- [CleanInbox:${summary.uid}] From: ${fromStr} | Subject: ${summary.subject} | ${age}`);
                 }
                 // Stryker disable next-line StringLiteral: Cosmetic section header text
-                return `## Inbox\nYou have mail (${counters.unread} unread):\n${inboxLines.join('\n')}`;
+                return `## Inbox\nYou have mail (${counts.unseen} unread):\n${inboxLines.join('\n')}`;
             }
         } catch (error) {
             // Stryker disable next-line StringLiteral,ObjectLiteral: Log message content is not behavior-affecting
@@ -384,7 +376,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             return undefined;
         }
         const { imap, wildDuckClient } = emailService;
-        if(!imap.searchByFlag || !wildDuckClient) {
+        if(!imap.searchByFlag) {
             return undefined;
         }
         // Stryker disable BlockStatement: try-catch guards rejected draft errors from breaking perch context

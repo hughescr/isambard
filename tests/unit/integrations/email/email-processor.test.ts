@@ -8,7 +8,6 @@ import { EmailFolder } from '@/integrations/email/types';
 import type { EmailMetadata, ClassifierVerdict } from '@/integrations/email/types';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import type { EmailClassifier } from '@/integrations/email/classifier';
-import type { EmailCounterStore } from '@/integrations/email/email-counters';
 import type { ImapConnection } from '@/integrations/email/imap-connection';
 
 // ---------------------------------------------------------------------------
@@ -63,21 +62,11 @@ function makeClassifier(verdict: ClassifierVerdict | Error): EmailClassifier {
     return { classify: mock(async () => verdict) } as unknown as EmailClassifier;
 }
 
-function makeCounters(): { store: EmailCounterStore, reset: ReturnType<typeof mock> } {
-    const reset = mock(async () => undefined);
+function makeImap(): { conn: ImapConnection, moveMessage: ReturnType<typeof mock> } {
+    const moveMessage = mock(async () => undefined);
     return {
-        store: { reset } as unknown as EmailCounterStore,
-        reset,
-    };
-}
-
-function makeImap(): { conn: ImapConnection, moveMessage: ReturnType<typeof mock>, getMailboxCounts: ReturnType<typeof mock> } {
-    const moveMessage      = mock(async () => undefined);
-    const getMailboxCounts = mock(async () => ({ total: 5, unread: 2 }));
-    return {
-        conn: { moveMessage, getMailboxCounts } as unknown as ImapConnection,
+        conn: { moveMessage } as unknown as ImapConnection,
         moveMessage,
-        getMailboxCounts,
     };
 }
 
@@ -93,16 +82,14 @@ describe('EmailProcessor', () => {
     });
 
     describe('allowlist bypass path', () => {
-        test('sender on allowlist + SPF pass → CleanInbox, no classifier, sync counters', async () => {
+        test('sender on allowlist + SPF pass → CleanInbox, no classifier', async () => {
             const email      = makeEmail();
             const classifier = makeClassifier(makeVerdict('safe'));
-            const { store, reset }            = makeCounters();
-            const { conn, moveMessage, getMailboxCounts } = makeImap();
+            const { conn, moveMessage } = makeImap();
 
             const processor = new EmailProcessor({
                 allowlist: makeAllowlist(true),
                 classifier,
-                counters:  store,
                 imap:      conn,
             });
 
@@ -112,8 +99,6 @@ describe('EmailProcessor', () => {
             expect(result.destinationFolder).toBe(EmailFolder.CleanInbox);
             expect(result.allowlistBypassed).toBe(true);
             expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.CleanInbox);
-            expect(getMailboxCounts).toHaveBeenCalledWith(EmailFolder.CleanInbox);
-            expect(reset).toHaveBeenCalledTimes(1);
             expect(classifier.classify).not.toHaveBeenCalled();
         });
 
@@ -122,13 +107,11 @@ describe('EmailProcessor', () => {
                 headers: { authenticationResults: 'mx.rungie.com; spf=fail smtp.mailfrom=other@other.com; dkim=pass header.d=example.com' },
             });
             const classifier = makeClassifier(makeVerdict('safe'));
-            const { store, reset }            = makeCounters();
-            const { conn, moveMessage, getMailboxCounts } = makeImap();
+            const { conn, moveMessage } = makeImap();
 
             const processor = new EmailProcessor({
                 allowlist: makeAllowlist(true),
                 classifier,
-                counters:  store,
                 imap:      conn,
             });
 
@@ -138,8 +121,6 @@ describe('EmailProcessor', () => {
             expect(result.destinationFolder).toBe(EmailFolder.CleanInbox);
             expect(result.allowlistBypassed).toBe(true);
             expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.CleanInbox);
-            expect(getMailboxCounts).toHaveBeenCalledWith(EmailFolder.CleanInbox);
-            expect(reset).toHaveBeenCalledTimes(1);
             expect(classifier.classify).not.toHaveBeenCalled();
         });
 
@@ -148,13 +129,11 @@ describe('EmailProcessor', () => {
                 headers: { authenticationResults: 'mx.rungie.com; spf=fail smtp.mailfrom=spammer@evil.com; dkim=fail' },
             });
             const classifier = makeClassifier(makeVerdict('safe'));
-            const { store, reset }            = makeCounters();
-            const { conn, moveMessage, getMailboxCounts } = makeImap();
+            const { conn, moveMessage } = makeImap();
 
             const processor = new EmailProcessor({
                 allowlist: makeAllowlist(true),
                 classifier,
-                counters:  store,
                 imap:      conn,
             });
 
@@ -162,23 +141,19 @@ describe('EmailProcessor', () => {
 
             expect(result.allowlistBypassed).toBe(false);
             expect(classifier.classify).toHaveBeenCalledTimes(1);
-            // safe → CleanInbox, counters synced
+            // safe → CleanInbox
             expect(result.destinationFolder).toBe(EmailFolder.CleanInbox);
             expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.CleanInbox);
-            expect(getMailboxCounts).toHaveBeenCalledWith(EmailFolder.CleanInbox);
-            expect(reset).toHaveBeenCalledTimes(1);
         });
 
         test('sender on allowlist with no authentication-results header → falls through to classifier', async () => {
             const email = makeEmail({ headers: {} });
             const classifier = makeClassifier(makeVerdict('spam'));
-            const { store, reset }            = makeCounters();
-            const { conn, moveMessage, getMailboxCounts } = makeImap();
+            const { conn, moveMessage } = makeImap();
 
             const processor = new EmailProcessor({
                 allowlist: makeAllowlist(true),
                 classifier,
-                counters:  store,
                 imap:      conn,
             });
 
@@ -188,23 +163,19 @@ describe('EmailProcessor', () => {
             expect(classifier.classify).toHaveBeenCalledTimes(1);
             expect(result.destinationFolder).toBe(EmailFolder.Junk);
             expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.Junk);
-            expect(getMailboxCounts).not.toHaveBeenCalled();
-            expect(reset).not.toHaveBeenCalled();
         });
     });
 
     describe('non-allowlist routing', () => {
-        test('safe verdict → CleanInbox, sync counters', async () => {
+        test('safe verdict → CleanInbox', async () => {
             const email      = makeEmail();
             const verdict    = makeVerdict('safe');
             const classifier = makeClassifier(verdict);
-            const { store, reset }            = makeCounters();
-            const { conn, moveMessage, getMailboxCounts } = makeImap();
+            const { conn, moveMessage } = makeImap();
 
             const processor = new EmailProcessor({
                 allowlist: makeAllowlist(false),
                 classifier,
-                counters:  store,
                 imap:      conn,
             });
 
@@ -214,20 +185,16 @@ describe('EmailProcessor', () => {
             expect(result.destinationFolder).toBe(EmailFolder.CleanInbox);
             expect(result.allowlistBypassed).toBe(false);
             expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.CleanInbox);
-            expect(getMailboxCounts).toHaveBeenCalledWith(EmailFolder.CleanInbox);
-            expect(reset).toHaveBeenCalledTimes(1);
         });
 
-        test('spam verdict → Junk, no counter sync', async () => {
+        test('spam verdict → Junk', async () => {
             const verdict    = makeVerdict('spam');
             const classifier = makeClassifier(verdict);
-            const { store, reset }            = makeCounters();
-            const { conn, moveMessage, getMailboxCounts } = makeImap();
+            const { conn, moveMessage } = makeImap();
 
             const processor = new EmailProcessor({
                 allowlist: makeAllowlist(false),
                 classifier,
-                counters:  store,
                 imap:      conn,
             });
 
@@ -237,15 +204,12 @@ describe('EmailProcessor', () => {
             expect(result.destinationFolder).toBe(EmailFolder.Junk);
             expect(result.allowlistBypassed).toBe(false);
             expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.Junk);
-            expect(getMailboxCounts).not.toHaveBeenCalled();
-            expect(reset).not.toHaveBeenCalled();
         });
 
         test('safe verdict → onReview and onUnsafe not invoked, onSafe is invoked', async () => {
             const verdict    = makeVerdict('safe');
             const email      = makeEmail();
             const classifier = makeClassifier(verdict);
-            const { store }  = makeCounters();
             const { conn }   = makeImap();
             const onReview = mock(async () => undefined);
             const onUnsafe = mock(async () => undefined);
@@ -255,7 +219,6 @@ describe('EmailProcessor', () => {
                 {
                     allowlist: makeAllowlist(false),
                     classifier,
-                    counters:  store,
                     imap:      conn,
                 },
                 { onReview, onUnsafe, onSafe }
@@ -271,13 +234,11 @@ describe('EmailProcessor', () => {
         test('safe verdict → onSafe not called when not provided', async () => {
             const verdict    = makeVerdict('safe');
             const classifier = makeClassifier(verdict);
-            const { store }  = makeCounters();
             const { conn }   = makeImap();
 
             const processor = new EmailProcessor({
                 allowlist: makeAllowlist(false),
                 classifier,
-                counters:  store,
                 imap:      conn,
             });
 
@@ -287,12 +248,11 @@ describe('EmailProcessor', () => {
             expect(result.destinationFolder).toBe(EmailFolder.CleanInbox);
         });
 
-        test('uncertain verdict → Review, no counter sync, onReview callback invoked', async () => {
+        test('uncertain verdict → Review, onReview callback invoked', async () => {
             const verdict    = makeVerdict('uncertain');
             const email      = makeEmail();
             const classifier = makeClassifier(verdict);
-            const { store, reset }            = makeCounters();
-            const { conn, moveMessage, getMailboxCounts } = makeImap();
+            const { conn, moveMessage } = makeImap();
             const onReview = mock(async () => undefined);
             const onUnsafe = mock(async () => undefined);
 
@@ -300,7 +260,6 @@ describe('EmailProcessor', () => {
                 {
                     allowlist: makeAllowlist(false),
                     classifier,
-                    counters:  store,
                     imap:      conn,
                 },
                 { onReview, onUnsafe }
@@ -312,8 +271,6 @@ describe('EmailProcessor', () => {
             expect(result.destinationFolder).toBe(EmailFolder.Review);
             expect(result.allowlistBypassed).toBe(false);
             expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.Review);
-            expect(getMailboxCounts).not.toHaveBeenCalled();
-            expect(reset).not.toHaveBeenCalled();
             expect(onReview).toHaveBeenCalledWith(email, verdict);
             expect(onUnsafe).not.toHaveBeenCalled();
         });
@@ -322,7 +279,6 @@ describe('EmailProcessor', () => {
             const verdict    = makeVerdict('uncertain');
             const email      = makeEmail();
             const classifier = makeClassifier(verdict);
-            const { store }  = makeCounters();
             const { conn }   = makeImap();
             const onSafe   = mock(async () => undefined);
             const onReview = mock(async () => undefined);
@@ -332,7 +288,6 @@ describe('EmailProcessor', () => {
                 {
                     allowlist: makeAllowlist(false),
                     classifier,
-                    counters:  store,
                     imap:      conn,
                 },
                 { onSafe, onReview, onUnsafe }
@@ -344,12 +299,11 @@ describe('EmailProcessor', () => {
             expect(onReview).toHaveBeenCalledWith(email, verdict);
         });
 
-        test('unsafe verdict → Quarantine, no counter sync, onUnsafe callback invoked', async () => {
+        test('unsafe verdict → Quarantine, onUnsafe callback invoked', async () => {
             const verdict    = makeVerdict('unsafe');
             const email      = makeEmail();
             const classifier = makeClassifier(verdict);
-            const { store, reset }            = makeCounters();
-            const { conn, moveMessage, getMailboxCounts } = makeImap();
+            const { conn, moveMessage } = makeImap();
             const onReview = mock(async () => undefined);
             const onUnsafe = mock(async () => undefined);
 
@@ -357,7 +311,6 @@ describe('EmailProcessor', () => {
                 {
                     allowlist: makeAllowlist(false),
                     classifier,
-                    counters:  store,
                     imap:      conn,
                 },
                 { onReview, onUnsafe }
@@ -369,8 +322,6 @@ describe('EmailProcessor', () => {
             expect(result.destinationFolder).toBe(EmailFolder.Quarantine);
             expect(result.allowlistBypassed).toBe(false);
             expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.Quarantine);
-            expect(getMailboxCounts).not.toHaveBeenCalled();
-            expect(reset).not.toHaveBeenCalled();
             expect(onUnsafe).toHaveBeenCalledWith(email, verdict);
             expect(onReview).not.toHaveBeenCalled();
         });
@@ -379,7 +330,6 @@ describe('EmailProcessor', () => {
             const verdict    = makeVerdict('unsafe');
             const email      = makeEmail();
             const classifier = makeClassifier(verdict);
-            const { store }  = makeCounters();
             const { conn }   = makeImap();
             const onSafe   = mock(async () => undefined);
             const onReview = mock(async () => undefined);
@@ -389,7 +339,6 @@ describe('EmailProcessor', () => {
                 {
                     allowlist: makeAllowlist(false),
                     classifier,
-                    counters:  store,
                     imap:      conn,
                 },
                 { onSafe, onReview, onUnsafe }
@@ -408,7 +357,6 @@ describe('EmailProcessor', () => {
             const verdict    = makeVerdict('safe');
             const email      = makeEmail();
             const classifier = makeClassifier(verdict);
-            const { store }  = makeCounters();
             const { conn }   = makeImap();
             const onUnsafe = mock(async () => undefined);
 
@@ -416,7 +364,6 @@ describe('EmailProcessor', () => {
                 {
                     allowlist: makeAllowlist(false),
                     classifier,
-                    counters:  store,
                     imap:      conn,
                 },
                 // onSafe intentionally not provided — ensures mutant at line 183 is caught
@@ -433,13 +380,11 @@ describe('EmailProcessor', () => {
         test('uncertain verdict routes correctly with no onReview callback', async () => {
             const verdict    = makeVerdict('uncertain');
             const classifier = makeClassifier(verdict);
-            const { store, reset }            = makeCounters();
-            const { conn, moveMessage, getMailboxCounts } = makeImap();
+            const { conn, moveMessage } = makeImap();
 
             const processor = new EmailProcessor({
                 allowlist: makeAllowlist(false),
                 classifier,
-                counters:  store,
                 imap:      conn,
             });
 
@@ -447,20 +392,16 @@ describe('EmailProcessor', () => {
 
             expect(result.destinationFolder).toBe(EmailFolder.Review);
             expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.Review);
-            expect(getMailboxCounts).not.toHaveBeenCalled();
-            expect(reset).not.toHaveBeenCalled();
         });
 
         test('unsafe verdict routes correctly with no onUnsafe callback', async () => {
             const verdict    = makeVerdict('unsafe');
             const classifier = makeClassifier(verdict);
-            const { store, reset }            = makeCounters();
-            const { conn, moveMessage, getMailboxCounts } = makeImap();
+            const { conn, moveMessage } = makeImap();
 
             const processor = new EmailProcessor({
                 allowlist: makeAllowlist(false),
                 classifier,
-                counters:  store,
                 imap:      conn,
             });
 
@@ -468,21 +409,17 @@ describe('EmailProcessor', () => {
 
             expect(result.destinationFolder).toBe(EmailFolder.Quarantine);
             expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.Quarantine);
-            expect(getMailboxCounts).not.toHaveBeenCalled();
-            expect(reset).not.toHaveBeenCalled();
         });
     });
 
     describe('error handling', () => {
         test('classifier error → throws EmailProcessingError', async () => {
             const classifier = makeClassifier(new Error('API failed'));
-            const { store }  = makeCounters();
             const { conn }   = makeImap();
 
             const processor = new EmailProcessor({
                 allowlist: makeAllowlist(false),
                 classifier,
-                counters:  store,
                 imap:      conn,
             });
 
@@ -493,17 +430,14 @@ describe('EmailProcessor', () => {
         test('IMAP move error → throws EmailProcessingError', async () => {
             const verdict     = makeVerdict('safe');
             const classifier  = makeClassifier(verdict);
-            const { store }   = makeCounters();
             const moveMessage = mock(async () => {
                 throw new Error('IMAP failed');
             });
-            const getMailboxCounts = mock(async () => ({ total: 5, unread: 2 }));
-            const conn = { moveMessage, getMailboxCounts } as unknown as ImapConnection;
+            const conn = { moveMessage } as unknown as ImapConnection;
 
             const processor = new EmailProcessor({
                 allowlist: makeAllowlist(false),
                 classifier,
-                counters:  store,
                 imap:      conn,
             });
 
@@ -513,59 +447,30 @@ describe('EmailProcessor', () => {
 
         test('IMAP move error on allowlist bypass → throws EmailProcessingError', async () => {
             const classifier  = makeClassifier(makeVerdict('safe'));
-            const { store }   = makeCounters();
             const moveMessage = mock(async () => {
                 throw new Error('IMAP move failed');
             });
-            const getMailboxCounts = mock(async () => ({ total: 5, unread: 2 }));
-            const conn = { moveMessage, getMailboxCounts } as unknown as ImapConnection;
+            const conn = { moveMessage } as unknown as ImapConnection;
 
             const processor = new EmailProcessor({
                 allowlist: makeAllowlist(true),
                 classifier,
-                counters:  store,
                 imap:      conn,
             });
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
             await expect(processor.processEmail(makeEmail())).rejects.toBeInstanceOf(EmailProcessingError);
         });
-
-        test('getMailboxCounts failure after CleanInbox route is best-effort — email still routed', async () => {
-            const verdict    = makeVerdict('safe');
-            const classifier = makeClassifier(verdict);
-            const { store }  = makeCounters();
-            const moveMessage      = mock(async () => undefined);
-            const getMailboxCounts = mock(async () => {
-                throw new Error('IMAP STATUS failed');
-            });
-            const conn = { moveMessage, getMailboxCounts } as unknown as ImapConnection;
-
-            const processor = new EmailProcessor({
-                allowlist: makeAllowlist(false),
-                classifier,
-                counters:  store,
-                imap:      conn,
-            });
-
-            const result = await processor.processEmail(makeEmail());
-
-            // Email still routed successfully despite counter sync failure
-            expect(result.destinationFolder).toBe(EmailFolder.CleanInbox);
-            expect(mockLogger.warn).toHaveBeenCalled();
-        });
     });
 
     describe('INFO logging', () => {
         test('logs routing decision for allowlist bypass', async () => {
-            const email     = makeEmail();
-            const { store } = makeCounters();
-            const { conn }  = makeImap();
+            const email    = makeEmail();
+            const { conn } = makeImap();
 
             const processor = new EmailProcessor({
                 allowlist:  makeAllowlist(true),
                 classifier: makeClassifier(makeVerdict('safe')),
-                counters:   store,
                 imap:       conn,
             });
 
@@ -578,15 +483,13 @@ describe('EmailProcessor', () => {
         });
 
         test('logs routing decision for classifier verdict', async () => {
-            const email     = makeEmail();
-            const verdict   = makeVerdict('spam');
-            const { store } = makeCounters();
-            const { conn }  = makeImap();
+            const email    = makeEmail();
+            const verdict  = makeVerdict('spam');
+            const { conn } = makeImap();
 
             const processor = new EmailProcessor({
                 allowlist:  makeAllowlist(false),
                 classifier: makeClassifier(verdict),
-                counters:   store,
                 imap:       conn,
             });
 
