@@ -60,3 +60,4 @@ scratch/
 
 # Running worktree
 running/
+.claude/worktrees
