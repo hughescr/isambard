@@ -792,7 +792,7 @@ describe('WildDuckClient', () => {
     // uploadMessage()
     // -----------------------------------------------------------------------
     describe('uploadMessage()', () => {
-        const UPLOAD_RESPONSE = { success: true, id: 42, uid: 42 };
+        const UPLOAD_RESPONSE = { success: true, message: { id: 42, mailbox: 'mbx-drafts', size: 512 }, previousDeleted: false };
 
         const BASE_PAYLOAD = {
             from:    { name: 'Isambard', address: 'isambard@rungie.com' },

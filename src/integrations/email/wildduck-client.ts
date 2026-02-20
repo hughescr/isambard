@@ -116,8 +116,9 @@ interface AddressListResponse {
 }
 
 interface UploadMessageResponse {
-    success: boolean
-    id:      number
+    success:         boolean
+    message:         { id: number, mailbox: string, size: number }
+    previousDeleted: boolean
 }
 
 interface SearchResultEntry {
@@ -484,7 +485,7 @@ export class WildDuckClient {
                 body:    JSON.stringify(resolvedPayload),
             }
         );
-        return response.id;
+        return response.message.id;
     }
 
     private async doSubmitMessage(mailboxPath: string, uid: number): Promise<void> {
