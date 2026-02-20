@@ -2534,7 +2534,7 @@ describe('createEmailMCPServer', () => {
             expect(mockGetMessageAmend).toHaveBeenCalledWith('Drafts', 42);
             const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.subject).toBe('Updated Subject');
-            expect(payload.replacePrevious).toBe(42);
+            expect(payload.replacePrevious).toEqual({ mailbox: 'Drafts', id: 42 });
         });
 
         test('should keep original subject when not provided', async () => {

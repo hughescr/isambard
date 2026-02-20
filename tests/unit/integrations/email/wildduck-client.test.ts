@@ -835,6 +835,33 @@ describe('WildDuckClient', () => {
             expect(body.text).toBe('Body text');
         });
 
+        test('resolves replacePrevious mailbox path to mailbox ID in JSON body', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(UPLOAD_RESPONSE));
+
+            await client.uploadMessage('Drafts', {
+                ...BASE_PAYLOAD,
+                replacePrevious: { mailbox: 'Drafts', id: 42 },
+            });
+
+            const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            const body = JSON.parse(options.body as string) as { replacePrevious: { mailbox: string, id: number } };
+            expect(body.replacePrevious).toEqual({ mailbox: 'mbx-drafts', id: 42 });
+        });
+
+        test('omits replacePrevious from JSON body when not set', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(UPLOAD_RESPONSE));
+
+            await client.uploadMessage('Drafts', BASE_PAYLOAD);
+
+            const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            const body = JSON.parse(options.body as string) as Record<string, unknown>;
+            expect(body.replacePrevious).toBeUndefined();
+        });
+
         test('returns the id from the response', async () => {
             const client = await makeInitializedClient();
 

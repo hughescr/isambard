@@ -918,7 +918,7 @@ export function createEmailMCPServer(
                             to:              toAddresses,
                             subject,
                             text:            body,
-                            replacePrevious: uid,
+                            replacePrevious: { mailbox: EmailFolder.Drafts, id: uid },
                             // Stryker disable next-line ArrayDeclaration,StringLiteral: flags array for draft
                             flags:           ['\\Draft'],
                             // Stryker disable next-line BooleanLiteral: draft flag is required for WildDuck draft upload

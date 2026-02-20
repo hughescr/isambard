@@ -71,7 +71,7 @@ export interface WildDuckUploadPayload {
     metaData?:        Record<string, unknown>
     flags?:           string[]
     draft?:           boolean
-    replacePrevious?: number
+    replacePrevious?: { mailbox: string, id: number }
 }
 
 export interface WildDuckMessage {
@@ -355,6 +355,7 @@ export class WildDuckClient {
             // (e.g. '[Gmail]/Sent Mail' vs 'Sent Mail')
             if(mailbox.specialUse) {
                 const logicalName = SPECIAL_USE_FLAGS[mailbox.specialUse];
+                // Stryker disable next-line ConditionalExpression: guard against undefined logicalName — Map.set(undefined, id) stores under undefined key (not string 'undefined'), untestable via getMailboxId() which requires a string argument
                 if(logicalName) {
                     this.reverseMailboxMap.set(logicalName, mailbox.id);
                 }
@@ -442,13 +443,16 @@ export class WildDuckClient {
     }
 
     private async doUploadMessage(mailboxPath: string, payload: WildDuckUploadPayload): Promise<number> {
-        const mailboxId = this.resolveMailboxId(mailboxPath);
-        const response  = await this.makeRequest<UploadMessageResponse>(
+        const mailboxId      = this.resolveMailboxId(mailboxPath);
+        const resolvedPayload = payload.replacePrevious
+            ? { ...payload, replacePrevious: { mailbox: this.resolveMailboxId(payload.replacePrevious.mailbox), id: payload.replacePrevious.id } }
+            : payload;
+        const response = await this.makeRequest<UploadMessageResponse>(
             `/users/me/mailboxes/${mailboxId}/messages`,
             {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify(payload),
+                body:    JSON.stringify(resolvedPayload),
             }
         );
         return response.id;
