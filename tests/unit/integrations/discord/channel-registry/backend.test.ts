@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
+import _ from 'lodash';
 import {
     DynamoDBDocumentClient,
     PutCommand,
@@ -13,6 +14,7 @@ import { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/
 import { ItemNotFoundError, ValidationError } from '@/errors';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
 import type { ChannelMetadata, ChannelStorageRecord } from '@/integrations/discord/channel-registry/types';
+import { WELL_KNOWN_CHANNELS } from '@/integrations/discord/channel-registry/types';
 import * as dynamoRetry from '@/storage/dynamo-retry';
 
 describe('ChannelRegistryBackend', () => {
@@ -348,193 +350,112 @@ describe('ChannelRegistryBackend', () => {
     });
 
     describe('getAllWellKnownChannels', () => {
-        test('should return empty array when Items is empty array', async () => {
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
+        test('should return empty array when no well-known channels exist', async () => {
+            // All 4 well-known types return null (not configured)
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const result = await backend.getAllWellKnownChannels();
 
             expect(result).toEqual([]);
 
-            // Verify getChannel is NOT called when Items is empty
-            const getCalls = ddbMock.commandCalls(GetCommand);
-            expect(getCalls).toHaveLength(0);
+            // Verify no ScanCommand was used
+            expect(ddbMock.commandCalls(ScanCommand)).toHaveLength(0);
+
+            // Verify QueryCommand called once per well-known type (4 types)
+            const queryCalls = ddbMock.commandCalls(QueryCommand);
+            expect(queryCalls).toHaveLength(WELL_KNOWN_CHANNELS.length);
         });
 
-        test('should return empty array when Items is undefined', async () => {
-            ddbMock.on(ScanCommand).resolves({});
+        test('should call getWellKnownChannel for each well-known type', async () => {
+            // All return null (not configured)
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-            const result = await backend.getAllWellKnownChannels();
+            await backend.getAllWellKnownChannels();
 
-            expect(result).toEqual([]);
+            // Verify QueryCommand is called for each well-known channel type
+            const queryCalls = ddbMock.commandCalls(QueryCommand);
+            expect(queryCalls).toHaveLength(WELL_KNOWN_CHANNELS.length);
 
-            // Verify getChannel is NOT called when Items is undefined
-            const getCalls = ddbMock.commandCalls(GetCommand);
-            expect(getCalls).toHaveLength(0);
+            // Each call should query GSI2 for a specific well-known type
+            const queriedTypes = _.map(queryCalls, call =>
+                call.args[0].input.ExpressionAttributeValues?.[':wellKnownPk'] as string
+            );
+            for(const type of WELL_KNOWN_CHANNELS) {
+                expect(queriedTypes).toContain(`WELLKNOWN#${type}`);
+            }
         });
 
-        test('should early return when Items exists but is empty array without calling getChannel', async () => {
-            // This test ensures the early return happens and getChannel is never called
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
+        test('should not use ScanCommand', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-            // Set up GetCommand to throw if it's called (it should not be)
-            ddbMock.on(GetCommand).rejects(new Error('GetCommand should not be called for empty Items'));
+            await backend.getAllWellKnownChannels();
 
-            const result = await backend.getAllWellKnownChannels();
-
-            // Result should be empty
-            expect(result).toEqual([]);
-
-            // GetCommand should NOT have been called at all - if it was, the error above would have been thrown
-            const getCalls = ddbMock.commandCalls(GetCommand);
-            expect(getCalls).toHaveLength(0);
+            expect(ddbMock.commandCalls(ScanCommand)).toHaveLength(0);
         });
 
-        test('should early return when Items is null/falsy without calling getChannel', async () => {
-            // This test ensures the first part of the OR condition (!result.Items) works
-            ddbMock.on(ScanCommand).resolves({ Items: undefined });
-
-            // Set up GetCommand to throw if it's called (it should not be)
-            ddbMock.on(GetCommand).rejects(new Error('GetCommand should not be called for undefined Items'));
-
-            const result = await backend.getAllWellKnownChannels();
-
-            expect(result).toEqual([]);
-
-            // If GetCommand was called, the error above would have been thrown
-            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
-        });
-
-        test('should fetch full records for each well-known channel found', async () => {
-            const channel1 = createStorageRecord({
+        test('should return records for configured well-known channels', async () => {
+            const generalChannel = createStorageRecord({
                 channelId:   createChannelId('111'),
                 isWellKnown: 'general'
             });
-            const channel2 = createStorageRecord({
+            const catchUpChannel = createStorageRecord({
                 channelId:   createChannelId('222'),
                 isWellKnown: 'catch-up'
             });
 
-            // Mock ScanCommand to return PKs from GSI2
-            ddbMock.on(ScanCommand).resolves({
-                Items: [
-                    { PK: `CHANNEL#${channel1.channelId}`, GSI2PK: 'WELLKNOWN#general', GSI2SK: 'CHANNEL' },
-                    { PK: `CHANNEL#${channel2.channelId}`, GSI2PK: 'WELLKNOWN#catch-up', GSI2SK: 'CHANNEL' },
-                ],
-            });
-
-            // Mock GetCommand to return full records
-            ddbMock.on(GetCommand)
-                .resolvesOnce({
-                    Item: {
-                        ...channel1,
-                        PK:     `CHANNEL#${channel1.channelId}`,
-                        SK:     'METADATA',
-                        GSI1PK: `GUILD#${guildId}`,
-                        GSI2PK: 'WELLKNOWN#general',
-                        GSI2SK: 'CHANNEL',
-                    },
-                })
-                .resolvesOnce({
-                    Item: {
-                        ...channel2,
-                        PK:     `CHANNEL#${channel2.channelId}`,
-                        SK:     'METADATA',
-                        GSI1PK: `GUILD#${guildId}`,
-                        GSI2PK: 'WELLKNOWN#catch-up',
-                        GSI2SK: 'CHANNEL',
-                    },
-                });
+            // Spy on getWellKnownChannel to control what it returns per type
+            const getWellKnownSpy = spyOn(backend, 'getWellKnownChannel').mockImplementation(
+                async (type) => {
+                    if(type === 'general') {
+                        return generalChannel;
+                    }
+                    if(type === 'catch-up') {
+                        return catchUpChannel;
+                    }
+                    return null;
+                }
+            );
 
             const result = await backend.getAllWellKnownChannels();
 
             expect(result).toHaveLength(2);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- expect.arrayContaining requires any[] type
+            expect(result).toEqual(expect.arrayContaining([
+                expect.objectContaining({ channelId: generalChannel.channelId }),
+                expect.objectContaining({ channelId: catchUpChannel.channelId }),
+            ]));
 
-            // Verify getChannel was called for each channelId
-            const getCalls = ddbMock.commandCalls(GetCommand);
-            expect(getCalls).toHaveLength(2);
-            expect(getCalls[0].args[0].input.Key).toEqual({
-                PK: `CHANNEL#${channel1.channelId}`,
-                SK: 'METADATA',
-            });
-            expect(getCalls[1].args[0].input.Key).toEqual({
-                PK: `CHANNEL#${channel2.channelId}`,
-                SK: 'METADATA',
-            });
+            // Verify getWellKnownChannel was called for each type
+            expect(getWellKnownSpy).toHaveBeenCalledTimes(WELL_KNOWN_CHANNELS.length);
+            for(const type of WELL_KNOWN_CHANNELS) {
+                expect(getWellKnownSpy).toHaveBeenCalledWith(type);
+            }
 
-            // Verify full records are returned
-            expect(result[0]).toEqual(channel1);
-            expect(result[1]).toEqual(channel2);
+            getWellKnownSpy.mockRestore();
         });
 
-        test('should filter out null results from channels not found', async () => {
-            const channel1 = createStorageRecord({
+        test('should filter out null results for unconfigured well-known types', async () => {
+            const generalChannel = createStorageRecord({
                 channelId:   createChannelId('111'),
                 isWellKnown: 'general'
             });
-            const channel2Id = createChannelId('222');
-            const channel3 = createStorageRecord({
-                channelId:   createChannelId('333'),
-                isWellKnown: 'catch-up'
-            });
 
-            // Mock ScanCommand to return 3 PKs
-            ddbMock.on(ScanCommand).resolves({
-                Items: [
-                    { PK: `CHANNEL#${channel1.channelId}`, GSI2PK: 'WELLKNOWN#general', GSI2SK: 'CHANNEL' },
-                    { PK: `CHANNEL#${channel2Id}`, GSI2PK: 'WELLKNOWN#deleted', GSI2SK: 'CHANNEL' },
-                    { PK: `CHANNEL#${channel3.channelId}`, GSI2PK: 'WELLKNOWN#catch-up', GSI2SK: 'CHANNEL' },
-                ],
-            });
-
-            // Mock GetCommand to return null for the second channel
-            ddbMock.on(GetCommand)
-                .resolvesOnce({
-                    Item: {
-                        ...channel1,
-                        PK:     `CHANNEL#${channel1.channelId}`,
-                        SK:     'METADATA',
-                        GSI1PK: `GUILD#${guildId}`,
-                    },
-                })
-                .resolvesOnce({}) // Channel not found
-                .resolvesOnce({
-                    Item: {
-                        ...channel3,
-                        PK:     `CHANNEL#${channel3.channelId}`,
-                        SK:     'METADATA',
-                        GSI1PK: `GUILD#${guildId}`,
-                    },
-                });
+            // Spy: only 'general' returns a record; others return null
+            const getWellKnownSpy = spyOn(backend, 'getWellKnownChannel').mockImplementation(
+                async (type) => {
+                    if(type === 'general') {
+                        return generalChannel;
+                    }
+                    return null;
+                }
+            );
 
             const result = await backend.getAllWellKnownChannels();
 
-            // Only 2 records should be returned (third was null)
-            expect(result).toHaveLength(2);
-            expect(result[0]).toEqual(channel1);
-            expect(result[1]).toEqual(channel3);
-        });
+            expect(result).toHaveLength(1);
+            expect(result[0]).toEqual(generalChannel);
 
-        test('should use correct GSI2 scan parameters', async () => {
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
-
-            await backend.getAllWellKnownChannels();
-
-            const calls = ddbMock.commandCalls(ScanCommand);
-            expect(calls).toHaveLength(1);
-            const call = calls[0];
-
-            expect(call.args[0].input.TableName).toBe(tableName);
-            expect(call.args[0].input.IndexName).toBe('GSI2');
-            expect(call.args[0].input.FilterExpression).toBe('begins_with(GSI2PK, :wellKnownPrefix)');
-            expect(call.args[0].input.ExpressionAttributeValues).toEqual({
-                ':wellKnownPrefix': 'WELLKNOWN#',
-            });
-
-            // Verify operation name passed to withDynamoTimeout
-            expect(withDynamoTimeoutSpy).toHaveBeenCalledWith(
-                expect.any(Function),
-                expect.objectContaining({ operation: 'ChannelRegistry.getAllWellKnownChannels.gsi2Scan' })
-            );
+            getWellKnownSpy.mockRestore();
         });
     });
 

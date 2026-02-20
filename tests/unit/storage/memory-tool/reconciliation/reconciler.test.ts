@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
-import { filter as _filter } from 'lodash';
-import { DynamoDBDocumentClient, QueryCommand, ScanCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
+import { filter as _filter, map as _map, replace as _replace } from 'lodash';
+import { DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { runReconciliation, delay, retryWithBackoff, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import type { MemoryPath, MemoryToolItemData, TagIndexItem } from '@/storage/memory-tool/types';
@@ -162,6 +162,50 @@ describe('runReconciliation', () => {
         mockLayerQuery('events', []);
     };
 
+    // Helper to mock Phase B to return no tags (empty GSI2 TAG_COUNTS)
+    const mockEmptyPhaseB = () => {
+        ddbMock.on(QueryCommand, {
+            IndexName:                 'GSI2',
+            KeyConditionExpression:    'GSI2PK = :gsi2pk',
+            ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
+        }).resolves({ Items: [] });
+    };
+
+    // Helper to mock Phase B with given tag index items (enumerated via GSI2 + per-tag queries)
+    const mockPhaseBWithItems = (items: TagIndexItem[]) => {
+        // Group items by tag
+        const byTag = new Map<string, TagIndexItem[]>();
+        for(const item of items) {
+            const tag = _replace(item.PK, 'TAG#', '');
+            if(!byTag.has(tag)) {
+                byTag.set(tag, []);
+            }
+            byTag.get(tag)!.push(item);
+        }
+
+        // Mock GSI2 query returning tag names
+        const tagCountItems = _map(Array.from(byTag.keys()), tag => ({
+            PK:     `TAG#${tag}`,
+            SK:     'META_COUNT',
+            GSI2PK: 'TAG_COUNTS',
+            GSI2SK: `TAG#${tag}`,
+            count:  byTag.get(tag)!.length,
+        }));
+        ddbMock.on(QueryCommand, {
+            IndexName:                 'GSI2',
+            KeyConditionExpression:    'GSI2PK = :gsi2pk',
+            ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
+        }).resolves({ Items: tagCountItems });
+
+        // Mock per-tag queries
+        for(const [tag, tagItems] of byTag) {
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
+                ExpressionAttributeValues: { ':pk': `TAG#${tag}`, ':skPrefix': 'PATH#' },
+            }).resolves({ Items: tagItems });
+        }
+    };
+
     beforeEach(() => {
         ddbMock.reset();
         tagIndex = new MemoryToolBackendTagIndex(
@@ -197,7 +241,7 @@ describe('runReconciliation', () => {
         test('should scan all three layers (identity, state, events) via GSI1', async () => {
             // Phase A should query GSI1 for each layer
             mockEmptyLayers();
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             await runReconciliation(deps, options);
 
@@ -236,7 +280,7 @@ describe('runReconciliation', () => {
                 KeyConditionExpression: 'PK = :pk AND SK = :sk',
             }).resolves({ Items: [] });
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             // Spy on createTagIndexItems to verify the empty string fallback is used
             const createSpy = mock(async (path: string, tags: Set<string>, updatedAt: string, contentPreview: string) => {
@@ -299,7 +343,7 @@ describe('runReconciliation', () => {
                 KeyConditionExpression: 'PK = :pk AND SK = :sk',
             }).resolves({ Items: [] });
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             const result = await runReconciliation(deps, options);
 
@@ -344,7 +388,7 @@ describe('runReconciliation', () => {
                 Items: [existingIndexItem],
             });
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             // Spy on refreshTagIndexItems to verify it's called (not createTagIndexItems)
             const refreshSpy = mock(() => Promise.resolve());
@@ -403,7 +447,7 @@ describe('runReconciliation', () => {
                 Items: [existingIndexItem],
             });
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             const result = await runReconciliation(deps, options);
 
@@ -447,7 +491,7 @@ describe('runReconciliation', () => {
                 Items: [existingIndexItem],
             });
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             const result = await runReconciliation(deps, options);
 
@@ -491,7 +535,7 @@ describe('runReconciliation', () => {
                 Items: [existingIndexItem],
             });
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             const result = await runReconciliation(deps, options);
 
@@ -519,7 +563,7 @@ describe('runReconciliation', () => {
             mockLayerQuery('state', []);
             mockLayerQuery('events', []);
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             const result = await runReconciliation(deps, options);
 
@@ -581,7 +625,7 @@ describe('runReconciliation', () => {
                 ExpressionAttributeValues: { ':pk': 'TAG#test', ':sk': 'PATH#/identity/core.md' },
             }).resolves({ Items: [freshIndexItemTest] });
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             const result = await runReconciliation(deps, options);
 
@@ -610,7 +654,7 @@ describe('runReconciliation', () => {
             mockLayerQuery('state', []);
             mockLayerQuery('events', []);
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             // Spy on tag index operations to verify they're NOT called
             const createSpy = mock(() => Promise.resolve());
@@ -649,7 +693,7 @@ describe('runReconciliation', () => {
             mockLayerQuery('state', []);
             mockLayerQuery('events', []);
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             // Spy on tag index operations to verify they're NOT called
             const createSpy = mock(() => Promise.resolve());
@@ -698,14 +742,19 @@ describe('runReconciliation', () => {
                 Items: [{ PK: 'TAG#test', SK: 'PATH#/identity/core.md' }],
             });
 
-            // Old path has NO index items (clean)
-            ddbMock.on(ScanCommand, {
-                FilterExpression: 'begins_with(PK, :pkPrefix) AND contains(SK, :skPart)',
+            // checkOldPathIndicesClean: query GSI2 TAG_COUNTS to enumerate tags
+            ddbMock.on(QueryCommand, {
+                IndexName:                 'GSI2',
+                KeyConditionExpression:    'GSI2PK = :gsi2pk',
+                ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
             }).resolves({
-                Items: [], // No old indices found
+                Items: [{ PK: 'TAG#test', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test', count: 1 }],
             });
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            // Old path has NO index items (GetItem returns undefined = clean)
+            ddbMock.on(GetCommand, {
+                Key: { PK: 'TAG#test', SK: 'PATH#/identity/old-name.md' },
+            }).resolves({ Item: undefined });
 
             updateMemoryMetadata.mockResolvedValue({
                 ...memoryItem,
@@ -749,20 +798,68 @@ describe('runReconciliation', () => {
                 Items: [{ PK: 'TAG#test', SK: 'PATH#/identity/core.md' }],
             });
 
-            // Phase B scan (order matters - this must come first)
-            ddbMock.on(ScanCommand, {
-                FilterExpression: 'begins_with(PK, :prefix)',
-            }).resolves({ Items: [] });
-
-            // Old path STILL has index items (this match comes after due to more specific filter)
-            ddbMock.on(ScanCommand, {
-                FilterExpression: 'begins_with(PK, :pkPrefix) AND contains(SK, :skPart)',
+            // checkOldPathIndicesClean: query GSI2 TAG_COUNTS to enumerate tags
+            ddbMock.on(QueryCommand, {
+                IndexName:                 'GSI2',
+                KeyConditionExpression:    'GSI2PK = :gsi2pk',
+                ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
             }).resolves({
-                Items: [{ PK: 'TAG#test', SK: 'PATH#/identity/old-name.md' }], // Still exists
+                Items: [{ PK: 'TAG#test', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test', count: 1 }],
             });
+
+            // Old path STILL has index items (GetItem returns an item = not clean)
+            ddbMock.on(GetCommand, {
+                Key: { PK: 'TAG#test', SK: 'PATH#/identity/old-name.md' },
+            }).resolves({ Item: { PK: 'TAG#test', SK: 'PATH#/identity/old-name.md' } }); // Still exists
 
             const result = await runReconciliation(deps, options);
 
+            expect(result.phaseA.metadataCleaned).toBe(0);
+            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+        });
+
+        test('should NOT clean previouslyKnownAs when tag enumeration fails (getAllTagNames returns undefined)', async () => {
+            const memoryItem = {
+                PK:          'DIR#/identity',
+                SK:          'FILE#core.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/core.md',
+                content:     'test content',
+                contentType: 'text/markdown',
+                metadata:    {
+                    previouslyKnownAs: '/identity/old-name.md',
+                },
+
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           new Set(['test']),
+                contentPreview: 'test content',
+            };
+
+            mockLayerQuery('identity', [memoryItem]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+
+            // Current path has index item
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND SK = :sk',
+                ExpressionAttributeValues: { ':pk': 'TAG#test', ':sk': 'PATH#/identity/core.md' },
+            }).resolves({
+                Items: [{ PK: 'TAG#test', SK: 'PATH#/identity/core.md' }],
+            });
+
+            // checkOldPathIndicesClean: GSI2 TAG_COUNTS query fails with non-throttling error
+            // causing getAllTagNames to return undefined
+            ddbMock.on(QueryCommand, {
+                IndexName:                 'GSI2',
+                KeyConditionExpression:    'GSI2PK = :gsi2pk',
+                ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
+            }).rejectsOnce(new Error('InternalServerError'));
+
+            const result = await runReconciliation(deps, options);
+
+            // Should NOT clean previouslyKnownAs since we couldn't confirm old indices are gone
             expect(result.phaseA.metadataCleaned).toBe(0);
             expect(updateMemoryMetadata).not.toHaveBeenCalled();
         });
@@ -813,7 +910,7 @@ describe('runReconciliation', () => {
                     Items: page2Items,
                 });
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             const result = await runReconciliation(deps, options);
 
@@ -824,7 +921,6 @@ describe('runReconciliation', () => {
             const controller = new AbortController();
 
             ddbMock.on(QueryCommand).resolves({ Items: [] });
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
 
             // Abort immediately
             controller.abort();
@@ -850,8 +946,6 @@ describe('runReconciliation', () => {
                 return Promise.resolve({ Items: [] });
             });
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
-
             // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
             await expect(
                 runReconciliation(deps, { ...options, signal: controller.signal })
@@ -873,8 +967,6 @@ describe('runReconciliation', () => {
                     controller.abort();
                     return Promise.resolve({ Items: [] });
                 });
-
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
             await expect(
@@ -941,7 +1033,7 @@ describe('runReconciliation', () => {
                 ExpressionAttributeValues: { ':pk': 'TAG#test', ':sk': 'PATH#/identity/stale.md' },
             }).resolves({ Items: [staleIndexItem] });
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             const result = await runReconciliation(deps, options);
 
@@ -981,7 +1073,7 @@ describe('runReconciliation', () => {
                 throw new Error('DynamoDB error');
             });
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             await runReconciliation(deps, options);
 
@@ -1018,7 +1110,7 @@ describe('runReconciliation', () => {
                 KeyConditionExpression: 'PK = :pk AND SK = :sk',
             }).resolves({ Items: [] }); // Explicitly empty array
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             // Spy on createTagIndexItems to verify it's called
             const createSpy = mock(() => Promise.resolve());
@@ -1057,7 +1149,7 @@ describe('runReconciliation', () => {
                 KeyConditionExpression: 'PK = :pk AND SK = :sk',
             }).resolves({ Items: [] });
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             // Spy on createTagIndexItems to make it throw
             const createSpy = mock(() => {
@@ -1102,14 +1194,19 @@ describe('runReconciliation', () => {
                 Items: [{ PK: 'TAG#test', SK: 'PATH#/identity/renamed.md' }],
             });
 
-            // Old path has NO index items (triggers cleanup)
-            ddbMock.on(ScanCommand, {
-                FilterExpression: 'begins_with(PK, :pkPrefix) AND contains(SK, :skPart)',
+            // checkOldPathIndicesClean: query GSI2 TAG_COUNTS to enumerate tags
+            ddbMock.on(QueryCommand, {
+                IndexName:                 'GSI2',
+                KeyConditionExpression:    'GSI2PK = :gsi2pk',
+                ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
             }).resolves({
-                Items: [], // No old indices found
+                Items: [{ PK: 'TAG#test', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test', count: 1 }],
             });
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            // Old path has NO index items (GetItem returns undefined = clean)
+            ddbMock.on(GetCommand, {
+                Key: { PK: 'TAG#test', SK: 'PATH#/identity/old-name.md' },
+            }).resolves({ Item: undefined });
 
             // Make updateMemoryMetadata throw
             updateMemoryMetadata.mockRejectedValue(new Error('Failed to update metadata'));
@@ -1122,16 +1219,22 @@ describe('runReconciliation', () => {
     });
 
     describe('Phase B - Scan tag index', () => {
-        test('should scan for TAG# items', async () => {
-            ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
+        test('should query GSI2 TAG_COUNTS to enumerate tags for Phase B', async () => {
+            ddbMock.on(QueryCommand, {
+                IndexName: 'GSI1',
+            }).resolves({ Items: [] }); // Phase A
+
+            mockEmptyPhaseB();
 
             await runReconciliation(deps, options);
 
-            const scanCalls = ddbMock.commandCalls(ScanCommand);
-            expect(scanCalls).toHaveLength(1);
-            expect(scanCalls[0].args[0].input.FilterExpression).toContain('begins_with(PK, :prefix)');
-            expect(scanCalls[0].args[0].input.ExpressionAttributeValues?.[':prefix']).toBe('TAG#');
+            // Phase B should query GSI2 with TAG_COUNTS partition key
+            const queryCalls = ddbMock.commandCalls(QueryCommand);
+            const gsi2Calls = _filter(queryCalls, call =>
+                call.args[0].input.IndexName === 'GSI2'
+                && call.args[0].input.ExpressionAttributeValues?.[':gsi2pk'] === 'TAG_COUNTS'
+            );
+            expect(gsi2Calls.length).toBeGreaterThanOrEqual(1);
         });
 
         test('should delete orphaned index items (memory does not exist)', async () => {
@@ -1145,11 +1248,11 @@ describe('runReconciliation', () => {
                 contentPreview: 'deleted content',
             };
 
-            ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
+            ddbMock.on(QueryCommand, {
+                IndexName: 'GSI1',
+            }).resolves({ Items: [] }); // Phase A
 
-            ddbMock.on(ScanCommand).resolves({
-                Items: [orphanedIndexItem],
-            });
+            mockPhaseBWithItems([orphanedIndexItem]);
 
             getMemory.mockResolvedValue(undefined); // Memory doesn't exist
 
@@ -1181,11 +1284,11 @@ describe('runReconciliation', () => {
                 contentPreview: 'updated content',
             };
 
-            ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
+            ddbMock.on(QueryCommand, {
+                IndexName: 'GSI1',
+            }).resolves({ Items: [] }); // Phase A
 
-            ddbMock.on(ScanCommand).resolves({
-                Items: [staleIndexItem],
-            });
+            mockPhaseBWithItems([staleIndexItem]);
 
             getMemory.mockResolvedValue(updatedMemory);
 
@@ -1217,11 +1320,11 @@ describe('runReconciliation', () => {
                 contentPreview: 'content',
             };
 
-            ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
+            ddbMock.on(QueryCommand, {
+                IndexName: 'GSI1',
+            }).resolves({ Items: [] }); // Phase A
 
-            ddbMock.on(ScanCommand).resolves({
-                Items: [validIndexItem],
-            });
+            mockPhaseBWithItems([validIndexItem]);
 
             getMemory.mockResolvedValue(memory);
 
@@ -1230,8 +1333,9 @@ describe('runReconciliation', () => {
             expect(result.phaseB.indexItemsDeleted).toBe(0);
         });
 
-        test('should handle pagination', async () => {
-            const page1: TagIndexItem[] = [{
+        test('should handle pagination within a single tag query', async () => {
+            // Two items for the same tag across two pages
+            const page1Item: TagIndexItem = {
                 PK:             'TAG#test1',
                 SK:             'PATH#/identity/file1.md',
                 memoryPath:     '/identity/file1.md',
@@ -1239,27 +1343,42 @@ describe('runReconciliation', () => {
                 updatedAt:      '2024-01-01T00:00:00.000Z',
                 tags:           new Set(['test1']),
                 contentPreview: 'content',
-            }];
+            };
 
-            const page2: TagIndexItem[] = [{
-                PK:             'TAG#test2',
+            const page2Item: TagIndexItem = {
+                PK:             'TAG#test1',
                 SK:             'PATH#/identity/file2.md',
                 memoryPath:     '/identity/file2.md',
                 layer:          'identity',
                 updatedAt:      '2024-01-01T00:00:00.000Z',
-                tags:           new Set(['test2']),
+                tags:           new Set(['test1']),
                 contentPreview: 'content',
-            }];
+            };
 
-            ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
+            ddbMock.on(QueryCommand, {
+                IndexName: 'GSI1',
+            }).resolves({ Items: [] }); // Phase A
 
-            ddbMock.on(ScanCommand)
+            // GSI2 TAG_COUNTS returns one tag with 2 items
+            ddbMock.on(QueryCommand, {
+                IndexName:                 'GSI2',
+                KeyConditionExpression:    'GSI2PK = :gsi2pk',
+                ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
+            }).resolves({
+                Items: [{ PK: 'TAG#test1', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test1', count: 2 }],
+            });
+
+            // Per-tag query returns page1 with LastEvaluatedKey, then page2
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
+                ExpressionAttributeValues: { ':pk': 'TAG#test1', ':skPrefix': 'PATH#' },
+            })
                 .resolvesOnce({
-                    Items:            page1,
+                    Items:            [page1Item],
                     LastEvaluatedKey: { PK: 'TAG#test1', SK: 'PATH#/identity/file1.md' },
                 })
                 .resolvesOnce({
-                    Items: page2,
+                    Items: [page2Item],
                 });
 
             getMemory.mockResolvedValue({
@@ -1283,7 +1402,6 @@ describe('runReconciliation', () => {
             const controller = new AbortController();
 
             ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
 
             // Abort before Phase B
             controller.abort();
@@ -1299,9 +1417,9 @@ describe('runReconciliation', () => {
 
             mockEmptyLayers(); // Phase A
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
-            // Abort before Phase B starts - the abort check at the start of the do-while will catch it
+            // Abort before Phase B starts - the abort check at the start of the for loop will catch it
             controller.abort();
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
@@ -1331,11 +1449,11 @@ describe('runReconciliation', () => {
                 contentPreview: 'content',
             };
 
-            ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
+            ddbMock.on(QueryCommand, {
+                IndexName: 'GSI1',
+            }).resolves({ Items: [] }); // Phase A
 
-            ddbMock.on(ScanCommand).resolves({
-                Items: [orphanedItem, validItem],
-            });
+            mockPhaseBWithItems([orphanedItem, validItem]);
 
             getMemory
                 .mockResolvedValueOnce(undefined) // First call - orphaned
@@ -1368,11 +1486,11 @@ describe('runReconciliation', () => {
                 contentPreview: 'content',
             };
 
-            ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
+            ddbMock.on(QueryCommand, {
+                IndexName: 'GSI1',
+            }).resolves({ Items: [] }); // Phase A
 
-            ddbMock.on(ScanCommand).resolves({
-                Items: [indexItem],
-            });
+            mockPhaseBWithItems([indexItem]);
 
             getMemory.mockRejectedValue(new Error('DynamoDB error'));
 
@@ -1381,7 +1499,7 @@ describe('runReconciliation', () => {
             expect(result.phaseB.errors).toBeGreaterThan(0);
         });
 
-        test('should exclude META_COUNT items from Phase B scan', async () => {
+        test('should only process PATH# items (META_COUNT excluded by begins_with SK query)', async () => {
             const tagIndexItem: TagIndexItem = {
                 PK:             'TAG#test',
                 SK:             'PATH#/identity/file.md',
@@ -1392,13 +1510,12 @@ describe('runReconciliation', () => {
                 contentPreview: 'content',
             };
 
-            ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
+            ddbMock.on(QueryCommand, {
+                IndexName: 'GSI1',
+            }).resolves({ Items: [] }); // Phase A
 
-            // Phase B scan should filter out META_COUNT items at DynamoDB level
-            // So the returned Items should only contain PATH# items
-            ddbMock.on(ScanCommand).resolves({
-                Items: [tagIndexItem], // Only PATH# items returned (META_COUNT filtered by FilterExpression)
-            });
+            // Phase B uses per-tag queries with begins_with(SK, 'PATH#'), which naturally excludes META_COUNT
+            mockPhaseBWithItems([tagIndexItem]);
 
             getMemory.mockResolvedValue({
                 path:           '/identity/file.md' as MemoryPath,
@@ -1417,11 +1534,13 @@ describe('runReconciliation', () => {
             expect(result.phaseB.itemsScanned).toBe(1);
             expect(result.phaseB.errors).toBe(0);
 
-            // Verify the FilterExpression excludes META_COUNT
-            const scanCalls = ddbMock.commandCalls(ScanCommand);
-            expect(scanCalls.length).toBeGreaterThanOrEqual(1);
-            expect(scanCalls[0].args[0].input.FilterExpression).toContain('SK <> :metaCount');
-            expect(scanCalls[0].args[0].input.ExpressionAttributeValues?.[':metaCount']).toBe('META_COUNT');
+            // Verify Phase B queries use begins_with(SK, 'PATH#') to exclude META_COUNT naturally
+            const queryCalls = ddbMock.commandCalls(QueryCommand);
+            const phaseBTagQueryCalls = _filter(queryCalls, call =>
+                call.args[0].input.KeyConditionExpression === 'PK = :pk AND begins_with(SK, :skPrefix)'
+                && call.args[0].input.ExpressionAttributeValues?.[':skPrefix'] === 'PATH#'
+            );
+            expect(phaseBTagQueryCalls.length).toBeGreaterThanOrEqual(1);
         });
     });
 
@@ -1449,7 +1568,7 @@ describe('runReconciliation', () => {
             ];
 
             ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             // Mock listTagCounts to return stored count = 2
             const listTagCountsMock = mock(() => Promise.resolve([{ tag: 'important', count: 2 }]));
@@ -1473,7 +1592,7 @@ describe('runReconciliation', () => {
 
         test('should update tag count when stored count differs from actual', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             // Mock listTagCounts to return stored count = 5
             const listTagCountsMock = mock(() => Promise.resolve([{ tag: 'important', count: 5 }]));
@@ -1518,7 +1637,7 @@ describe('runReconciliation', () => {
                 IndexName: 'GSI1',
             }).resolves({ Items: [] });
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             // Mock listTagCounts to return stored count = 1
             const listTagCountsMock = mock(() => Promise.resolve([{ tag: 'orphan', count: 1 }]));
@@ -1556,7 +1675,7 @@ describe('runReconciliation', () => {
             mockLayerQuery('identity', []);
             mockLayerQuery('state', []);
             mockLayerQuery('events', []);
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
+            mockEmptyPhaseB();
 
             // Mock listTagCounts to return a tag
             const listTagCountsMock = mock(() => Promise.resolve([
@@ -1580,7 +1699,7 @@ describe('runReconciliation', () => {
                 IndexName: 'GSI1',
             }).resolves({ Items: [] });
 
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             const listTagCountsMock = mock(() => Promise.resolve([{ tag: 'test', count: 1 }]));
             deps.tagIndex.listTagCounts = listTagCountsMock;
@@ -1610,7 +1729,7 @@ describe('runReconciliation', () => {
 
         test('should handle errors when processing meta count', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] }); // Phase A
-            ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
+            mockEmptyPhaseB();
 
             const listTagCountsMock = mock(() => Promise.resolve([{ tag: 'error-tag', count: 1 }]));
             deps.tagIndex.listTagCounts = listTagCountsMock;
@@ -1632,7 +1751,6 @@ describe('runReconciliation', () => {
     describe('Integration - Both phases', () => {
         test('should run both phases and return complete result', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
 
             const result = await runReconciliation(deps, options);
 
@@ -1646,7 +1764,6 @@ describe('runReconciliation', () => {
 
         test('should report success when no errors', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
 
             const result = await runReconciliation(deps, options);
 
@@ -1655,7 +1772,6 @@ describe('runReconciliation', () => {
 
         test('should report failure when errors occurred in Phase A', async () => {
             ddbMock.on(QueryCommand).rejects(new Error('DynamoDB error'));
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
 
             const result = await runReconciliation(deps, options);
 
@@ -1665,9 +1781,11 @@ describe('runReconciliation', () => {
 
         test('should report failure when errors occurred in Phase B only', async () => {
             // Phase A succeeds
-            ddbMock.on(QueryCommand).resolves({ Items: [] });
+            ddbMock.on(QueryCommand, {
+                IndexName: 'GSI1',
+            }).resolves({ Items: [] });
 
-            // Phase B has error
+            // Phase B has error: GSI2 returns a tag, per-tag query returns an item, getMemory throws
             const indexItem: TagIndexItem = {
                 PK:             'TAG#test',
                 SK:             'PATH#/identity/file.md',
@@ -1678,8 +1796,11 @@ describe('runReconciliation', () => {
                 contentPreview: 'content',
             };
 
-            ddbMock.on(ScanCommand).resolves({ Items: [indexItem] });
+            mockPhaseBWithItems([indexItem]);
             getMemory.mockRejectedValue(new Error('DynamoDB error'));
+
+            // Ensure Phase C doesn't process any tags (so Phase C stays error-free)
+            deps.tagIndex.listTagCounts = mock(() => Promise.resolve([]));
 
             const result = await runReconciliation(deps, options);
 
@@ -1692,7 +1813,6 @@ describe('runReconciliation', () => {
         test('should report failure when errors occurred in Phase C only', async () => {
             // Phase A & B succeed
             ddbMock.on(QueryCommand).resolves({ Items: [] });
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
 
             // Phase C has error - listTagCounts throws
             const listTagCountsMock = mock(() => Promise.reject(new Error('DynamoDB error')));
@@ -1708,7 +1828,6 @@ describe('runReconciliation', () => {
 
         test('should measure total duration', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
 
             const result = await runReconciliation(deps, options);
 

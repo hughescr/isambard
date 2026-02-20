@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { mockClient } from 'aws-sdk-client-mock';
-import { DynamoDBDocumentClient, QueryCommand, ScanCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, QueryCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { runReconciliation, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import type { MemoryToolItemData } from '@/storage/memory-tool/types';
@@ -50,24 +50,23 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
             IndexName: 'GSI1',
         }).resolves({ Items: [] });
 
-        ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
-
-        // Phase C: Mock listTagCounts returning a META_COUNT item
+        // Phase B uses GSI2 first (empty), then Phase C uses it for listTagCounts
         ddbMock.on(QueryCommand, {
             IndexName:                 'GSI2',
             KeyConditionExpression:    'GSI2PK = :gsi2pk',
             ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
-        }).resolves({
-            Items: [
-                {
-                    PK:     'TAG#test',
-                    SK:     'META_COUNT',
-                    GSI2PK: 'TAG_COUNTS',
-                    GSI2SK: 'TAG#test',
-                    count:  5, // Claims 5 items
-                },
-            ],
-        });
+        }).resolvesOnce({ Items: [] }) // Phase B (no tags to process)
+            .resolves({
+                Items: [
+                    {
+                        PK:     'TAG#test',
+                        SK:     'META_COUNT',
+                        GSI2PK: 'TAG_COUNTS',
+                        GSI2SK: 'TAG#test',
+                        count:  5, // Claims 5 items
+                    },
+                ],
+            });
 
         // Mock actual count query (PK='TAG#test' AND begins_with(SK, 'PATH#'))
         ddbMock.on(QueryCommand, {
@@ -89,24 +88,23 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
             IndexName: 'GSI1',
         }).resolves({ Items: [] });
 
-        ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
-
-        // Phase C: Mock listTagCounts returning a META_COUNT item
+        // Phase B uses GSI2 first (empty), then Phase C uses it for listTagCounts
         ddbMock.on(QueryCommand, {
             IndexName:                 'GSI2',
             KeyConditionExpression:    'GSI2PK = :gsi2pk',
             ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
-        }).resolves({
-            Items: [
-                {
-                    PK:     'TAG#test',
-                    SK:     'META_COUNT',
-                    GSI2PK: 'TAG_COUNTS',
-                    GSI2SK: 'TAG#test',
-                    count:  10, // Claims 10 items
-                },
-            ],
-        });
+        }).resolvesOnce({ Items: [] }) // Phase B (no tags to process)
+            .resolves({
+                Items: [
+                    {
+                        PK:     'TAG#test',
+                        SK:     'META_COUNT',
+                        GSI2PK: 'TAG_COUNTS',
+                        GSI2SK: 'TAG#test',
+                        count:  10, // Claims 10 items
+                    },
+                ],
+            });
 
         // Mock actual count query
         ddbMock.on(QueryCommand, {
@@ -134,24 +132,23 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
             IndexName: 'GSI1',
         }).resolves({ Items: [] });
 
-        ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
-
-        // Phase C: Mock listTagCounts
+        // Phase B uses GSI2 first (empty), then Phase C uses it for listTagCounts
         ddbMock.on(QueryCommand, {
             IndexName:                 'GSI2',
             KeyConditionExpression:    'GSI2PK = :gsi2pk',
             ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
-        }).resolves({
-            Items: [
-                {
-                    PK:     'TAG#orphan',
-                    SK:     'META_COUNT',
-                    GSI2PK: 'TAG_COUNTS',
-                    GSI2SK: 'TAG#orphan',
-                    count:  3, // Claims 3 items
-                },
-            ],
-        });
+        }).resolvesOnce({ Items: [] }) // Phase B (no tags to process)
+            .resolves({
+                Items: [
+                    {
+                        PK:     'TAG#orphan',
+                        SK:     'META_COUNT',
+                        GSI2PK: 'TAG_COUNTS',
+                        GSI2SK: 'TAG#orphan',
+                        count:  3, // Claims 3 items
+                    },
+                ],
+            });
 
         // Mock actual count query (returns 0)
         ddbMock.on(QueryCommand, {
@@ -185,18 +182,17 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
             IndexName: 'GSI1',
         }).resolves({ Items: [] });
 
-        ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
-
-        // Phase C: Mock listTagCounts
+        // Phase B uses GSI2 first (empty), then Phase C uses it for listTagCounts
         ddbMock.on(QueryCommand, {
             IndexName:                 'GSI2',
             KeyConditionExpression:    'GSI2PK = :gsi2pk',
             ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
-        }).resolves({
-            Items: [
-                { PK: 'TAG#test', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test', count: 5 },
-            ],
-        });
+        }).resolvesOnce({ Items: [] }) // Phase B (no tags to process)
+            .resolves({
+                Items: [
+                    { PK: 'TAG#test', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test', count: 5 },
+                ],
+            });
 
         // Abort after Phase B
         controller.abort();
@@ -215,19 +211,18 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
             IndexName: 'GSI1',
         }).resolves({ Items: [] });
 
-        ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
-
-        // Phase C: Mock listTagCounts with multiple tags
+        // Phase B uses GSI2 first (empty), then Phase C uses it for listTagCounts with multiple tags
         ddbMock.on(QueryCommand, {
             IndexName:                 'GSI2',
             KeyConditionExpression:    'GSI2PK = :gsi2pk',
             ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
-        }).resolves({
-            Items: [
-                { PK: 'TAG#test1', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test1', count: 5 },
-                { PK: 'TAG#test2', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test2', count: 3 },
-            ],
-        });
+        }).resolvesOnce({ Items: [] }) // Phase B (no tags to process)
+            .resolves({
+                Items: [
+                    { PK: 'TAG#test1', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test1', count: 5 },
+                    { PK: 'TAG#test2', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test2', count: 3 },
+                ],
+            });
 
         // First tag processes successfully
         ddbMock.on(QueryCommand, {
@@ -256,18 +251,17 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
             IndexName: 'GSI1',
         }).resolves({ Items: [] });
 
-        ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
-
-        // Phase C: Mock listTagCounts
+        // Phase B uses GSI2 first (empty), then Phase C uses it for listTagCounts
         ddbMock.on(QueryCommand, {
             IndexName:                 'GSI2',
             KeyConditionExpression:    'GSI2PK = :gsi2pk',
             ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
-        }).resolves({
-            Items: [
-                { PK: 'TAG#test', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test', count: 10 },
-            ],
-        });
+        }).resolvesOnce({ Items: [] }) // Phase B (no tags to process)
+            .resolves({
+                Items: [
+                    { PK: 'TAG#test', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test', count: 10 },
+                ],
+            });
 
         // Happy path: count query returns correct count without pagination
         ddbMock.on(QueryCommand, {
@@ -288,18 +282,17 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
             IndexName: 'GSI1',
         }).resolves({ Items: [] });
 
-        ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
-
-        // Phase C: Mock listTagCounts
+        // Phase B uses GSI2 first (empty), then Phase C uses it for listTagCounts
         ddbMock.on(QueryCommand, {
             IndexName:                 'GSI2',
             KeyConditionExpression:    'GSI2PK = :gsi2pk',
             ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
-        }).resolves({
-            Items: [
-                { PK: 'TAG#test', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test', count: 5 },
-            ],
-        });
+        }).resolvesOnce({ Items: [] }) // Phase B (no tags to process)
+            .resolves({
+                Items: [
+                    { PK: 'TAG#test', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test', count: 5 },
+                ],
+            });
 
         // Mock actual count query to throw error
         ddbMock.on(QueryCommand, {
@@ -317,24 +310,23 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
             IndexName: 'GSI1',
         }).resolves({ Items: [] });
 
-        ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
-
-        // Phase C: Mock listTagCounts
+        // Phase B uses GSI2 first (empty), then Phase C uses it for listTagCounts
         ddbMock.on(QueryCommand, {
             IndexName:                 'GSI2',
             KeyConditionExpression:    'GSI2PK = :gsi2pk',
             ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
-        }).resolves({
-            Items: [
-                {
-                    PK:     'TAG#orphan',
-                    SK:     'META_COUNT',
-                    GSI2PK: 'TAG_COUNTS',
-                    GSI2SK: 'TAG#orphan',
-                    count:  3, // Claims 3 items
-                },
-            ],
-        });
+        }).resolvesOnce({ Items: [] }) // Phase B (no tags to process)
+            .resolves({
+                Items: [
+                    {
+                        PK:     'TAG#orphan',
+                        SK:     'META_COUNT',
+                        GSI2PK: 'TAG_COUNTS',
+                        GSI2SK: 'TAG#orphan',
+                        count:  3, // Claims 3 items
+                    },
+                ],
+            });
 
         // Mock actual count query (returns 0)
         ddbMock.on(QueryCommand, {
@@ -359,24 +351,23 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
             IndexName: 'GSI1',
         }).resolves({ Items: [] });
 
-        ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
-
-        // Phase C: Mock listTagCounts
+        // Phase B uses GSI2 first (empty), then Phase C uses it for listTagCounts
         ddbMock.on(QueryCommand, {
             IndexName:                 'GSI2',
             KeyConditionExpression:    'GSI2PK = :gsi2pk',
             ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
-        }).resolves({
-            Items: [
-                {
-                    PK:     'TAG#test',
-                    SK:     'META_COUNT',
-                    GSI2PK: 'TAG_COUNTS',
-                    GSI2SK: 'TAG#test',
-                    count:  10, // Claims 10 items
-                },
-            ],
-        });
+        }).resolvesOnce({ Items: [] }) // Phase B (no tags to process)
+            .resolves({
+                Items: [
+                    {
+                        PK:     'TAG#test',
+                        SK:     'META_COUNT',
+                        GSI2PK: 'TAG_COUNTS',
+                        GSI2SK: 'TAG#test',
+                        count:  10, // Claims 10 items
+                    },
+                ],
+            });
 
         // Mock actual count query
         ddbMock.on(QueryCommand, {
@@ -401,19 +392,18 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
             IndexName: 'GSI1',
         }).resolves({ Items: [] });
 
-        ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
-
-        // Phase C: Mock listTagCounts with multiple items
+        // Phase B uses GSI2 first (empty), then Phase C uses it for listTagCounts with multiple items
         ddbMock.on(QueryCommand, {
             IndexName:                 'GSI2',
             KeyConditionExpression:    'GSI2PK = :gsi2pk',
             ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
-        }).resolves({
-            Items: [
-                { PK: 'TAG#tag1', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#tag1', count: 5 },
-                { PK: 'TAG#tag2', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#tag2', count: 3 },
-            ],
-        });
+        }).resolvesOnce({ Items: [] }) // Phase B (no tags to process)
+            .resolves({
+                Items: [
+                    { PK: 'TAG#tag1', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#tag1', count: 5 },
+                    { PK: 'TAG#tag2', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#tag2', count: 3 },
+                ],
+            });
 
         // Mock actual count queries
         ddbMock.on(QueryCommand, {
@@ -438,24 +428,23 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
             IndexName: 'GSI1',
         }).resolves({ Items: [] });
 
-        ddbMock.on(ScanCommand).resolves({ Items: [] }); // Phase B
-
-        // Phase C: Mock listTagCounts
+        // Phase B uses GSI2 first (empty), then Phase C uses it for listTagCounts
         ddbMock.on(QueryCommand, {
             IndexName:                 'GSI2',
             KeyConditionExpression:    'GSI2PK = :gsi2pk',
             ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
-        }).resolves({
-            Items: [
-                {
-                    PK:     'TAG#large-tag',
-                    SK:     'META_COUNT',
-                    GSI2PK: 'TAG_COUNTS',
-                    GSI2SK: 'TAG#large-tag',
-                    count:  1500, // Claims 1500 items
-                },
-            ],
-        });
+        }).resolvesOnce({ Items: [] }) // Phase B (no tags to process)
+            .resolves({
+                Items: [
+                    {
+                        PK:     'TAG#large-tag',
+                        SK:     'META_COUNT',
+                        GSI2PK: 'TAG_COUNTS',
+                        GSI2SK: 'TAG#large-tag',
+                        count:  1500, // Claims 1500 items
+                    },
+                ],
+            });
 
         // Mock actual count query with pagination
         // First page returns 1000 items with LastEvaluatedKey

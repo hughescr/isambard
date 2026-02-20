@@ -7,7 +7,7 @@
  * - Phase C: Verify META_COUNT atomic counters match actual tag index item counts
  */
 
-import { DynamoDBDocumentClient, QueryCommand, ScanCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { map as _map, isObject as _isObject, isString as _isString, startsWith as _startsWith } from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { MemoryToolBackendTagIndex } from '../backend-tag-index';
@@ -253,33 +253,97 @@ async function processMemoryItemTags(
 }
 
 /**
+ * Query all tag names from GSI2 TAG_COUNTS partition
+ */
+async function getAllTagNames(
+    ctx: PhaseAContext | PhaseBContext
+): Promise<string[] | undefined> {
+    let lastEvaluatedKey: Record<string, unknown> | undefined;
+    const allTags: string[] = [];
+
+    // Stryker disable ConditionalExpression,BlockStatement: Intentional infinite loop with break
+    do {
+        const result = await retryWithBackoff(
+            // eslint-disable-next-line no-loop-func -- async function executed immediately via await
+            async () => ctx.deps.docClient.send(new QueryCommand({
+                TableName:                 ctx.deps.tableName,
+                IndexName:                 'GSI2',
+                /* Stryker disable next-line StringLiteral: DynamoDB expression */
+                KeyConditionExpression:    'GSI2PK = :gsi2pk',
+                // Stryker disable next-line StringLiteral: DynamoDB expression attribute values
+                ExpressionAttributeValues: {
+                    ':gsi2pk': 'TAG_COUNTS',
+                },
+                ExclusiveStartKey: lastEvaluatedKey,
+            })),
+            ctx.options.backoff,
+            /* Stryker disable next-line StringLiteral: Retry context string is observational */
+            'getAllTagNames',
+            ctx.options.signal
+        );
+
+        if(!result) {
+            return undefined;
+        }
+
+        for(const item of result.Items ?? []) {
+            // Extract tag name from GSI2SK = 'TAG#{tagname}'
+            // Stryker disable next-line StringLiteral: Key prefix parsing
+            const gsi2sk = item.GSI2SK as string | undefined;
+            // Stryker disable next-line ConditionalExpression,BlockStatement,StringLiteral: Guard clause for malformed items with TAG# prefix check
+            if(gsi2sk && _startsWith(gsi2sk, 'TAG#')) {
+                allTags.push(gsi2sk.slice(4));
+            }
+        }
+
+        lastEvaluatedKey = result.LastEvaluatedKey;
+
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Loop termination
+    } while(lastEvaluatedKey);
+    // Stryker restore ConditionalExpression,BlockStatement
+
+    return allTags;
+}
+
+/**
  * Check if old path's tag indices are cleaned up
+ * Enumerates all tags via GSI2 TAG_COUNTS, then GetItem for each tag at the old path
  */
 async function checkOldPathIndicesClean(
     ctx: PhaseAContext,
     oldPath: string
 ): Promise<boolean> {
-    const result = await retryWithBackoff(
-        async () => ctx.deps.docClient.send(new ScanCommand({
-            TableName:                 ctx.deps.tableName,
-            /* Stryker disable next-line StringLiteral: DynamoDB expression */
-            FilterExpression:          'begins_with(PK, :pkPrefix) AND contains(SK, :skPart)',
-            /* Stryker disable StringLiteral,ObjectLiteral: DynamoDB expression attribute values */
-            ExpressionAttributeValues: {
-                ':pkPrefix': 'TAG#',
-                ':skPart':   oldPath,
-            },
-            /* Stryker restore StringLiteral,ObjectLiteral */
-            Limit: 1,
-        })),
-        ctx.options.backoff,
-        /* Stryker disable next-line StringLiteral: Retry context string is observational */
-        `checkOldPathIndicesClean:${oldPath}`,
-        ctx.options.signal
-    );
+    const allTags = await getAllTagNames(ctx);
 
-    // Clean if no items found
-    return !result?.Items || result.Items.length === 0;
+    // Stryker disable next-line ConditionalExpression,BlockStatement: Guard clause for failed tag enumeration
+    if(!allTags) {
+        // Failed to enumerate tags - assume not clean (conservative)
+        return false;
+    }
+
+    for(const tag of allTags) {
+        const result = await retryWithBackoff(
+            async () => ctx.deps.docClient.send(new GetCommand({
+                TableName: ctx.deps.tableName,
+                Key:       {
+                    PK: `TAG#${tag}`,
+                    // Stryker disable next-line StringLiteral: Key prefix for old path check
+                    SK: `PATH#${oldPath}`,
+                },
+            })),
+            ctx.options.backoff,
+            /* Stryker disable next-line StringLiteral: Retry context string is observational */
+            `checkOldPathIndicesClean:${tag}:${oldPath}`,
+            ctx.options.signal
+        );
+
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Found an old index = not clean
+        if(result?.Item) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 /**
@@ -495,7 +559,65 @@ async function processTagIndexItem(
 }
 
 /**
- * Phase B: Scan all tag index items and delete orphaned entries
+ * Scan all tag index items for a single tag via PK query
+ */
+async function scanTagItems(
+    ctx: PhaseBContext,
+    tag: string
+): Promise<void> {
+    let lastEvaluatedKey: Record<string, unknown> | undefined;
+
+    // Stryker disable ConditionalExpression,BlockStatement: Intentional infinite loop with break
+    do {
+        if(ctx.options.signal?.aborted) {
+            // Stryker disable next-line StringLiteral: Abort message not exercised in tests
+            throw new Error('Aborted');
+        }
+
+        const result = await retryWithBackoff(
+            // eslint-disable-next-line no-loop-func -- async function executed immediately via await
+            async () => ctx.deps.docClient.send(new QueryCommand({
+                TableName:                 ctx.deps.tableName,
+                KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
+                // Stryker disable next-line StringLiteral: DynamoDB expression attribute values
+                ExpressionAttributeValues: {
+                    ':pk':       `TAG#${tag}`,
+                    ':skPrefix': 'PATH#',
+                },
+                Limit:             ctx.options.scanPageSize,
+                ExclusiveStartKey: lastEvaluatedKey,
+            })),
+            ctx.options.backoff,
+            /* Stryker disable next-line StringLiteral: Retry context string is observational */
+            `scanTagItems:${tag}`,
+            ctx.options.signal
+        );
+
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Null check
+        if(!result) {
+            /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
+            logger.warn({ tag, msg: 'Failed to query tag index items' });
+            /* Stryker restore StringLiteral,ObjectLiteral */
+            // Stryker disable next-line UpdateOperator: Error increment in uncovered error path
+            ctx.progress.errors++;
+            break;
+        }
+
+        const items = (result.Items ?? []) as TagIndexItem[];
+
+        for(const item of items) {
+            await processTagIndexItem(ctx, item);
+        }
+
+        lastEvaluatedKey = result.LastEvaluatedKey;
+
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Loop termination
+    } while(lastEvaluatedKey);
+    // Stryker restore ConditionalExpression,BlockStatement
+}
+
+/**
+ * Phase B: Enumerate all tags via GSI2 TAG_COUNTS, then query each tag's index items and delete orphaned entries
  */
 async function runPhaseB(
     deps: ReconcilerDeps,
@@ -514,56 +636,28 @@ async function runPhaseB(
 
     const ctx: PhaseBContext = { deps, options, progress };
 
-    let lastEvaluatedKey: Record<string, unknown> | undefined;
+    // Enumerate all tags from GSI2 TAG_COUNTS partition
+    const allTags = await getAllTagNames(ctx);
 
-    // Stryker disable ConditionalExpression,BlockStatement: Intentional infinite loop with break
-    do {
+    if(!allTags) {
+        /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
+        logger.warn({ msg: 'Failed to enumerate tags for Phase B' });
+        /* Stryker restore StringLiteral,ObjectLiteral */
+        // Stryker disable next-line UpdateOperator: Error increment in uncovered error path
+        progress.errors++;
+        progress.endTime = new Date();
+        return progress;
+    }
+
+    for(const tag of allTags) {
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Abort check in tight loop
         if(options.signal?.aborted) {
             // Stryker disable next-line StringLiteral: Abort message not exercised in tests
             throw new Error('Aborted');
         }
 
-        const result = await retryWithBackoff(
-            // eslint-disable-next-line no-loop-func -- async function executed immediately via await
-            async () => deps.docClient.send(new ScanCommand({
-                TableName:                 deps.tableName,
-                /* Stryker disable next-line StringLiteral: DynamoDB expression */
-                FilterExpression:          'begins_with(PK, :prefix) AND SK <> :metaCount',
-                // Stryker disable next-line StringLiteral,ObjectLiteral: DynamoDB expression attribute values
-                ExpressionAttributeValues: {
-                    ':prefix':    'TAG#',
-                    ':metaCount': 'META_COUNT',
-                },
-                Limit:             options.scanPageSize,
-                ExclusiveStartKey: lastEvaluatedKey,
-            })),
-            options.backoff,
-            /* Stryker disable next-line StringLiteral: Retry context string is observational */
-            'scanTagIndex',
-            options.signal
-        );
-
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Null check
-        if(!result) {
-            /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
-            logger.warn({ msg: 'Failed to scan tag index' });
-            /* Stryker restore StringLiteral,ObjectLiteral */
-            // Stryker disable next-line UpdateOperator: Error increment in uncovered error path
-            progress.errors++;
-            break;
-        }
-
-        const items = (result.Items ?? []) as TagIndexItem[];
-
-        for(const item of items) {
-            await processTagIndexItem(ctx, item);
-        }
-
-        lastEvaluatedKey = result.LastEvaluatedKey;
-
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Loop termination
-    } while(lastEvaluatedKey);
-    // Stryker restore ConditionalExpression,BlockStatement
+        await scanTagItems(ctx, tag);
+    }
 
     progress.endTime = new Date();
     return progress;

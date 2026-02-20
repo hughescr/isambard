@@ -52,7 +52,7 @@ export class ChannelRegistryManager {
      * Should be called on startup for optimal performance.
      */
     async warmCache(): Promise<void> {
-        const storedRecords = await this.backend.getAllChannels();
+        const storedRecords = await this.backend.getChannelsByGuild(this.homeGuildId);
 
         for(const record of storedRecords) {
             await this.fetchAndCacheChannel(record);
@@ -222,7 +222,7 @@ export class ChannelRegistryManager {
         }
 
         // Fallback to backend
-        const storedRecords = await this.backend.getAllChannels();
+        const storedRecords = await this.backend.getChannelsByGuild(this.homeGuildId);
         const results: ChannelMetadata[] = [];
 
         // Fetch channel info from Discord for each record

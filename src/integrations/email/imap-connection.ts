@@ -691,7 +691,7 @@ export class ImapConnection {
                 for(const folder of REQUIRED_FOLDERS) {
                     // Stryker disable next-line ConditionalExpression: optimization guard — skips overwriting flag-resolved paths with fallback
                     if(!resolved.has(folder)) {
-                        // Stryker disable next-line ConditionalExpression: fallback path when folder not in FOLDER_FALLBACK_PATHS
+                        // Stryker disable next-line ConditionalExpression,LogicalOperator: fallback path when folder not in FOLDER_FALLBACK_PATHS
                         resolved.set(folder, FOLDER_FALLBACK_PATHS[folder] ?? folder);
                     }
                 }

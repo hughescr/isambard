@@ -15,7 +15,8 @@ import { createChannelId, type ChannelId, type GuildId } from '../types';
 import {
     type ChannelStorageRecord,
     type WellKnownChannel,
-    channelStorageRecordSchema
+    channelStorageRecordSchema,
+    WELL_KNOWN_CHANNELS
 } from './types';
 import { ChannelRegistryKeyGenerator, type ChannelRegistryKeys } from './key-generator';
 
@@ -193,41 +194,9 @@ export class ChannelRegistryBackend {
      * @returns Array of well-known channel storage records
      */
     async getAllWellKnownChannels(): Promise<ChannelStorageRecord[]> {
-        // Step 1: Scan GSI2 to find all well-known channels
-        const command = new ScanCommand({
-            TableName:                 this.tableName,
-            IndexName:                 'GSI2',
-            FilterExpression:          'begins_with(GSI2PK, :wellKnownPrefix)',
-            ExpressionAttributeValues: {
-                ':wellKnownPrefix': 'WELLKNOWN#',
-            },
-        });
-
-        const result = await withDynamoTimeout(
-            () => this.docClient.send(command),
-            {
-                timeoutMs: this.timeoutMs,
-                operation: 'ChannelRegistry.getAllWellKnownChannels.gsi2Scan',
-            }
+        const results = await Promise.all(
+            _.map(WELL_KNOWN_CHANNELS, type => this.getWellKnownChannel(type))
         );
-
-        // Stryker disable next-line all: Performance optimization - early return to avoid unnecessary work
-        if(!result.Items || result.Items.length === 0) {
-            return [];
-        }
-
-        // Step 2: Extract channelIds from PKs
-        const channelIds = _.map(result.Items, (item) => {
-            const pk = item.PK as string;
-            return createChannelId(_.replace(pk, 'CHANNEL#', ''));
-        });
-
-        // Step 3: Fetch all full records in parallel using Promise.all
-        // Note: Using individual GetCommand calls instead of BatchGetCommand due to Bun compatibility
-        const fetchPromises = _.map(channelIds, channelId => this.getChannel(channelId));
-        const results = await Promise.all(fetchPromises);
-
-        // Filter out null results (channels that weren't found)
         return _.filter(results, (item): item is ChannelStorageRecord => item !== null);
     }
 
