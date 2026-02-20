@@ -1208,6 +1208,34 @@ describe('ImapListener', () => {
             await listener.stop();
         });
 
+        test('on successful retry with undefined to field: passes empty string to onSendApprovalRequest', async () => {
+            const uid = 88;
+            const { conn, clearFlag } = makeImap({
+                searchByFlag: mock(async () => [uid]),
+            });
+            const { processor } = makeProcessor();
+            const { wdc, getMessage, updateMessageMetadata } = makeWildDuck({
+                getMessage: mock(async () => ({
+                    id:      uid,
+                    subject: 'No-to test',
+                    // `to` field deliberately absent (undefined) — exercises the `?? []` fallback
+                })),
+            });
+            const onSendApprovalRequest = mock(async () => undefined);
+            const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            await listener.start();
+
+            expect(getMessage).toHaveBeenCalledWith('Drafts', uid);
+            // toStr is '' because msg.to is undefined (falls back to []) and lodash maps an empty array
+            expect(onSendApprovalRequest).toHaveBeenCalledWith('', 'No-to test', uid, undefined);
+            expect(clearFlag).toHaveBeenCalledWith(uid, 'Drafts', '\\DiscordNotifyFailed');
+            expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', uid, { notifyAttempts: 0 });
+
+            await listener.stop();
+        });
+
         test('skips message when getMessage returns null', async () => {
             const uid = 55;
             const { conn } = makeImap({

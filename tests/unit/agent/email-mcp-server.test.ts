@@ -1701,7 +1701,7 @@ describe('createEmailMCPServer', () => {
 
             await handler({ to: 'bob@example.com', subject: 'Test', body: 'Body', identity: 'formal' });
 
-            expect(mockSendApprovalRequest).toHaveBeenCalledWith('bob@example.com', 'Test', 99);
+            expect(mockSendApprovalRequest).toHaveBeenCalledWith('bob@example.com', 'Test', 99, undefined);
         });
 
         test('should accept an array of to addresses and upload all to WildDuck', async () => {
@@ -1768,7 +1768,7 @@ describe('createEmailMCPServer', () => {
 
             await handler({ to: ['alice@example.com', 'bob@example.com'], subject: 'Hi', body: 'Hello', identity: 'formal' });
 
-            expect(mockSendApprovalRequest).toHaveBeenCalledWith('alice@example.com, bob@example.com', 'Hi', 99);
+            expect(mockSendApprovalRequest).toHaveBeenCalledWith('alice@example.com, bob@example.com', 'Hi', 99, undefined);
         });
 
         test('should include rate limit warning when over limit', async () => {
@@ -2369,7 +2369,8 @@ describe('createEmailMCPServer', () => {
                 getUserAddresses: mock(async () => [
                     { id: '1', address: 'formal@example.com', name: 'Izzy Formal', main: false, tags: ['formal'] },
                 ]),
-                getMailboxId: mock(_.constant('mbx-clean')),
+                getMailboxId:          mock(_.constant('mbx-clean')),
+                updateMessageMetadata: mock(async () => { /* intentionally empty */ }),
             } as unknown as WildDuckClient;
             mockAllowlistReplyAll = {
                 isAllowed: mock(_.constant(true)),
@@ -2394,7 +2395,11 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('pending admin approval');
         });
 
-        test('replyAll should call sendApprovalRequest with (to, subject, uid) — WildDuck derives recipients via reference', async () => {
+        test('replyAll should call sendApprovalRequest with (to, subject, uid, cc) — cc extracted from original message', async () => {
+            const primaryTo = originalEmailWithCc.from.address;
+            const subject   = `Re: ${originalEmailWithCc.subject}`;
+            const uid       = 88;
+
             const server = createEmailMCPServer(mockImap, mockCounters, {
                 wildDuckClient:      mockWildDuckReplyAll,
                 allowlist:           mockAllowlistReplyAll,
@@ -2404,9 +2409,8 @@ describe('createEmailMCPServer', () => {
 
             await handler({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', identity: 'formal' });
 
-            // sendApprovalRequest is called with (to, subject, uid) — no cc parameter
-            const callArgs = mockSendApprovalRequestReplyAll.mock.calls[0] as [string, string, number];
-            expect(callArgs).toHaveLength(3);
+            // sendApprovalRequest is called with (to, subject, uid, cc) — cc extracted from original.cc
+            expect(mockSendApprovalRequestReplyAll).toHaveBeenCalledWith(primaryTo, subject, uid, ['bob@example.com']);
         });
 
         test('replyAll upload payload should not contain cc (WildDuck derives recipients from reference object)', async () => {
@@ -2507,9 +2511,10 @@ describe('createEmailMCPServer', () => {
             ]);
             mockSendApprovalRequest = mock(async () => { /* intentionally empty */ });
             mockWildDuckAmend = {
-                getMessage:       mockGetMessageAmend,
-                uploadMessage:    mockUploadMessageAmend,
-                getUserAddresses: mockGetUserAddresses,
+                getMessage:            mockGetMessageAmend,
+                uploadMessage:         mockUploadMessageAmend,
+                getUserAddresses:      mockGetUserAddresses,
+                updateMessageMetadata: mock(async () => { /* intentionally empty */ }),
             } as unknown as WildDuckClient;
         });
 
@@ -2523,7 +2528,9 @@ describe('createEmailMCPServer', () => {
             const result: CallToolResult = await handler({ message: 'Drafts:42', subject: 'Updated Subject' });
 
             expect(result.isError).toBeUndefined();
-            expect(getText(result)).toContain('Drafts:55');
+            // Routes through approval — result contains pending admin approval message with the UID
+            expect(getText(result)).toContain('pending admin approval');
+            expect(getText(result)).toContain('55');
             expect(mockGetMessageAmend).toHaveBeenCalledWith('Drafts', 42);
             const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.subject).toBe('Updated Subject');
@@ -2617,7 +2624,20 @@ describe('createEmailMCPServer', () => {
 
             await handler({ message: 'Drafts:42', subject: 'Updated' });
 
-            expect(mockSendApprovalRequest).toHaveBeenCalledWith('original-to@example.com', 'Updated', 55);
+            expect(mockSendApprovalRequest).toHaveBeenCalledWith('original-to@example.com', 'Updated', 55, undefined);
+        });
+
+        test('should join multiple to addresses with ", " separator in sendApprovalRequest', async () => {
+            const server = createEmailMCPServer(mockImap, mockCounters, {
+                wildDuckClient:      mockWildDuckAmend,
+                sendApprovalRequest: mockSendApprovalRequest,
+            });
+            const handler = getToolHandler(server, 'amendAndResubmitDraft');
+
+            await handler({ message: 'Drafts:42', to: ['addr1@example.com', 'addr2@example.com'] });
+
+            // Two addresses joined with ', ' separator — validates join separator mutation
+            expect(mockSendApprovalRequest).toHaveBeenCalledWith('addr1@example.com, addr2@example.com', expect.any(String), 55, undefined);
         });
 
         test('should return error when original draft not found', async () => {
@@ -2654,7 +2674,7 @@ describe('createEmailMCPServer', () => {
             expect(mockLogger.warn).toHaveBeenCalled();
         });
 
-        test('should still succeed when sendApprovalRequest fails', async () => {
+        test('should return failure message and set DiscordNotifyFailed flag when sendApprovalRequest fails', async () => {
             mockSendApprovalRequest = mock(async () => {
                 throw new Error('Discord unavailable');
             });
@@ -2668,8 +2688,34 @@ describe('createEmailMCPServer', () => {
             const result: CallToolResult = await handler({ message: 'Drafts:42' });
 
             expect(result.isError).toBeUndefined();
-            expect(getText(result)).toContain('Drafts:55');
+            expect(getText(result)).toContain('failed to notify admin');
+            expect(getText(result)).toContain('retry automatically');
             expect(mockLogger.warn).toHaveBeenCalled();
+            // Flag should be set on the draft
+            expect(mockImap.setFlag).toHaveBeenCalledWith(55, 'Drafts', '\\DiscordNotifyFailed');
+            // Attempt count stored in metadata
+            expect(mockWildDuckAmend.updateMessageMetadata).toHaveBeenCalledWith('Drafts', 55, { notifyAttempts: 1 });
+        });
+
+        test('should inform Izzy of notification failure even when flag setting also fails', async () => {
+            mockSendApprovalRequest = mock(async () => {
+                throw new Error('Discord unavailable');
+            });
+            mockImap.setFlag = mock(async () => {
+                throw new Error('IMAP flag failed');
+            });
+
+            const server = createEmailMCPServer(mockImap, mockCounters, {
+                wildDuckClient:      mockWildDuckAmend,
+                sendApprovalRequest: mockSendApprovalRequest,
+            });
+            const handler = getToolHandler(server, 'amendAndResubmitDraft');
+
+            const result: CallToolResult = await handler({ message: 'Drafts:42' });
+
+            // Should still inform Izzy even if flag setting failed
+            expect(result.isError).toBeUndefined();
+            expect(getText(result)).toContain('failed to notify admin');
         });
 
         test('should use formal from address when identity is formal', async () => {

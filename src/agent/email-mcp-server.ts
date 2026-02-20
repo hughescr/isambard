@@ -64,7 +64,7 @@ export interface EmailMCPServerOptions {
     /** Optional email allowlist for outbound recipient gating */
     allowlist?:             EmailAllowlist
     /** Optional callback to send outbound approval request to admin */
-    sendApprovalRequest?:   (to: string, subject: string, draftUid: number) => Promise<void>
+    sendApprovalRequest?:   (to: string, subject: string, draftUid: number, cc?: string[]) => Promise<void>
 }
 
 // Stryker disable ObjectLiteral,StringLiteral: MIME type map is a configuration constant
@@ -224,6 +224,7 @@ export function createEmailMCPServer(
         subject: string,
         rateLimitWarning: string,
         successMessage: string,
+        cc?: string[],
         isAllowedOverride?: boolean
     ): Promise<string> {
         // Stryker disable next-line ConditionalExpression,EqualityOperator,BooleanLiteral: isAllowedOverride false forces approval path; ?? false default unreachable when allowlist always provided
@@ -240,7 +241,7 @@ export function createEmailMCPServer(
         if(sendApprovalRequest) {
             // Stryker disable BlockStatement: try-catch wraps approval notification — failure sets IMAP flag and informs Izzy
             try {
-                await sendApprovalRequest(toAddress, subject, draftUid);
+                await sendApprovalRequest(toAddress, subject, draftUid, cc);
             } catch (notifErr) {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.warn({ error: _.isError(notifErr) ? notifErr.message : String(notifErr), msg: 'Failed to send outbound approval request' });
@@ -667,7 +668,7 @@ export function createEmailMCPServer(
                         // Stryker disable next-line ConditionalExpression,EqualityOperator,BooleanLiteral: all-recipients allowlist check; ?? false unreachable when allowlist always provided
                         const isAllAllowed = _.every(toAddresses, addr => allowlist?.isAllowed(addr) ?? false);
                         const toStr        = toAddresses.join(', ');
-                        const text         = await submitOrRequestApproval(uid, toStr, args.subject, rateLimitWarning, 'Sent successfully.', isAllAllowed);
+                        const text         = await submitOrRequestApproval(uid, toStr, args.subject, rateLimitWarning, 'Sent successfully.', undefined, isAllAllowed);
                         return {
                             content: [{ type: 'text' as const, text }],
                         };
@@ -797,8 +798,12 @@ export function createEmailMCPServer(
                         // For plain reply, check allowlist for primary recipient.
                         // Stryker disable next-line ConditionalExpression,EqualityOperator,BooleanLiteral: replyAll forces approval path; plain reply uses allowlist
                         const isAllowedOverride: boolean | undefined = args.mode === 'replyAll' ? false : undefined;
+                        // Stryker disable next-line ConditionalExpression,EqualityOperator: extract cc addresses for replyAll mode only
+                        const ccAddresses = args.mode === 'replyAll'
+                            ? _(original.cc ?? []).map('address').compact().value()
+                            : undefined;
                         // Stryker disable next-line StringLiteral,LogicalOperator: Result message is configuration; ?? '' is defensive fallback when subject absent
-                        const text = await submitOrRequestApproval(uid, primaryTo, `Re: ${original.subject ?? ''}`, rateLimitWarning, `Reply sent to ${primaryTo}.`, isAllowedOverride);
+                        const text = await submitOrRequestApproval(uid, primaryTo, `Re: ${original.subject ?? ''}`, rateLimitWarning, `Reply sent to ${primaryTo}.`, ccAddresses, isAllowedOverride);
                         return {
                             content: [{ type: 'text' as const, text }],
                         };
@@ -866,7 +871,6 @@ export function createEmailMCPServer(
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     identity: z.enum(['formal', 'informal']).optional().describe('Email identity to use (leave blank to keep original)'),
                 },
-                // eslint-disable-next-line complexity -- amendAndResubmitDraft handler has inherent branching for amendments and approval flow
                 async (args): Promise<CallToolResult> => {
                     // Stryker disable BlockStatement: try-catch wraps amend operations - error handling
                     try {
@@ -921,22 +925,21 @@ export function createEmailMCPServer(
                             draft:           true,
                         });
 
-                        // Request admin approval for the amended draft
-                        if(sendApprovalRequest) {
-                            // Stryker disable BlockStatement: try-catch wraps approval notification - best-effort
-                            try {
-                                // Stryker disable next-line StringLiteral: join separator is cosmetic formatting
-                                await sendApprovalRequest(toAddresses.join(', '), subject, newUid);
-                            } catch (notifErr) {
-                                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                                logger.warn({ error: _.isError(notifErr) ? notifErr.message : String(notifErr), msg: 'Failed to send outbound approval request for amended draft' });
-                            }
-                            // Stryker restore BlockStatement
-                        }
-
+                        // Always route through approval (isAllowedOverride=false) — amended drafts require human review.
+                        const amendResult = await submitOrRequestApproval(
+                            newUid,
+                            // Stryker disable next-line StringLiteral: join separator is cosmetic formatting — tested via multi-recipient amend test
+                            toAddresses.join(', '),
+                            subject,
+                            // Stryker disable next-line StringLiteral: empty string — no rate limit warning for amend (rate limiter not called on approval path)
+                            '',
+                            // Stryker disable next-line StringLiteral: empty string — successMessage is unreachable when isAllowedOverride=false always routes to approval
+                            '',
+                            undefined, // cc not available for amend-resubmit
+                            false      // isAllowedOverride=false → always approval path
+                        );
                         return {
-                            // Stryker disable next-line StringLiteral: Result message is configuration
-                            content: [{ type: 'text' as const, text: `Draft updated and resubmitted for approval as Drafts:${newUid}.` }],
+                            content: [{ type: 'text' as const, text: amendResult }],
                         };
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);

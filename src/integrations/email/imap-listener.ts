@@ -299,6 +299,7 @@ export class ImapListener {
                         continue;
                     }
 
+                    // Stryker disable next-line ArrayDeclaration: to only sent when non-empty; fallback [] produces same empty string via lodash map
                     const toStr      = _(msg.to ?? []).map('address').join(', ');
                     const subject    = msg.subject ?? '';
                     const ccAddresses = _.map(msg.cc ?? [], 'address');

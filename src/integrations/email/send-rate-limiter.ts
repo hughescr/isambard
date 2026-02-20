@@ -60,7 +60,7 @@ export class SendRateLimiter {
         if(refill > 0) {
             this.tokens         = Math.min(this.capacity, this.tokens + refill);
             // Stryker disable next-line ArithmeticOperator: advance lastRefillTime by the whole ms consumed by refilled tokens
-            this.lastRefillTime = this.lastRefillTime + Math.floor(refill / this.refillRatePerHour) * 3600 * 1000;
+            this.lastRefillTime = this.lastRefillTime + Math.round(refill / this.refillRatePerHour * 3600 * 1000);
         }
     }
 }
