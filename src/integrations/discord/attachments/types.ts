@@ -14,7 +14,7 @@ export const MAX_IMAGE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
 
 // Schema for Discord attachment metadata
 export const AttachmentMetadataSchema = z.object({
-    url:         z.string().url(),
+    url:         z.url(),
     filename:    z.string(),
     contentType: z.string(),
     size:        z.number().int().positive(),

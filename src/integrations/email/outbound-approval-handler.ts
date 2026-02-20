@@ -1,5 +1,6 @@
 import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction } from 'discord.js';
-import { EmbedBuilder, ActionRowBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
+import { LabelBuilder, ModalBuilder, TextInputBuilder } from '@discordjs/builders';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { ImapConnection } from '@/integrations/email/imap-connection';
@@ -29,6 +30,10 @@ export interface OutboundApprovalHandlerDeps {
  *
  * Supports select menu customIds:
  * - email-allowlist-select:{uid}
+ *
+ * **Authorization**: Delegated to Discord channel permissions on `adminDiscordChannelId`.
+ * No in-code user ID check is needed because only admins have access to that channel.
+ * Discord channel-level ACL is the enforcement boundary.
  */
 export class OutboundApprovalHandler {
     private readonly wildDuckClient: WildDuckClient;
@@ -297,14 +302,15 @@ export class OutboundApprovalHandler {
         const reasonInput = new TextInputBuilder()
             // Stryker disable next-line StringLiteral: field customId is configuration
             .setCustomId('reject-reason')
-            // Stryker disable next-line StringLiteral: label is UI configuration
-            .setLabel('Reason for rejection')
             .setStyle(TextInputStyle.Short)
             // Stryker disable next-line BooleanLiteral: optional rejection reason field — required=false is UI configuration
             .setRequired(false);
 
-        const actionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(reasonInput);
-        modal.addComponents(actionRow);
+        const reasonLabel = new LabelBuilder()
+            // Stryker disable next-line StringLiteral: label is UI configuration
+            .setLabel('Reason for rejection')
+            .setTextInputComponent(reasonInput);
+        modal.addLabelComponents(reasonLabel);
 
         await interaction.showModal(modal);
     }

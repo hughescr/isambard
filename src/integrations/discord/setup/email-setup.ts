@@ -164,7 +164,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
 
     // Build sendApprovalRequest callback (posts approval embed to #admin channel)
     // Retries up to 3 times on transient failures. Propagates error to caller after exhaustion.
-    // Stryker disable ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration: sendApprovalRequest callback is integration wiring
+    // Stryker disable ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression: sendApprovalRequest callback is integration wiring
     const sendApprovalRequest = async (to: string, subject: string, draftUid: number, cc?: string[]): Promise<void> => {
         const BLUE = 0x0099FF;
         const embed = new EmbedBuilder()
@@ -201,10 +201,12 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
             const channel = await client.channels.fetch(emailConfig.adminDiscordChannelId);
             if(channel && 'send' in channel) {
                 await channel.send({ embeds: [embed], components: [actionRow] });
+            } else {
+                throw new Error(`Admin channel ${emailConfig.adminDiscordChannelId} is not a sendable text channel`);
             }
         }, { policy: { maxAttempts: 3 } });
     };
-    // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration
+    // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression
 
     // Create listener (not started yet — started in clientReady handler)
     // Must be created after sendApprovalRequest and wildDuckClient are defined.

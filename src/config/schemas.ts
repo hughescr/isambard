@@ -25,7 +25,7 @@ export const agentConfigSchema = z.object({
 
 // CalDAV: url (validated), username, password (non-empty strings)
 export const caldavConfigSchema = z.object({
-    url:      z.string().url(),
+    url:      z.url(),
     username: z.string().min(1),
     password: z.string().min(1),
 });
@@ -46,7 +46,7 @@ export const emailConfigSchema = z.object({
     maxBodySizeBytes:               z.number().int().positive().default(50_000),
     adminDiscordUserId:             z.string().min(1),
     adminDiscordChannelId:          z.string().min(1),
-    wildDuckApiUrl:                 z.string().url(),
+    wildDuckApiUrl:                 z.url(),
     sendReservoirCapacity:          z.number().int().positive().default(24),
     sendReservoirRefillRatePerHour: z.number().positive().default(1),
     imapDebug:                      z.boolean().default(false),

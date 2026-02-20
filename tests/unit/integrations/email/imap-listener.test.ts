@@ -1258,6 +1258,35 @@ describe('ImapListener', () => {
             await listener.stop();
         });
 
+        test('when onSendApprovalRequest throws (e.g. admin channel not sendable), DiscordNotifyFailed flag is retained', async () => {
+            const uid = 99;
+            const { conn, setFlag, clearFlag } = makeImap({
+                searchByFlag: mock(async () => [uid]),
+            });
+            const { processor } = makeProcessor();
+            const { wdc } = makeWildDuck({
+                getMessage: mock(async () => ({
+                    id:       uid,
+                    subject:  'Pending approval',
+                    to:       [{ address: 'target@example.com' }],
+                    metaData: { notifyAttempts: 1 },
+                })),
+            });
+            // Simulates sendApprovalRequest throwing because admin channel is not a sendable text channel
+            const onSendApprovalRequest = mock(async () => {
+                throw new Error('Admin channel 123456 is not a sendable text channel');
+            });
+            const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            await listener.start();
+
+            // Error propagated → DiscordNotifyFailed flag is NOT cleared (notification still pending)
+            expect(clearFlag).not.toHaveBeenCalledWith(uid, 'Drafts', '\\DiscordNotifyFailed');
+            // Did NOT transition to GaveUp (only at 2 attempts; MAX is 5)
+            expect(setFlag).not.toHaveBeenCalled();
+        });
+
         test('on failed retry below MAX_NOTIFY_ATTEMPTS: increments notifyAttempts, keeps flag', async () => {
             const uid = 33;
             const { conn, setFlag, clearFlag } = makeImap({
@@ -1408,6 +1437,49 @@ describe('ImapListener', () => {
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining matcher
                 msg: expect.stringContaining('notification attempt metadata'),
             }));
+
+            await listener.stop();
+        });
+
+        test('checkPendingNotifications is called after each IDLE wakeup', async () => {
+            let idleCallCount = 0;
+            let secondIdleResolve!: () => void;
+            const idle = mock(() => {
+                idleCallCount++;
+                if(idleCallCount === 1) {
+                    // First idle resolves immediately (simulates new mail notification)
+                    return Promise.resolve();
+                }
+                // Second idle blocks until stop() calls cancelIdle()
+                return new Promise<void>((resolve) => {
+                    secondIdleResolve = resolve;
+                });
+            });
+            const cancelIdle = mock(() => {
+                secondIdleResolve?.();
+            });
+
+            const searchByFlag = mock(async () => []);
+            const { conn }   = makeImap({ idle, cancelIdle, searchByFlag });
+            const { processor } = makeProcessor();
+            const { wdc }       = makeWildDuck();
+            const onSendApprovalRequest = mock(async () => undefined);
+            const config = { ...IDLE_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            await listener.start();
+            // searchByFlag called once during start() (after backlog drain)
+            const callsAfterStart = searchByFlag.mock.calls.length;
+            expect(callsAfterStart).toBeGreaterThanOrEqual(1);
+
+            // Let idleLoop run: idle() #1 resolves → fetchAndProcess → checkPendingNotifications → idle() #2
+            await flushAsync();
+            await flushAsync();
+            await flushAsync();
+
+            // searchByFlag should have been called again after the IDLE wakeup
+            const callsAfterIdle = searchByFlag.mock.calls.length;
+            expect(callsAfterIdle).toBeGreaterThan(callsAfterStart);
 
             await listener.stop();
         });

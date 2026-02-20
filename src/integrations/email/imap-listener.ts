@@ -152,6 +152,8 @@ export class ImapListener {
                 // Re-fetch immediately while there are more messages (batch cap was hit)
                 // Stryker disable next-line ConditionalExpression: re-poll loop drains backlog — always correct
                 while(await this.fetchAndProcess() && this._running) { /* drain backlog */ }
+                // Check for pending notification failures after each IDLE wakeup (best-effort)
+                await this.checkPendingNotifications();
             } catch (err) {
                 clearTimeout(idleTimer);
                 logger.warn({

@@ -323,12 +323,13 @@ describe('OutboundApprovalHandler', () => {
 
                 expect(showModal).toHaveBeenCalledTimes(1);
                 // Use toJSON() to access the serialized modal data including component properties
+                // LabelBuilder (Components V2) produces { components: [{ component: { required } }] }
                 const modalArg = showModal.mock.calls[0]?.[0] as { toJSON: () => {
-                    components: { components: { required?: boolean }[] }[]
+                    components: { component: { required?: boolean } }[]
                 } };
                 const modalJson = modalArg.toJSON();
                 // The text input should be optional (not required)
-                const textInput = modalJson.components?.[0]?.components?.[0];
+                const textInput = modalJson.components?.[0]?.component;
                 expect(textInput?.required).toBe(false);
             });
         });
