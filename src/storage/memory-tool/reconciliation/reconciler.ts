@@ -8,7 +8,7 @@
  */
 
 import { DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
-import { map as _map, isObject as _isObject, isString as _isString, startsWith as _startsWith } from 'lodash';
+import { map as _map, some as _some, isArray as _isArray, isObject as _isObject, isString as _isString, startsWith as _startsWith } from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { MemoryToolBackendTagIndex } from '../backend-tag-index';
 import type { MemoryPath, MemoryToolItemData, MemoryToolItem, TagIndexItem } from '../types';
@@ -119,7 +119,7 @@ export async function retryWithBackoff<T>(
                 throw new Error('Aborted');
             }
 
-            // Stryker disable next-line LogicalOperator: Error type guards for throttling detection
+            // Stryker disable next-line LogicalOperator,ConditionalExpression: Error type guards for throttling detection
             const isThrottled = error && _isObject(error) && 'name' in error
               && (error.name === 'ProvisionedThroughputExceededException' || error.name === 'ThrottlingException');
 
@@ -306,13 +306,58 @@ async function getAllTagNames(
 }
 
 /**
+ * Check if old path's tag indices are cleaned up using known old tags (new format).
+ * Runs GetItem for each old tag in parallel via Promise.all.
+ */
+async function checkOldPathIndicesCleanByTags(
+    ctx: PhaseAContext,
+    oldPath: string,
+    oldTags: string[]
+): Promise<boolean> {
+    // Stryker disable next-line ConditionalExpression,BlockStatement,BooleanLiteral: Empty old tags means nothing to check — clean by definition
+    if(oldTags.length === 0) {
+        return true;
+    }
+
+    const results = await Promise.all(
+        _map(oldTags, tag =>
+            retryWithBackoff(
+                async () => ctx.deps.docClient.send(new GetCommand({
+                    TableName: ctx.deps.tableName,
+                    Key:       {
+                        PK: `TAG#${tag}`,
+                        // Stryker disable next-line StringLiteral: Key prefix for old path check
+                        SK: `PATH#${oldPath}`,
+                    },
+                })),
+                ctx.options.backoff,
+                /* Stryker disable next-line StringLiteral: Retry context string is observational */
+                `checkOldPathIndicesClean:${tag}:${oldPath}`,
+                ctx.options.signal
+            )
+        )
+    );
+
+    // Stryker disable next-line ConditionalExpression,ArrayDeclaration: Any existing item means not clean
+    return !_some(results, result => result?.Item);
+}
+
+/**
  * Check if old path's tag indices are cleaned up
- * Enumerates all tags via GSI2 TAG_COUNTS, then GetItem for each tag at the old path
+ * If previouslyKnownAsTags is present (new format): uses GetItem per old tag in parallel.
+ * Otherwise (backward compat with old renames): enumerates all tags via GSI2 TAG_COUNTS.
  */
 async function checkOldPathIndicesClean(
     ctx: PhaseAContext,
-    oldPath: string
+    oldPath: string,
+    oldTags?: string[]
 ): Promise<boolean> {
+    // Stryker disable next-line ConditionalExpression,BlockStatement: New format fast path — use stored old tags directly
+    if(oldTags) {
+        return checkOldPathIndicesCleanByTags(ctx, oldPath, oldTags);
+    }
+
+    // Backward compat: enumerate all tags via GSI2 TAG_COUNTS
     const allTags = await getAllTagNames(ctx);
 
     // Stryker disable next-line ConditionalExpression,BlockStatement: Guard clause for failed tag enumeration
@@ -361,12 +406,18 @@ async function cleanPreviouslyKnownAs(
         return;
     }
 
+    // Extract previouslyKnownAsTags if present (new format) for efficient per-tag check
+    /* Stryker disable next-line OptionalChaining: Defensive null check */
+    const previousTags = memoryItem.metadata?.previouslyKnownAsTags;
+    // Stryker disable next-line ConditionalExpression: Pass array if present (new format), undefined for backward compat fallback
+    const oldTags = _isArray(previousTags) ? previousTags as string[] : undefined;
+
     try {
-        const isClean = await checkOldPathIndicesClean(ctx, previousPath);
+        const isClean = await checkOldPathIndicesClean(ctx, previousPath, oldTags);
 
         if(isClean) {
-            // Remove previouslyKnownAs from metadata
-            const { previouslyKnownAs: _, ...cleanMetadata } = memoryItem.metadata ?? {};
+            // Remove previouslyKnownAs and previouslyKnownAsTags from metadata
+            const { previouslyKnownAs: _, previouslyKnownAsTags: __, ...cleanMetadata } = memoryItem.metadata ?? {};
 
             await ctx.deps.updateMemoryMetadata(
                 memoryItem.path,

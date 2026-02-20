@@ -7,8 +7,7 @@ import {
     GetCommand,
     QueryCommand,
     UpdateCommand,
-    DeleteCommand,
-    ScanCommand
+    DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
 import { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/backend';
 import { ItemNotFoundError, ValidationError } from '@/errors';
@@ -358,9 +357,6 @@ describe('ChannelRegistryBackend', () => {
 
             expect(result).toEqual([]);
 
-            // Verify no ScanCommand was used
-            expect(ddbMock.commandCalls(ScanCommand)).toHaveLength(0);
-
             // Verify QueryCommand called once per well-known type (4 types)
             const queryCalls = ddbMock.commandCalls(QueryCommand);
             expect(queryCalls).toHaveLength(WELL_KNOWN_CHANNELS.length);
@@ -383,14 +379,6 @@ describe('ChannelRegistryBackend', () => {
             for(const type of WELL_KNOWN_CHANNELS) {
                 expect(queriedTypes).toContain(`WELLKNOWN#${type}`);
             }
-        });
-
-        test('should not use ScanCommand', async () => {
-            ddbMock.on(QueryCommand).resolves({ Items: [] });
-
-            await backend.getAllWellKnownChannels();
-
-            expect(ddbMock.commandCalls(ScanCommand)).toHaveLength(0);
         });
 
         test('should return records for configured well-known channels', async () => {
@@ -456,45 +444,6 @@ describe('ChannelRegistryBackend', () => {
             expect(result[0]).toEqual(generalChannel);
 
             getWellKnownSpy.mockRestore();
-        });
-    });
-
-    describe('getAllChannels', () => {
-        test('should return all channels using scan', async () => {
-            const channel1 = createStorageRecord({ channelId: createChannelId('111') });
-            const channel2 = createStorageRecord({ channelId: createChannelId('222') });
-
-            ddbMock.on(ScanCommand).resolves({
-                Items: [
-                    { ...channel1, PK: `CHANNEL#${channel1.channelId}`, SK: 'METADATA' },
-                    { ...channel2, PK: `CHANNEL#${channel2.channelId}`, SK: 'METADATA' },
-                ],
-            });
-
-            const result = await backend.getAllChannels();
-
-            expect(result).toHaveLength(2);
-
-            const calls = ddbMock.commandCalls(ScanCommand);
-            const call = calls[0];
-            expect(call.args[0].input.FilterExpression).toBe('SK = :metadataSk');
-            expect(call.args[0].input.ExpressionAttributeValues).toEqual({
-                ':metadataSk': 'METADATA',
-            });
-
-            // Verify operation name passed to withDynamoTimeout
-            expect(withDynamoTimeoutSpy).toHaveBeenCalledWith(
-                expect.any(Function),
-                expect.objectContaining({ operation: 'ChannelRegistry.getAllChannels' })
-            );
-        });
-
-        test('should return empty array when no channels exist', async () => {
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
-
-            const result = await backend.getAllChannels();
-
-            expect(result).toEqual([]);
         });
     });
 

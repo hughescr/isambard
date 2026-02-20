@@ -3,6 +3,7 @@ import type { Client, Channel } from 'discord.js';
 import { logger } from '@hughescr/logger';
 import type { ChannelRegistryBackend } from './backend';
 import type { ChannelMetadata, WellKnownChannel, ChannelStorageRecord } from './types';
+import { createGuildId } from '../types';
 import type { ChannelId, GuildId } from '../types';
 
 /**
@@ -48,13 +49,18 @@ export class ChannelRegistryManager {
 
     /**
      * Load all channels from DynamoDB into cache.
+     * Fetches both home guild channels and DM channels in parallel.
      * Fetches channel info from Discord API for each stored record.
      * Should be called on startup for optimal performance.
      */
     async warmCache(): Promise<void> {
-        const storedRecords = await this.backend.getChannelsByGuild(this.homeGuildId);
+        const dmGuildId = createGuildId('DM');
+        const [guildRecords, dmRecords] = await Promise.all([
+            this.backend.getChannelsByGuild(this.homeGuildId),
+            this.backend.getChannelsByGuild(dmGuildId),
+        ]);
 
-        for(const record of storedRecords) {
+        for(const record of [...guildRecords, ...dmRecords]) {
             await this.fetchAndCacheChannel(record);
         }
 

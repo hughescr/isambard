@@ -193,8 +193,12 @@ export async function rename(
         path:        newPath,
         content:     sourceItem.content,
         contentType: sourceItem.contentType,
-        metadata:    { ...sourceItem.metadata, previouslyKnownAs: params.path },
-        tags:        sourceItem.tags,
+        metadata:    {
+            ...sourceItem.metadata,
+            previouslyKnownAs:     params.path,
+            previouslyKnownAsTags: sourceItem.tags ? [...sourceItem.tags] : [],
+        },
+        tags: sourceItem.tags,
     });
 
     // Delete old memory

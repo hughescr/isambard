@@ -1216,6 +1216,370 @@ describe('runReconciliation', () => {
             expect(result.phaseA.errors).toBeGreaterThan(0);
             expect(updateMemoryMetadata).toHaveBeenCalled();
         });
+
+        test('should NOT clean previouslyKnownAs when old path index still exists (new previouslyKnownAsTags format)', async () => {
+            const memoryItem = {
+                PK:          'DIR#/identity',
+                SK:          'FILE#core.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/core.md',
+                content:     'test content',
+                contentType: 'text/markdown',
+                metadata:    {
+                    previouslyKnownAs:     '/identity/old-name.md',
+                    previouslyKnownAsTags: ['tag1'],
+                },
+
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           new Set(['tag1']),
+                contentPreview: 'test content',
+            };
+
+            mockLayerQuery('identity', [memoryItem]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+
+            // Current path has index item
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND SK = :sk',
+                ExpressionAttributeValues: { ':pk': 'TAG#tag1', ':sk': 'PATH#/identity/core.md' },
+            }).resolves({ Items: [{ PK: 'TAG#tag1', SK: 'PATH#/identity/core.md' }] });
+
+            // Old path STILL has index item for tag1 (not clean yet)
+            ddbMock.on(GetCommand, {
+                Key: { PK: 'TAG#tag1', SK: 'PATH#/identity/old-name.md' },
+            }).resolves({ Item: { PK: 'TAG#tag1', SK: 'PATH#/identity/old-name.md' } });
+
+            mockEmptyPhaseB();
+
+            const result = await runReconciliation(deps, options);
+
+            // Should NOT clean because old path index still exists
+            expect(result.phaseA.metadataCleaned).toBe(0);
+            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+        });
+
+        test('should clean previouslyKnownAs immediately when previouslyKnownAsTags is empty array (no tags to check)', async () => {
+            const memoryItem = {
+                PK:          'DIR#/identity',
+                SK:          'FILE#core.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/core.md',
+                content:     'test content',
+                contentType: 'text/markdown',
+                metadata:    {
+                    someOtherKey:          'preserved',
+                    previouslyKnownAs:     '/identity/old-name.md',
+                    previouslyKnownAsTags: [],
+                },
+
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           new Set<string>(),
+                contentPreview: 'test content',
+            };
+
+            mockLayerQuery('identity', [memoryItem]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+
+            mockEmptyPhaseB();
+
+            updateMemoryMetadata.mockResolvedValue({
+                ...memoryItem,
+                metadata: { someOtherKey: 'preserved' },
+            } as unknown as MemoryToolItemData);
+
+            const result = await runReconciliation(deps, options);
+
+            // Empty previouslyKnownAsTags → immediately clean (no GetItem needed)
+            expect(result.phaseA.metadataCleaned).toBe(1);
+            expect(updateMemoryMetadata).toHaveBeenCalledWith(
+                '/identity/core.md',
+                expect.objectContaining({ metadata: { someOtherKey: 'preserved' } })
+            );
+            // No GetCommand should have been issued for tag checking
+            expect(ddbMock.commandCalls(GetCommand).length).toBe(0);
+        });
+
+        test('should use GetItem per old tag (not TAG_COUNTS) when previouslyKnownAsTags is present', async () => {
+            const memoryItem = {
+                PK:          'DIR#/identity',
+                SK:          'FILE#core.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/core.md',
+                content:     'test content',
+                contentType: 'text/markdown',
+                metadata:    {
+                    previouslyKnownAs:     '/identity/old-name.md',
+                    previouslyKnownAsTags: ['tag1', 'tag2'],
+                },
+
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           new Set(['tag1', 'tag2']),
+                contentPreview: 'test content',
+            };
+
+            mockLayerQuery('identity', [memoryItem]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+
+            // Current path has index items for both tags
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND SK = :sk',
+                ExpressionAttributeValues: { ':pk': 'TAG#tag1', ':sk': 'PATH#/identity/core.md' },
+            }).resolves({ Items: [{ PK: 'TAG#tag1', SK: 'PATH#/identity/core.md' }] });
+
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND SK = :sk',
+                ExpressionAttributeValues: { ':pk': 'TAG#tag2', ':sk': 'PATH#/identity/core.md' },
+            }).resolves({ Items: [{ PK: 'TAG#tag2', SK: 'PATH#/identity/core.md' }] });
+
+            // Old path has NO index items for either tag (clean)
+            ddbMock.on(GetCommand, {
+                Key: { PK: 'TAG#tag1', SK: 'PATH#/identity/old-name.md' },
+            }).resolves({ Item: undefined });
+
+            ddbMock.on(GetCommand, {
+                Key: { PK: 'TAG#tag2', SK: 'PATH#/identity/old-name.md' },
+            }).resolves({ Item: undefined });
+
+            mockEmptyPhaseB();
+
+            updateMemoryMetadata.mockResolvedValue({
+                ...memoryItem,
+                metadata: {},
+            } as unknown as MemoryToolItemData);
+
+            const result = await runReconciliation(deps, options);
+
+            expect(result.phaseA.metadataCleaned).toBe(1);
+            expect(updateMemoryMetadata).toHaveBeenCalled();
+
+            // Verify GSI2 TAG_COUNTS was NOT queried for checkOldPathIndicesClean
+            // (it IS queried for Phase B and Phase C, but not for Phase A's checkOldPathIndicesClean)
+            const queryCalls = ddbMock.commandCalls(QueryCommand);
+            const gsi2CheckCalls = _filter(queryCalls, call =>
+                call.args[0].input.IndexName === 'GSI2'
+                && call.args[0].input.ExpressionAttributeValues?.[':gsi2pk'] === 'TAG_COUNTS'
+            );
+            // Phase B + Phase C each make one GSI2 call, but NOT Phase A's checkOldPathIndicesClean
+            const getItemCalls = ddbMock.commandCalls(GetCommand);
+            expect(getItemCalls.length).toBeGreaterThanOrEqual(2);
+            // Phase B (getAllTagNames) + Phase C (listTagCounts) = exactly 2 GSI2 calls
+            // If Phase A also called GSI2, it would be 3+ — this confirms the fast path is used
+            expect(gsi2CheckCalls.length).toBe(2);
+        });
+
+        test('should check multiple old tags in parallel (Promise.all) when previouslyKnownAsTags present', async () => {
+            // Track call order to verify parallelism (both GetCommands sent before any resolves)
+            const callOrder: string[] = [];
+            const resolvers: (() => void)[] = [];
+
+            const memoryItem = {
+                PK:          'DIR#/identity',
+                SK:          'FILE#core.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/core.md',
+                content:     'test content',
+                contentType: 'text/markdown',
+                metadata:    {
+                    previouslyKnownAs:     '/identity/old-name.md',
+                    previouslyKnownAsTags: ['tagA', 'tagB'],
+                },
+
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           new Set(['tagA', 'tagB']),
+                contentPreview: 'test content',
+            };
+
+            mockLayerQuery('identity', [memoryItem]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+
+            // Current path index items exist
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND SK = :sk',
+                ExpressionAttributeValues: { ':pk': 'TAG#tagA', ':sk': 'PATH#/identity/core.md' },
+            }).resolves({ Items: [{ PK: 'TAG#tagA', SK: 'PATH#/identity/core.md' }] });
+
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND SK = :sk',
+                ExpressionAttributeValues: { ':pk': 'TAG#tagB', ':sk': 'PATH#/identity/core.md' },
+            }).resolves({ Items: [{ PK: 'TAG#tagB', SK: 'PATH#/identity/core.md' }] });
+
+            // Both old path GetItems return no item (clean) — use deferred promises to track ordering
+            ddbMock.on(GetCommand, {
+                Key: { PK: 'TAG#tagA', SK: 'PATH#/identity/old-name.md' },
+            }).callsFake(async () => {
+                callOrder.push('tagA-called');
+                await new Promise<void>(resolve => resolvers.push(resolve));
+                return { Item: undefined };
+            });
+
+            ddbMock.on(GetCommand, {
+                Key: { PK: 'TAG#tagB', SK: 'PATH#/identity/old-name.md' },
+            }).callsFake(async () => {
+                callOrder.push('tagB-called');
+                await new Promise<void>(resolve => resolvers.push(resolve));
+                return { Item: undefined };
+            });
+
+            mockEmptyPhaseB();
+
+            updateMemoryMetadata.mockResolvedValue({
+                ...memoryItem,
+                metadata: {},
+            } as unknown as MemoryToolItemData);
+
+            // Start reconciliation without awaiting — so we can observe mid-flight state
+            const reconciliationPromise = runReconciliation(deps, options);
+
+            // Let microtasks run until both GetCommands are in-flight
+            // Flush event loop turns until both calls are recorded or we time out
+            for(let i = 0; i < 100 && callOrder.length < 2; i++) {
+                await Promise.resolve();
+            }
+
+            // Both calls should be in-flight simultaneously (parallel Promise.all)
+            expect(callOrder).toContain('tagA-called');
+            expect(callOrder).toContain('tagB-called');
+
+            // Resolve both so reconciliation can complete
+            for(const resolve of resolvers) {
+                resolve();
+            }
+
+            const result = await reconciliationPromise;
+            expect(result.phaseA.metadataCleaned).toBe(1);
+        });
+
+        test('should fall back to TAG_COUNTS enumeration when previouslyKnownAsTags absent (backward compat)', async () => {
+            const memoryItem = {
+                PK:          'DIR#/identity',
+                SK:          'FILE#core.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/core.md',
+                content:     'test content',
+                contentType: 'text/markdown',
+                metadata:    {
+                    previouslyKnownAs: '/identity/old-name.md',
+                    // No previouslyKnownAsTags — old rename format
+                },
+
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           new Set(['test']),
+                contentPreview: 'test content',
+            };
+
+            mockLayerQuery('identity', [memoryItem]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+
+            // Current path has index item
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND SK = :sk',
+                ExpressionAttributeValues: { ':pk': 'TAG#test', ':sk': 'PATH#/identity/core.md' },
+            }).resolves({ Items: [{ PK: 'TAG#test', SK: 'PATH#/identity/core.md' }] });
+
+            // TAG_COUNTS GSI2 query (old fallback path) returns one tag
+            ddbMock.on(QueryCommand, {
+                IndexName:                 'GSI2',
+                KeyConditionExpression:    'GSI2PK = :gsi2pk',
+                ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
+            }).resolves({
+                Items: [{ PK: 'TAG#test', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test', count: 1 }],
+            });
+
+            // Old path has NO index items (GetItem = clean)
+            ddbMock.on(GetCommand, {
+                Key: { PK: 'TAG#test', SK: 'PATH#/identity/old-name.md' },
+            }).resolves({ Item: undefined });
+
+            // Fake Phase B to avoid extra GSI2 calls
+            mockEmptyPhaseB();
+
+            updateMemoryMetadata.mockResolvedValue({
+                ...memoryItem,
+                metadata: {},
+            } as unknown as MemoryToolItemData);
+
+            const result = await runReconciliation(deps, options);
+
+            expect(result.phaseA.metadataCleaned).toBe(1);
+            // GSI2 TAG_COUNTS was queried (fallback path for Phase A) + Phase B
+            const queryCalls = ddbMock.commandCalls(QueryCommand);
+            const gsi2Calls = _filter(queryCalls, call =>
+                call.args[0].input.IndexName === 'GSI2'
+                && call.args[0].input.ExpressionAttributeValues?.[':gsi2pk'] === 'TAG_COUNTS'
+            );
+            // Phase A fallback + Phase B = 2 GSI2 calls
+            expect(gsi2Calls.length).toBeGreaterThanOrEqual(2);
+        });
+
+        test('should remove both previouslyKnownAs and previouslyKnownAsTags during cleanup', async () => {
+            const memoryItem = {
+                PK:          'DIR#/identity',
+                SK:          'FILE#core.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/core.md',
+                content:     'test content',
+                contentType: 'text/markdown',
+                metadata:    {
+                    someOtherKey:          'preserved',
+                    previouslyKnownAs:     '/identity/old-name.md',
+                    previouslyKnownAsTags: ['tag1'],
+                },
+
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           new Set(['tag1']),
+                contentPreview: 'test content',
+            };
+
+            mockLayerQuery('identity', [memoryItem]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+
+            // Current path has index item
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND SK = :sk',
+                ExpressionAttributeValues: { ':pk': 'TAG#tag1', ':sk': 'PATH#/identity/core.md' },
+            }).resolves({ Items: [{ PK: 'TAG#tag1', SK: 'PATH#/identity/core.md' }] });
+
+            // Old path has NO index item (clean)
+            ddbMock.on(GetCommand, {
+                Key: { PK: 'TAG#tag1', SK: 'PATH#/identity/old-name.md' },
+            }).resolves({ Item: undefined });
+
+            mockEmptyPhaseB();
+
+            updateMemoryMetadata.mockResolvedValue({
+                ...memoryItem,
+                metadata: { someOtherKey: 'preserved' },
+            } as unknown as MemoryToolItemData);
+
+            const result = await runReconciliation(deps, options);
+
+            expect(result.phaseA.metadataCleaned).toBe(1);
+            // Verify updateMemoryMetadata was called with metadata that has NEITHER previouslyKnownAs NOR previouslyKnownAsTags
+            // Access call args directly to avoid nested expect matchers typed-as-any causing lint errors
+            const calledArg = updateMemoryMetadata.mock.calls[0][1] as { metadata: Record<string, unknown> };
+            expect(calledArg.metadata).not.toHaveProperty('previouslyKnownAs');
+            expect(calledArg.metadata).not.toHaveProperty('previouslyKnownAsTags');
+            // But other metadata is preserved
+            expect(calledArg.metadata).toHaveProperty('someOtherKey', 'preserved');
+        });
     });
 
     describe('Phase B - Scan tag index', () => {

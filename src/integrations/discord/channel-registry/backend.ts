@@ -4,8 +4,7 @@ import {
     GetCommand,
     QueryCommand,
     UpdateCommand,
-    DeleteCommand,
-    ScanCommand // Still needed for getAllChannels()
+    DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
 import _ from 'lodash';
 import { stripDynamoKeys } from '@/storage/utils/index.js';
@@ -198,33 +197,6 @@ export class ChannelRegistryBackend {
             _.map(WELL_KNOWN_CHANNELS, type => this.getWellKnownChannel(type))
         );
         return _.filter(results, (item): item is ChannelStorageRecord => item !== null);
-    }
-
-    /**
-     * Gets all channel storage records.
-     * WARNING: Uses scan operation - expensive for large datasets.
-     * Manager layer is responsible for merging with Discord API data.
-     *
-     * @returns Array of all channel storage records
-     */
-    async getAllChannels(): Promise<ChannelStorageRecord[]> {
-        const command = new ScanCommand({
-            TableName:                 this.tableName,
-            FilterExpression:          'SK = :metadataSk',
-            ExpressionAttributeValues: {
-                ':metadataSk': 'METADATA',
-            },
-        });
-
-        const result = await withDynamoTimeout(
-            () => this.docClient.send(command),
-            {
-                timeoutMs: this.timeoutMs,
-                operation: 'ChannelRegistry.getAllChannels',
-            }
-        );
-
-        return _.map(result.Items ?? [], item => stripDynamoKeys(item) as ChannelStorageRecord);
     }
 
     /**

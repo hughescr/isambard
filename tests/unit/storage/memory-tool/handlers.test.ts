@@ -379,7 +379,7 @@ describe('Memory Tool Handlers', () => {
                 path:        '/test/new.md' as MemoryPath,
                 content:     'Content',
                 contentType: 'text/markdown' as ContentType,
-                metadata:    { key: 'value', previouslyKnownAs: '/test/old.md' },
+                metadata:    { key: 'value', previouslyKnownAs: '/test/old.md', previouslyKnownAsTags: ['tag1'] },
 
                 createdAt: '2025-01-01T00:00:01.000Z',
                 updatedAt: '2025-01-01T00:00:01.000Z',
@@ -399,10 +399,51 @@ describe('Memory Tool Handlers', () => {
                 path:        '/test/new.md',
                 content:     'Content',
                 contentType: 'text/markdown',
-                metadata:    { key: 'value', previouslyKnownAs: '/test/old.md' },
+                metadata:    { key: 'value', previouslyKnownAs: '/test/old.md', previouslyKnownAsTags: ['tag1'] },
                 tags:        new Set(['tag1']),
             });
             expect(mockBackend.delete).toHaveBeenCalledWith('/test/old.md');
+        });
+
+        it('should store previouslyKnownAsTags as empty array when source has no tags', async () => {
+            mockBackend.get = mock(async (path: MemoryPath) => {
+                if(path === '/test/old.md') {
+                    return {
+                        path:        '/test/old.md' as MemoryPath,
+                        content:     'Content',
+                        contentType: 'text/markdown' as ContentType,
+                        metadata:    { key: 'value' },
+
+                        createdAt: '2025-01-01T00:00:00.000Z',
+                        updatedAt: '2025-01-01T00:00:00.000Z',
+                        // No tags field
+                    };
+                }
+                return undefined;
+            });
+            mockBackend.create = mock(async () => ({
+                path:        '/test/new.md' as MemoryPath,
+                content:     'Content',
+                contentType: 'text/markdown' as ContentType,
+                metadata:    { key: 'value', previouslyKnownAs: '/test/old.md', previouslyKnownAsTags: [] },
+
+                createdAt: '2025-01-01T00:00:01.000Z',
+                updatedAt: '2025-01-01T00:00:01.000Z',
+            }));
+            mockBackend.delete = mock(async () => undefined);
+
+            await rename(mockBackend, {
+                path:     '/test/old.md',
+                new_path: '/test/new.md',
+            });
+
+            expect(mockBackend.create).toHaveBeenCalledWith({
+                path:        '/test/new.md',
+                content:     'Content',
+                contentType: 'text/markdown',
+                metadata:    { key: 'value', previouslyKnownAs: '/test/old.md', previouslyKnownAsTags: [] },
+                tags:        undefined,
+            });
         });
 
         it('should add previouslyKnownAs metadata to renamed memory', async () => {
@@ -424,7 +465,7 @@ describe('Memory Tool Handlers', () => {
                 path:        '/test/new.md' as MemoryPath,
                 content:     'Content',
                 contentType: 'text/markdown' as ContentType,
-                metadata:    { existingKey: 'existingValue', previouslyKnownAs: '/test/old.md' },
+                metadata:    { existingKey: 'existingValue', previouslyKnownAs: '/test/old.md', previouslyKnownAsTags: [] },
 
                 createdAt: '2025-01-01T00:00:01.000Z',
                 updatedAt: '2025-01-01T00:00:01.000Z',
@@ -436,12 +477,13 @@ describe('Memory Tool Handlers', () => {
                 new_path: '/test/new.md',
             });
 
-            // Verify the created memory includes previouslyKnownAs metadata
+            // Verify the created memory includes previouslyKnownAs and previouslyKnownAsTags metadata
             expect(mockBackend.create).toHaveBeenCalledWith({
                 path:        '/test/new.md',
                 content:     'Content',
                 contentType: 'text/markdown',
-                metadata:    { existingKey: 'existingValue', previouslyKnownAs: '/test/old.md' },
+                metadata:    { existingKey: 'existingValue', previouslyKnownAs: '/test/old.md', previouslyKnownAsTags: [] },
+                tags:        undefined,
             });
         });
 
