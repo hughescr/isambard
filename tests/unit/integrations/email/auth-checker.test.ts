@@ -15,8 +15,8 @@ describe.concurrent('checkAuthentication', () => {
         expect(checkAuthentication(header, '')).toEqual({ spfPass: false, dkimPass: false });
     });
 
-    test('fromAddress with bare TLD domain (unresolvable org) returns both false', () => {
-        // 'alice@com' has domain 'com' which is a bare TLD with no eTLD+1 — orgDomain returns null
+    test('fromAddress with bare TLD domain returns both false', () => {
+        // 'alice@com' has domain 'com' — exact comparison 'example.com' !== 'com' returns false
         const header = 'mx.rungie.com; spf=pass smtp.mailfrom=alice@example.com';
         expect(checkAuthentication(header, 'alice@com')).toEqual({ spfPass: false, dkimPass: false });
     });
@@ -39,15 +39,16 @@ describe.concurrent('checkAuthentication', () => {
         expect(checkAuthentication(header, 'alice@example.com')).toEqual({ spfPass: false, dkimPass: false });
     });
 
-    test('SPF pass with subdomain aligned to From domain (relaxed alignment) returns spfPass true', () => {
-        // mail.example.com org domain is example.com, same as example.com
+    test('SPF pass with subdomain of From domain does NOT align (exact matching)', () => {
+        // mail.example.com !== example.com under exact domain matching
         const header = 'mx.rungie.com; spf=pass smtp.mailfrom=alice@mail.example.com';
-        expect(checkAuthentication(header, 'alice@example.com')).toEqual({ spfPass: true, dkimPass: false });
+        expect(checkAuthentication(header, 'alice@example.com')).toEqual({ spfPass: false, dkimPass: false });
     });
 
-    test('SPF pass with From subdomain aligned to mailfrom domain (relaxed alignment) returns spfPass true', () => {
+    test('SPF pass with From subdomain different from mailfrom domain does NOT align (exact matching)', () => {
+        // mail.example.com !== example.com under exact domain matching
         const header = 'mx.rungie.com; spf=pass smtp.mailfrom=alice@example.com';
-        expect(checkAuthentication(header, 'alice@mail.example.com')).toEqual({ spfPass: true, dkimPass: false });
+        expect(checkAuthentication(header, 'alice@mail.example.com')).toEqual({ spfPass: false, dkimPass: false });
     });
 
     // -------------------------------------------------------------------
@@ -68,9 +69,10 @@ describe.concurrent('checkAuthentication', () => {
         expect(checkAuthentication(header, 'alice@example.com')).toEqual({ spfPass: false, dkimPass: false });
     });
 
-    test('DKIM pass with subdomain aligned to From domain (relaxed alignment) returns dkimPass true', () => {
+    test('DKIM pass with subdomain of From domain does NOT align (exact matching)', () => {
+        // mail.example.com !== example.com under exact domain matching
         const header = 'mx.rungie.com; dkim=pass header.d=mail.example.com';
-        expect(checkAuthentication(header, 'alice@example.com')).toEqual({ spfPass: false, dkimPass: true });
+        expect(checkAuthentication(header, 'alice@example.com')).toEqual({ spfPass: false, dkimPass: false });
     });
 
     // -------------------------------------------------------------------
@@ -140,7 +142,7 @@ describe.concurrent('checkAuthentication', () => {
     });
 
     // -------------------------------------------------------------------
-    // Multi-label TLD (eTLD) alignment — .co.uk, .com.au
+    // Multi-label TLD domains — .co.uk, .com.au
     // -------------------------------------------------------------------
     test('different .co.uk orgs do NOT align (SPF)', () => {
         // alice.co.uk and attacker.co.uk share a TLD but are different organizations
@@ -148,10 +150,10 @@ describe.concurrent('checkAuthentication', () => {
         expect(checkAuthentication(header, 'alice@alice.co.uk')).toEqual({ spfPass: false, dkimPass: false });
     });
 
-    test('same .co.uk org with subdomain aligns (SPF relaxed alignment)', () => {
-        // mail.alice.co.uk and alice.co.uk are the same org
+    test('SPF pass with subdomain does NOT align with parent domain (exact matching)', () => {
+        // mail.alice.co.uk !== alice.co.uk under exact domain matching
         const header = 'mx.example.com; spf=pass smtp.mailfrom=sender@mail.alice.co.uk';
-        expect(checkAuthentication(header, 'alice@alice.co.uk')).toEqual({ spfPass: true, dkimPass: false });
+        expect(checkAuthentication(header, 'alice@alice.co.uk')).toEqual({ spfPass: false, dkimPass: false });
     });
 
     test('different .co.uk orgs do NOT align (DKIM)', () => {
@@ -175,15 +177,15 @@ describe.concurrent('checkAuthentication', () => {
     });
 
     // -------------------------------------------------------------------
-    // Unresolvable / bare TLD domains — null orgDomain result
+    // Bare TLD domains — do not align under exact matching
     // -------------------------------------------------------------------
-    test('bare TLD-only smtp.mailfrom (co.uk) does not align with any org', () => {
-        // parse('co.uk').domain returns null — treat as no alignment
+    test('bare TLD-only smtp.mailfrom (co.uk) does not align with any domain', () => {
+        // co.uk !== example.com under exact domain matching
         const header = 'mx.example.com; spf=pass smtp.mailfrom=co.uk';
         expect(checkAuthentication(header, 'alice@example.com')).toEqual({ spfPass: false, dkimPass: false });
     });
 
-    test('bare TLD-only header.d (co.uk) does not align with any org', () => {
+    test('bare TLD-only header.d (co.uk) does not align with any domain', () => {
         const header = 'mx.example.com; dkim=pass header.d=co.uk';
         expect(checkAuthentication(header, 'alice@example.com')).toEqual({ spfPass: false, dkimPass: false });
     });
@@ -203,16 +205,16 @@ describe.concurrent('checkAuthentication', () => {
     });
 
     // -------------------------------------------------------------------
-    // Private suffix domains (e.g. github.io) — each subdomain is its own org
+    // Domains with same suffix (e.g. github.io) — exact domain matching distinguishes them
     // -------------------------------------------------------------------
-    test('SPF pass for foo.github.io aligns with From: foo.github.io (private suffix)', () => {
-        // foo.github.io is the eTLD+1 under the private suffix github.io
+    test('SPF pass for foo.github.io aligns with From: foo.github.io', () => {
+        // foo.github.io === foo.github.io — exact match passes
         const header = 'mx.example.com; spf=pass smtp.mailfrom=alice@foo.github.io';
         expect(checkAuthentication(header, 'alice@foo.github.io')).toEqual({ spfPass: true, dkimPass: false });
     });
 
-    test('SPF pass for bar.github.io does NOT align with From: foo.github.io (private suffix isolation)', () => {
-        // bar.github.io and foo.github.io are different orgs — should NOT align
+    test('SPF pass for bar.github.io does NOT align with From: foo.github.io', () => {
+        // bar.github.io !== foo.github.io — exact match fails
         const header = 'mx.example.com; spf=pass smtp.mailfrom=attacker@bar.github.io';
         expect(checkAuthentication(header, 'user@foo.github.io')).toEqual({ spfPass: false, dkimPass: false });
     });

@@ -17,6 +17,8 @@ export interface EmailProcessorDeps {
 }
 
 export interface ProcessEmailCallbacks {
+    /** Called when an email is classified as 'safe' but sender is not on allowlist — used for Discord admin notification */
+    onSafe?:   (email: EmailMetadata, verdict: ClassifierVerdict) => Promise<void>
     /** Called when an email is classified as 'uncertain' — used for Discord review embed */
     onReview?: (email: EmailMetadata, verdict: ClassifierVerdict) => Promise<void>
     /** Called when an email is classified as 'unsafe' — used for Discord alert to Craig */
@@ -174,7 +176,9 @@ export class EmailProcessor {
     }
 
     private async invokeCallback(email: EmailMetadata, verdict: ClassifierVerdict): Promise<void> {
-        if(verdict.verdict === 'uncertain' && this.callbacks.onReview) {
+        if(verdict.verdict === 'safe' && this.callbacks.onSafe) {
+            await this.callbacks.onSafe(email, verdict);
+        } else if(verdict.verdict === 'uncertain' && this.callbacks.onReview) {
             await this.callbacks.onReview(email, verdict);
         } else if(verdict.verdict === 'unsafe' && this.callbacks.onUnsafe) {
             await this.callbacks.onUnsafe(email, verdict);

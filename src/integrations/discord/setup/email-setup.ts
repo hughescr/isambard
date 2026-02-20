@@ -1,5 +1,5 @@
 import type { Client } from 'discord.js';
-import { REST, Routes } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, REST, Routes } from 'discord.js';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
@@ -15,7 +15,11 @@ import { ReviewHandler } from '@/integrations/email/review-handler';
 import { buildReviewEmbed, buildUnsafeAlert } from '@/integrations/email/review-embed-builder';
 import { AllowlistCommandHandler, buildAllowlistCommand } from '@/integrations/email/allowlist-commands';
 import { EmailFolder } from '@/integrations/email/types';
+import { WildDuckClient } from '@/integrations/email/wildduck-client';
+import { SendRateLimiter } from '@/integrations/email/send-rate-limiter';
+import { OutboundApprovalHandler } from '@/integrations/email/outbound-approval-handler';
 import { createEmailMCPServer } from '@/agent/email-mcp-server';
+import { retryAsync } from '@/utils/retry';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,12 +38,14 @@ export interface EmailSetupOptions {
 }
 
 export interface EmailSetupResult {
-    listener:         ImapListener
-    reviewHandler:    ReviewHandler
-    allowlistHandler: AllowlistCommandHandler
-    emailMcpServer:   McpServerConfig
-    imap:             ImapConnection
-    counters:         EmailCounterStore
+    listener:                ImapListener
+    reviewHandler:           ReviewHandler
+    allowlistHandler:        AllowlistCommandHandler
+    emailMcpServer:          McpServerConfig
+    imap:                    ImapConnection
+    counters:                EmailCounterStore
+    outboundApprovalHandler: OutboundApprovalHandler
+    wildDuckClient:          WildDuckClient
 }
 
 // ---------------------------------------------------------------------------
@@ -83,46 +89,57 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Load allowlist from DynamoDB into memory cache
     await allowlist.load();
 
-    // Create processor with Discord DM callbacks
+    // Create processor with Discord admin channel callbacks
     // Stryker disable ObjectLiteral,BlockStatement,ArrayDeclaration,StringLiteral: EmailProcessor config and callbacks are integration wiring - not unit testable
     const processor = new EmailProcessor(
         { allowlist, classifier, counters, imap },
         {
-            onReview: async (email, _verdict) => {
+            onSafe: async (email, _verdict) => {
                 try {
-                    const { embed, actionRow } = buildReviewEmbed(email, EmailFolder.Review);
-                    const user = await client.users.fetch(emailConfig.adminDiscordUserId);
-                    await user.send({ embeds: [embed], components: [actionRow] });
+                    const channel = await client.channels.fetch(emailConfig.adminDiscordChannelId);
+                    if(channel && 'send' in channel) {
+                        await channel.send({
+                            content: `Safe email from **${email.from.address}** — not on allowlist.\nSubject: ${email.subject}\n\nUse \`/allowlist add ${email.from.address}\` to add to allowlist.`,
+                        });
+                    }
                 } catch (err) {
                     logger.error({
                         error: _.isError(err) ? err.message : String(err),
-                        msg:   'Failed to send email review DM to admin',
+                        msg:   'Failed to send safe-but-not-allowlisted notification to admin channel',
+                    });
+                }
+            },
+            onReview: async (email, _verdict) => {
+                try {
+                    const { embed, actionRow } = buildReviewEmbed(email, EmailFolder.Review);
+                    const channel = await client.channels.fetch(emailConfig.adminDiscordChannelId);
+                    if(channel && 'send' in channel) {
+                        await channel.send({ embeds: [embed], components: [actionRow] });
+                    }
+                } catch (err) {
+                    logger.error({
+                        error: _.isError(err) ? err.message : String(err),
+                        msg:   'Failed to send email review embed to admin channel',
                     });
                 }
             },
             onUnsafe: async (email, verdict) => {
                 try {
                     const { embed, actionRow } = buildUnsafeAlert(email, verdict, EmailFolder.Quarantine);
-                    const user = await client.users.fetch(emailConfig.adminDiscordUserId);
-                    await user.send({ embeds: [embed], components: [actionRow] });
+                    const channel = await client.channels.fetch(emailConfig.adminDiscordChannelId);
+                    if(channel && 'send' in channel) {
+                        await channel.send({ embeds: [embed], components: [actionRow] });
+                    }
                 } catch (err) {
                     logger.error({
                         error: _.isError(err) ? err.message : String(err),
-                        msg:   'Failed to send unsafe alert DM to admin',
+                        msg:   'Failed to send unsafe alert to admin channel',
                     });
                 }
             },
         }
     );
     // Stryker restore ObjectLiteral,BlockStatement,ArrayDeclaration,StringLiteral
-
-    // Create listener (not started yet — started in clientReady handler)
-    // Stryker disable next-line ObjectLiteral: ImapListener config object is integration wiring
-    const listener = new ImapListener(imap, processor, counters, {
-        useIdle:        emailConfig.useIdle,
-        idleTimeoutMs:  emailConfig.idleTimeoutMs,
-        pollFallbackMs: emailConfig.pollFallbackMs,
-    });
 
     // Create review handler (handles email-* button interactions)
     // Stryker disable next-line ObjectLiteral: ReviewHandler config object is integration wiring
@@ -131,8 +148,105 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Create allowlist command handler (handles /allowlist interactions)
     const allowlistHandler = new AllowlistCommandHandler(allowlist, emailConfig.adminDiscordUserId);
 
+    // Create WildDuck client (required — wildDuckApiUrl is required in the config schema)
+    // Stryker disable ObjectLiteral,StringLiteral: WildDuck client wiring is integration-only
+    const wildDuckClient = new WildDuckClient({
+        url:          emailConfig.wildDuckApiUrl,
+        imapUser:     emailConfig.user,
+        imapPassword: emailConfig.password,
+    });
+    await wildDuckClient.init();
+    // Stryker restore ObjectLiteral,StringLiteral
+
+    // Create rate limiter for outbound email
+    // Stryker disable next-line ObjectLiteral: SendRateLimiter config object is integration wiring
+    const rateLimiter = new SendRateLimiter({ softLimit: emailConfig.sendSoftLimitPerDay });
+
+    // Build sendApprovalRequest callback (posts approval embed to #admin channel)
+    // Retries up to 3 times on transient failures. Propagates error to caller after exhaustion.
+    // Stryker disable ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration: sendApprovalRequest callback is integration wiring
+    const sendApprovalRequest = async (to: string, subject: string, draftUid: number, cc?: string[]): Promise<void> => {
+        const BLUE = 0x0099FF;
+        const embed = new EmbedBuilder()
+            .setTitle('Outbound Email Approval Required')
+            .setColor(BLUE)
+            .addFields(
+                { name: 'To',      value: to,      inline: true  },
+                { name: 'Subject', value: subject, inline: true  },
+                { name: 'UID',     value: String(draftUid), inline: true }
+            );
+
+        // Stryker disable next-line ConditionalExpression,EqualityOperator: cc field conditional is integration wiring
+        if(cc && cc.length > 0) {
+            embed.addFields({ name: 'CC', value: cc.join(', '), inline: true });
+        }
+
+        const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`email-send-approve:${draftUid}`)
+                .setLabel('Approve')
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId(`email-send-approveallowlist:${draftUid}`)
+                .setLabel('Approve + Allowlist...')
+                .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+                .setCustomId(`email-send-reject:${draftUid}`)
+                .setLabel('Reject')
+                .setStyle(ButtonStyle.Danger)
+        );
+
+        // Retry channel.send() up to 3 times; errors propagate to caller after exhaustion
+        await retryAsync(async () => {
+            const channel = await client.channels.fetch(emailConfig.adminDiscordChannelId);
+            if(channel && 'send' in channel) {
+                await channel.send({ embeds: [embed], components: [actionRow] });
+            }
+        }, { policy: { maxAttempts: 3 } });
+    };
+    // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration
+
+    // Create listener (not started yet — started in clientReady handler)
+    // Must be created after sendApprovalRequest and wildDuckClient are defined.
+    // Stryker disable next-line ObjectLiteral: ImapListener config object is integration wiring
+    const listener = new ImapListener(imap, processor, counters, {
+        useIdle:               emailConfig.useIdle,
+        idleTimeoutMs:         emailConfig.idleTimeoutMs,
+        pollFallbackMs:        emailConfig.pollFallbackMs,
+        onSendApprovalRequest: sendApprovalRequest,
+        wildDuckClient,
+    });
+
+    // Create outbound approval handler (handles email-send-* button/modal interactions)
+    // Stryker disable next-line ObjectLiteral: outbound approval handler wiring is integration-only
+    const outboundApprovalHandler = new OutboundApprovalHandler({
+        wildDuckClient,
+        imapConnection: imap,
+        allowlist,
+    });
+
     // Create email MCP server for Claude agent
-    const emailMcpServer = createEmailMCPServer(imap, counters);
+    // Stryker disable ObjectLiteral,BlockStatement,StringLiteral: MCP server options and admin notification callback are integration wiring - not unit testable
+    const emailMcpServer = createEmailMCPServer(imap, counters, {
+        sendAdminNotification: async (msg) => {
+            try {
+                const channel = await client.channels.fetch(emailConfig.adminDiscordChannelId);
+                if(channel && 'send' in channel) {
+                    await channel.send(msg);
+                }
+            } catch (err) {
+                logger.error({
+                    error: _.isError(err) ? err.message : String(err),
+                    msg:   'Failed to send restricted mailbox notification to admin channel',
+                });
+            }
+        },
+        wildDuckClient,
+        rateLimiter,
+        allowlist,
+        sendApprovalRequest,
+    });
+    // Stryker restore ObjectLiteral,BlockStatement,StringLiteral
 
     // Register /allowlist slash command with Discord
     await registerAllowlistCommand(botToken, applicationId);
@@ -148,6 +262,8 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         emailMcpServer,
         imap,
         counters,
+        outboundApprovalHandler,
+        wildDuckClient,
     };
 }
 

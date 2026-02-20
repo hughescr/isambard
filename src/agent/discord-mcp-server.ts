@@ -5,6 +5,7 @@ import _ from 'lodash';
 import { randomUUID } from 'node:crypto';
 import type { Client, TextChannel, Message, MessageCreateOptions } from 'discord.js';
 import { logger } from '@hughescr/logger';
+// eslint-disable-next-line no-warning-comments -- tracked in roadmap, not forgotten
 // TODO: Decouple - Discord MCP server should expose platform-agnostic MCP tool interfaces wrapping messaging platform capabilities
 // eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord message history; decouple per roadmap
 import type { MessageSearchService } from '../integrations/discord/message-history/search';

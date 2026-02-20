@@ -5,7 +5,8 @@ import type { EmailProcessor } from '@/integrations/email/email-processor';
 import type { EmailCounterStore } from '@/integrations/email/email-counters';
 import type { EmailMetadata } from '@/integrations/email/types';
 import type { ImapListenerConfig } from '@/integrations/email/imap-listener';
-import { ImapListener } from '@/integrations/email/imap-listener';
+import { ImapListener, MAX_NOTIFY_ATTEMPTS } from '@/integrations/email/imap-listener';
+import _ from 'lodash';
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -23,6 +24,7 @@ function makeEmail(uid: number): EmailMetadata {
         bodyText:       'Body text',
         hasAttachments: false,
         headers:        {},
+        attachments:    [],
     };
 }
 
@@ -38,6 +40,9 @@ function makeImap(overrides: Partial<{
     getMailboxCounts: ReturnType<typeof mock>
     idle:             ReturnType<typeof mock>
     cancelIdle:       ReturnType<typeof mock>
+    searchByFlag:     ReturnType<typeof mock>
+    setFlag:          ReturnType<typeof mock>
+    clearFlag:        ReturnType<typeof mock>
 }> = {}): {
     conn:             ImapConnection
     connect:          ReturnType<typeof mock>
@@ -47,6 +52,9 @@ function makeImap(overrides: Partial<{
     getMailboxCounts: ReturnType<typeof mock>
     idle:             ReturnType<typeof mock>
     cancelIdle:       ReturnType<typeof mock>
+    searchByFlag:     ReturnType<typeof mock>
+    setFlag:          ReturnType<typeof mock>
+    clearFlag:        ReturnType<typeof mock>
 } {
     const connect          = overrides.connect          ?? mock(async () => undefined);
     const disconnect       = overrides.disconnect       ?? mock(async () => undefined);
@@ -55,9 +63,12 @@ function makeImap(overrides: Partial<{
     const getMailboxCounts = overrides.getMailboxCounts ?? mock(async () => ({ total: 3, unread: 1 }));
     const idle             = overrides.idle             ?? mock(async () => undefined);
     const cancelIdle       = overrides.cancelIdle       ?? mock(() => undefined);
+    const searchByFlag     = overrides.searchByFlag     ?? mock(async () => []);
+    const setFlag          = overrides.setFlag          ?? mock(async () => undefined);
+    const clearFlag        = overrides.clearFlag        ?? mock(async () => undefined);
 
     return {
-        conn: { connect, disconnect, ensureFolders, fetchNewMessages, getMailboxCounts, idle, cancelIdle } as unknown as ImapConnection,
+        conn: { connect, disconnect, ensureFolders, fetchNewMessages, getMailboxCounts, idle, cancelIdle, searchByFlag, setFlag, clearFlag } as unknown as ImapConnection,
         connect,
         disconnect,
         ensureFolders,
@@ -65,6 +76,9 @@ function makeImap(overrides: Partial<{
         getMailboxCounts,
         idle,
         cancelIdle,
+        searchByFlag,
+        setFlag,
+        clearFlag,
     };
 }
 
@@ -284,6 +298,57 @@ describe('ImapListener', () => {
             }));
 
             await listener.stop();
+        });
+
+        test('when stop() is called while start() is draining a backlog, the loop exits after the current batch', async () => {
+            // The startup while loop is: while(this._running && await this.fetchAndProcess())
+            // First fetch returns 25 emails (batch cap hit) → loop checks _running and calls fetchAndProcess again
+            // Second fetch blocks → we call stop() → _running becomes false → loop exits when second fetch resolves
+            let fetchCount = 0;
+            let resolveSecondFetch!: (value: never[]) => void;
+            const fetchNewMessages = mock(() => {
+                fetchCount++;
+                if(fetchCount === 1) {
+                    // First fetch: 25 emails — batch cap hit, loop will evaluate _running && fetchAndProcess()
+                    return Promise.resolve(Array.from({ length: 25 }, (_, i) => makeEmail(i + 1)));
+                }
+                // Second fetch: blocks until test resolves it
+                return new Promise<never[]>((resolve) => {
+                    resolveSecondFetch = resolve;
+                });
+            });
+
+            const { conn } = makeImap({ fetchNewMessages });
+            const { processor } = makeProcessor();
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+
+            // Fire start() without awaiting — it blocks on the second fetch
+            const startPromise = listener.start();
+
+            // Flush many microtasks: connect → ensureFolders → getMailboxCounts → reset →
+            // fetchAndProcess #1 (25 emails, cap hit, processes 20) → fetchAndProcess #2 (blocks)
+            // Need enough ticks: ~4 setup + 1 fetch + 20 process + 1 second fetch = ~30+
+            for(let i = 0; i < 60; i++) {
+                await Promise.resolve();
+            }
+
+            // Second fetch is now in-flight — resolveSecondFetch should be set
+            // Call stop() while the second fetch is blocked
+            const stopPromise = listener.stop();
+
+            // Resolve the paused second fetch — returns empty (not cap hit)
+            // _running is now false, so loop exits even though fetchAndProcess returned false
+            resolveSecondFetch([]);
+
+            // Await both start and stop to settle
+            await startPromise;
+            await stopPromise;
+
+            // After stop(), _running is false
+            expect(listener.running).toBe(false);
+            // Only 2 fetches: initial (cap hit) and second (blocked, then resolved) — no third fetch
+            expect(fetchCount).toBe(2);
         });
     });
 
@@ -534,29 +599,42 @@ describe('ImapListener', () => {
             await listener.stop();
         });
 
-        test('processes at most MAX_EMAILS_PER_POLL emails per fetch and updates lastUid to last processed', async () => {
-            // Generate 25 emails with UIDs 1..25
-            const manyEmails = Array.from({ length: 25 }, (_, i) => makeEmail(i + 1));
-            const fetchNewMessages = mock(async () => manyEmails);
+        test('processes at most MAX_EMAILS_PER_POLL emails per fetch and re-polls immediately if batch cap hit', async () => {
+            // First call returns 25 (batch cap hit); second call returns 5 (no more cap)
+            let fetchCount = 0;
+            const fetchNewMessages = mock(async () => {
+                fetchCount++;
+                if(fetchCount === 1) {
+                    return Array.from({ length: 25 }, (_, i) => makeEmail(i + 1)); // UIDs 1..25
+                }
+                return Array.from({ length: 5 }, (_, i) => makeEmail(21 + i)); // UIDs 21..25
+            });
             const { conn }                    = makeImap({ fetchNewMessages });
             const { processor, processEmail } = makeProcessor();
 
             const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
             await listener.start();
 
-            // Only first 20 should be processed
-            expect(processEmail).toHaveBeenCalledTimes(20);
-            // lastUid should be UID 20 (not 25); next fetch call uses sinceUid=20
-            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync();
+            // First batch: 20 processed (UIDs 1-20), lastUid=20; immediately re-polls since cap hit
+            // Second batch: 5 processed (UIDs 21-25), lastUid=25; no re-poll
+            expect(fetchNewMessages).toHaveBeenCalledTimes(2);
+            expect(fetchNewMessages).toHaveBeenNthCalledWith(1, 'INBOX', 0);
             expect(fetchNewMessages).toHaveBeenNthCalledWith(2, 'INBOX', 20);
+            expect(processEmail).toHaveBeenCalledTimes(25);
 
             await listener.stop();
         });
 
         test('logs warning when batch cap is hit', async () => {
-            const manyEmails = Array.from({ length: 21 }, (_, i) => makeEmail(i + 1));
-            const fetchNewMessages = mock(async () => manyEmails);
+            // First call: 21 emails (triggers batch cap warning); second call: 0 (stops re-polling)
+            let fetchCount = 0;
+            const fetchNewMessages = mock(async () => {
+                fetchCount++;
+                if(fetchCount === 1) {
+                    return Array.from({ length: 21 }, (_, i) => makeEmail(i + 1));
+                }
+                return [];
+            });
             const { conn }      = makeImap({ fetchNewMessages });
             const { processor } = makeProcessor();
 
@@ -604,6 +682,119 @@ describe('ImapListener', () => {
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
             await flushAsync();
             expect(fetchNewMessages).toHaveBeenNthCalledWith(2, 'INBOX', 20);
+
+            await listener.stop();
+        });
+    });
+
+    // ---------------------------------------------------------------------------
+    // Immediate re-poll when batch cap hit
+    // ---------------------------------------------------------------------------
+
+    describe('immediate re-poll when batch cap hit', () => {
+        test('in poll mode: when batch cap hit during scheduled poll, calls fetchAndProcess again immediately (no timer)', async () => {
+            // Start with empty initial fetch, then poll returns > MAX emails, then returns 0
+            let fetchCount = 0;
+            const fetchNewMessages = mock(async () => {
+                fetchCount++;
+                if(fetchCount === 1) {
+                    return []; // Initial fetch: nothing
+                }
+                if(fetchCount === 2) {
+                    return Array.from({ length: 25 }, (_, i) => makeEmail(i + 1)); // batch cap hit
+                }
+                return []; // Third call: no more
+            });
+            const { conn }                    = makeImap({ fetchNewMessages });
+            const { processor, processEmail } = makeProcessor();
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            await listener.start(); // fetch #1: empty
+
+            // Fire poll timer — fetch #2 (25 emails) triggers immediate re-fetch (fetch #3)
+            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+            await flushAsync();
+
+            expect(fetchNewMessages).toHaveBeenCalledTimes(3);
+            // Fetch #3 should use lastUid=20 (from capped batch)
+            expect(fetchNewMessages).toHaveBeenNthCalledWith(3, 'INBOX', 20);
+            expect(processEmail).toHaveBeenCalledTimes(20);
+
+            await listener.stop();
+        });
+
+        test('in IDLE mode: when batch cap hit, calls fetchAndProcess again before re-entering IDLE', async () => {
+            let fetchCount     = 0;
+            let idleCallCount  = 0;
+            let thirdIdleResolve!: () => void;
+
+            const idle = mock(() => {
+                idleCallCount++;
+                if(idleCallCount === 1) {
+                    // First idle resolves immediately (new mail notification)
+                    return Promise.resolve();
+                }
+                // Second idle blocks until stop
+                return new Promise<void>((resolve) => {
+                    thirdIdleResolve = resolve;
+                });
+            });
+            const cancelIdle = mock(() => {
+                thirdIdleResolve?.();
+            });
+            const fetchNewMessages = mock(async () => {
+                fetchCount++;
+                if(fetchCount === 1) {
+                    return []; // Initial fetch on start
+                }
+                if(fetchCount === 2) {
+                    // After first IDLE resolves: 25 emails (batch cap hit)
+                    return Array.from({ length: 25 }, (_, i) => makeEmail(i + 1));
+                }
+                return []; // Re-fetch after cap: no more
+            });
+
+            const { conn }      = makeImap({ idle, cancelIdle, fetchNewMessages });
+            const { processor } = makeProcessor();
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, IDLE_CONFIG);
+            await listener.start();
+            // Let idleLoop run: idle() #1 resolves → fetchAndProcess (cap hit) → re-fetchAndProcess → idle() #2
+            // Multiple flushAsync() calls are needed for the full async chain to settle
+            await flushAsync();
+            await flushAsync();
+            await flushAsync();
+
+            // fetchAndProcess was called during re-poll (fetch #3 after cap)
+            expect(fetchNewMessages).toHaveBeenNthCalledWith(3, 'INBOX', 20);
+            // idle() should have been called again after draining (entering IDLE #2)
+            expect(idleCallCount).toBeGreaterThanOrEqual(2);
+
+            await listener.stop();
+        });
+
+        test('in poll mode: when batch cap NOT hit, no immediate re-poll (goes back to timer)', async () => {
+            let fetchCount = 0;
+            const fetchNewMessages = mock(async () => {
+                fetchCount++;
+                if(fetchCount === 1) {
+                    return []; // Initial fetch
+                }
+                return Array.from({ length: 5 }, (_, i) => makeEmail(i + 1)); // under cap
+            });
+            const { conn }      = makeImap({ fetchNewMessages });
+            const { processor } = makeProcessor();
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            await listener.start(); // fetch #1
+
+            // Fire poll timer — fetch #2 (5 emails, no cap) should NOT trigger immediate re-fetch
+            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+            await flushAsync();
+
+            expect(fetchNewMessages).toHaveBeenCalledTimes(2);
+            // A new poll timer should be scheduled (normal re-scheduling)
+            expect(jest.getTimerCount()).toBe(1);
 
             await listener.stop();
         });
@@ -891,6 +1082,333 @@ describe('ImapListener', () => {
 
             // cancelIdle is always called in stop() — it's a no-op when no IDLE is active
             expect(cancelIdle).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    // ---------------------------------------------------------------------------
+    // checkPendingNotifications (via start() and poll())
+    // ---------------------------------------------------------------------------
+
+    describe('checkPendingNotifications (via start and poll)', () => {
+        function makeWildDuck(overrides: Partial<{
+            getMessage:            ReturnType<typeof mock>
+            updateMessageMetadata: ReturnType<typeof mock>
+        }> = {}): {
+            wdc:                   { getMessage: ReturnType<typeof mock>, updateMessageMetadata: ReturnType<typeof mock> }
+            getMessage:            ReturnType<typeof mock>
+            updateMessageMetadata: ReturnType<typeof mock>
+        } {
+            const getMessage            = overrides.getMessage            ?? mock(_.constant(Promise.resolve(null)));
+            const updateMessageMetadata = overrides.updateMessageMetadata ?? mock(async () => undefined);
+            return {
+                wdc: { getMessage, updateMessageMetadata },
+                getMessage,
+                updateMessageMetadata,
+            };
+        }
+
+        test('does not search by flag when onSendApprovalRequest is not configured', async () => {
+            const { conn, searchByFlag } = makeImap();
+            const { processor }          = makeProcessor();
+
+            // No onSendApprovalRequest in config
+            const listener = new ImapListener(conn, processor, makeCounters().store, DEFAULT_CONFIG);
+            await listener.start();
+
+            expect(searchByFlag).not.toHaveBeenCalled();
+
+            await listener.stop();
+        });
+
+        test('does not search by flag when wildDuckClient is not configured', async () => {
+            const { conn, searchByFlag } = makeImap();
+            const { processor }          = makeProcessor();
+
+            const onSendApprovalRequest = mock(async () => undefined);
+            const config = { ...DEFAULT_CONFIG, onSendApprovalRequest };
+            // no wildDuckClient
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            await listener.start();
+
+            expect(searchByFlag).not.toHaveBeenCalled();
+
+            await listener.stop();
+        });
+
+        test('no further calls when searchByFlag returns empty array', async () => {
+            const { conn, searchByFlag } = makeImap({
+                searchByFlag: mock(async () => []),
+            });
+            const { processor }         = makeProcessor();
+            const { wdc, getMessage }   = makeWildDuck();
+            const onSendApprovalRequest = mock(async () => undefined);
+            const config                = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            await listener.start();
+
+            expect(searchByFlag).toHaveBeenCalledWith('Drafts', '\\DiscordNotifyFailed');
+            expect(getMessage).not.toHaveBeenCalled();
+
+            await listener.stop();
+        });
+
+        test('on successful retry: calls onSendApprovalRequest, clears flag, resets notifyAttempts', async () => {
+            const uid = 42;
+            const { conn, clearFlag } = makeImap({
+                searchByFlag: mock(async () => [uid]),
+            });
+            const { processor } = makeProcessor();
+            const { wdc, getMessage, updateMessageMetadata } = makeWildDuck({
+                getMessage: mock(async () => ({
+                    id:      uid,
+                    subject: 'Test subject',
+                    to:      [{ address: 'alice@example.com' }],
+                    cc:      [],
+                })),
+            });
+            const onSendApprovalRequest = mock(async () => undefined);
+            const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            await listener.start();
+
+            expect(getMessage).toHaveBeenCalledWith('Drafts', uid);
+            expect(onSendApprovalRequest).toHaveBeenCalledWith('alice@example.com', 'Test subject', uid, undefined);
+            expect(clearFlag).toHaveBeenCalledWith(uid, 'Drafts', '\\DiscordNotifyFailed');
+            expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', uid, { notifyAttempts: 0 });
+
+            await listener.stop();
+        });
+
+        test('on successful retry with CC: passes cc array to onSendApprovalRequest', async () => {
+            const uid = 77;
+            const { conn } = makeImap({
+                searchByFlag: mock(async () => [uid]),
+            });
+            const { processor } = makeProcessor();
+            const { wdc, getMessage } = makeWildDuck({
+                getMessage: mock(async () => ({
+                    id:      uid,
+                    subject: 'CC test',
+                    to:      [{ address: 'alice@example.com' }],
+                    cc:      [{ address: 'bob@example.com' }, { address: 'carol@example.com' }],
+                })),
+            });
+            const onSendApprovalRequest = mock(async () => undefined);
+            const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            await listener.start();
+
+            expect(getMessage).toHaveBeenCalledWith('Drafts', uid);
+            expect(onSendApprovalRequest).toHaveBeenCalledWith('alice@example.com', 'CC test', uid, ['bob@example.com', 'carol@example.com']);
+
+            await listener.stop();
+        });
+
+        test('skips message when getMessage returns null', async () => {
+            const uid = 55;
+            const { conn } = makeImap({
+                searchByFlag: mock(async () => [uid]),
+            });
+            const { processor } = makeProcessor();
+            const { wdc, getMessage, updateMessageMetadata } = makeWildDuck({
+                getMessage: mock(_.constant(Promise.resolve(null))),
+            });
+            const onSendApprovalRequest = mock(async () => undefined);
+            const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            await listener.start();
+
+            expect(getMessage).toHaveBeenCalledWith('Drafts', uid);
+            expect(onSendApprovalRequest).not.toHaveBeenCalled();
+            expect(updateMessageMetadata).not.toHaveBeenCalled();
+
+            await listener.stop();
+        });
+
+        test('on failed retry below MAX_NOTIFY_ATTEMPTS: increments notifyAttempts, keeps flag', async () => {
+            const uid = 33;
+            const { conn, setFlag, clearFlag } = makeImap({
+                searchByFlag: mock(async () => [uid]),
+            });
+            const { processor } = makeProcessor();
+            // Message has notifyAttempts: 2; after failed retry → 3 (below MAX_NOTIFY_ATTEMPTS=5)
+            const { wdc, updateMessageMetadata } = makeWildDuck({
+                getMessage: mock(async () => ({
+                    id:       uid,
+                    subject:  'Retry test',
+                    to:       [{ address: 'bob@example.com' }],
+                    metaData: { notifyAttempts: 2 },
+                })),
+            });
+            const onSendApprovalRequest = mock(async () => {
+                throw new Error('Discord offline');
+            });
+            const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            await listener.start();
+
+            // Did NOT clear the DiscordNotifyFailed flag
+            expect(clearFlag).not.toHaveBeenCalledWith(uid, 'Drafts', '\\DiscordNotifyFailed');
+            // Did NOT set DiscordNotifyGaveUp
+            expect(setFlag).not.toHaveBeenCalled();
+            // Incremented attempts from 2 → 3
+            expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', uid, { notifyAttempts: 3 });
+
+            await listener.stop();
+        });
+
+        test('on failed retry at MAX_NOTIFY_ATTEMPTS: transitions to DiscordNotifyGaveUp flag', async () => {
+            const uid = 44;
+            const { conn, setFlag, clearFlag } = makeImap({
+                searchByFlag: mock(async () => [uid]),
+            });
+            const { processor } = makeProcessor();
+            // notifyAttempts: 4 → after +1 = 5 = MAX_NOTIFY_ATTEMPTS → give up
+            const { wdc, updateMessageMetadata } = makeWildDuck({
+                getMessage: mock(async () => ({
+                    id:       uid,
+                    subject:  'Give up test',
+                    to:       [{ address: 'carol@example.com' }],
+                    metaData: { notifyAttempts: MAX_NOTIFY_ATTEMPTS - 1 },
+                })),
+            });
+            const onSendApprovalRequest = mock(async () => {
+                throw new Error('Discord offline');
+            });
+            const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            await listener.start();
+
+            // Cleared the DiscordNotifyFailed flag
+            expect(clearFlag).toHaveBeenCalledWith(uid, 'Drafts', '\\DiscordNotifyFailed');
+            // Set the DiscordNotifyGaveUp flag
+            expect(setFlag).toHaveBeenCalledWith(uid, 'Drafts', '\\DiscordNotifyGaveUp');
+            // Stored final attempt count
+            expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', uid, { notifyAttempts: MAX_NOTIFY_ATTEMPTS });
+
+            await listener.stop();
+        });
+
+        test('on failed retry with no metadata (getMessage returns null on retry): defaults to 2, below MAX', async () => {
+            const uid = 66;
+            const { conn, setFlag, clearFlag } = makeImap({
+                searchByFlag: mock(async () => [uid]),
+            });
+            const { processor } = makeProcessor();
+            // First getMessage returns msg (for the notification attempt), second returns null (for retry escalation)
+            let getMessageCallCount = 0;
+            const { wdc, updateMessageMetadata } = makeWildDuck({
+                getMessage: mock(async () => {
+                    getMessageCallCount++;
+                    if(getMessageCallCount === 1) {
+                        return { id: uid, subject: 'Test', to: [{ address: 'dave@example.com' }] };
+                    }
+                    return null;
+                }),
+            });
+            const onSendApprovalRequest = mock(async () => {
+                throw new Error('Discord offline');
+            });
+            const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            await listener.start();
+
+            // null metaData → attempts defaults to 2, which is < MAX_NOTIFY_ATTEMPTS (5), so increment
+            expect(clearFlag).not.toHaveBeenCalled();
+            expect(setFlag).not.toHaveBeenCalled();
+            expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', uid, { notifyAttempts: 2 });
+
+            await listener.stop();
+        });
+
+        test('error in searchByFlag is caught and logged, does not throw', async () => {
+            const { conn } = makeImap({
+                searchByFlag: mock(async () => {
+                    throw new Error('IMAP search failed');
+                }),
+            });
+            const { processor } = makeProcessor();
+            const { wdc }       = makeWildDuck();
+            const onSendApprovalRequest = mock(async () => undefined);
+            const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            // Should not throw
+            await listener.start();
+
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining matcher
+                msg: expect.stringContaining('pending notification'),
+            }));
+
+            await listener.stop();
+        });
+
+        test('error during metadata update on failure escalation is logged, does not throw', async () => {
+            const uid = 88;
+            const { conn } = makeImap({
+                searchByFlag: mock(async () => [uid]),
+            });
+            const { processor } = makeProcessor();
+            const { wdc } = makeWildDuck({
+                getMessage: mock(async () => ({
+                    id:       uid,
+                    subject:  'Meta error test',
+                    to:       [{ address: 'eve@example.com' }],
+                    metaData: { notifyAttempts: 1 },
+                })),
+                updateMessageMetadata: mock(async () => { throw new Error('DynamoDB offline'); }),
+            });
+            const onSendApprovalRequest = mock(async () => {
+                throw new Error('Discord offline');
+            });
+            const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            // Should not throw
+            await listener.start();
+
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining matcher
+                msg: expect.stringContaining('notification attempt metadata'),
+            }));
+
+            await listener.stop();
+        });
+
+        test('checkPendingNotifications is called after each poll cycle', async () => {
+            const { conn, searchByFlag } = makeImap({
+                searchByFlag: mock(async () => []),
+            });
+            const { processor } = makeProcessor();
+            const { wdc }       = makeWildDuck();
+            const onSendApprovalRequest = mock(async () => undefined);
+            const config = { ...DEFAULT_CONFIG, onSendApprovalRequest, wildDuckClient: wdc };
+
+            const listener = new ImapListener(conn, processor, makeCounters().store, config);
+            await listener.start();
+
+            // searchByFlag called once during start() (after backlog drain)
+            const callsAfterStart = searchByFlag.mock.calls.length;
+            expect(callsAfterStart).toBeGreaterThanOrEqual(1);
+
+            // Trigger one poll cycle
+            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+            await flushAsync();
+
+            // searchByFlag should have been called again during the poll
+            const callsAfterPoll = searchByFlag.mock.calls.length;
+            expect(callsAfterPoll).toBeGreaterThan(callsAfterStart);
+
+            await listener.stop();
         });
     });
 });

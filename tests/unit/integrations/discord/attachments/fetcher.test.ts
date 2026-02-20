@@ -491,13 +491,13 @@ describe('Attachment Fetcher', () => {
             const result = await saveNonImageAttachment(metadata, '/tmp/scratch', 'msg123');
 
             expect(result).not.toBeNull();
-            expect(result?.localPath).toBe('/tmp/scratch/attachments/msg123/document.pdf');
+            expect(result?.localPath).toBe('/tmp/scratch/attachments/discord-msg123/document.pdf');
             expect(result?.originalFilename).toBe('document.pdf');
             expect(result?.contentType).toBe('application/pdf');
             expect(result?.size).toBe(4096);
 
-            expect(mockFsPromises.mkdir).toHaveBeenCalledWith('/tmp/scratch/attachments/msg123', { recursive: true });
-            expect(mockFsPromises.writeFile).toHaveBeenCalledWith('/tmp/scratch/attachments/msg123/document.pdf', fileData);
+            expect(mockFsPromises.mkdir).toHaveBeenCalledWith('/tmp/scratch/attachments/discord-msg123', { recursive: true });
+            expect(mockFsPromises.writeFile).toHaveBeenCalledWith('/tmp/scratch/attachments/discord-msg123/document.pdf', fileData);
         });
 
         test('creates nested directory structure', async () => {
@@ -516,7 +516,7 @@ describe('Attachment Fetcher', () => {
 
             await saveNonImageAttachment(metadata, '/some/deep/path', 'msg456');
 
-            expect(mockFsPromises.mkdir).toHaveBeenCalledWith('/some/deep/path/attachments/msg456', { recursive: true });
+            expect(mockFsPromises.mkdir).toHaveBeenCalledWith('/some/deep/path/attachments/discord-msg456', { recursive: true });
         });
 
         test('handles fetch errors gracefully (returns null)', async () => {
@@ -555,6 +555,30 @@ describe('Attachment Fetcher', () => {
 
             expect(result).toBeNull();
             expect(arrayBufferMock).not.toHaveBeenCalled();
+        });
+
+        test('sanitizes filename before saving to prevent path traversal', async () => {
+            const metadata: AttachmentMetadata = {
+                url:         'https://example.com/evil.pdf',
+                filename:    '../../../etc/passwd',
+                contentType: 'application/pdf',
+                size:        512,
+            };
+
+            const fileData = Buffer.from('pdf-content');
+            mockFetch.mockResolvedValueOnce({
+                ok:          true,
+                arrayBuffer: async () => fileData.buffer,
+            } as Response);
+
+            const result = await saveNonImageAttachment(metadata, '/tmp/scratch', 'msg789');
+
+            expect(result).not.toBeNull();
+            // The sanitized filename must not contain path separators or dotdot
+            expect(result?.localPath).not.toContain('..');
+            expect(result?.localPath).not.toMatch(/\/etc\/passwd/);
+            // originalFilename preserves the original for reference
+            expect(result?.originalFilename).toBe('../../../etc/passwd');
         });
 
         test('handles filesystem errors gracefully (returns null)', async () => {

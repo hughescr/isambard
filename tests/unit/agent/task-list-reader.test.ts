@@ -4,7 +4,7 @@
  * The task list reader reads Claude Agent SDK task JSON files from a session
  * directory and builds a compact summary for idle status generation.
  */
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, setSystemTime } from 'bun:test';
 import { constant as _constant, replace as _replace } from 'lodash';
 import { mockLogger } from '../../setup';
 import { createTaskListReader } from '@/agent/task-list-reader';
@@ -21,6 +21,10 @@ describe('createTaskListReader', () => {
         mockGetCurrentSessionId = mock(_constant('test-session-id'));
 
         mockLogger.debug.mockClear();
+    });
+
+    afterEach(() => {
+        setSystemTime();
     });
 
     test('should return undefined when no session ID', async () => {
@@ -139,8 +143,9 @@ describe('createTaskListReader', () => {
     });
 
     test('should exclude completed tasks from exactly 2 hours ago', async () => {
-        const now = new Date();
-        const exactlyTwoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+        const frozenNow = new Date('2026-01-01T12:00:00.000Z');
+        setSystemTime(frozenNow);
+        const exactlyTwoHoursAgo = new Date(frozenNow.getTime() - 2 * 60 * 60 * 1000);
 
         const mockFiles: Dirent[] = [
             { name: 'task1.json', isFile: _constant(true) } as Dirent,
@@ -162,7 +167,8 @@ describe('createTaskListReader', () => {
 
         const result = await reader.buildTaskListSummary();
 
-        // Should be excluded (< 2 hours, not <=)
+        // Should be excluded: (now - completedTime) < twoHoursMs → twoHoursMs < twoHoursMs → false
+        // Mutant (<=) would include it: twoHoursMs <= twoHoursMs → true → result would not be undefined
         expect(result).toBeUndefined();
     });
 

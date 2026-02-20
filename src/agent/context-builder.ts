@@ -6,7 +6,8 @@
  */
 
 import { logger } from '@hughescr/logger';
-import { map as _map, isNumber as _isNumber, sortBy as _sortBy } from 'lodash';
+import _ from 'lodash';
+import { map as _map, isNumber as _isNumber, isString as _isString, sortBy as _sortBy } from 'lodash';
 import type { MemoryToolBackend } from '../storage/memory-tool/backend';
 import type { MemoryPath, MemoryToolItemData } from '../storage/memory-tool/types';
 import { createMemoryPath, createLayerName } from '../storage/memory-tool/types';
@@ -29,15 +30,22 @@ export interface EmailCounterService {
     getCounters: () => Promise<EmailCounters>
 }
 
-/** Minimal interface for listing unread messages */
+/** Minimal interface for listing unread messages and searching by flag */
 export interface ImapService {
-    listUnread: (folder: string) => Promise<UnreadEmailSummary[]>
+    listUnread:    (folder: string) => Promise<UnreadEmailSummary[]>
+    searchByFlag?: (folder: string, flag: string) => Promise<number[]>
+}
+
+/** Minimal interface for retrieving message metadata from WildDuck */
+export interface WildDuckService {
+    getMessage: (mailboxPath: string, uid: number) => Promise<{ id: number, subject?: string, to?: { address: string, name?: string }[], metaData?: Record<string, unknown> } | null>
 }
 
 /** Combined email service dependency for perch inbox section */
 export interface EmailService {
-    counterStore: EmailCounterService
-    imap:         ImapService
+    counterStore:    EmailCounterService
+    imap:            ImapService
+    wildDuckClient?: WildDuckService
 }
 
 export interface RecentEventsResult {
@@ -173,6 +181,31 @@ export function formatMemoryPreview(
 }
 
 /**
+ * Extract a rejection summary line from WildDuck message fields and metadata.
+ * Returns a formatted string if the message has rejectedAt + reason + to, else undefined.
+ * @internal
+ */
+function formatRejectedDraftLine(
+    subject:    string | undefined,
+    to:         { address: string, name?: string }[] | undefined,
+    metaData:   Record<string, unknown> | undefined
+): string | undefined {
+    if(!metaData?.rejectedAt) {
+        return undefined;
+    }
+    const reason    = _isString(metaData.reason) ? metaData.reason : undefined;
+    // Stryker disable next-line ConditionalExpression,EqualityOperator: defensive length check; to is always non-empty when the caller has verified it has addresses
+    const firstTo   = to && to.length > 0 ? to[0] : undefined;
+    const toAddress = firstTo?.address;
+    // Stryker disable next-line ConditionalExpression,BlockStatement,LogicalOperator: only include rejected drafts with reason and to
+    if(!reason || !toAddress) {
+        return undefined;
+    }
+    // Stryker disable next-line StringLiteral: Cosmetic rejection line format
+    return `- To: ${toAddress}, Subject: "${subject ?? ''}" — Reason: ${reason}`;
+}
+
+/**
  * Creates a context builder for managing agent memory context
  */
 export function createContextBuilder(options: ContextBuilderOptions): ContextBuilder {
@@ -259,6 +292,136 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         }
 
         return eventSections.join('\n\n');
+    };
+
+    /**
+     * Build the email inbox section for perch context.
+     * Returns formatted inbox section string, or undefined if no unread mail or email service unavailable.
+     */
+    const buildEmailInboxSection = async (now: Date): Promise<string | undefined> => {
+        if(!emailService) {
+            return undefined;
+        }
+        // Stryker disable BlockStatement: try-catch guards email errors from breaking perch context
+        try {
+            const counters = await emailService.counterStore.getCounters();
+            if(counters.unread > 0) {
+                const summaries = await emailService.imap.listUnread('CleanInbox');
+                // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for inboxLines
+                const inboxLines: string[] = [];
+                for(const summary of summaries) {
+                    const age = formatShortRelativeTime(summary.date, now);
+                    // Stryker disable next-line StringLiteral,ObjectLiteral: Cosmetic inbox line format
+                    const fromStr = summary.from.name ? `${summary.from.name} <${summary.from.address}>` : summary.from.address;
+                    // Stryker disable next-line StringLiteral: UID reference prefix is configuration
+                    inboxLines.push(`- [CleanInbox:${summary.uid}] From: ${fromStr} | Subject: ${summary.subject} | ${age}`);
+                }
+                // Stryker disable next-line StringLiteral: Cosmetic section header text
+                return `## Inbox\nYou have mail (${counters.unread} unread):\n${inboxLines.join('\n')}`;
+            }
+        } catch (error) {
+            // Stryker disable next-line StringLiteral,ObjectLiteral: Log message content is not behavior-affecting
+            logger.warn({ error, msg: 'Email inbox fetch failed, skipping inbox section' });
+        }
+        // Stryker restore BlockStatement
+        return undefined;
+    };
+
+    /**
+     * Build the admin-rejected subsection: messages sent by Izzy that were rejected by admin.
+     */
+    const buildAdminRejectedSubsection = async (
+        uids: number[],
+        wdc: WildDuckService
+    ): Promise<string | undefined> => {
+        // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for rejectionLines
+        const rejectionLines: string[] = [];
+        for(const uid of uids) {
+            // Stryker disable next-line StringLiteral: EmailFolder.Drafts is configuration constant
+            const msg  = await wdc.getMessage('Drafts', uid);
+            const line = formatRejectedDraftLine(msg?.subject, msg?.to, msg?.metaData);
+            if(line) {
+                rejectionLines.push(line);
+            }
+        }
+        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no lines = no section
+        if(rejectionLines.length === 0) {
+            return undefined;
+        }
+        // Stryker disable next-line StringLiteral: Cosmetic section header text
+        return `## Messages You Attempted to Send (Rejected by Admin)\n${rejectionLines.join('\n')}`;
+    };
+
+    /**
+     * Build the gave-up escalation subsection: drafts that could not reach Discord for approval.
+     */
+    const buildGaveUpSubsection = async (
+        uids: number[],
+        wdc: WildDuckService
+    ): Promise<string | undefined> => {
+        // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for gaveUpLines
+        const gaveUpLines: string[] = [];
+        for(const uid of uids) {
+            // Stryker disable next-line StringLiteral: EmailFolder.Drafts is configuration constant
+            const msg    = await wdc.getMessage('Drafts', uid);
+            const toStr  = _(msg?.to ?? []).map('address').join(', ');
+            const subject = msg?.subject ?? '(no subject)';
+            // Stryker disable next-line StringLiteral: Cosmetic line format
+            gaveUpLines.push(`- Drafts:${uid} to ${toStr} — "${subject}"`);
+        }
+        // Stryker disable next-line StringLiteral: Cosmetic section header text
+        return `## CRITICAL: ${uids.length} draft(s) could not be sent for admin approval after multiple attempts:\n${gaveUpLines.join('\n')}\nPlease notify Craig directly to check the Drafts folder.`;
+    };
+
+    /**
+     * Build the rejected drafts section for perch context.
+     * Returns formatted rejected drafts section string, or undefined if none found or service unavailable.
+     * Also includes a CRITICAL escalation section for drafts where Discord notification has permanently failed.
+     */
+    const buildRejectedDraftSection = async (): Promise<string | undefined> => {
+        if(!emailService) {
+            return undefined;
+        }
+        const { imap, wildDuckClient } = emailService;
+        if(!imap.searchByFlag || !wildDuckClient) {
+            return undefined;
+        }
+        // Stryker disable BlockStatement: try-catch guards rejected draft errors from breaking perch context
+        try {
+            // Stryker disable next-line StringLiteral: EmailFolder.Drafts is configuration constant
+            const rejectedUids = await imap.searchByFlag('Drafts', '\\SendRejectedByAdmin');
+            // Stryker disable next-line StringLiteral: EmailFolder.Drafts is configuration constant
+            const gaveUpUids   = await imap.searchByFlag('Drafts', '\\DiscordNotifyGaveUp');
+
+            // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
+            const sections: string[] = [];
+
+            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: skip if no rejected drafts
+            if(rejectedUids.length > 0) {
+                const sub = await buildAdminRejectedSubsection(rejectedUids, wildDuckClient);
+                if(sub) {
+                    sections.push(sub);
+                }
+            }
+
+            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: skip if no gave-up drafts
+            if(gaveUpUids.length > 0) {
+                const sub = await buildGaveUpSubsection(gaveUpUids, wildDuckClient);
+                if(sub) {
+                    sections.push(sub);
+                }
+            }
+
+            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: skip if no sections
+            if(sections.length > 0) {
+                return sections.join('\n\n');
+            }
+        } catch (err) {
+            // Stryker disable next-line StringLiteral,ObjectLiteral: Log message content is not behavior-affecting
+            logger.warn({ err, msg: 'Failed to load rejected draft context' });
+        }
+        // Stryker restore BlockStatement
+        return undefined;
     };
 
     const builder: ContextBuilder = {
@@ -533,28 +696,15 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             }
 
             // 4. Email inbox summary (optional — skip if no email service configured)
-            if(emailService) {
-                // Stryker disable BlockStatement: try-catch guards email errors from breaking perch context
-                try {
-                    const counters = await emailService.counterStore.getCounters();
-                    if(counters.unread > 0) {
-                        const summaries = await emailService.imap.listUnread('CleanInbox');
-                        // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for inboxLines
-                        const inboxLines: string[] = [];
-                        for(const summary of summaries) {
-                            const age = formatShortRelativeTime(summary.date, now);
-                            // Stryker disable next-line StringLiteral,ObjectLiteral: Cosmetic inbox line format
-                            const fromStr = summary.from.name ? `${summary.from.name} <${summary.from.address}>` : summary.from.address;
-                            inboxLines.push(`- From: ${fromStr} | Subject: ${summary.subject} | ${age}`);
-                        }
-                        // Stryker disable next-line StringLiteral: Cosmetic section header text
-                        sections.push(`## Inbox\nYou have mail (${counters.unread} unread):\n${inboxLines.join('\n')}`);
-                    }
-                } catch (error) {
-                    // Stryker disable next-line StringLiteral,ObjectLiteral: Log message content is not behavior-affecting
-                    logger.warn({ error, msg: 'Email inbox fetch failed, skipping inbox section' });
-                }
-                // Stryker restore BlockStatement
+            const inboxSection = await buildEmailInboxSection(now);
+            if(inboxSection) {
+                sections.push(inboxSection);
+            }
+
+            // 5. Rejected drafts context (outbound emails rejected by admin)
+            const rejectedDraftsSection = await buildRejectedDraftSection();
+            if(rejectedDraftsSection) {
+                sections.push(rejectedDraftsSection);
             }
 
             // Stryker disable next-line StringLiteral: Cosmetic trailing newlines for context formatting

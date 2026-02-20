@@ -3,6 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
+// eslint-disable-next-line no-warning-comments -- tracked in roadmap, not forgotten
 // TODO: Decouple - Inbox MCP server should expose platform-agnostic MCP tool interfaces wrapping inbox management capabilities
 // eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord inbox manager; decouple per roadmap
 import type { InboxManager } from '../integrations/discord/inbox/inbox-manager';

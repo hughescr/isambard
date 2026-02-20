@@ -4,7 +4,7 @@ import { convert } from 'html-to-text';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import { ImapConnectionError } from '@/integrations/email/errors';
-import type { EmailMetadata, EmailAddress, EmailHeaders, EmailSummary } from '@/integrations/email/types';
+import type { EmailMetadata, EmailAddress, EmailHeaders, EmailSummary, AttachmentData } from '@/integrations/email/types';
 import { EmailFolder } from '@/integrations/email/types';
 
 // ---------------------------------------------------------------------------
@@ -38,6 +38,7 @@ const HEADER_NAMES = [
     'date',
     'message-id',
     'in-reply-to',
+    'reply-to',
     'authentication-results',
     'x-rspamd-report',
     'x-rspamd-score',
@@ -127,6 +128,46 @@ function findTextPart(bodyStructure: MessageStructureObject | undefined): { part
 }
 
 /**
+ * Collect all attachment MIME parts (disposition=attachment) from a BODYSTRUCTURE tree.
+ * Returns an array of { part, filename, contentType } for each attachment found.
+ */
+function findAttachmentParts(
+    bodyStructure: MessageStructureObject | undefined
+): { part: string, filename: string, contentType: string }[] {
+    // Stryker disable next-line ConditionalExpression,BlockStatement: guard for absent bodyStructure
+    if(!bodyStructure) {
+        return [];
+    }
+
+    const results: { part: string, filename: string, contentType: string }[] = [];
+    const type = _.toLower(bodyStructure.type);
+
+    // Stryker disable next-line ConditionalExpression,StringLiteral: multipart check distinguishes container vs leaf nodes
+    if(!_.startsWith(type, 'multipart/')) {
+        // Leaf node: check if it's an attachment
+        if(_.toLower(bodyStructure.disposition ?? '') === 'attachment') {
+            const filename    = bodyStructure.dispositionParameters?.filename ?? bodyStructure.dispositionParameters?.name ?? 'attachment';
+            // Stryker disable next-line ConditionalExpression,StringLiteral: part fallback when bodyStructure.part is absent (simple messages)
+            const part        = bodyStructure.part ?? '1';
+            results.push({ part, filename, contentType: type });
+        }
+        return results;
+    }
+
+    // Multipart node: recurse into children
+    // Stryker disable next-line ConditionalExpression: _.flatMap(undefined) is empty — childNodes guard
+    const children = bodyStructure.childNodes ?? [];
+    for(const child of children) {
+        const found = findAttachmentParts(child);
+        // Stryker disable next-line BlockStatement: pushing results from children — always required
+        for(const item of found) {
+            results.push(item);
+        }
+    }
+    return results;
+}
+
+/**
  * Extract plain-text body from a decoded body part string.
  * Converts HTML to text if isHtml is true.
  * Truncates at maxBytes on a valid UTF-8 byte boundary.
@@ -198,6 +239,8 @@ function buildEmailHeaders(headers: Record<string, string>): EmailHeaders {
     return {
         ...(headers['message-id']             ? { messageId: headers['message-id']            } : {}),
         ...(headers['in-reply-to']            ? { inReplyTo: headers['in-reply-to']           } : {}),
+        // Stryker disable next-line ObjectLiteral: replyTo header pass-through — only present in some emails, tested indirectly
+        ...(headers['reply-to']               ? { replyTo: headers['reply-to']              } : {}),
         ...(headers['authentication-results'] ? { authenticationResults: headers['authentication-results'] } : {}),
         ...(headers['x-rspamd-report']        ? { xRspamdReport: headers['x-rspamd-report']       } : {}),
         ...(headers['x-rspamd-score']         ? { xRspamdScore: headers['x-rspamd-score']        } : {}),
@@ -205,9 +248,9 @@ function buildEmailHeaders(headers: Record<string, string>): EmailHeaders {
 }
 
 /**
- * Convert a FetchMessageObject (with pre-fetched body string) into EmailMetadata.
+ * Convert a FetchMessageObject (with pre-fetched body string and attachments) into EmailMetadata.
  */
-function toEmailMetadata(msg: FetchMessageObject, bodyText: string): EmailMetadata {
+function toEmailMetadata(msg: FetchMessageObject, bodyText: string, attachments: AttachmentData[] = []): EmailMetadata {
     const headers      = parseHeaders(msg.source ?? Buffer.alloc(0));
     const envelope     = msg.envelope ?? {};
     const fromArr      = mapAddresses(envelope.from);
@@ -226,6 +269,7 @@ function toEmailMetadata(msg: FetchMessageObject, bodyText: string): EmailMetada
         bodyText,
         hasAttachments: hasAttachmentParts(msg.bodyStructure),
         headers:        emailHeaders,
+        attachments,
     };
 }
 
@@ -348,6 +392,43 @@ export class ImapConnection {
         return extractBody(partBuf.toString('utf8'), textPart.isHtml, this.maxBytes);
     }
 
+    /**
+     * Fetch all attachment parts for a single message given its bodyStructure.
+     * Fetches each attachment part and returns the raw data.
+     * Both operations happen within the caller's serialize() callback.
+     * @internal
+     */
+    private async fetchAttachments(uid: number, bodyStructure: MessageStructureObject | undefined): Promise<AttachmentData[]> {
+        const attachmentParts = findAttachmentParts(bodyStructure);
+        // Stryker disable next-line ConditionalExpression,BlockStatement: no attachment parts found — return empty array
+        if(attachmentParts.length === 0) {
+            return [];
+        }
+
+        const results: AttachmentData[] = [];
+        for(const { part, filename, contentType } of attachmentParts) {
+            // Stryker disable next-line MethodExpression: await is required for sequential attachment fetching within serialize
+            const partMsg = await this.client.fetchOne(
+                String(uid),
+                // Stryker disable next-line ObjectLiteral,ArrayDeclaration: bodyParts fetch option is API configuration
+                { bodyParts: [part] },
+                // Stryker disable next-line ObjectLiteral,BooleanLiteral: uid option is API configuration
+                { uid: true }
+            );
+            // Stryker disable next-line ConditionalExpression,BlockStatement: guard for absent bodyParts in response
+            if(!partMsg || !partMsg.bodyParts) {
+                continue;
+            }
+            const partBuf = partMsg.bodyParts.get(part);
+            // Stryker disable next-line ConditionalExpression,BlockStatement: guard for absent part content
+            if(!partBuf) {
+                continue;
+            }
+            results.push({ filename, contentType, data: partBuf });
+        }
+        return results;
+    }
+
     /** Fetch a single message by UID from the given folder. */
     async fetchMessage(folder: string, uid: number): Promise<EmailMetadata> {
         return this.serialize(async () => {
@@ -364,8 +445,9 @@ export class ImapConnection {
                 if(!msg) {
                     throw new ImapConnectionError(`Message UID ${uid} not found in ${folder}`);
                 }
-                const bodyText = await this.fetchBodyText(uid, msg.bodyStructure);
-                return toEmailMetadata(msg, bodyText);
+                const bodyText    = await this.fetchBodyText(uid, msg.bodyStructure);
+                const attachments = await this.fetchAttachments(uid, msg.bodyStructure);
+                return toEmailMetadata(msg, bodyText, attachments);
             } catch (err) {
                 if(err instanceof ImapConnectionError) {
                     throw err;
@@ -476,6 +558,29 @@ export class ImapConnection {
         });
     }
 
+    /** Search a folder for messages with a given custom flag. Returns array of UIDs. */
+    async searchByFlag(folder: string, flag: string): Promise<number[]> {
+        return this.serialize(async () => {
+            // Stryker disable BlockStatement: try-catch wraps IMAP search - error handling
+            try {
+                await this.client.mailboxOpen(folder);
+                // Stryker disable next-line ObjectLiteral: IMAP search criteria are API configuration
+                const result = await this.client.search({ keyword: flag }, { uid: true });
+                // Stryker disable next-line ConditionalExpression,ArrayDeclaration: false means no match support, treat as empty
+                return result ? _.map(result, Number) : [];
+            } catch (err) {
+                if(err instanceof ImapConnectionError) {
+                    throw err;
+                }
+                throw new ImapConnectionError(
+                    `searchByFlag failed (folder=${folder}, flag=${flag}): ${_.isError(err) ? err.message : String(err)}`,
+                    // Stryker disable next-line ObjectLiteral,StringLiteral: Error cause wrapping is not behavior-affecting
+                    { cause: String(err) }
+                );
+            }
+        });
+    }
+
     /** Add a flag to a message (e.g. '\\Seen'). */
     async setFlag(uid: number, folder: string, flag: string): Promise<void> {
         return this.serialize(async () => {
@@ -490,6 +595,27 @@ export class ImapConnection {
                 }
                 throw new ImapConnectionError(
                     `setFlag failed (uid=${uid}, folder=${folder}, flag=${flag}): ${_.isError(err) ? err.message : String(err)}`,
+                    // Stryker disable next-line ObjectLiteral,StringLiteral: Error cause wrapping is not behavior-affecting
+                    { cause: String(err) }
+                );
+            }
+        });
+    }
+
+    /** Remove a flag from a message (e.g. '\\DiscordNotifyFailed'). */
+    async clearFlag(uid: number, folder: string, flag: string): Promise<void> {
+        return this.serialize(async () => {
+            // Stryker disable BlockStatement: try-catch wraps IMAP flags - error handling
+            try {
+                await this.client.mailboxOpen(folder);
+                // Stryker disable next-line ObjectLiteral,BooleanLiteral: IMAP flag options are API configuration constants
+                await this.client.messageFlagsRemove(uid, [flag], { uid: true });
+            } catch (err) {
+                if(err instanceof ImapConnectionError) {
+                    throw err;
+                }
+                throw new ImapConnectionError(
+                    `clearFlag failed (uid=${uid}, folder=${folder}, flag=${flag}): ${_.isError(err) ? err.message : String(err)}`,
                     // Stryker disable next-line ObjectLiteral,StringLiteral: Error cause wrapping is not behavior-affecting
                     { cause: String(err) }
                 );
@@ -584,5 +710,38 @@ export class ImapConnection {
             this._idleAbort();
             this._idleAbort = null;
         }
+    }
+
+    /**
+     * Append a raw RFC 2822 message to the given IMAP folder.
+     * Returns the UID of the appended message.
+     */
+    async appendMessage(folder: string, rawMessage: Buffer): Promise<number> {
+        return this.serialize(async () => {
+            // Stryker disable BlockStatement: try-catch wraps IMAP append - error handling
+            try {
+                await this.client.mailboxOpen(folder);
+                const result = await this.client.append(folder, rawMessage);
+                const uid = (result as { uid?: number }).uid;
+                // UIDPLUS extension (RFC 4315) is required; WildDuck/Dovecot always provide uid.
+                // If uid is absent the server does not support UIDPLUS — treat as an error.
+                if(!uid) {
+                    throw new ImapConnectionError(
+                        // Stryker disable next-line StringLiteral: Error message is configuration
+                        'appendMessage: server did not return a UID (UIDPLUS extension required)'
+                    );
+                }
+                return uid;
+            } catch (err) {
+                if(err instanceof ImapConnectionError) {
+                    throw err;
+                }
+                throw new ImapConnectionError(
+                    `appendMessage failed (folder=${folder}): ${_.isError(err) ? err.message : String(err)}`,
+                    // Stryker disable next-line ObjectLiteral,StringLiteral: Error cause wrapping is not behavior-affecting
+                    { cause: String(err) }
+                );
+            }
+        });
     }
 }

@@ -42,7 +42,6 @@
     "remove-markdown": "^0.6.3",
     "semver": "^7.7.4",
     "sst": "^3.18.5",
-    "tldts": "^7.0.23",
     "zod": "^4.3.6"
   },
   "devDependencies": {

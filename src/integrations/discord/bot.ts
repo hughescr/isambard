@@ -339,12 +339,30 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         // eslint-disable-next-line @typescript-eslint/no-misused-promises -- interactionCreate handler is async
         client.on('interactionCreate', async (interaction) => {
             if(interaction.isButton()) {
+                // Route email-send-* buttons to outbound approval handler (before email-* catch-all)
+                if(emailSetup && _.startsWith(interaction.customId, 'email-send-')) {
+                    await emailSetup.outboundApprovalHandler.handleButton(interaction);
+                    return;
+                }
                 // Route email-* buttons to review handler
                 if(emailSetup && _.startsWith(interaction.customId, 'email-')) {
                     await emailSetup.reviewHandler.handleButton(interaction);
                     return;
                 }
                 await interactionHandler.handleButtonInteraction(interaction);
+            } else if(interaction.isModalSubmit()) {
+                if(emailSetup && _.startsWith(interaction.customId, 'email-send-reject-reason:')) {
+                    await emailSetup.outboundApprovalHandler.handleModalSubmit(interaction);
+                    return;
+                }
+            } else if(interaction.isStringSelectMenu() && _.startsWith(interaction.customId, 'email-allowlist-select:')) {
+                if(emailSetup) {
+                    await emailSetup.outboundApprovalHandler.handleSelectMenu(interaction);
+                    return;
+                } else {
+                    // Stryker disable next-line StringLiteral: error message is not behavior-affecting
+                    await interaction.reply({ content: 'Email integration is not currently available.', ephemeral: true });
+                }
             } else if(interaction.isChatInputCommand() && interaction.commandName === 'allowlist') {
                 if(emailSetup) {
                     await emailSetup.allowlistHandler.handle(interaction);
@@ -573,6 +591,16 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                         error: _.isError(err) ? err.message : String(err),
                         // Stryker disable next-line StringLiteral: log message is not behavior-affecting
                         msg:   'Email listener stop failed during shutdown',
+                    });
+                }
+                // Stryker disable BlockStatement: try-catch isolates WildDuck shutdown from Discord cleanup
+                try {
+                    await emailSetup.wildDuckClient.shutdown();
+                } catch (err) {
+                    logger.error({
+                        error: _.isError(err) ? err.message : String(err),
+                        // Stryker disable next-line StringLiteral: log message is not behavior-affecting
+                        msg:   'WildDuck client shutdown failed during email teardown',
                     });
                 }
             }

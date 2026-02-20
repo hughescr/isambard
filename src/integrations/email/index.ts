@@ -11,3 +11,6 @@ export * from './allowlist-commands';
 export * from './imap-listener';
 export * from './review-embed-builder';
 export * from './review-handler';
+export * from './wildduck-client';
+export * from './send-rate-limiter';
+export * from './outbound-approval-handler';

@@ -11,22 +11,22 @@ function createMockResources(
     overrides?: Partial<Record<keyof ResourceProvider, { value: string | undefined }>>
 ): ResourceProvider {
     const defaults: ResourceProvider = {
-        NodeEnv:              { value: 'development' },
-        LogLevel:             { value: 'info' },
-        Port:                 { value: '3000' },
-        DiscordBotToken:      { value: 'bot-token-123' },
-        DiscordApplicationId: { value: 'app-id-456' },
-        DiscordHomeGuildId:   { value: 'home-guild-123' },
-        ClaudeCodeOAuthToken: { value: 'test-oauth-token-12345' },
-        IsambardMainModel:    { value: 'sonnet' },
+        NodeEnv:               { value: 'development' },
+        LogLevel:              { value: 'info' },
+        Port:                  { value: '3000' },
+        DiscordBotToken:       { value: 'bot-token-123' },
+        DiscordApplicationId:  { value: 'app-id-456' },
+        DiscordHomeGuildId:    { value: 'home-guild-123' },
+        ClaudeCodeOAuthToken:  { value: 'test-oauth-token-12345' },
+        IsambardMainModel:     { value: 'sonnet' },
         // Email secrets default to undefined (email config is optional)
-        ImapHost:             { value: undefined },
-        ImapPort:             { value: undefined },
-        SmtpHost:             { value: undefined },
-        SmtpPort:             { value: undefined },
-        EmailUser:            { value: undefined },
-        EmailPassword:        { value: undefined },
-        AdminDiscordUserId:   { value: undefined },
+        ImapHost:              { value: undefined },
+        ImapPort:              { value: undefined },
+        EmailUser:             { value: undefined },
+        EmailPassword:         { value: undefined },
+        AdminDiscordUserId:    { value: undefined },
+        AdminDiscordChannelId: { value: undefined },
+        WildDuckApiUrl:        { value: undefined },
         // Planned integrations (not yet implemented):
         // CaldavUrl:          { value: 'https://caldav.example.com' },
         // CaldavUsername:     { value: 'user' },
@@ -35,6 +35,20 @@ function createMockResources(
         // BoxClientSecret:    { value: 'box-secret' },
     };
     return { ...defaults, ...overrides };
+}
+
+/** Minimal email resource overrides for full email config */
+function emailResources(extra?: Partial<Record<keyof ResourceProvider, { value: string | undefined }>>) {
+    return createMockResources({
+        ImapHost:              { value: 'imap.rungie.com' },
+        ImapPort:              { value: '993' },
+        EmailUser:             { value: 'user@rungie.com' },
+        EmailPassword:         { value: 'secret-password' },
+        AdminDiscordUserId:    { value: '111111111111111111' },
+        AdminDiscordChannelId: { value: '987654321098765432' },
+        WildDuckApiUrl:        { value: 'https://wildduck.example.com' },
+        ...extra,
+    });
 }
 
 describe.concurrent('loadConfig', () => {
@@ -271,95 +285,46 @@ describe.concurrent('loadConfig', () => {
         });
 
         test('should load email config when EmailUser is set', () => {
-            const resources = createMockResources({
-                ImapHost:           { value: 'imap.rungie.com' },
-                ImapPort:           { value: '993' },
-                SmtpHost:           { value: 'smtp.rungie.com' },
-                SmtpPort:           { value: '587' },
-                EmailUser:          { value: 'user@rungie.com' },
-                EmailPassword:      { value: 'secret-password' },
-                AdminDiscordUserId: { value: '111111111111111111' },
-            });
-            const config = loadConfig(resources);
+            const config = loadConfig(emailResources());
 
             expect(config.email).toBeDefined();
             expect(config.email?.imapHost).toBe('imap.rungie.com');
             expect(config.email?.imapPort).toBe(993);
-            expect(config.email?.smtpHost).toBe('smtp.rungie.com');
-            expect(config.email?.smtpPort).toBe(587);
             expect(config.email?.user).toBe('user@rungie.com');
+            expect(config.email?.wildDuckApiUrl).toBe('https://wildduck.example.com');
         });
 
         test('should apply schema defaults when email secrets are set', () => {
-            const resources = createMockResources({
-                ImapHost:           { value: 'imap.rungie.com' },
-                ImapPort:           { value: '993' },
-                SmtpHost:           { value: 'smtp.rungie.com' },
-                SmtpPort:           { value: '587' },
-                EmailUser:          { value: 'user@rungie.com' },
-                EmailPassword:      { value: 'secret-password' },
-                AdminDiscordUserId: { value: '111111111111111111' },
-            });
-            const config = loadConfig(resources);
+            const config = loadConfig(emailResources());
 
             expect(config.email?.useIdle).toBe(true);
             expect(config.email?.idleTimeoutMs).toBe(1_740_000);
             expect(config.email?.pollFallbackMs).toBe(300_000);
             expect(config.email?.maxBodySizeBytes).toBe(50_000);
-            expect(config.email?.fromName).toBe('Isambard (AI agent)');
-            expect(config.email?.fromNameInformal).toBe('Izzy');
             expect(config.email?.sendSoftLimitPerDay).toBe(10);
         });
 
-        test('should produce undefined fromEmail and fromEmailInformal when env vars not set', () => {
-            const resources = createMockResources({
-                ImapHost:           { value: 'imap.rungie.com' },
-                ImapPort:           { value: '993' },
-                SmtpHost:           { value: 'smtp.rungie.com' },
-                SmtpPort:           { value: '587' },
-                EmailUser:          { value: 'user@rungie.com' },
-                EmailPassword:      { value: 'secret-password' },
-                AdminDiscordUserId: { value: '111111111111111111' },
-            });
-            const config = loadConfig(resources);
-
-            // fromEmail and fromEmailInformal are optional — undefined when env var not set
-            expect(config.email?.fromEmail).toBeUndefined();
-            expect(config.email?.fromEmailInformal).toBeUndefined();
-        });
-
-        test('should apply default adminDiscordUserId when not set', () => {
-            const resources = createMockResources({
-                ImapHost:           { value: 'imap.rungie.com' },
-                ImapPort:           { value: '993' },
-                SmtpHost:           { value: 'smtp.rungie.com' },
-                SmtpPort:           { value: '587' },
-                EmailUser:          { value: 'user@rungie.com' },
-                EmailPassword:      { value: 'secret-password' },
-                AdminDiscordUserId: { value: '111111111111111111' },
-            });
-            const config = loadConfig(resources);
+        test('should load adminDiscordUserId when set', () => {
+            const config = loadConfig(emailResources());
 
             expect(config.email?.adminDiscordUserId).toBe('111111111111111111');
             expect(config.email?.adminDiscordUserId.length).toBeGreaterThan(0);
         });
 
-        test('should treat empty-string SmtpHost as undefined (optional field)', () => {
-            const resources = createMockResources({
-                ImapHost:           { value: 'imap.rungie.com' },
-                ImapPort:           { value: '993' },
-                SmtpHost:           { value: '' },
-                SmtpPort:           { value: '' },
-                EmailUser:          { value: 'user@rungie.com' },
-                EmailPassword:      { value: 'secret-password' },
-                AdminDiscordUserId: { value: '111111111111111111' },
+        test('should fail validation when wildDuckApiUrl is not set', () => {
+            const resources = emailResources({
+                WildDuckApiUrl: { value: undefined },
             });
-            const config = loadConfig(resources);
 
-            // Empty strings for optional fields should be treated as undefined, not fail validation
-            expect(config.email).toBeDefined();
-            expect(config.email?.smtpHost).toBeUndefined();
-            expect(config.email?.smtpPort).toBeUndefined();
+            expect(() => loadConfig(resources)).toThrow(/email\.wildDuckApiUrl|wildDuckApiUrl/i);
+        });
+
+        test('should wire wildDuckApiUrl from resource to config', () => {
+            const config = loadConfig(emailResources({
+                WildDuckApiUrl: { value: 'http://localhost:8080' },
+            }));
+
+            expect(config.email?.wildDuckApiUrl).toBe('http://localhost:8080');
         });
     });
 });
@@ -507,52 +472,6 @@ describe('loadConfig - Perch Config', () => {
         const config = loadConfig(resources);
         expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
         expect(config.perch?.testMode?.forceSlot).toBeUndefined();
-    });
-});
-
-// Email from-address env var tests run sequentially (not concurrent) because they mutate process.env
-describe('loadConfig - Email from-address env vars', () => {
-    const emailResources = () => createMockResources({
-        ImapHost:           { value: 'imap.rungie.com' },
-        ImapPort:           { value: '993' },
-        SmtpHost:           { value: 'smtp.rungie.com' },
-        SmtpPort:           { value: '587' },
-        EmailUser:          { value: 'user@rungie.com' },
-        EmailPassword:      { value: 'secret-password' },
-        AdminDiscordUserId: { value: '111111111111111111' },
-    });
-
-    afterEach(() => {
-        delete process.env.EMAIL_FROM_EMAIL;
-        delete process.env.EMAIL_FROM_EMAIL_INFORMAL;
-    });
-
-    test('should pass through non-empty EMAIL_FROM_EMAIL to config.email.fromEmail', () => {
-        process.env.EMAIL_FROM_EMAIL = 'izzy@example.com';
-        const config = loadConfig(emailResources());
-
-        expect(config.email?.fromEmail).toBe('izzy@example.com');
-    });
-
-    test('should produce undefined fromEmail when EMAIL_FROM_EMAIL is empty string', () => {
-        process.env.EMAIL_FROM_EMAIL = '';
-        const config = loadConfig(emailResources());
-
-        expect(config.email?.fromEmail).toBeUndefined();
-    });
-
-    test('should pass through non-empty EMAIL_FROM_EMAIL_INFORMAL to config.email.fromEmailInformal', () => {
-        process.env.EMAIL_FROM_EMAIL_INFORMAL = 'izzy-informal@example.com';
-        const config = loadConfig(emailResources());
-
-        expect(config.email?.fromEmailInformal).toBe('izzy-informal@example.com');
-    });
-
-    test('should produce undefined fromEmailInformal when EMAIL_FROM_EMAIL_INFORMAL is empty string', () => {
-        process.env.EMAIL_FROM_EMAIL_INFORMAL = '';
-        const config = loadConfig(emailResources());
-
-        expect(config.email?.fromEmailInformal).toBeUndefined();
     });
 });
 

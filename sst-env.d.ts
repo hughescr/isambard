@@ -6,6 +6,10 @@
 
 declare module "sst" {
   export interface Resource {
+    "AdminDiscordChannelId": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
     "AdminDiscordUserId": {
       "type": "sst.sst.Secret"
       "value": string
@@ -62,11 +66,7 @@ declare module "sst" {
       "type": "sst.sst.Linkable"
       "value": string
     }
-    "SmtpHost": {
-      "type": "sst.sst.Secret"
-      "value": string
-    }
-    "SmtpPort": {
+    "WildDuckApiUrl": {
       "type": "sst.sst.Secret"
       "value": string
     }

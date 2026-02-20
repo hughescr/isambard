@@ -31,6 +31,7 @@ function makeEmail(overrides: Partial<EmailMetadata> = {}): EmailMetadata {
             authenticationResults: 'mx.rungie.com; spf=pass smtp.mailfrom=alice@example.com; dkim=pass header.d=example.com',
             xRspamdScore:          '1.2',
         },
+        attachments: [],
         ...overrides,
     };
 }
@@ -240,13 +241,15 @@ describe('EmailProcessor', () => {
             expect(reset).not.toHaveBeenCalled();
         });
 
-        test('safe verdict → no callbacks invoked even when both provided', async () => {
+        test('safe verdict → onReview and onUnsafe not invoked, onSafe is invoked', async () => {
             const verdict    = makeVerdict('safe');
+            const email      = makeEmail();
             const classifier = makeClassifier(verdict);
             const { store }  = makeCounters();
             const { conn }   = makeImap();
             const onReview = mock(async () => undefined);
             const onUnsafe = mock(async () => undefined);
+            const onSafe   = mock(async () => undefined);
 
             const processor = new EmailProcessor(
                 {
@@ -255,13 +258,33 @@ describe('EmailProcessor', () => {
                     counters:  store,
                     imap:      conn,
                 },
-                { onReview, onUnsafe }
+                { onReview, onUnsafe, onSafe }
             );
 
-            await processor.processEmail(makeEmail());
+            await processor.processEmail(email);
 
             expect(onReview).not.toHaveBeenCalled();
             expect(onUnsafe).not.toHaveBeenCalled();
+            expect(onSafe).toHaveBeenCalledWith(email, verdict);
+        });
+
+        test('safe verdict → onSafe not called when not provided', async () => {
+            const verdict    = makeVerdict('safe');
+            const classifier = makeClassifier(verdict);
+            const { store }  = makeCounters();
+            const { conn }   = makeImap();
+
+            const processor = new EmailProcessor({
+                allowlist: makeAllowlist(false),
+                classifier,
+                counters:  store,
+                imap:      conn,
+            });
+
+            // Should not throw when onSafe is not provided
+            const result = await processor.processEmail(makeEmail());
+            expect(result.verdict).toEqual(verdict);
+            expect(result.destinationFolder).toBe(EmailFolder.CleanInbox);
         });
 
         test('uncertain verdict → Review, no counter sync, onReview callback invoked', async () => {
@@ -295,6 +318,32 @@ describe('EmailProcessor', () => {
             expect(onUnsafe).not.toHaveBeenCalled();
         });
 
+        test('uncertain verdict → onSafe not invoked even when all callbacks provided', async () => {
+            const verdict    = makeVerdict('uncertain');
+            const email      = makeEmail();
+            const classifier = makeClassifier(verdict);
+            const { store }  = makeCounters();
+            const { conn }   = makeImap();
+            const onSafe   = mock(async () => undefined);
+            const onReview = mock(async () => undefined);
+            const onUnsafe = mock(async () => undefined);
+
+            const processor = new EmailProcessor(
+                {
+                    allowlist: makeAllowlist(false),
+                    classifier,
+                    counters:  store,
+                    imap:      conn,
+                },
+                { onSafe, onReview, onUnsafe }
+            );
+
+            await processor.processEmail(email);
+
+            expect(onSafe).not.toHaveBeenCalled();
+            expect(onReview).toHaveBeenCalledWith(email, verdict);
+        });
+
         test('unsafe verdict → Quarantine, no counter sync, onUnsafe callback invoked', async () => {
             const verdict    = makeVerdict('unsafe');
             const email      = makeEmail();
@@ -324,6 +373,59 @@ describe('EmailProcessor', () => {
             expect(reset).not.toHaveBeenCalled();
             expect(onUnsafe).toHaveBeenCalledWith(email, verdict);
             expect(onReview).not.toHaveBeenCalled();
+        });
+
+        test('unsafe verdict → onReview not invoked even when all callbacks provided', async () => {
+            const verdict    = makeVerdict('unsafe');
+            const email      = makeEmail();
+            const classifier = makeClassifier(verdict);
+            const { store }  = makeCounters();
+            const { conn }   = makeImap();
+            const onSafe   = mock(async () => undefined);
+            const onReview = mock(async () => undefined);
+            const onUnsafe = mock(async () => undefined);
+
+            const processor = new EmailProcessor(
+                {
+                    allowlist: makeAllowlist(false),
+                    classifier,
+                    counters:  store,
+                    imap:      conn,
+                },
+                { onSafe, onReview, onUnsafe }
+            );
+
+            await processor.processEmail(email);
+
+            expect(onReview).not.toHaveBeenCalled();
+            expect(onUnsafe).toHaveBeenCalledWith(email, verdict);
+        });
+
+        test('safe verdict → onUnsafe not invoked when onSafe is absent', async () => {
+            // When safe verdict and onSafe not provided, no callbacks should fire
+            // This test specifically kills the mutation: verdict.verdict === 'unsafe' → true
+            // (which would cause onUnsafe to be invoked for safe emails)
+            const verdict    = makeVerdict('safe');
+            const email      = makeEmail();
+            const classifier = makeClassifier(verdict);
+            const { store }  = makeCounters();
+            const { conn }   = makeImap();
+            const onUnsafe = mock(async () => undefined);
+
+            const processor = new EmailProcessor(
+                {
+                    allowlist: makeAllowlist(false),
+                    classifier,
+                    counters:  store,
+                    imap:      conn,
+                },
+                // onSafe intentionally not provided — ensures mutant at line 183 is caught
+                { onUnsafe }
+            );
+
+            await processor.processEmail(email);
+
+            expect(onUnsafe).not.toHaveBeenCalled();
         });
     });
 

@@ -5,11 +5,13 @@ import { z } from 'zod';
 export const EmailFolder = {
     Inbox:      'INBOX',
     CleanInbox: 'CleanInbox',
+    Drafts:     'Drafts',
     Quarantine: 'Quarantine',
     Review:     'Review',
     Junk:       'Junk',
     Trash:      'Trash',
     Archive:    'Archive',
+    Sent:       'Sent',
 } as const;
 export type EmailFolder = typeof EmailFolder[keyof typeof EmailFolder];
 
@@ -39,6 +41,16 @@ export const EmailIdentity = {
 } as const;
 export type EmailIdentity = typeof EmailIdentity[keyof typeof EmailIdentity];
 
+// Fetched email attachment data
+export interface AttachmentData {
+    /** Original filename from Content-Disposition */
+    filename:    string
+    /** MIME content type */
+    contentType: string
+    /** Raw attachment bytes */
+    data:        Buffer
+}
+
 // Email metadata (from IMAP FETCH)
 export interface EmailMetadata {
     /** IMAP UID */
@@ -61,6 +73,8 @@ export interface EmailMetadata {
     hasAttachments: boolean
     /** Selected headers map */
     headers:        EmailHeaders
+    /** Fetched attachment data (present when fetched via fetchMessage) */
+    attachments:    AttachmentData[]
 }
 
 // Parsed email address
@@ -73,6 +87,7 @@ export interface EmailAddress {
 export interface EmailHeaders {
     messageId?:             string
     inReplyTo?:             string
+    replyTo?:               string
     authenticationResults?: string
     xRspamdReport?:         string
     xRspamdScore?:          string

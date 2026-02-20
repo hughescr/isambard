@@ -2592,6 +2592,9 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toContain('bob@example.com');
             expect(result).toContain('Hello');
             expect(result).toContain('World');
+            // UIDs must appear in CleanInbox:UID format for agent to reference them
+            expect(result).toContain('CleanInbox:1');
+            expect(result).toContain('CleanInbox:2');
         });
 
         test('should skip inbox section when emailService provided but unread === 0', async () => {
@@ -2662,6 +2665,346 @@ describe('createContextBuilder loading methods', () => {
             await contextBuilder.buildPerchContext(now);
 
             expect(emailService.imap.listUnread).toHaveBeenCalledWith('CleanInbox');
+        });
+
+        test('should format inbox UIDs as CleanInbox:UID for agent reference', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => ({ total: 3, unread: 1 })),
+                },
+                imap: {
+                    listUnread: mock(async () => [
+                        { uid: 42, from: { address: 'sender@example.com' }, subject: 'Test', date: new Date('2025-01-15T09:00:00.000Z') },
+                    ]),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext(now);
+
+            // Must contain the CleanInbox:UID reference for agent to use with getEmailContent
+            expect(result).toContain('CleanInbox:42');
+        });
+
+        // Rejected draft context section
+        // -------------------------------------------------------------------
+
+        test('should include rejected drafts section when rejected UIDs and reasons are present', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                },
+                imap: {
+                    listUnread:   mock(async () => []),
+                    searchByFlag: mock(async () => [99]),
+                },
+                wildDuckClient: {
+                    getMessage: mock(async () => ({
+                        id:       99,
+                        subject:  'Hi there',
+                        to:       [{ address: 'bob@example.com' }],
+                        metaData: {
+                            rejectedAt: '2024-01-01T00:00:00.000Z',
+                            reason:     'Inappropriate content',
+                        },
+                    })),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).toContain('Messages You Attempted to Send (Rejected by Admin)');
+            expect(result).toContain('bob@example.com');
+            expect(result).toContain('Hi there');
+            expect(result).toContain('Inappropriate content');
+        });
+
+        test('should skip rejected drafts section when no rejected UIDs', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                },
+                imap: {
+                    listUnread:   mock(async () => []),
+                    searchByFlag: mock(async () => []),
+                },
+                wildDuckClient: {
+                    getMessage: mock(_.constant(Promise.resolve(null))),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).not.toContain('Messages You Attempted to Send');
+        });
+
+        test('should skip rejected drafts section when wildDuckClient is not provided', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const mockSearchByFlag = mock(async () => [99]);
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                },
+                imap: {
+                    listUnread:   mock(async () => []),
+                    searchByFlag: mockSearchByFlag,
+                },
+                // no wildDuckClient
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).not.toContain('Messages You Attempted to Send');
+        });
+
+        test('should skip rejected drafts section when imap has no searchByFlag', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                },
+                imap: {
+                    listUnread: mock(async () => []),
+                    // no searchByFlag
+                },
+                wildDuckClient: {
+                    getMessage: mock(_.constant(Promise.resolve(null))),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).not.toContain('Messages You Attempted to Send');
+        });
+
+        test('should skip drafts without rejectedAt in metaData', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                },
+                imap: {
+                    listUnread:   mock(async () => []),
+                    searchByFlag: mock(async () => [55]),
+                },
+                wildDuckClient: {
+                    getMessage: mock(async () => ({
+                        id:       55,
+                        subject:  'Test',
+                        to:       [{ address: 'alice@example.com' }],
+                        metaData: {
+                            // no rejectedAt — this is a pending draft
+                        },
+                    })),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).not.toContain('Messages You Attempted to Send');
+        });
+
+        test('should log warning and not crash when searchByFlag throws', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                },
+                imap: {
+                    listUnread:   mock(async () => []),
+                    searchByFlag: mock(async () => {
+                        throw new Error('IMAP flag search failed');
+                    }),
+                },
+                wildDuckClient: {
+                    getMessage: mock(_.constant(Promise.resolve(null))),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).not.toContain('Messages You Attempted to Send');
+            expect(mockLogger.warn).toHaveBeenCalled();
+        });
+
+        // DiscordNotifyGaveUp escalation section
+        // -------------------------------------------------------------------
+
+        test('should include CRITICAL escalation section when DiscordNotifyGaveUp UIDs present', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            let _searchByFlagCallCount = 0;
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                },
+                imap: {
+                    listUnread:   mock(async () => []),
+                    searchByFlag: mock(async (folder: string, flag: string) => {
+                        _searchByFlagCallCount++;
+                        if(flag === '\\DiscordNotifyGaveUp') {
+                            return [101];
+                        }
+                        return []; // No rejected-by-admin drafts
+                    }),
+                },
+                wildDuckClient: {
+                    getMessage: mock(async () => ({
+                        id:      101,
+                        subject: 'Urgent email',
+                        to:      [{ address: 'frank@example.com' }],
+                    })),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).toContain('CRITICAL');
+            expect(result).toContain('frank@example.com');
+            expect(result).toContain('Urgent email');
+            expect(result).toContain('Drafts:101');
+            expect(result).toContain('Craig');
+        });
+
+        test('should not include CRITICAL escalation when no DiscordNotifyGaveUp UIDs', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                },
+                imap: {
+                    listUnread:   mock(async () => []),
+                    searchByFlag: mock(async () => []),
+                },
+                wildDuckClient: {
+                    getMessage: mock(_.constant(Promise.resolve(null))),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).not.toContain('CRITICAL');
+        });
+
+        test('should include both rejected and CRITICAL sections when both types of UIDs present', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                },
+                imap: {
+                    listUnread:   mock(async () => []),
+                    searchByFlag: mock(async (_folder: string, flag: string) => {
+                        if(flag === '\\SendRejectedByAdmin') {
+                            return [200];
+                        }
+                        if(flag === '\\DiscordNotifyGaveUp') {
+                            return [201];
+                        }
+                        return [];
+                    }),
+                },
+                wildDuckClient: {
+                    getMessage: mock(async (_folder: string, uid: number) => {
+                        if(uid === 200) {
+                            return {
+                                id:       200,
+                                subject:  'Rejected email',
+                                to:       [{ address: 'grace@example.com' }],
+                                metaData: { rejectedAt: '2024-01-01T00:00:00.000Z', reason: 'Off-topic' },
+                            };
+                        }
+                        return {
+                            id:      201,
+                            subject: 'Failed notify email',
+                            to:      [{ address: 'henry@example.com' }],
+                        };
+                    }),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).toContain('Messages You Attempted to Send (Rejected by Admin)');
+            expect(result).toContain('grace@example.com');
+            expect(result).toContain('CRITICAL');
+            expect(result).toContain('henry@example.com');
+        });
+
+        test('should use (no subject) fallback for gave-up drafts with no subject', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                counterStore: {
+                    getCounters: mock(async () => ({ total: 0, unread: 0 })),
+                },
+                imap: {
+                    listUnread:   mock(async () => []),
+                    searchByFlag: mock(async (_folder: string, flag: string) => {
+                        if(flag === '\\DiscordNotifyGaveUp') {
+                            return [300];
+                        }
+                        return [];
+                    }),
+                },
+                wildDuckClient: {
+                    getMessage: mock(async () => ({
+                        id: 300,
+                        to: [{ address: 'iris@example.com' }],
+                        // no subject
+                    })),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).toContain('CRITICAL');
+            expect(result).toContain('(no subject)');
         });
     });
 });

@@ -16,10 +16,12 @@ const mockSearch          = mock<() => Promise<unknown>>(() => Promise.resolve([
 const mockFetchOne        = mock<() => Promise<unknown>>(() => Promise.resolve(false));
 const mockFetchAll        = mock<() => Promise<unknown>>(() => Promise.resolve([]));
 const mockMessageMove     = mock<() => Promise<unknown>>(() => Promise.resolve({}));
-const mockMessageFlagsAdd = mock<() => Promise<unknown>>(() => Promise.resolve(true));
+const mockMessageFlagsAdd    = mock<() => Promise<unknown>>(() => Promise.resolve(true));
+const mockMessageFlagsRemove = mock<() => Promise<unknown>>(() => Promise.resolve(true));
 const mockList            = mock<() => Promise<unknown>>(() => Promise.resolve([]));
 const mockIdle            = mock<() => Promise<void>>(() => Promise.resolve());
 const mockStatus          = mock<() => Promise<unknown>>(() => Promise.resolve({ messages: 10, unseen: 3 }));
+const mockAppend          = mock<() => Promise<unknown>>(() => Promise.resolve({ uid: 42 }));
 
 type MockFn = (...args: unknown[]) => unknown;
 
@@ -33,10 +35,12 @@ class MockImapFlow {
     fetchOne(...args: unknown[])        { return (mockFetchOne as MockFn)(...args); }
     fetchAll(...args: unknown[])        { return (mockFetchAll as MockFn)(...args); }
     messageMove(...args: unknown[])     { return (mockMessageMove as MockFn)(...args); }
-    messageFlagsAdd(...args: unknown[]) { return (mockMessageFlagsAdd as MockFn)(...args); }
+    messageFlagsAdd(...args: unknown[])    { return (mockMessageFlagsAdd as MockFn)(...args); }
+    messageFlagsRemove(...args: unknown[]) { return (mockMessageFlagsRemove as MockFn)(...args); }
     list(...args: unknown[])            { return (mockList as MockFn)(...args); }
     idle(...args: unknown[])            { return (mockIdle as MockFn)(...args); }
     status(...args: unknown[])          { return (mockStatus as MockFn)(...args); }
+    append(...args: unknown[])          { return (mockAppend as MockFn)(...args); }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
@@ -169,9 +173,11 @@ describe('ImapConnection', () => {
         mockFetchAll.mockReset();
         mockMessageMove.mockReset();
         mockMessageFlagsAdd.mockReset();
+        mockMessageFlagsRemove.mockReset();
         mockList.mockReset();
         mockIdle.mockReset();
         mockStatus.mockReset();
+        mockAppend.mockReset();
 
         // Default successful implementations
         mockConnect.mockImplementation(() => Promise.resolve());
@@ -182,9 +188,11 @@ describe('ImapConnection', () => {
         mockFetchAll.mockImplementation(() => Promise.resolve([]));
         mockMessageMove.mockImplementation(() => Promise.resolve({}));
         mockMessageFlagsAdd.mockImplementation(() => Promise.resolve(true));
+        mockMessageFlagsRemove.mockImplementation(() => Promise.resolve(true));
         mockList.mockImplementation(() => Promise.resolve([]));
         mockIdle.mockImplementation(() => Promise.resolve());
         mockStatus.mockImplementation(() => Promise.resolve({ messages: 10, unseen: 3 }));
+        mockAppend.mockImplementation(() => Promise.resolve({ uid: 42 }));
 
         connection = new ImapConnection(DEFAULT_CONFIG);
     });
@@ -538,24 +546,37 @@ describe('ImapConnection', () => {
         });
 
         test('no text parts in bodyStructure: returns empty string', async () => {
+            const pdfData = Buffer.from('pdf-content');
             const fetchResult = {
                 ...makePlainFetchResult(),
                 bodyStructure: {
                     type:       'multipart/mixed',
                     childNodes: [
-                        { type: 'application/pdf', part: '1', disposition: 'attachment', childNodes: [] },
+                        {
+                            type:                  'application/pdf',
+                            part:                  '1',
+                            disposition:           'attachment',
+                            dispositionParameters: { filename: 'report.pdf' },
+                            childNodes:            [],
+                        },
                     ],
                 },
             };
-            // Only one fetchOne call — no bodyPart fetch needed
-            mockFetchOne.mockImplementationOnce(() => Promise.resolve(fetchResult));
+            // Two fetchOne calls: envelope/structure + attachment part fetch
+            mockFetchOne
+                .mockImplementationOnce(() => Promise.resolve(fetchResult))
+                .mockImplementationOnce(() => Promise.resolve({
+                    uid:       42,
+                    bodyParts: new Map([['1', pdfData]]),
+                }));
             await connection.connect();
 
             const result = await connection.fetchMessage('INBOX', 42);
 
             expect(result.bodyText).toBe('');
-            // Only one fetchOne call: no body part fetch for no-text messages
-            expect(mockFetchOne).toHaveBeenCalledTimes(1);
+            // Two fetchOne calls: envelope fetch + attachment fetch (no text body fetch)
+            expect(mockFetchOne).toHaveBeenCalledTimes(2);
+            expect(result.attachments).toHaveLength(1);
         });
 
         test('absent bodyStructure: returns empty string', async () => {
@@ -925,6 +946,41 @@ describe('ImapConnection', () => {
     });
 
     // -------------------------------------------------------------------
+    // clearFlag
+    // -------------------------------------------------------------------
+    describe('clearFlag()', () => {
+        test('opens folder and calls messageFlagsRemove with uid and flag array', async () => {
+            await connection.connect();
+
+            await connection.clearFlag(42, 'Drafts', '\\DiscordNotifyFailed');
+
+            expect(mockMailboxOpen).toHaveBeenCalledWith('Drafts');
+            expect(mockMessageFlagsRemove).toHaveBeenCalledWith(
+                42,
+                ['\\DiscordNotifyFailed'],
+                expect.objectContaining({ uid: true })
+            );
+        });
+
+        test('wraps error in ImapConnectionError', async () => {
+            mockMessageFlagsRemove.mockImplementation(() => Promise.reject(new Error('flag remove failed')));
+            await connection.connect();
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
+            await expect(connection.clearFlag(42, 'Drafts', '\\DiscordNotifyFailed')).rejects.toBeInstanceOf(ImapConnectionError);
+        });
+
+        test('re-throws ImapConnectionError without wrapping', async () => {
+            const original = new ImapConnectionError('already wrapped');
+            mockMessageFlagsRemove.mockImplementation(() => Promise.reject(original));
+            await connection.connect();
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
+            await expect(connection.clearFlag(42, 'Drafts', '\\TestFlag')).rejects.toBe(original);
+        });
+    });
+
+    // -------------------------------------------------------------------
     // ensureFolders
     // -------------------------------------------------------------------
     describe('ensureFolders()', () => {
@@ -932,11 +988,14 @@ describe('ImapConnection', () => {
             const allFolders = [
                 { path: 'INBOX' },
                 { path: 'CleanInbox' },
+                { path: 'Drafts' },
                 { path: 'Quarantine' },
                 { path: 'Review' },
                 { path: 'Junk' },
                 { path: 'Trash' },
                 { path: 'Archive' },
+                { path: 'Drafts' },
+                { path: 'Sent' },
             ];
             mockList.mockImplementation(() => Promise.resolve(allFolders));
             await connection.connect();
@@ -950,11 +1009,14 @@ describe('ImapConnection', () => {
             const allFolders = [
                 { path: 'INBOX' },
                 { path: 'CleanInbox' },
+                { path: 'Drafts' },
                 { path: 'Quarantine' },
                 { path: 'Review' },
                 { path: 'Junk' },
                 { path: 'Trash' },
                 { path: 'Archive' },
+                { path: 'Drafts' },
+                { path: 'Sent' },
             ];
             mockList.mockImplementation(() => Promise.resolve(allFolders));
             await connection.connect();
@@ -979,6 +1041,7 @@ describe('ImapConnection', () => {
             mockList.mockImplementation(() => Promise.resolve([
                 { path: 'INBOX' },
                 { path: 'CleanInbox' },
+                { path: 'Drafts' },
                 { path: 'Review' },
                 { path: 'Junk' },
                 { path: 'Trash' },
@@ -1465,6 +1528,339 @@ describe('ImapConnection', () => {
             const result = await connection.fetchMessage('INBOX', 42);
 
             expect(result.hasAttachments).toBe(true);
+        });
+    });
+
+    // -------------------------------------------------------------------
+    // fetchAttachments / findAttachmentParts (tested via fetchMessage)
+    // -------------------------------------------------------------------
+    describe('fetchAttachments (via fetchMessage)', () => {
+        test('returns empty attachments array for plain-text email', async () => {
+            setupFetchOnePair(makePlainFetchResult(), '1', PLAIN_BODY_CONTENT);
+            await connection.connect();
+
+            const result = await connection.fetchMessage('INBOX', 42);
+
+            expect(result.attachments).toEqual([]);
+        });
+
+        test('returns empty attachments array when bodyStructure is undefined', async () => {
+            mockFetchOne.mockImplementationOnce(() => Promise.resolve({
+                uid:      20,
+                source:   PLAIN_SOURCE,
+                envelope: {
+                    date:      new Date('2024-01-01'),
+                    subject:   'Test',
+                    messageId: '<x@x.com>',
+                    from:      [{ address: 'a@b.com' }],
+                    to:        [],
+                    cc:        [],
+                },
+                bodyStructure: undefined,
+            }));
+            await connection.connect();
+
+            const result = await connection.fetchMessage('INBOX', 20);
+
+            expect(result.attachments).toEqual([]);
+        });
+
+        test('fetches a single attachment from multipart/mixed message', async () => {
+            const fetchResult = {
+                ...makePlainFetchResult(),
+                bodyStructure: {
+                    type:       'multipart/mixed',
+                    childNodes: [
+                        { type: 'text/plain',      part: '1', childNodes: [] },
+                        {
+                            type:                  'application/pdf',
+                            part:                  '2',
+                            disposition:           'attachment',
+                            dispositionParameters: { filename: 'report.pdf' },
+                            childNodes:            [],
+                        },
+                    ],
+                },
+            };
+            const pdfData = Buffer.from('fake-pdf-data');
+            mockFetchOne
+                .mockImplementationOnce(() => Promise.resolve(fetchResult))
+                .mockImplementationOnce(() => Promise.resolve({
+                    uid:       42,
+                    bodyParts: new Map([['1', Buffer.from(PLAIN_BODY_CONTENT)]]),
+                }))
+                .mockImplementationOnce(() => Promise.resolve({
+                    uid:       42,
+                    bodyParts: new Map([['2', pdfData]]),
+                }));
+            await connection.connect();
+
+            const result = await connection.fetchMessage('INBOX', 42);
+
+            expect(result.attachments).toHaveLength(1);
+            expect(result.attachments[0]?.filename).toBe('report.pdf');
+            expect(result.attachments[0]?.contentType).toBe('application/pdf');
+            expect(result.attachments[0]?.data).toEqual(pdfData);
+        });
+
+        test('fetches multiple attachments from multipart/mixed message', async () => {
+            const fetchResult = {
+                ...makePlainFetchResult(),
+                bodyStructure: {
+                    type:       'multipart/mixed',
+                    childNodes: [
+                        { type: 'text/plain', part: '1', childNodes: [] },
+                        {
+                            type:                  'application/pdf',
+                            part:                  '2',
+                            disposition:           'attachment',
+                            dispositionParameters: { filename: 'report.pdf' },
+                            childNodes:            [],
+                        },
+                        {
+                            type:                  'image/jpeg',
+                            part:                  '3',
+                            disposition:           'attachment',
+                            dispositionParameters: { filename: 'photo.jpg' },
+                            childNodes:            [],
+                        },
+                    ],
+                },
+            };
+            const pdfData  = Buffer.from('pdf-bytes');
+            const jpegData = Buffer.from('jpeg-bytes');
+            mockFetchOne
+                .mockImplementationOnce(() => Promise.resolve(fetchResult))
+                .mockImplementationOnce(() => Promise.resolve({
+                    uid:       42,
+                    bodyParts: new Map([['1', Buffer.from(PLAIN_BODY_CONTENT)]]),
+                }))
+                .mockImplementationOnce(() => Promise.resolve({
+                    uid:       42,
+                    bodyParts: new Map([['2', pdfData]]),
+                }))
+                .mockImplementationOnce(() => Promise.resolve({
+                    uid:       42,
+                    bodyParts: new Map([['3', jpegData]]),
+                }));
+            await connection.connect();
+
+            const result = await connection.fetchMessage('INBOX', 42);
+
+            expect(result.attachments).toHaveLength(2);
+            expect(result.attachments[0]?.filename).toBe('report.pdf');
+            expect(result.attachments[0]?.contentType).toBe('application/pdf');
+            expect(result.attachments[1]?.filename).toBe('photo.jpg');
+            expect(result.attachments[1]?.contentType).toBe('image/jpeg');
+        });
+
+        test('uses fallback filename "attachment" when dispositionParameters has no filename', async () => {
+            const fetchResult = {
+                ...makePlainFetchResult(),
+                bodyStructure: {
+                    type:       'multipart/mixed',
+                    childNodes: [
+                        { type: 'text/plain',      part: '1', childNodes: [] },
+                        {
+                            type:        'application/octet-stream',
+                            part:        '2',
+                            disposition: 'attachment',
+                            // No dispositionParameters
+                            childNodes:  [],
+                        },
+                    ],
+                },
+            };
+            const data = Buffer.from('raw-data');
+            mockFetchOne
+                .mockImplementationOnce(() => Promise.resolve(fetchResult))
+                .mockImplementationOnce(() => Promise.resolve({
+                    uid:       42,
+                    bodyParts: new Map([['1', Buffer.from(PLAIN_BODY_CONTENT)]]),
+                }))
+                .mockImplementationOnce(() => Promise.resolve({
+                    uid:       42,
+                    bodyParts: new Map([['2', data]]),
+                }));
+            await connection.connect();
+
+            const result = await connection.fetchMessage('INBOX', 42);
+
+            expect(result.attachments).toHaveLength(1);
+            expect(result.attachments[0]?.filename).toBe('attachment');
+        });
+
+        test('finds attachment using name parameter when filename is absent', async () => {
+            const fetchResult = {
+                ...makePlainFetchResult(),
+                bodyStructure: {
+                    type:       'multipart/mixed',
+                    childNodes: [
+                        { type: 'text/plain', part: '1', childNodes: [] },
+                        {
+                            type:                  'application/pdf',
+                            part:                  '2',
+                            disposition:           'attachment',
+                            dispositionParameters: { name: 'named.pdf' },
+                            childNodes:            [],
+                        },
+                    ],
+                },
+            };
+            const pdfData = Buffer.from('pdf-data');
+            mockFetchOne
+                .mockImplementationOnce(() => Promise.resolve(fetchResult))
+                .mockImplementationOnce(() => Promise.resolve({
+                    uid:       42,
+                    bodyParts: new Map([['1', Buffer.from(PLAIN_BODY_CONTENT)]]),
+                }))
+                .mockImplementationOnce(() => Promise.resolve({
+                    uid:       42,
+                    bodyParts: new Map([['2', pdfData]]),
+                }));
+            await connection.connect();
+
+            const result = await connection.fetchMessage('INBOX', 42);
+
+            expect(result.attachments).toHaveLength(1);
+            expect(result.attachments[0]?.filename).toBe('named.pdf');
+        });
+
+        test('skips attachment when fetchOne returns false for that part', async () => {
+            const fetchResult = {
+                ...makePlainFetchResult(),
+                bodyStructure: {
+                    type:       'multipart/mixed',
+                    childNodes: [
+                        { type: 'text/plain', part: '1', childNodes: [] },
+                        {
+                            type:                  'application/pdf',
+                            part:                  '2',
+                            disposition:           'attachment',
+                            dispositionParameters: { filename: 'report.pdf' },
+                            childNodes:            [],
+                        },
+                    ],
+                },
+            };
+            mockFetchOne
+                .mockImplementationOnce(() => Promise.resolve(fetchResult))
+                .mockImplementationOnce(() => Promise.resolve({
+                    uid:       42,
+                    bodyParts: new Map([['1', Buffer.from(PLAIN_BODY_CONTENT)]]),
+                }))
+                .mockImplementationOnce(() => Promise.resolve(false)); // Attachment fetch returns false
+            await connection.connect();
+
+            const result = await connection.fetchMessage('INBOX', 42);
+
+            // Attachment is skipped (no part data)
+            expect(result.attachments).toHaveLength(0);
+        });
+
+        test('skips attachment when bodyParts map does not contain the part', async () => {
+            const fetchResult = {
+                ...makePlainFetchResult(),
+                bodyStructure: {
+                    type:       'multipart/mixed',
+                    childNodes: [
+                        { type: 'text/plain', part: '1', childNodes: [] },
+                        {
+                            type:                  'application/pdf',
+                            part:                  '2',
+                            disposition:           'attachment',
+                            dispositionParameters: { filename: 'report.pdf' },
+                            childNodes:            [],
+                        },
+                    ],
+                },
+            };
+            mockFetchOne
+                .mockImplementationOnce(() => Promise.resolve(fetchResult))
+                .mockImplementationOnce(() => Promise.resolve({
+                    uid:       42,
+                    bodyParts: new Map([['1', Buffer.from(PLAIN_BODY_CONTENT)]]),
+                }))
+                .mockImplementationOnce(() => Promise.resolve({
+                    uid:       42,
+                    bodyParts: new Map(), // Empty — part '2' missing
+                }));
+            await connection.connect();
+
+            const result = await connection.fetchMessage('INBOX', 42);
+
+            expect(result.attachments).toHaveLength(0);
+        });
+
+        test('finds attachment in nested multipart structure', async () => {
+            const fetchResult = {
+                ...makePlainFetchResult(),
+                bodyStructure: {
+                    type:       'multipart/mixed',
+                    childNodes: [
+                        {
+                            type:       'multipart/alternative',
+                            childNodes: [
+                                { type: 'text/plain', part: '1.1', childNodes: [] },
+                                { type: 'text/html',  part: '1.2', childNodes: [] },
+                            ],
+                        },
+                        {
+                            type:                  'application/pdf',
+                            part:                  '2',
+                            disposition:           'attachment',
+                            dispositionParameters: { filename: 'nested.pdf' },
+                            childNodes:            [],
+                        },
+                    ],
+                },
+            };
+            const pdfData = Buffer.from('nested-pdf');
+            mockFetchOne
+                .mockImplementationOnce(() => Promise.resolve(fetchResult))
+                .mockImplementationOnce(() => Promise.resolve({
+                    uid:       42,
+                    bodyParts: new Map([['1.1', Buffer.from(PLAIN_BODY_CONTENT)]]),
+                }))
+                .mockImplementationOnce(() => Promise.resolve({
+                    uid:       42,
+                    bodyParts: new Map([['2', pdfData]]),
+                }));
+            await connection.connect();
+
+            const result = await connection.fetchMessage('INBOX', 42);
+
+            expect(result.attachments).toHaveLength(1);
+            expect(result.attachments[0]?.filename).toBe('nested.pdf');
+            expect(result.attachments[0]?.data).toEqual(pdfData);
+        });
+
+        test('uses part "1" as fallback when bodyStructure.part is absent for attachment', async () => {
+            const fetchResult = {
+                ...makePlainFetchResult(),
+                bodyStructure: {
+                    type:                  'application/pdf',
+                    // No part field
+                    disposition:           'attachment',
+                    dispositionParameters: { filename: 'nopart.pdf' },
+                    childNodes:            [],
+                },
+            };
+            const pdfData = Buffer.from('nopart-pdf');
+            // Only one fetchOne call for a single-part attachment with no text part
+            mockFetchOne
+                .mockImplementationOnce(() => Promise.resolve(fetchResult))
+                .mockImplementationOnce(() => Promise.resolve({
+                    uid:       42,
+                    bodyParts: new Map([['1', pdfData]]),
+                }));
+            await connection.connect();
+
+            const result = await connection.fetchMessage('INBOX', 42);
+
+            expect(result.attachments).toHaveLength(1);
+            expect(result.attachments[0]?.filename).toBe('nopart.pdf');
+            expect(result.attachments[0]?.data).toEqual(pdfData);
         });
     });
 
@@ -2126,6 +2522,119 @@ describe('ImapConnection', () => {
             await p2;
 
             expect(order).toEqual(['listUnread-start', 'listUnread-done', 'status-start']);
+        });
+    });
+
+    // -------------------------------------------------------------------
+    // appendMessage
+    // -------------------------------------------------------------------
+    describe('appendMessage', () => {
+        test('should open mailbox and call append with folder and buffer', async () => {
+            mockAppend.mockImplementation(() => Promise.resolve({ uid: 77 }));
+
+            await connection.connect();
+            const rawMsg = Buffer.from('raw-message');
+            const uid    = await connection.appendMessage('Drafts', rawMsg);
+
+            expect(mockMailboxOpen).toHaveBeenCalledWith('Drafts');
+            expect(mockAppend).toHaveBeenCalledWith('Drafts', rawMsg);
+            expect(uid).toBe(77);
+        });
+
+        test('should throw ImapConnectionError when append result has no uid (UIDPLUS required)', async () => {
+            mockAppend.mockImplementation(() => Promise.resolve({}));
+
+            await connection.connect();
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
+            await expect(connection.appendMessage('Drafts', Buffer.from('msg')))
+                .rejects.toBeInstanceOf(ImapConnectionError);
+        });
+
+        test('should throw ImapConnectionError with UIDPLUS message when uid is absent', async () => {
+            mockAppend.mockImplementation(() => Promise.resolve({}));
+
+            await connection.connect();
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
+            await expect(connection.appendMessage('Drafts', Buffer.from('msg')))
+                .rejects.toThrow('UIDPLUS');
+        });
+
+        test('should throw ImapConnectionError on failure', async () => {
+            mockAppend.mockImplementation(() => Promise.reject(new Error('APPEND failed')));
+
+            await connection.connect();
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
+            await expect(connection.appendMessage('Drafts', Buffer.from('msg')))
+                .rejects.toBeInstanceOf(ImapConnectionError);
+        });
+
+        test('should re-throw ImapConnectionError without wrapping', async () => {
+            const original = new ImapConnectionError('already wrapped');
+            mockAppend.mockImplementation(() => Promise.reject(original));
+
+            await connection.connect();
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
+            await expect(connection.appendMessage('Drafts', Buffer.from('msg')))
+                .rejects.toBe(original);
+        });
+    });
+
+    // -------------------------------------------------------------------
+    // searchByFlag
+    // -------------------------------------------------------------------
+    describe('searchByFlag', () => {
+        test('should open mailbox and search by keyword', async () => {
+            mockSearch.mockImplementation(() => Promise.resolve([10, 20, 30]));
+
+            await connection.connect();
+            const uids = await connection.searchByFlag('Drafts', '\\SendRejectedByAdmin');
+
+            expect(mockMailboxOpen).toHaveBeenCalledWith('Drafts');
+            expect(mockSearch).toHaveBeenCalledWith({ keyword: '\\SendRejectedByAdmin' }, { uid: true });
+            expect(uids).toEqual([10, 20, 30]);
+        });
+
+        test('should return empty array when search returns no results', async () => {
+            mockSearch.mockImplementation(() => Promise.resolve([]));
+
+            await connection.connect();
+            const uids = await connection.searchByFlag('Drafts', '\\TestFlag');
+
+            expect(uids).toEqual([]);
+        });
+
+        test('should return empty array when search returns null/undefined', async () => {
+            mockSearch.mockImplementation(() => Promise.resolve(null));
+
+            await connection.connect();
+            const uids = await connection.searchByFlag('Drafts', '\\TestFlag');
+
+            expect(uids).toEqual([]);
+        });
+
+        test('should throw ImapConnectionError on failure', async () => {
+            mockSearch.mockImplementation(() => Promise.reject(new Error('SEARCH failed')));
+
+            await connection.connect();
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
+            await expect(connection.searchByFlag('Drafts', '\\Flag'))
+                .rejects.toBeInstanceOf(ImapConnectionError);
+        });
+
+        test('should re-throw ImapConnectionError without wrapping', async () => {
+            const original = new ImapConnectionError('already wrapped');
+            mockSearch.mockImplementation(() => Promise.reject(original));
+
+            await connection.connect();
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
+            await expect(connection.searchByFlag('Drafts', '\\Flag'))
+                .rejects.toBe(original);
         });
     });
 });

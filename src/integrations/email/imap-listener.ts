@@ -12,12 +12,21 @@ import type { EmailCounterStore } from '@/integrations/email/email-counters';
 
 export interface ImapListenerConfig {
     // Stryker disable next-line BooleanLiteral: useIdle flag is configuration
-    useIdle:        boolean
+    useIdle:                boolean
     // Stryker disable next-line NumericLiteral: IDLE timeout is configuration constant (RFC 2177 limit)
-    idleTimeoutMs:  number
+    idleTimeoutMs:          number
     // Stryker disable next-line NumericLiteral: Poll fallback interval is configuration constant
-    pollFallbackMs: number
+    pollFallbackMs:         number
+    /** Optional callback to retry a Discord notification for a pending draft */
+    onSendApprovalRequest?: (to: string, subject: string, draftUid: number, cc?: string[]) => Promise<void>
+    /** Optional WildDuck client for pending notification checks */
+    wildDuckClient?: {
+        getMessage:            (mailboxPath: string, uid: number) => Promise<{ id: number, subject?: string, to?: { address: string, name?: string }[], cc?: { address: string, name?: string }[], metaData?: Record<string, unknown> } | null>
+        updateMessageMetadata: (mailboxPath: string, uid: number, metadata: Record<string, unknown>) => Promise<void>
+    }
 }
+
+export const MAX_NOTIFY_ATTEMPTS = 5;
 
 const MAX_EMAILS_PER_POLL = 20;
 
@@ -75,7 +84,12 @@ export class ImapListener {
             }
 
             // Fetch and process any messages that arrived before this session
-            await this.fetchAndProcess();
+            // Re-fetch immediately while there are more messages (batch cap was hit)
+            // Stryker disable next-line ConditionalExpression: re-poll loop drains backlog — always correct
+            while(this._running && await this.fetchAndProcess()) { /* drain backlog */ }
+
+            // Check for pending notification failures on startup (best-effort)
+            await this.checkPendingNotifications();
 
             // Stryker disable next-line ConditionalExpression: useIdle controls IDLE vs polling mode
             if(this.config.useIdle) {
@@ -135,7 +149,9 @@ export class ImapListener {
                 if(!this._running) {
                     break;
                 }
-                await this.fetchAndProcess();
+                // Re-fetch immediately while there are more messages (batch cap was hit)
+                // Stryker disable next-line ConditionalExpression: re-poll loop drains backlog — always correct
+                while(await this.fetchAndProcess() && this._running) { /* drain backlog */ }
             } catch (err) {
                 clearTimeout(idleTimer);
                 logger.warn({
@@ -161,24 +177,34 @@ export class ImapListener {
     private async poll(): Promise<void> {
         // Stryker disable BlockStatement: try-catch wraps poll cycle — error handling
         try {
-            await this.fetchAndProcess();
+            // Re-fetch immediately while there are more messages (batch cap was hit)
+            // Stryker disable next-line ConditionalExpression: re-poll loop drains backlog — always correct
+            while(await this.fetchAndProcess() && this._running) { /* drain backlog */ }
         } catch (err) {
             logger.warn({
                 error: _.isError(err) ? err.message : String(err),
                 msg:   'Poll cycle failed, will retry',
             });
         }
+        // Check for pending notification failures after each poll cycle (best-effort)
+        await this.checkPendingNotifications();
         if(this._running) {
             this.scheduleNextPoll();
         }
     }
 
-    private async fetchAndProcess(): Promise<void> {
+    /**
+     * Fetch and process a batch of new messages.
+     * Returns true if the batch was capped at MAX_EMAILS_PER_POLL (indicating more messages likely remain),
+     * false otherwise.
+     */
+    private async fetchAndProcess(): Promise<boolean> {
         const emails = await this.imap.fetchNewMessages(EmailFolder.Inbox, this.lastUid);
 
         // Stryker disable next-line ConditionalExpression,EqualityOperator: batch cap rate-limits processing to MAX_EMAILS_PER_POLL; > vs >= is equivalent when length === cap (slice(0, n) of n-element array = all n)
-        const toProcess = emails.length > MAX_EMAILS_PER_POLL ? emails.slice(0, MAX_EMAILS_PER_POLL) : emails;
-        if(emails.length > MAX_EMAILS_PER_POLL) {
+        const capped    = emails.length > MAX_EMAILS_PER_POLL;
+        const toProcess = capped ? emails.slice(0, MAX_EMAILS_PER_POLL) : emails;
+        if(capped) {
             // Stryker disable ObjectLiteral,StringLiteral: log message content is not behavior-affecting
             logger.warn({
                 total:     emails.length,
@@ -196,6 +222,8 @@ export class ImapListener {
         if(toProcess.length > 0) {
             this.lastUid = _(toProcess).map('uid').max() ?? this.lastUid;
         }
+
+        return capped;
     }
 
     private async processOne(email: EmailMetadata): Promise<void> {
@@ -209,5 +237,92 @@ export class ImapListener {
                 msg:   'Failed to process email, continuing',
             });
         }
+    }
+
+    /**
+     * Search Drafts for messages with \\DiscordNotifyFailed flag and attempt to retry
+     * the Discord notification. On success, clears the flag. On repeated failure,
+     * transitions to \\DiscordNotifyGaveUp after MAX_NOTIFY_ATTEMPTS.
+     * Best-effort — errors logged, never thrown.
+     */
+    /**
+     * Attempt to escalate a failed notification: increment attempt counter or transition
+     * to GaveUp flag when MAX_NOTIFY_ATTEMPTS is reached.
+     * Best-effort — errors logged, never thrown.
+     */
+    private async escalateFailedNotification(
+        uid: number,
+        wildDuckClient: NonNullable<ImapListenerConfig['wildDuckClient']>
+    ): Promise<void> {
+        // Stryker disable BlockStatement: try-catch wraps give-up escalation - best-effort
+        try {
+            const msg      = await wildDuckClient.getMessage(EmailFolder.Drafts, uid);
+            // Stryker disable next-line ConditionalExpression: defensive fallback to 2 when metadata absent
+            const attempts = _.isNumber(msg?.metaData?.notifyAttempts) ? (msg.metaData.notifyAttempts) + 1 : 2;
+
+            if(attempts >= MAX_NOTIFY_ATTEMPTS) {
+                // Give up — transition to GaveUp flag
+                // Stryker disable next-line StringLiteral: flag name is configuration
+                await this.imap.clearFlag(uid, EmailFolder.Drafts, '\\DiscordNotifyFailed');
+                // Stryker disable next-line StringLiteral: flag name is configuration
+                await this.imap.setFlag(uid, EmailFolder.Drafts, '\\DiscordNotifyGaveUp');
+                await wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, uid, { notifyAttempts: attempts });
+            } else {
+                // Increment attempt count, keep flag
+                await wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, uid, { notifyAttempts: attempts });
+            }
+        } catch (metaErr) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.warn({ err: metaErr, uid, msg: 'Failed to update notification attempt metadata' });
+        }
+        // Stryker restore BlockStatement
+    }
+
+    private async checkPendingNotifications(): Promise<void> {
+        const { onSendApprovalRequest, wildDuckClient } = this.config;
+        // Stryker disable next-line ConditionalExpression,BlockStatement: early return when dependencies not configured
+        if(!onSendApprovalRequest || !wildDuckClient) {
+            return;
+        }
+
+        // Stryker disable BlockStatement: try-catch wraps entire check — best-effort, never throws
+        try {
+            // Stryker disable next-line StringLiteral: flag name is configuration
+            const pendingUids = await this.imap.searchByFlag(EmailFolder.Drafts, '\\DiscordNotifyFailed');
+
+            for(const uid of pendingUids) {
+                // Stryker disable BlockStatement: try-catch wraps individual notification retry - best-effort
+                try {
+                    const msg = await wildDuckClient.getMessage(EmailFolder.Drafts, uid);
+                    // Stryker disable next-line ConditionalExpression,BlockStatement: skip missing messages
+                    if(!msg) {
+                        continue;
+                    }
+
+                    const toStr      = _(msg.to ?? []).map('address').join(', ');
+                    const subject    = msg.subject ?? '';
+                    const ccAddresses = _.map(msg.cc ?? [], 'address');
+
+                    // Stryker disable next-line ConditionalExpression,EqualityOperator,ArrayDeclaration: cc only passed when non-empty
+                    await onSendApprovalRequest(toStr, subject, uid, ccAddresses.length > 0 ? ccAddresses : undefined);
+
+                    // Success — clear the flag and reset attempt count
+                    // Stryker disable next-line StringLiteral: flag name is configuration
+                    await this.imap.clearFlag(uid, EmailFolder.Drafts, '\\DiscordNotifyFailed');
+                    await wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, uid, { notifyAttempts: 0 });
+                } catch (err) {
+                    // Notification retry failed — check if we should give up
+                    await this.escalateFailedNotification(uid, wildDuckClient);
+                    // Stryker restore BlockStatement
+                    // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                    logger.warn({ err, uid, msg: 'Failed to retry Discord notification for pending draft' });
+                }
+                // Stryker restore BlockStatement
+            }
+        } catch (searchErr) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.warn({ err: searchErr, msg: 'Failed to search for pending notification drafts' });
+        }
+        // Stryker restore BlockStatement
     }
 }

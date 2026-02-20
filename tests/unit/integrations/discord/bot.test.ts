@@ -2430,6 +2430,8 @@ describe('createDiscordBot', () => {
             const replyMock = mock(async (_opts: unknown) => undefined);
             const mockInteraction = {
                 isButton:           mock(() => false),
+                isModalSubmit:      mock(() => false),
+                isStringSelectMenu: mock(() => false),
                 isChatInputCommand: mock(() => true),
                 commandName:        'allowlist',
                 reply:              replyMock,
@@ -2706,6 +2708,8 @@ describe('createDiscordBot', () => {
             // Build a mock /allowlist ChatInputCommand interaction
             const mockInteraction = {
                 isButton:           mock(() => false),
+                isModalSubmit:      mock(() => false),
+                isStringSelectMenu: mock(() => false),
                 isChatInputCommand: mock(() => true),
                 commandName:        'allowlist',
             };
@@ -2775,6 +2779,203 @@ describe('createDiscordBot', () => {
             await interactionCreateHandler!(mockInteraction);
 
             expect(handleButtonMock).not.toHaveBeenCalled();
+        });
+
+        test('email-send-* button replies ephemerally when outboundApprovalHandler is undefined (Bug C)', async () => {
+            // Bug C: when outboundApprovalHandler is undefined, interaction.reply should be called
+            // with an ephemeral error message instead of silently doing nothing
+            let interactionCreateHandler: ((interaction: unknown) => Promise<void>) | undefined;
+
+            const mockClient = {
+                on: mock((event: string, handler: (...args: unknown[]) => void) => {
+                    if(event === 'interactionCreate') {
+                        interactionCreateHandler = handler as (interaction: unknown) => Promise<void>;
+                    }
+                    return mockClient;
+                }),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            // emailSetup with outboundApprovalHandler always present (WildDuck is required)
+            const handleButtonMockApproval = mock(async () => undefined);
+            const mockEmailSetup = {
+                listener:                { start: mock(async () => undefined), stop: mock(async () => undefined) },
+                reviewHandler:           { handleButton: mock(async () => undefined) },
+                allowlistHandler:        { handle: mock(async () => undefined) },
+                emailMcpServer:          {},
+                imap:                    {},
+                counters:                {},
+                outboundApprovalHandler: { handleButton: handleButtonMockApproval, handleModalSubmit: mock(async () => undefined) },
+                wildDuckClient:          { shutdown: mock(async () => undefined) },
+            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+
+            createDiscordBot({
+                config: mockConfig,
+
+                channelRegistry: mockChannelRegistry,
+                emailSetup:      mockEmailSetup,
+            });
+
+            // Fire clientReady to register interactionCreate handler
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            expect(interactionCreateHandler).toBeDefined();
+
+            const mockInteraction = {
+                isButton:           mock(() => true),
+                isModalSubmit:      mock(() => false),
+                isChatInputCommand: mock(() => false),
+                customId:           'email-send-approve:42',
+                reply:              mock(async (_opts: unknown) => undefined),
+            };
+
+            await interactionCreateHandler!(mockInteraction);
+
+            // outboundApprovalHandler.handleButton should be called (WildDuck is always present)
+            expect(handleButtonMockApproval).toHaveBeenCalledTimes(1);
+        });
+
+        test('email-send-reject-reason modal replies ephemerally when outboundApprovalHandler is undefined (Bug C)', async () => {
+            // WildDuck is now required, so outboundApprovalHandler is always present
+            let interactionCreateHandler: ((interaction: unknown) => Promise<void>) | undefined;
+
+            const mockClient = {
+                on: mock((event: string, handler: (...args: unknown[]) => void) => {
+                    if(event === 'interactionCreate') {
+                        interactionCreateHandler = handler as (interaction: unknown) => Promise<void>;
+                    }
+                    return mockClient;
+                }),
+                once:               mock(() => mockClient),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            const handleModalMock = mock(async () => undefined);
+            const mockEmailSetup = {
+                listener:                { start: mock(async () => undefined), stop: mock(async () => undefined) },
+                reviewHandler:           { handleButton: mock(async () => undefined) },
+                allowlistHandler:        { handle: mock(async () => undefined) },
+                emailMcpServer:          {},
+                imap:                    {},
+                counters:                {},
+                outboundApprovalHandler: { handleButton: mock(async () => undefined), handleModalSubmit: handleModalMock },
+                wildDuckClient:          { shutdown: mock(async () => undefined) },
+            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+
+            createDiscordBot({
+                config: mockConfig,
+
+                channelRegistry: mockChannelRegistry,
+                emailSetup:      mockEmailSetup,
+            });
+
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            expect(interactionCreateHandler).toBeDefined();
+
+            const mockInteraction = {
+                isButton:           mock(() => false),
+                isModalSubmit:      mock(() => true),
+                isChatInputCommand: mock(() => false),
+                customId:           'email-send-reject-reason:42',
+                reply:              mock(async (_opts: unknown) => undefined),
+            };
+
+            await interactionCreateHandler!(mockInteraction);
+
+            // outboundApprovalHandler.handleModalSubmit should be called (WildDuck is always present)
+            expect(handleModalMock).toHaveBeenCalledTimes(1);
+        });
+
+        test('email-allowlist-select select menu replies ephemerally when emailSetup is absent', async () => {
+            let interactionCreateHandler: ((interaction: unknown) => Promise<void>) | undefined;
+
+            const mockClient = {
+                on: mock((event: string, handler: (...args: unknown[]) => void) => {
+                    if(event === 'interactionCreate') {
+                        interactionCreateHandler = handler as (interaction: unknown) => Promise<void>;
+                    }
+                    return mockClient;
+                }),
+                once: mock((_event: string, _handler: (...args: unknown[]) => void) => {
+                    return mockClient;
+                }),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+            } as unknown as Client;
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+
+            // Mock channel registry functions
+            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                discovered: 0,
+                updated:    0,
+                errors:     [],
+            }));
+            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
+            // Create bot WITHOUT emailSetup
+            createDiscordBot({
+                config: mockConfig,
+
+                channelRegistry: mockChannelRegistry,
+            });
+
+            // Fire clientReady to register interactionCreate handler
+            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
+            const clientReadyHandler = clientReadyHandlers[0]?.[1];
+            if(clientReadyHandler) {
+                await Promise.resolve(clientReadyHandler(mockClient));
+            }
+
+            expect(interactionCreateHandler).toBeDefined();
+
+            // Build a mock email-allowlist-select StringSelectMenu interaction
+            const replyMock = mock(async (_opts: unknown) => undefined);
+            const mockInteraction = {
+                isButton:           mock(() => false),
+                isModalSubmit:      mock(() => false),
+                isStringSelectMenu: mock(() => true),
+                isChatInputCommand: mock(() => false),
+                customId:           'email-allowlist-select:42',
+                values:             [],
+                reply:              replyMock,
+            };
+
+            await interactionCreateHandler!(mockInteraction);
+
+            // Should reply ephemerally with unavailable message
+            expect(replyMock).toHaveBeenCalledTimes(1);
+            expect(replyMock).toHaveBeenCalledWith(expect.objectContaining({
+                ephemeral: true,
+            }));
         });
     });
 });

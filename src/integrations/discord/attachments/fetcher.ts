@@ -12,6 +12,7 @@ import {
     isSupportedImageType
 } from './types';
 import { needsConversion, convert } from './converter';
+import { sanitizeFilename } from '@/utils/filename';
 
 const FETCH_TIMEOUT_MS = 30_000;
 
@@ -153,7 +154,7 @@ export async function saveNonImageAttachment(
     messageId: string
 ): Promise<StoredAttachment | null> {
     try {
-        const dir = join(scratchDir, 'attachments', messageId);
+        const dir = join(scratchDir, 'attachments', `discord-${messageId}`);
         await mkdir(dir, { recursive: true });
 
         // Stryker disable next-line ObjectLiteral: Fetch timeout options are not unit-testable without flaky timing dependencies
@@ -167,8 +168,9 @@ export async function saveNonImageAttachment(
             return null;
         }
 
-        const buffer = Buffer.from(await response.arrayBuffer());
-        const localPath = join(dir, metadata.filename);
+        const buffer    = Buffer.from(await response.arrayBuffer());
+        const safeFilename = sanitizeFilename(metadata.filename);
+        const localPath = join(dir, safeFilename);
         await writeFile(localPath, buffer);
 
         return {

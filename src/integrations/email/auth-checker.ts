@@ -1,18 +1,5 @@
 import _ from 'lodash';
-import { parse } from 'tldts';
 import type { AuthCheckResult } from '@/integrations/email/types';
-
-/**
- * Extract the organizational domain (eTLD+1) from a domain string using tldts.
- * For relaxed alignment: mail.example.com → example.com
- * Uses the Public Suffix List for correct eTLD+1 extraction.
- * Returns null if the domain cannot be resolved to a registrable domain (e.g., bare TLD).
- */
-function orgDomain(domain: string): string | null {
-    // Stryker disable next-line StringLiteral,ObjectLiteral,ArrayDeclaration,BooleanLiteral: tldts parse options are configuration constants
-    const result = parse(domain, { validHosts: [], allowPrivateDomains: true });
-    return result.domain ?? null;
-}
 
 /**
  * Extract the domain from an email address or a bare domain string.
@@ -27,10 +14,10 @@ function extractDomain(emailOrDomain: string): string {
         return '';
     }
     // Stryker restore ConditionalExpression,BlockStatement,StringLiteral
-    // Stryker disable next-line Regex: anchor mutations produce equivalent results — tldts/orgDomain treats malformed mid-bracket inputs as non-alignable regardless
+    // Stryker disable next-line Regex: anchor mutations produce equivalent results — exact domain comparison treats malformed inputs as non-alignable regardless
     const cleaned = _.replace(_.trim(emailOrDomain), /^<|>$/g, '');
     const atIdx = cleaned.indexOf('@');
-    // Stryker disable next-line ConditionalExpression,EqualityOperator,MethodExpression: atIdx boundary distinguishes address from bare domain; tldts parses email addresses natively so slice is equivalent
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,MethodExpression,ArithmeticOperator: atIdx boundary distinguishes address from bare domain; slice(atIdx+1) extracts domain after @
     return atIdx >= 0 ? cleaned.slice(atIdx + 1) : cleaned;
 }
 
@@ -39,9 +26,10 @@ function extractDomain(emailOrDomain: string): string {
  * Used to determine if an allowlisted sender's email is authenticated.
  * Allowlist bypass requires: sender on allowlist AND (spfPass OR dkimPass).
  *
- * Alignment rules (relaxed, per RFC 7489):
- * - SPF: spf=pass AND smtp.mailfrom domain has same org domain as From:
- * - DKIM: dkim=pass AND header.d domain has same org domain as From:
+ * Alignment rules (strict/exact, case-insensitive):
+ * - SPF: spf=pass AND smtp.mailfrom domain exactly matches From: domain
+ * - DKIM: dkim=pass AND header.d domain exactly matches From: domain
+ * Subdomains do NOT align (mail.example.com does NOT align with example.com).
  */
 export function checkAuthentication(authenticationResults: string | undefined, fromAddress: string): AuthCheckResult {
     // Stryker disable next-line ConditionalExpression,BlockStatement: Guard is defensive — falsy strings produce same result from main loop
@@ -54,11 +42,7 @@ export function checkAuthentication(authenticationResults: string | undefined, f
     if(!fromDomain) {
         return { spfPass: false, dkimPass: false };
     }
-    const fromOrg = orgDomain(_.toLower(fromDomain));
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Guard is defensive — null fromOrg means from domain is a bare TLD, cannot align with anything
-    if(!fromOrg) {
-        return { spfPass: false, dkimPass: false };
-    }
+    const normalizedFromDomain = _.toLower(fromDomain);
 
     const parts = _.split(authenticationResults, ';');
 
@@ -74,8 +58,7 @@ export function checkAuthentication(authenticationResults: string | undefined, f
             const mailfromMatch = /\bsmtp\.mailfrom=([^\s;]+)/i.exec(normalized);
             if(mailfromMatch) {
                 const mailfromDomain = extractDomain(_.toLower(mailfromMatch[1]));
-                const mailfromOrg    = mailfromDomain ? orgDomain(mailfromDomain) : null;
-                if(mailfromOrg && mailfromOrg === fromOrg) {
+                if(mailfromDomain && mailfromDomain === normalizedFromDomain) {
                     spfPass = true;
                 }
             }
@@ -87,8 +70,7 @@ export function checkAuthentication(authenticationResults: string | undefined, f
             const headerdMatch = /\bheader\.d=([^\s;]+)/i.exec(normalized);
             if(headerdMatch) {
                 const dkimDomain = _.toLower(headerdMatch[1]);
-                const dkimOrg    = dkimDomain ? orgDomain(dkimDomain) : null;
-                if(dkimOrg && dkimOrg === fromOrg) {
+                if(dkimDomain && dkimDomain === normalizedFromDomain) {
                     dkimPass = true;
                 }
             }

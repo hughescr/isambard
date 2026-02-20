@@ -26,6 +26,7 @@ function makeEmail(overrides: Partial<EmailMetadata> = {}): EmailMetadata {
         bodyText:       'Test body.',
         hasAttachments: false,
         headers:        {},
+        attachments:    [],
         ...overrides,
     };
 }

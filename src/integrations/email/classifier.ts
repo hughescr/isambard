@@ -11,6 +11,13 @@ import type { EmailMetadata, ClassifierVerdict } from './types';
  * Uses generateTextWithSystemPrompt for zero-API-key overhead (OAuth/Claude Max).
  */
 export class EmailClassifier {
+    constructor(apiKey?: string) {
+        if(apiKey === '') {
+            // Stryker disable next-line StringLiteral: Error message is configuration
+            throw new ClassifierError('API key must not be empty string');
+        }
+    }
+
     /**
      * Classify an email for safety.
      * Returns a verdict with confidence and reason.

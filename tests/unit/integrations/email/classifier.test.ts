@@ -26,6 +26,7 @@ function makeEmail(overrides: Partial<EmailMetadata> = {}): EmailMetadata {
             xRspamdScore:          '1.2',
             xRspamdReport:         'DKIM_SIGNED=0.0',
         },
+        attachments: [],
         ...overrides,
     };
 }
@@ -46,6 +47,28 @@ describe('EmailClassifier', () => {
         mockGenerateTextWithSystemPrompt.mockResolvedValue(
             makeVerdictJson({ verdict: 'safe', confidence: 0.9, reason: 'Default safe response' })
         );
+    });
+
+    describe('constructor apiKey guard', () => {
+        test('constructs successfully with no apiKey argument', () => {
+            expect(() => new EmailClassifier()).not.toThrow();
+        });
+
+        test('constructs successfully with undefined apiKey', () => {
+            expect(() => new EmailClassifier(undefined)).not.toThrow();
+        });
+
+        test('throws ClassifierError when apiKey is empty string', () => {
+            expect(() => new EmailClassifier('')).toThrow(ClassifierError);
+        });
+
+        test('error message mentions empty API key', () => {
+            expect(() => new EmailClassifier('')).toThrow(/empty|api.?key/i);
+        });
+
+        test('constructs successfully with non-empty apiKey', () => {
+            expect(() => new EmailClassifier('sk-ant-valid-key')).not.toThrow();
+        });
     });
 
     describe('successful classification', () => {

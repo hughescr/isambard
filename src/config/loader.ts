@@ -16,6 +16,8 @@ type ConfigKeys = Exclude<keyof SstResource,
   | 'LogTimezone' | 'PerchEnabled' | 'PerchTestModeForceSlot' | 'PerchTestModeTriggerOnStartup'
   // Stale entries from sst-env.d.ts (not in actual config):
   | 'DiscordMonitoredChannels' | 'DynamoDBEndpoint' | 'DynamoDBRegion' | 'DynamoDBTableName'
+  // Removed (SMTP replaced by WildDuck):
+  | 'SmtpHost' | 'SmtpPort'
   // Planned integrations (not yet implemented):
   | 'CaldavUrl' | 'CaldavUsername' | 'CaldavPassword'
   | 'BoxClientId' | 'BoxClientSecret'
@@ -83,21 +85,15 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
             : undefined,
         email: resources.EmailUser.value
             ? {
-                imapHost:           resources.ImapHost.value,
-                imapPort:           resources.ImapPort.value,
-                // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string must become undefined for optional fields
-                smtpHost:           resources.SmtpHost.value || undefined,
-                // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string must become undefined for optional fields
-                smtpPort:           resources.SmtpPort.value || undefined,
-                user:               resources.EmailUser.value,
-                password:           resources.EmailPassword.value,
-                // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string must become undefined for optional fields
-                fromEmail:          env.get('EMAIL_FROM_EMAIL').asString() || undefined,
-                // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string must become undefined for optional fields
-                fromEmailInformal:  env.get('EMAIL_FROM_EMAIL_INFORMAL').asString() || undefined,
-                adminDiscordUserId: resources.AdminDiscordUserId.value,
+                imapHost:              resources.ImapHost.value,
+                imapPort:              resources.ImapPort.value,
+                user:                  resources.EmailUser.value,
+                password:              resources.EmailPassword.value,
+                adminDiscordUserId:    resources.AdminDiscordUserId.value,
+                adminDiscordChannelId: resources.AdminDiscordChannelId.value,
+                wildDuckApiUrl:        resources.WildDuckApiUrl.value,
                 // Stryker disable next-line LogicalOperator: ?? undefined is configuration wiring — not behavior-affecting
-                imapDebug:          env.get('EMAIL_IMAP_DEBUG').asBool() ?? undefined,
+                imapDebug:             env.get('EMAIL_IMAP_DEBUG').asBool() ?? undefined,
             }
             : undefined,
         // Planned integrations (commented out until implemented):

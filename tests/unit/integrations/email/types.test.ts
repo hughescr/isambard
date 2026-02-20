@@ -16,6 +16,8 @@ describe.concurrent('EmailFolder', () => {
         expect(EmailFolder.Junk).toBe('Junk');
         expect(EmailFolder.Trash).toBe('Trash');
         expect(EmailFolder.Archive).toBe('Archive');
+        expect(EmailFolder.Drafts).toBe('Drafts');
+        expect(EmailFolder.Sent).toBe('Sent');
     });
 
     test('should have exactly the expected keys', () => {
@@ -27,7 +29,9 @@ describe.concurrent('EmailFolder', () => {
         expect(keys).toContain('Junk');
         expect(keys).toContain('Trash');
         expect(keys).toContain('Archive');
-        expect(keys).toHaveLength(7);
+        expect(keys).toContain('Drafts');
+        expect(keys).toContain('Sent');
+        expect(keys).toHaveLength(9);
     });
 });
 
