@@ -26,7 +26,7 @@ export const memoryTable = new sst.aws.Dynamo('IsambardMemory', {
     transform: {
         table: {
             billingMode:            'PROVISIONED',
-            readCapacity:           2,
+            readCapacity:           5,
             writeCapacity:          2,
             globalSecondaryIndexes: [
                 {

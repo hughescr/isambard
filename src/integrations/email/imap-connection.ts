@@ -28,6 +28,39 @@ export interface ImapConnectionConfig {
 // Stryker disable next-line all: EmailFolder enum values are configuration
 const REQUIRED_FOLDERS = _.values(EmailFolder);
 
+/**
+ * Maps IMAP specialUse flag to the logical EmailFolder value.
+ * Standard IMAP flags per RFC 6154.
+ */
+// Stryker disable StringLiteral,ObjectLiteral: specialUse flag strings and folder values are IMAP RFC 6154 configuration
+const SPECIAL_USE_FLAGS: Record<string, string> = {
+    '\\Inbox':   'INBOX',
+    '\\Sent':    'Sent',
+    '\\Drafts':  'Drafts',
+    '\\Junk':    'Junk',
+    '\\Trash':   'Trash',
+    '\\Archive': 'Archive',
+};
+// Stryker restore StringLiteral,ObjectLiteral
+
+/**
+ * Fallback IMAP path to use when no specialUse flag resolves a folder.
+ * Custom folders (CleanInbox, Quarantine, Review) are always hardcoded.
+ */
+// Stryker disable StringLiteral: fallback path strings are IMAP server configuration constants
+const FOLDER_FALLBACK_PATHS: Record<string, string> = {
+    INBOX:      'INBOX',
+    Sent:       'Sent Mail',   // WildDuck uses 'Sent Mail'
+    Drafts:     'Drafts',
+    Junk:       'Junk',
+    Trash:      'Trash',
+    Archive:    'Archive',
+    CleanInbox: 'CleanInbox',
+    Quarantine: 'Quarantine',
+    Review:     'Review',
+};
+// Stryker restore StringLiteral
+
 /** Header names we extract and expose. */
 // Stryker disable StringLiteral: HEADER_NAMES entries are configuration constants
 const HEADER_NAMES = [
@@ -284,8 +317,9 @@ export class ImapConnection {
     // Stryker disable next-line ObjectLiteral: initial queue value is implementation infrastructure
     private          _queue:     Promise<void> = Promise.resolve();
     // Stryker disable next-line BooleanLiteral: initialization flag — false is correct initial state
-    private          _idleAborted  = false;
+    private          _idleAborted    = false;
     private          _idleAbort: (() => void) | null = null;
+    private          _resolvedPaths = new Map<string, string>();
 
     constructor(config: ImapConnectionConfig) {
         // Stryker disable next-line ConditionalExpression,BooleanLiteral,EqualityOperator: imapDebug conditional is debug configuration — not behavior-affecting
@@ -313,6 +347,17 @@ export class ImapConnection {
         // eslint-disable-next-line @typescript-eslint/unbound-method -- _.noop is safe to pass as callback; it has no `this` dependency
         this._queue  = result.then(_.noop, _.noop);
         return result;
+    }
+
+    /**
+     * Resolve a logical EmailFolder value to its actual IMAP path.
+     * Returns the resolved path from _resolvedPaths, or the original value
+     * if no resolution is available (e.g., before ensureFolders() is called).
+     * @internal
+     */
+    private resolveFolder(folder: string): string {
+        // Stryker disable next-line ConditionalExpression: fallback to original folder when not yet resolved
+        return this._resolvedPaths.get(folder) ?? folder;
     }
 
     /** Whether the connection is currently active. */
@@ -434,7 +479,7 @@ export class ImapConnection {
         return this.serialize(async () => {
             // Stryker disable BlockStatement: try-catch wraps IMAP fetch - error handling
             try {
-                await this.client.mailboxOpen(folder);
+                await this.client.mailboxOpen(this.resolveFolder(folder));
                 const msg = await this.client.fetchOne(
                     String(uid),
                     // Stryker disable next-line ObjectLiteral,BooleanLiteral: IMAP fetch options are API configuration constants
@@ -466,7 +511,7 @@ export class ImapConnection {
         return this.serialize(async () => {
             // Stryker disable BlockStatement: try-catch wraps IMAP search/fetch - error handling
             try {
-                await this.client.mailboxOpen(folder);
+                await this.client.mailboxOpen(this.resolveFolder(folder));
                 const uidRange = `${sinceUid + 1}:*`;
                 const uids     = await this.client.search({ uid: uidRange }, { uid: true });
                 if(!uids || uids.length === 0) {
@@ -505,7 +550,7 @@ export class ImapConnection {
         return this.serialize(async () => {
             // Stryker disable BlockStatement: try-catch wraps IMAP search/fetch - error handling
             try {
-                await this.client.mailboxOpen(folder);
+                await this.client.mailboxOpen(this.resolveFolder(folder));
                 const uids = await this.client.search({ seen: false }, { uid: true });
                 if(!uids || uids.length === 0) {
                     return [];
@@ -542,9 +587,9 @@ export class ImapConnection {
         return this.serialize(async () => {
             // Stryker disable BlockStatement: try-catch wraps IMAP move - error handling
             try {
-                await this.client.mailboxOpen(fromFolder);
+                await this.client.mailboxOpen(this.resolveFolder(fromFolder));
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: IMAP move options are API configuration constants
-                await this.client.messageMove(uid, toFolder, { uid: true });
+                await this.client.messageMove(uid, this.resolveFolder(toFolder), { uid: true });
             } catch (err) {
                 if(err instanceof ImapConnectionError) {
                     throw err;
@@ -563,7 +608,7 @@ export class ImapConnection {
         return this.serialize(async () => {
             // Stryker disable BlockStatement: try-catch wraps IMAP search - error handling
             try {
-                await this.client.mailboxOpen(folder);
+                await this.client.mailboxOpen(this.resolveFolder(folder));
                 // Stryker disable next-line ObjectLiteral: IMAP search criteria are API configuration
                 const result = await this.client.search({ keyword: flag }, { uid: true });
                 // Stryker disable next-line ConditionalExpression,ArrayDeclaration: false means no match support, treat as empty
@@ -586,7 +631,7 @@ export class ImapConnection {
         return this.serialize(async () => {
             // Stryker disable BlockStatement: try-catch wraps IMAP flags - error handling
             try {
-                await this.client.mailboxOpen(folder);
+                await this.client.mailboxOpen(this.resolveFolder(folder));
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: IMAP flag options are API configuration constants
                 await this.client.messageFlagsAdd(uid, [flag], { uid: true });
             } catch (err) {
@@ -607,7 +652,7 @@ export class ImapConnection {
         return this.serialize(async () => {
             // Stryker disable BlockStatement: try-catch wraps IMAP flags - error handling
             try {
-                await this.client.mailboxOpen(folder);
+                await this.client.mailboxOpen(this.resolveFolder(folder));
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: IMAP flag options are API configuration constants
                 await this.client.messageFlagsRemove(uid, [flag], { uid: true });
             } catch (err) {
@@ -623,18 +668,44 @@ export class ImapConnection {
         });
     }
 
-    /** Verify that all required email folders exist on the server. */
+    /** Verify that all required email folders exist on the server, resolving paths via specialUse flags. */
     async ensureFolders(): Promise<void> {
         return this.serialize(async () => {
             // Stryker disable BlockStatement: try-catch wraps IMAP list - error handling
             try {
                 const mailboxes = await this.client.list();
-                const paths     = new Set(_.map(mailboxes, 'path'));
-                for(const folder of REQUIRED_FOLDERS) {
-                    if(!paths.has(folder)) {
-                        throw new ImapConnectionError(`Required IMAP folder missing: ${folder}`);
+
+                // Phase 1: Build resolved map from specialUse flags, then fill remaining with fallbacks.
+                const resolved = new Map<string, string>();
+
+                // First pass: resolve via specialUse flags
+                for(const mailbox of mailboxes) {
+                    const flag = (mailbox as { specialUse?: string }).specialUse;
+                    // Stryker disable next-line ConditionalExpression,BlockStatement: guard for absent specialUse flag
+                    if(flag && SPECIAL_USE_FLAGS[flag]) {
+                        resolved.set(SPECIAL_USE_FLAGS[flag], mailbox.path);
                     }
                 }
+
+                // Second pass: fill any not yet resolved using fallback paths
+                for(const folder of REQUIRED_FOLDERS) {
+                    // Stryker disable next-line ConditionalExpression: optimization guard — skips overwriting flag-resolved paths with fallback
+                    if(!resolved.has(folder)) {
+                        // Stryker disable next-line ConditionalExpression: fallback path when folder not in FOLDER_FALLBACK_PATHS
+                        resolved.set(folder, FOLDER_FALLBACK_PATHS[folder] ?? folder);
+                    }
+                }
+
+                // Phase 2: Validate all resolved paths exist on the server
+                const paths = new Set(_.map(mailboxes, 'path'));
+                for(const [logicalFolder, resolvedPath] of resolved) {
+                    if(!paths.has(resolvedPath)) {
+                        throw new ImapConnectionError(`Required IMAP folder missing: ${logicalFolder}`);
+                    }
+                }
+
+                // Store resolved map for use by IMAP methods
+                this._resolvedPaths = resolved;
             } catch (err) {
                 if(err instanceof ImapConnectionError) {
                     throw err;
@@ -654,7 +725,7 @@ export class ImapConnection {
             // Stryker disable BlockStatement: try-catch wraps IMAP status - error handling
             try {
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: STATUS query options are API configuration constants
-                const status = await this.client.status(folder, { messages: true, unseen: true });
+                const status = await this.client.status(this.resolveFolder(folder), { messages: true, unseen: true });
                 return {
                     total:  (status as { messages?: number }).messages ?? 0,
                     unread: (status as { unseen?: number }).unseen   ?? 0,
@@ -681,7 +752,7 @@ export class ImapConnection {
         return this.serialize(async () => {
             // Stryker disable next-line BooleanLiteral: reset abort flag at start of each idle cycle
             this._idleAborted = false;
-            await this.client.mailboxOpen(folder);
+            await this.client.mailboxOpen(this.resolveFolder(folder));
             // Stryker disable next-line ConditionalExpression,BlockStatement: race guard — skip IDLE if cancelIdle() was called during mailboxOpen
             if(!this._idleAborted) {
                 await Promise.race([
@@ -720,8 +791,8 @@ export class ImapConnection {
         return this.serialize(async () => {
             // Stryker disable BlockStatement: try-catch wraps IMAP append - error handling
             try {
-                await this.client.mailboxOpen(folder);
-                const result = await this.client.append(folder, rawMessage);
+                await this.client.mailboxOpen(this.resolveFolder(folder));
+                const result = await this.client.append(this.resolveFolder(folder), rawMessage);
                 const uid = (result as { uid?: number }).uid;
                 // UIDPLUS extension (RFC 4315) is required; WildDuck/Dovecot always provide uid.
                 // If uid is absent the server does not support UIDPLUS — treat as an error.

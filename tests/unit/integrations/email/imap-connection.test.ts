@@ -984,19 +984,20 @@ describe('ImapConnection', () => {
     // ensureFolders
     // -------------------------------------------------------------------
     describe('ensureFolders()', () => {
+        // Standard "happy path" fixture with specialUse flags — WildDuck uses 'Sent Mail' for Sent
+        const allFolders = [
+            { path: 'INBOX',     specialUse: '\\Inbox'   },
+            { path: 'CleanInbox'                          },  // custom, no flag
+            { path: 'Drafts',    specialUse: '\\Drafts'  },
+            { path: 'Quarantine'                          },  // custom, no flag
+            { path: 'Review'                              },  // custom, no flag
+            { path: 'Junk',      specialUse: '\\Junk'    },
+            { path: 'Trash',     specialUse: '\\Trash'   },
+            { path: 'Archive',   specialUse: '\\Archive' },
+            { path: 'Sent Mail', specialUse: '\\Sent'    },  // WildDuck uses 'Sent Mail'
+        ];
+
         test('calls list() to get available mailboxes', async () => {
-            const allFolders = [
-                { path: 'INBOX' },
-                { path: 'CleanInbox' },
-                { path: 'Drafts' },
-                { path: 'Quarantine' },
-                { path: 'Review' },
-                { path: 'Junk' },
-                { path: 'Trash' },
-                { path: 'Archive' },
-                { path: 'Drafts' },
-                { path: 'Sent' },
-            ];
             mockList.mockImplementation(() => Promise.resolve(allFolders));
             await connection.connect();
 
@@ -1006,18 +1007,6 @@ describe('ImapConnection', () => {
         });
 
         test('resolves when all expected folders are present', async () => {
-            const allFolders = [
-                { path: 'INBOX' },
-                { path: 'CleanInbox' },
-                { path: 'Drafts' },
-                { path: 'Quarantine' },
-                { path: 'Review' },
-                { path: 'Junk' },
-                { path: 'Trash' },
-                { path: 'Archive' },
-                { path: 'Drafts' },
-                { path: 'Sent' },
-            ];
             mockList.mockImplementation(() => Promise.resolve(allFolders));
             await connection.connect();
 
@@ -1025,10 +1014,78 @@ describe('ImapConnection', () => {
             await expect(connection.ensureFolders()).resolves.toBeUndefined();
         });
 
+        test('resolves when Sent folder is matched via \\Sent specialUse flag to Sent Mail path', async () => {
+            // WildDuck has 'Sent Mail' as the path but \\Sent specialUse flag maps it to EmailFolder.Sent
+            mockList.mockImplementation(() => Promise.resolve(allFolders));
+            await connection.connect();
+
+            // Should not throw — specialUse flag resolves 'Sent' -> 'Sent Mail'
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
+            await expect(connection.ensureFolders()).resolves.toBeUndefined();
+        });
+
+        test('resolves when Sent has no specialUse flag but FOLDER_FALLBACK_PATHS path exists', async () => {
+            // No \\Sent flag on any folder — fallback to 'Sent Mail' from FOLDER_FALLBACK_PATHS
+            const noFlagFolders = [
+                { path: 'INBOX',     specialUse: '\\Inbox'   },
+                { path: 'CleanInbox'                          },
+                { path: 'Drafts',    specialUse: '\\Drafts'  },
+                { path: 'Quarantine'                          },
+                { path: 'Review'                              },
+                { path: 'Junk',      specialUse: '\\Junk'    },
+                { path: 'Trash',     specialUse: '\\Trash'   },
+                { path: 'Archive',   specialUse: '\\Archive' },
+                { path: 'Sent Mail'                           },  // present but no specialUse flag
+            ];
+            mockList.mockImplementation(() => Promise.resolve(noFlagFolders));
+            await connection.connect();
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
+            await expect(connection.ensureFolders()).resolves.toBeUndefined();
+        });
+
+        test('throws when neither flag-matched nor fallback-path Sent folder exists', async () => {
+            // Neither '\\Sent'-flagged folder nor 'Sent Mail' fallback path exists
+            const noSentFolders = [
+                { path: 'INBOX',     specialUse: '\\Inbox'   },
+                { path: 'CleanInbox'                          },
+                { path: 'Drafts',    specialUse: '\\Drafts'  },
+                { path: 'Quarantine'                          },
+                { path: 'Review'                              },
+                { path: 'Junk',      specialUse: '\\Junk'    },
+                { path: 'Trash',     specialUse: '\\Trash'   },
+                { path: 'Archive',   specialUse: '\\Archive' },
+                // No 'Sent Mail' path, no \\Sent flag
+            ];
+            mockList.mockImplementation(() => Promise.resolve(noSentFolders));
+            await connection.connect();
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
+            await expect(connection.ensureFolders()).rejects.toThrow('Sent');
+        });
+
+        test('custom folders (CleanInbox, Quarantine, Review) always use hardcoded names', async () => {
+            // Custom folders are never resolved via flags — they must exist by exact name
+            const missingCustomFolders = [
+                { path: 'INBOX',     specialUse: '\\Inbox'   },
+                { path: 'Drafts',    specialUse: '\\Drafts'  },
+                { path: 'Junk',      specialUse: '\\Junk'    },
+                { path: 'Trash',     specialUse: '\\Trash'   },
+                { path: 'Archive',   specialUse: '\\Archive' },
+                { path: 'Sent Mail', specialUse: '\\Sent'    },
+                // Missing CleanInbox, Quarantine, Review
+            ];
+            mockList.mockImplementation(() => Promise.resolve(missingCustomFolders));
+            await connection.connect();
+
+            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
+            await expect(connection.ensureFolders()).rejects.toBeInstanceOf(ImapConnectionError);
+        });
+
         test('throws ImapConnectionError when a folder is missing', async () => {
             mockList.mockImplementation(() => Promise.resolve([
-                { path: 'INBOX' },
-                { path: 'Junk' },
+                { path: 'INBOX', specialUse: '\\Inbox' },
+                { path: 'Junk',  specialUse: '\\Junk'  },
                 // Missing CleanInbox, Quarantine, Review, Archive
             ]));
             await connection.connect();
@@ -1039,13 +1096,14 @@ describe('ImapConnection', () => {
 
         test('error message names the missing folder', async () => {
             mockList.mockImplementation(() => Promise.resolve([
-                { path: 'INBOX' },
-                { path: 'CleanInbox' },
-                { path: 'Drafts' },
-                { path: 'Review' },
-                { path: 'Junk' },
-                { path: 'Trash' },
-                { path: 'Archive' },
+                { path: 'INBOX',     specialUse: '\\Inbox'   },
+                { path: 'CleanInbox'                          },
+                { path: 'Drafts',    specialUse: '\\Drafts'  },
+                { path: 'Review'                              },
+                { path: 'Junk',      specialUse: '\\Junk'    },
+                { path: 'Trash',     specialUse: '\\Trash'   },
+                { path: 'Archive',   specialUse: '\\Archive' },
+                { path: 'Sent Mail', specialUse: '\\Sent'    },
                 // Missing Quarantine
             ]));
             await connection.connect();
@@ -1064,7 +1122,7 @@ describe('ImapConnection', () => {
 
         test('re-throws ImapConnectionError from inner throw unchanged', async () => {
             mockList.mockImplementation(() => Promise.resolve([
-                { path: 'INBOX' },
+                { path: 'INBOX', specialUse: '\\Inbox' },
                 // Missing all other required folders
             ]));
             await connection.connect();
@@ -1083,6 +1141,77 @@ describe('ImapConnection', () => {
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
             await expect(connection.ensureFolders()).rejects.toThrow('ensureFolders failed');
+        });
+
+        // -------------------------------------------------------------------
+        // resolveFolder() integration — methods use resolved paths after ensureFolders()
+        // -------------------------------------------------------------------
+
+        test('fetchMessage uses resolved path after ensureFolders() — Sent -> Sent Mail', async () => {
+            mockList.mockImplementation(() => Promise.resolve(allFolders));
+            setupFetchOnePair(makePlainFetchResult(), '1', PLAIN_BODY_CONTENT);
+            await connection.connect();
+            await connection.ensureFolders();
+
+            await connection.fetchMessage('Sent', 42);
+
+            expect(mockMailboxOpen).toHaveBeenCalledWith('Sent Mail');
+        });
+
+        test('moveMessage uses resolved toFolder path after ensureFolders() — Sent -> Sent Mail', async () => {
+            mockList.mockImplementation(() => Promise.resolve(allFolders));
+            mockMessageMove.mockImplementation(() => Promise.resolve({}));
+            await connection.connect();
+            await connection.ensureFolders();
+
+            await connection.moveMessage(42, 'INBOX', 'Sent');
+
+            expect(mockMessageMove).toHaveBeenCalledWith(42, 'Sent Mail', expect.objectContaining({ uid: true }));
+        });
+
+        test('appendMessage uses resolved path for both mailboxOpen and append after ensureFolders()', async () => {
+            mockList.mockImplementation(() => Promise.resolve(allFolders));
+            mockAppend.mockImplementation(() => Promise.resolve({ uid: 99 }));
+            await connection.connect();
+            await connection.ensureFolders();
+
+            await connection.appendMessage('Sent', Buffer.from('raw message'));
+
+            expect(mockMailboxOpen).toHaveBeenCalledWith('Sent Mail');
+            expect(mockAppend).toHaveBeenCalledWith('Sent Mail', expect.any(Buffer));
+        });
+
+        test('getMailboxCounts uses resolved path after ensureFolders() — Sent -> Sent Mail', async () => {
+            mockList.mockImplementation(() => Promise.resolve(allFolders));
+            mockStatus.mockImplementation(() => Promise.resolve({ messages: 5, unseen: 1 }));
+            await connection.connect();
+            await connection.ensureFolders();
+
+            await connection.getMailboxCounts('Sent');
+
+            expect(mockStatus).toHaveBeenCalledWith('Sent Mail', expect.objectContaining({ messages: true, unseen: true }));
+        });
+
+        test('idle uses resolved path after ensureFolders() — Sent -> Sent Mail', async () => {
+            mockList.mockImplementation(() => Promise.resolve(allFolders));
+            mockIdle.mockImplementation(() => Promise.resolve());
+            await connection.connect();
+            await connection.ensureFolders();
+
+            await connection.idle('Sent');
+
+            expect(mockMailboxOpen).toHaveBeenCalledWith('Sent Mail');
+        });
+
+        test('before ensureFolders(), resolveFolder returns the original folder path unchanged', async () => {
+            // Without calling ensureFolders(), _resolvedPaths is empty — resolveFolder falls back to identity
+            setupFetchOnePair(makePlainFetchResult(), '1', PLAIN_BODY_CONTENT);
+            await connection.connect();
+
+            await connection.fetchMessage('Sent', 42);
+
+            // Before ensureFolders() is called, 'Sent' is passed through as-is
+            expect(mockMailboxOpen).toHaveBeenCalledWith('Sent');
         });
     });
 
