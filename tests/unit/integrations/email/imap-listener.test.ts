@@ -42,7 +42,6 @@ function makeImap(overrides: Partial<{
     cancelIdle:       ReturnType<typeof mock>
     searchByFlag:     ReturnType<typeof mock>
     setFlag:          ReturnType<typeof mock>
-    clearFlag:        ReturnType<typeof mock>
 }> = {}): {
     conn:             ImapConnection
     connect:          ReturnType<typeof mock>
@@ -54,7 +53,6 @@ function makeImap(overrides: Partial<{
     cancelIdle:       ReturnType<typeof mock>
     searchByFlag:     ReturnType<typeof mock>
     setFlag:          ReturnType<typeof mock>
-    clearFlag:        ReturnType<typeof mock>
 } {
     const connect          = overrides.connect          ?? mock(async () => undefined);
     const disconnect       = overrides.disconnect       ?? mock(async () => undefined);
@@ -65,10 +63,9 @@ function makeImap(overrides: Partial<{
     const cancelIdle       = overrides.cancelIdle       ?? mock(() => undefined);
     const searchByFlag     = overrides.searchByFlag     ?? mock(async () => []);
     const setFlag          = overrides.setFlag          ?? mock(async () => undefined);
-    const clearFlag        = overrides.clearFlag        ?? mock(async () => undefined);
 
     return {
-        conn: { connect, disconnect, ensureFolders, fetchNewMessages, getMailboxCounts, idle, cancelIdle, searchByFlag, setFlag, clearFlag } as unknown as ImapConnection,
+        conn: { connect, disconnect, ensureFolders, fetchNewMessages, getMailboxCounts, idle, cancelIdle, searchByFlag, setFlag } as unknown as ImapConnection,
         connect,
         disconnect,
         ensureFolders,
@@ -78,7 +75,6 @@ function makeImap(overrides: Partial<{
         cancelIdle,
         searchByFlag,
         setFlag,
-        clearFlag,
     };
 }
 
@@ -1093,17 +1089,21 @@ describe('ImapListener', () => {
         function makeWildDuck(overrides: Partial<{
             getMessage:            ReturnType<typeof mock>
             updateMessageMetadata: ReturnType<typeof mock>
+            updateMessageFlags:    ReturnType<typeof mock>
         }> = {}): {
-            wdc:                   { getMessage: ReturnType<typeof mock>, updateMessageMetadata: ReturnType<typeof mock> }
+            wdc:                   { getMessage: ReturnType<typeof mock>, updateMessageMetadata: ReturnType<typeof mock>, updateMessageFlags: ReturnType<typeof mock> }
             getMessage:            ReturnType<typeof mock>
             updateMessageMetadata: ReturnType<typeof mock>
+            updateMessageFlags:    ReturnType<typeof mock>
         } {
             const getMessage            = overrides.getMessage            ?? mock(_.constant(Promise.resolve(null)));
             const updateMessageMetadata = overrides.updateMessageMetadata ?? mock(async () => undefined);
+            const updateMessageFlags    = overrides.updateMessageFlags    ?? mock(async () => undefined);
             return {
-                wdc: { getMessage, updateMessageMetadata },
+                wdc: { getMessage, updateMessageMetadata, updateMessageFlags },
                 getMessage,
                 updateMessageMetadata,
+                updateMessageFlags,
             };
         }
 
@@ -1148,19 +1148,19 @@ describe('ImapListener', () => {
             const listener = new ImapListener(conn, processor, makeCounters().store, config);
             await listener.start();
 
-            expect(searchByFlag).toHaveBeenCalledWith('Drafts', '\\DiscordNotifyFailed');
+            expect(searchByFlag).toHaveBeenCalledWith('Drafts', 'DiscordNotifyFailed');
             expect(getMessage).not.toHaveBeenCalled();
 
             await listener.stop();
         });
 
-        test('on successful retry: calls onSendApprovalRequest, clears flag, resets notifyAttempts', async () => {
+        test('on successful retry: calls onSendApprovalRequest, clears flag via updateMessageFlags, resets notifyAttempts', async () => {
             const uid = 42;
-            const { conn, clearFlag } = makeImap({
+            const { conn } = makeImap({
                 searchByFlag: mock(async () => [uid]),
             });
             const { processor } = makeProcessor();
-            const { wdc, getMessage, updateMessageMetadata } = makeWildDuck({
+            const { wdc, getMessage, updateMessageMetadata, updateMessageFlags } = makeWildDuck({
                 getMessage: mock(async () => ({
                     id:      uid,
                     subject: 'Test subject',
@@ -1176,7 +1176,7 @@ describe('ImapListener', () => {
 
             expect(getMessage).toHaveBeenCalledWith('Drafts', uid);
             expect(onSendApprovalRequest).toHaveBeenCalledWith('alice@example.com', 'Test subject', uid, undefined);
-            expect(clearFlag).toHaveBeenCalledWith(uid, 'Drafts', '\\DiscordNotifyFailed');
+            expect(updateMessageFlags).toHaveBeenCalledWith('Drafts', uid, { removeFlags: ['DiscordNotifyFailed'] });
             expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', uid, { notifyAttempts: 0 });
 
             await listener.stop();
@@ -1210,11 +1210,11 @@ describe('ImapListener', () => {
 
         test('on successful retry with undefined to field: passes empty string to onSendApprovalRequest', async () => {
             const uid = 88;
-            const { conn, clearFlag } = makeImap({
+            const { conn } = makeImap({
                 searchByFlag: mock(async () => [uid]),
             });
             const { processor } = makeProcessor();
-            const { wdc, getMessage, updateMessageMetadata } = makeWildDuck({
+            const { wdc, getMessage, updateMessageMetadata, updateMessageFlags } = makeWildDuck({
                 getMessage: mock(async () => ({
                     id:      uid,
                     subject: 'No-to test',
@@ -1230,7 +1230,7 @@ describe('ImapListener', () => {
             expect(getMessage).toHaveBeenCalledWith('Drafts', uid);
             // toStr is '' because msg.to is undefined (falls back to []) and lodash maps an empty array
             expect(onSendApprovalRequest).toHaveBeenCalledWith('', 'No-to test', uid, undefined);
-            expect(clearFlag).toHaveBeenCalledWith(uid, 'Drafts', '\\DiscordNotifyFailed');
+            expect(updateMessageFlags).toHaveBeenCalledWith('Drafts', uid, { removeFlags: ['DiscordNotifyFailed'] });
             expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', uid, { notifyAttempts: 0 });
 
             await listener.stop();
@@ -1260,11 +1260,11 @@ describe('ImapListener', () => {
 
         test('when onSendApprovalRequest throws (e.g. admin channel not sendable), DiscordNotifyFailed flag is retained', async () => {
             const uid = 99;
-            const { conn, setFlag, clearFlag } = makeImap({
+            const { conn } = makeImap({
                 searchByFlag: mock(async () => [uid]),
             });
             const { processor } = makeProcessor();
-            const { wdc } = makeWildDuck({
+            const { wdc, updateMessageFlags } = makeWildDuck({
                 getMessage: mock(async () => ({
                     id:       uid,
                     subject:  'Pending approval',
@@ -1282,19 +1282,19 @@ describe('ImapListener', () => {
             await listener.start();
 
             // Error propagated → DiscordNotifyFailed flag is NOT cleared (notification still pending)
-            expect(clearFlag).not.toHaveBeenCalledWith(uid, 'Drafts', '\\DiscordNotifyFailed');
-            // Did NOT transition to GaveUp (only at 2 attempts; MAX is 5)
-            expect(setFlag).not.toHaveBeenCalled();
+            // (below MAX_NOTIFY_ATTEMPTS=5, so no give-up transition either)
+            expect(updateMessageFlags).not.toHaveBeenCalledWith('Drafts', uid, expect.objectContaining({ removeFlags: ['DiscordNotifyFailed'] }));
+            expect(updateMessageFlags).not.toHaveBeenCalledWith('Drafts', uid, expect.objectContaining({ addFlags: ['DiscordNotifyGaveUp'] }));
         });
 
         test('on failed retry below MAX_NOTIFY_ATTEMPTS: increments notifyAttempts, keeps flag', async () => {
             const uid = 33;
-            const { conn, setFlag, clearFlag } = makeImap({
+            const { conn } = makeImap({
                 searchByFlag: mock(async () => [uid]),
             });
             const { processor } = makeProcessor();
             // Message has notifyAttempts: 2; after failed retry → 3 (below MAX_NOTIFY_ATTEMPTS=5)
-            const { wdc, updateMessageMetadata } = makeWildDuck({
+            const { wdc, updateMessageMetadata, updateMessageFlags } = makeWildDuck({
                 getMessage: mock(async () => ({
                     id:       uid,
                     subject:  'Retry test',
@@ -1310,24 +1310,22 @@ describe('ImapListener', () => {
             const listener = new ImapListener(conn, processor, makeCounters().store, config);
             await listener.start();
 
-            // Did NOT clear the DiscordNotifyFailed flag
-            expect(clearFlag).not.toHaveBeenCalledWith(uid, 'Drafts', '\\DiscordNotifyFailed');
-            // Did NOT set DiscordNotifyGaveUp
-            expect(setFlag).not.toHaveBeenCalled();
+            // Did NOT transition flags (below MAX_NOTIFY_ATTEMPTS)
+            expect(updateMessageFlags).not.toHaveBeenCalled();
             // Incremented attempts from 2 → 3
             expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', uid, { notifyAttempts: 3 });
 
             await listener.stop();
         });
 
-        test('on failed retry at MAX_NOTIFY_ATTEMPTS: transitions to DiscordNotifyGaveUp flag', async () => {
+        test('on failed retry at MAX_NOTIFY_ATTEMPTS: transitions to DiscordNotifyGaveUp flag via updateMessageFlags', async () => {
             const uid = 44;
-            const { conn, setFlag, clearFlag } = makeImap({
+            const { conn } = makeImap({
                 searchByFlag: mock(async () => [uid]),
             });
             const { processor } = makeProcessor();
             // notifyAttempts: 4 → after +1 = 5 = MAX_NOTIFY_ATTEMPTS → give up
-            const { wdc, updateMessageMetadata } = makeWildDuck({
+            const { wdc, updateMessageMetadata, updateMessageFlags } = makeWildDuck({
                 getMessage: mock(async () => ({
                     id:       uid,
                     subject:  'Give up test',
@@ -1343,10 +1341,11 @@ describe('ImapListener', () => {
             const listener = new ImapListener(conn, processor, makeCounters().store, config);
             await listener.start();
 
-            // Cleared the DiscordNotifyFailed flag
-            expect(clearFlag).toHaveBeenCalledWith(uid, 'Drafts', '\\DiscordNotifyFailed');
-            // Set the DiscordNotifyGaveUp flag
-            expect(setFlag).toHaveBeenCalledWith(uid, 'Drafts', '\\DiscordNotifyGaveUp');
+            // Transitions GaveUp and clears Failed via wildDuckClient.updateMessageFlags
+            expect(updateMessageFlags).toHaveBeenCalledWith('Drafts', uid, {
+                addFlags:    ['DiscordNotifyGaveUp'],
+                removeFlags: ['DiscordNotifyFailed'],
+            });
             // Stored final attempt count
             expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', uid, { notifyAttempts: MAX_NOTIFY_ATTEMPTS });
 
@@ -1355,13 +1354,13 @@ describe('ImapListener', () => {
 
         test('on failed retry with no metadata (getMessage returns null on retry): defaults to 2, below MAX', async () => {
             const uid = 66;
-            const { conn, setFlag, clearFlag } = makeImap({
+            const { conn } = makeImap({
                 searchByFlag: mock(async () => [uid]),
             });
             const { processor } = makeProcessor();
             // First getMessage returns msg (for the notification attempt), second returns null (for retry escalation)
             let getMessageCallCount = 0;
-            const { wdc, updateMessageMetadata } = makeWildDuck({
+            const { wdc, updateMessageMetadata, updateMessageFlags } = makeWildDuck({
                 getMessage: mock(async () => {
                     getMessageCallCount++;
                     if(getMessageCallCount === 1) {
@@ -1378,9 +1377,8 @@ describe('ImapListener', () => {
             const listener = new ImapListener(conn, processor, makeCounters().store, config);
             await listener.start();
 
-            // null metaData → attempts defaults to 2, which is < MAX_NOTIFY_ATTEMPTS (5), so increment
-            expect(clearFlag).not.toHaveBeenCalled();
-            expect(setFlag).not.toHaveBeenCalled();
+            // null metaData → attempts defaults to 2, which is < MAX_NOTIFY_ATTEMPTS (5), so increment (no flag transition)
+            expect(updateMessageFlags).not.toHaveBeenCalled();
             expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', uid, { notifyAttempts: 2 });
 
             await listener.stop();

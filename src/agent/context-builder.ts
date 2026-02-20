@@ -390,9 +390,9 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         // Stryker disable BlockStatement: try-catch guards rejected draft errors from breaking perch context
         try {
             // Stryker disable next-line StringLiteral: EmailFolder.Drafts is configuration constant
-            const rejectedUids = await imap.searchByFlag('Drafts', '\\SendRejectedByAdmin');
+            const rejectedUids = await imap.searchByFlag('Drafts', 'SendRejectedByAdmin');
             // Stryker disable next-line StringLiteral: EmailFolder.Drafts is configuration constant
-            const gaveUpUids   = await imap.searchByFlag('Drafts', '\\DiscordNotifyGaveUp');
+            const gaveUpUids   = await imap.searchByFlag('Drafts', 'DiscordNotifyGaveUp');
 
             // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
             const sections: string[] = [];

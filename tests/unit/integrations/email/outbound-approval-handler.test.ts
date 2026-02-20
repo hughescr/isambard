@@ -4,7 +4,6 @@ import _ from 'lodash';
 import { mockLogger } from '../../../setup';
 import { OutboundApprovalHandler } from '../../../../src/integrations/email/outbound-approval-handler';
 import type { OutboundApprovalHandlerDeps } from '../../../../src/integrations/email/outbound-approval-handler';
-import type { ImapConnection } from '../../../../src/integrations/email/imap-connection';
 import type { EmailAllowlist } from '../../../../src/integrations/email/allowlist';
 import type { WildDuckClient } from '../../../../src/integrations/email/wildduck-client';
 import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction } from 'discord.js';
@@ -73,14 +72,10 @@ function makeSelectMenuInteraction(customId: string, selectedValues: string[] = 
 }
 
 function makeDeps(overrides: Partial<OutboundApprovalHandlerDeps> = {}): OutboundApprovalHandlerDeps {
-    const mockImap: ImapConnection = {
-        setFlag:     mock(async () => { /* intentionally empty */ }),
-        moveMessage: mock(async () => { /* intentionally empty */ }),
-    } as unknown as ImapConnection;
-
     const mockWildDuck: WildDuckClient = {
         submitMessage:         mock(async () => { /* intentionally empty */ }),
         updateMessageMetadata: mock(async () => { /* intentionally empty */ }),
+        updateMessageFlags:    mock(async () => { /* intentionally empty */ }),
         getMessage:            mock(async () => ({ id: 42, to: [{ address: 'recipient@example.com' }] })),
     } as unknown as WildDuckClient;
 
@@ -91,7 +86,6 @@ function makeDeps(overrides: Partial<OutboundApprovalHandlerDeps> = {}): Outboun
 
     return {
         wildDuckClient: mockWildDuck,
-        imapConnection: mockImap,
         allowlist:      mockAllowlist,
         ...overrides,
     };
@@ -415,7 +409,7 @@ describe('OutboundApprovalHandler', () => {
             expect(deferUpdate).not.toHaveBeenCalled();
         });
 
-        test('should deferUpdate, call updateMessageMetadata with reason, set IMAP flag, update embed', async () => {
+        test('should deferUpdate, call updateMessageMetadata with reason, set flag via wildDuck, update embed', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
             const { interaction, deferUpdate, editReply } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate');
@@ -428,7 +422,7 @@ describe('OutboundApprovalHandler', () => {
             expect(updateArgs?.[0]).toBe('Drafts');
             expect(updateArgs?.[1]).toBe(42);
             expect((updateArgs?.[2] as Record<string, unknown>)?.reason).toBe('Not appropriate');
-            expect(deps.imapConnection.setFlag).toHaveBeenCalledWith(42, 'Drafts', '\\SendRejectedByAdmin');
+            expect(deps.wildDuckClient.updateMessageFlags).toHaveBeenCalledWith('Drafts', 42, { addFlags: ['SendRejectedByAdmin'] });
             expect(editReply).toHaveBeenCalledTimes(1);
         });
 
@@ -492,24 +486,24 @@ describe('OutboundApprovalHandler', () => {
             expect((updateArgs?.[2] as Record<string, unknown>)?.reason).toBe('No reason given');
         });
 
-        test('should set IMAP flag after rejection', async () => {
+        test('should set flag via wildDuckClient.updateMessageFlags after rejection', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
             const { interaction } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate');
 
             await handler.handleModalSubmit(interaction);
 
-            expect(deps.imapConnection.setFlag).toHaveBeenCalledWith(42, 'Drafts', '\\SendRejectedByAdmin');
+            expect(deps.wildDuckClient.updateMessageFlags).toHaveBeenCalledWith('Drafts', 42, { addFlags: ['SendRejectedByAdmin'] });
         });
 
-        test('should NOT call moveMessage to Trash after rejection (draft stays in Drafts)', async () => {
+        test('should NOT submit message after rejection (draft stays in Drafts)', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
             const { interaction } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate');
 
             await handler.handleModalSubmit(interaction);
 
-            expect(deps.imapConnection.moveMessage).not.toHaveBeenCalled();
+            expect(deps.wildDuckClient.submitMessage).not.toHaveBeenCalled();
         });
 
         test('should log error if updateMessageMetadata fails', async () => {

@@ -223,7 +223,6 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Stryker disable next-line ObjectLiteral: outbound approval handler wiring is integration-only
     const outboundApprovalHandler = new OutboundApprovalHandler({
         wildDuckClient,
-        imapConnection: imap,
         allowlist,
     });
 

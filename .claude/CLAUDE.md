@@ -47,9 +47,10 @@ Isambard can propose improvements to its own code:
 ### Directory Structure
 - `src/agent/` - Claude Agent SDK integration
 - `src/storage/` - DynamoDB models, repositories, and storage backends
-- `src/integrations/` - External services (Discord, etc.)
+- `src/integrations/` - External services (Discord, Email)
 - `src/config/` - Configuration with Zod validation
 - `src/app/` - Application composition root (composition layer for createApp decomposition)
+- `src/errors/` - Centralized error hierarchy (IsambardError base with StorageError, DiscordError subtrees)
 - `src/utils/` - Shared utilities
 
 ### Agents, Skills, and Plugins
@@ -79,6 +80,15 @@ The agent subsystem connects Discord to Claude with persistent memory:
   - `classifier.ts` - `AnswerClassifier` class for LLM-based answer classification
 - `src/agent/question-registry/` - Question lifecycle management
   - `registry.ts` - `QuestionRegistry` class for tracking pending questions with timeouts
+- `src/agent/email-mcp-server.ts` - MCP server for email operations (checkInbox, getEmailContent, archiveEmail, searchEmail, sendEmail, replyToEmail, deleteDraft, amendAndResubmitDraft)
+- `src/agent/inbox-mcp-server.ts` - MCP server for Discord inbox operations (getUnreadOverview, getChannelSummary, fetchMessages, markAsRead, markChannelRead)
+- `src/agent/event-summarizer.ts` - LLM-based event summarization for context compression
+- `src/agent/multimodal-message-builder.ts` - Builds multimodal messages with image support
+- `src/agent/resume-prompt-builder.ts` - Builds resume prompts for background task auto-resume
+- `src/agent/task-list-reader.ts` - `TaskListReader` for reading Claude task list state
+- `src/agent/task-cleanup-processor.ts` - Cleanup processor for stale task list entries
+- `src/agent/task-persistence-coordinator.ts` - Coordinator for task list persistence across sessions
+- `src/agent/task-directory-copier.ts` - Utility for copying task directories
 - `src/agent/index.ts` - Public exports
 - `src/index.ts` - Application entry point with lifecycle management
 
@@ -100,6 +110,7 @@ The Discord integration provides bot functionality:
   - `catchup-setup.ts` - Catch-up session runner, inbox initialization, and catch-up context building
   - `coordinator-setup.ts` - Message coordinator integration with agent, attachment processing, boundary mapping (Discord→agent types)
   - `event-handler-setup.ts` - Channel registry initialization, message processing setup, channel cleanup handlers
+  - `email-setup.ts` - Email MCP server initialization and IMAP listener lifecycle
 - `src/integrations/discord/index.ts` - Public exports
 
 ### Discord Presence System
@@ -122,6 +133,26 @@ Message search and caching for historical context:
   - `fetcher.ts` - Discord API message fetcher
   - `search.ts` - Message search service
   - `summarizer.ts` - Overflow message summarization
+
+### Email Integration
+IMAP inbox reading with WildDuck HTTP API for outbound sending and admin approval workflow:
+- `src/integrations/email/types.ts` - Email types (EmailFolder, WildDuckMessage, WildDuckAddress, SearchCriteria)
+- `src/integrations/email/errors.ts` - Email error hierarchy
+- `src/integrations/email/imap-connection.ts` - IMAP connection via imapflow (IDLE push support)
+- `src/integrations/email/imap-listener.ts` - IMAP IDLE listener with checkPendingNotifications loop
+- `src/integrations/email/wildduck-client.ts` - WildDuck HTTP API client (message search, flag management, draft upload, message send, updateMessageFlags)
+- `src/integrations/email/email-processor.ts` - Email processing pipeline
+- `src/integrations/email/email-counters.ts` - CleanInbox unread counter management
+- `src/integrations/email/outbound-approval-handler.ts` - Admin approval workflow for outbound emails via Discord
+- `src/integrations/email/allowlist.ts` - Recipient allowlist management
+- `src/integrations/email/allowlist-commands.ts` - Discord slash commands for allowlist management
+- `src/integrations/email/auth-checker.ts` - Authorization checking for outbound email
+- `src/integrations/email/send-rate-limiter.ts` - Token bucket rate limiter for outbound sends (capacity=24, refill=1/hr)
+- `src/integrations/email/classifier.ts` - Email classification
+- `src/integrations/email/classifier-prompt.ts` - LLM prompt for email classification
+- `src/integrations/email/review-embed-builder.ts` - Discord embed builder for approval review
+- `src/integrations/email/review-handler.ts` - Handles admin approval/rejection responses
+- `src/integrations/email/index.ts` - Public exports
 
 ### Memory Tool Subsystem
 Custom memory tool implementation with DynamoDB backend and three-layer architecture:

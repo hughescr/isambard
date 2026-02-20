@@ -6,10 +6,13 @@ Expand integrations and information sources.
 ## Read-Only Integrations
 Priority order for adding read-only access to external services:
 
-### Email Access
-- [ ] IMAP connection (imapflow)
-- [ ] Read-only inbox queries
-- [ ] MCP tools for email context
+### Email Access (Completed February 2026)
+- [x] IMAP connection (imapflow) with IDLE push support
+- [x] Inbox read queries with CleanInbox management and IMAP IDLE
+- [x] MCP tools for email context (checkInbox, getEmailContent, archiveEmail, searchEmail)
+- [x] Outbound email via WildDuck HTTP API with admin approval workflow (sendEmail, replyToEmail, amendAndResubmitDraft, deleteDraft)
+- [x] Allowlist-based access control for outbound sending
+- [x] Token bucket rate limiter for outbound sends
 
 ### Social & Content Feeds
 - [ ] Bluesky integration (AT Protocol)
@@ -24,7 +27,7 @@ Priority order for adding read-only access to external services:
 ## Future Write Capabilities
 After read-only integrations are stable:
 - [ ] Calendar event creation
-- [ ] Email sending (nodemailer)
+- [x] Email sending (via WildDuck HTTP API, not nodemailer)
 - [ ] Bluesky posting
 - [ ] Box Documents (box-node-sdk)
 

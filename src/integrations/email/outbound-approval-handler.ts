@@ -3,7 +3,6 @@ import { EmbedBuilder, ActionRowBuilder, TextInputStyle, StringSelectMenuBuilder
 import { LabelBuilder, ModalBuilder, TextInputBuilder } from '@discordjs/builders';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
-import type { ImapConnection } from '@/integrations/email/imap-connection';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import { EmailFolder } from '@/integrations/email/types';
@@ -13,7 +12,6 @@ const RED   = 0xFF0000;
 
 export interface OutboundApprovalHandlerDeps {
     wildDuckClient: WildDuckClient
-    imapConnection: ImapConnection
     allowlist:      EmailAllowlist
 }
 
@@ -37,12 +35,10 @@ export interface OutboundApprovalHandlerDeps {
  */
 export class OutboundApprovalHandler {
     private readonly wildDuckClient: WildDuckClient;
-    private readonly imapConnection: ImapConnection;
     private readonly allowlist:      EmailAllowlist;
 
     constructor(deps: OutboundApprovalHandlerDeps) {
         this.wildDuckClient = deps.wildDuckClient;
-        this.imapConnection = deps.imapConnection;
         this.allowlist      = deps.allowlist;
     }
 
@@ -134,8 +130,9 @@ export class OutboundApprovalHandler {
                 reason,
             });
 
-            // Set IMAP flag so context-builder's searchByFlag can find rejected drafts
-            await this.imapConnection.setFlag(uid, EmailFolder.Drafts, '\\SendRejectedByAdmin');
+            // Set flag so context-builder's searchByFlag can find rejected drafts
+            // Stryker disable next-line StringLiteral: flag name is configuration
+            await this.wildDuckClient.updateMessageFlags(EmailFolder.Drafts, uid, { addFlags: ['SendRejectedByAdmin'] });
 
             const updatedEmbed = new EmbedBuilder()
                 // Stryker disable next-line StringLiteral,TemplateLiteral: UI label is configuration

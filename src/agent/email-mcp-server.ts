@@ -257,7 +257,7 @@ export function createEmailMCPServer(
                 // Stryker disable BlockStatement: try-catch wraps flag setting — best-effort, draft already saved
                 try {
                     // Stryker disable next-line StringLiteral: flag name is configuration
-                    await imap.setFlag(draftUid, EmailFolder.Drafts, '\\DiscordNotifyFailed');
+                    await wildDuckClient.updateMessageFlags(EmailFolder.Drafts, draftUid, { addFlags: ['DiscordNotifyFailed'] });
                     await wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, draftUid, { notifyAttempts: 1 });
                 } catch (flagErr) {
                     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
@@ -668,8 +668,6 @@ export function createEmailMCPServer(
                             text:    args.body,
                             // Stryker disable next-line ConditionalExpression,EqualityOperator,ObjectLiteral: attachments array inclusion guard
                             ...(attachments.length > 0 ? { attachments } : {}),
-                            // Stryker disable next-line ArrayDeclaration,StringLiteral: flags array for draft
-                            flags:   ['\\Draft'],
                             // Stryker disable next-line BooleanLiteral: draft flag is required for WildDuck draft upload
                             draft:   true,
                         });
@@ -797,8 +795,6 @@ export function createEmailMCPServer(
                             },
                             // Stryker disable next-line ConditionalExpression,EqualityOperator,ObjectLiteral: attachments array inclusion guard
                             ...(attachments.length > 0 ? { attachments } : {}),
-                            // Stryker disable next-line ArrayDeclaration,StringLiteral: flags array for draft
-                            flags: ['\\Draft'],
                             // Stryker disable next-line BooleanLiteral: draft flag is required for WildDuck draft upload
                             draft: true,
                         });
@@ -935,8 +931,6 @@ export function createEmailMCPServer(
                             subject,
                             text:            body,
                             replacePrevious: { mailbox: EmailFolder.Drafts, id: uid },
-                            // Stryker disable next-line ArrayDeclaration,StringLiteral: flags array for draft
-                            flags:           ['\\Draft'],
                             // Stryker disable next-line BooleanLiteral: draft flag is required for WildDuck draft upload
                             draft:           true,
                         });

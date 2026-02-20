@@ -2706,7 +2706,7 @@ describe('createContextBuilder loading methods', () => {
                 imap: {
                     listUnread:   mock(async () => []),
                     searchByFlag: mock(async (_folder: string, flag: string) => {
-                        if(flag === '\\SendRejectedByAdmin') {
+                        if(flag === 'SendRejectedByAdmin') {
                             return [99];
                         }
                         return []; // No gave-up drafts — isolate subject to rejection line only
@@ -2881,7 +2881,7 @@ describe('createContextBuilder loading methods', () => {
                     listUnread:   mock(async () => []),
                     searchByFlag: mock(async (folder: string, flag: string) => {
                         _searchByFlagCallCount++;
-                        if(flag === '\\DiscordNotifyGaveUp') {
+                        if(flag === 'DiscordNotifyGaveUp') {
                             return [101];
                         }
                         return []; // No rejected-by-admin drafts
@@ -2942,10 +2942,10 @@ describe('createContextBuilder loading methods', () => {
                 imap: {
                     listUnread:   mock(async () => []),
                     searchByFlag: mock(async (_folder: string, flag: string) => {
-                        if(flag === '\\SendRejectedByAdmin') {
+                        if(flag === 'SendRejectedByAdmin') {
                             return [200];
                         }
-                        if(flag === '\\DiscordNotifyGaveUp') {
+                        if(flag === 'DiscordNotifyGaveUp') {
                             return [201];
                         }
                         return [];
@@ -2991,7 +2991,7 @@ describe('createContextBuilder loading methods', () => {
                 imap: {
                     listUnread:   mock(async () => []),
                     searchByFlag: mock(async (_folder: string, flag: string) => {
-                        if(flag === '\\DiscordNotifyGaveUp') {
+                        if(flag === 'DiscordNotifyGaveUp') {
                             return [300];
                         }
                         return [];
@@ -3025,7 +3025,7 @@ describe('createContextBuilder loading methods', () => {
                 imap: {
                     listUnread:   mock(async () => []),
                     searchByFlag: mock(async (_folder: string, flag: string) => {
-                        if(flag === '\\DiscordNotifyGaveUp') {
+                        if(flag === 'DiscordNotifyGaveUp') {
                             return [400];
                         }
                         return [];
@@ -3059,10 +3059,10 @@ describe('createContextBuilder loading methods', () => {
                 imap: {
                     listUnread:   mock(async () => []),
                     searchByFlag: mock(async (_folder: string, flag: string) => {
-                        if(flag === '\\SendRejectedByAdmin') {
+                        if(flag === 'SendRejectedByAdmin') {
                             return [500];
                         }
-                        if(flag === '\\DiscordNotifyGaveUp') {
+                        if(flag === 'DiscordNotifyGaveUp') {
                             return [501];
                         }
                         return [];

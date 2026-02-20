@@ -15,6 +15,7 @@ export interface SearchCriteria {
     before?:        string
     since?:         string
     header?:        { name: string, value: string }
+    keyword?:       string
 }
 
 export interface WildDuckSearchParams {
@@ -85,6 +86,7 @@ export interface WildDuckMessage {
     text?:     string
     html?:     string
     metaData?: Record<string, unknown>
+    flags?:    string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -271,6 +273,29 @@ export class WildDuckClient {
     }
 
     /**
+     * Update flags on an existing message (add and/or remove).
+     * Retries once on 401 by re-authenticating.
+     */
+    async updateMessageFlags(mailboxPath: string, uid: number, options: { addFlags?: string[], removeFlags?: string[] }): Promise<void> {
+        // Stryker disable next-line ConditionalExpression,LogicalOperator: early return when no flags to update — no-op is correct
+        if(!options.addFlags?.length && !options.removeFlags?.length) {
+            return;
+        }
+        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
+        try {
+            await this.doUpdateMessageFlags(mailboxPath, uid, options);
+        } catch (err) {
+            if(err instanceof WildDuckAuthError) {
+                await this.authenticate();
+                await this.doUpdateMessageFlags(mailboxPath, uid, options);
+                return;
+            }
+            throw err;
+        }
+        // Stryker restore BlockStatement
+    }
+
+    /**
      * Delete a message by IMAP UID.
      * Retries once on 401 by re-authenticating.
      */
@@ -384,6 +409,10 @@ export class WildDuckClient {
         if(query.header) {
             searchParams.set(`header.${query.header.name}`, query.header.value);
         }
+        if(query.keyword) {
+            // Stryker disable next-line StringLiteral: query param name is API contract
+            searchParams.set('keyword', query.keyword);
+        }
 
         // Map mailbox names to WildDuck IDs
         // Stryker disable next-line EqualityOperator,ConditionalExpression: length > 0 and length >= 0 are equivalent since the loop body runs 0 times for empty arrays; ConditionalExpression → true would still run 0 times when array is empty
@@ -474,6 +503,25 @@ export class WildDuckClient {
                 method:  'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify({ metaData: metadata }),
+            }
+        );
+    }
+
+    private async doUpdateMessageFlags(mailboxPath: string, uid: number, options: { addFlags?: string[], removeFlags?: string[] }): Promise<void> {
+        const mailboxId = this.resolveMailboxId(mailboxPath);
+        const body: Record<string, string[]> = {};
+        if(options.addFlags) {
+            body.addFlags = options.addFlags;
+        }
+        if(options.removeFlags) {
+            body.removeFlags = options.removeFlags;
+        }
+        await this.makeRequest<unknown>(
+            `/users/me/mailboxes/${mailboxId}/messages/${uid}`,
+            {
+                method:  'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(body),
             }
         );
     }

@@ -18,11 +18,11 @@ Izzy has also been taught an important lesson: if they ever want to exceed free-
 - **Persistent Memory** - DynamoDB-backed three-layer memory system (identity/state/events)
 - **Message History** - Search and cache Discord message history for context
 - **Time Awareness** - Temporal context injection and relative time formatting
+- **Email Integration** - IMAP inbox reading and outbound email via WildDuck API with admin approval workflow
 - **Self-Improvement** - Proposes enhancements via PRs (requires human approval)
 
 ### Planned Integrations (Not Yet Implemented)
 - Apple Calendar (CalDAV)
-- Email (IMAP/SMTP)
 - Box Documents
 
 ## Authentication
@@ -95,9 +95,19 @@ Isambard uses OAuth authentication via Claude Max subscription:
    PERCH_TEST_MODE_TRIGGER_ON_STARTUP=false
    ```
 
+   **Email integration secrets (active):**
+   ```bash
+   bunx sst secret set ImapHost <imap-host>
+   bunx sst secret set ImapPort <imap-port>
+   bunx sst secret set EmailUser <email-user>
+   bunx sst secret set EmailPassword <email-password>
+   bunx sst secret set AdminDiscordUserId <admin-discord-user-id>
+   bunx sst secret set AdminDiscordChannelId <admin-discord-channel-id>
+   bunx sst secret set WildDuckApiUrl <wildduck-api-url>
+   ```
+
    **Planned integrations (not yet implemented - secrets commented out in `sst/secrets.ts`):**
    - Apple Calendar (CalDAV): `CaldavUrl`, `CaldavUsername`, `CaldavPassword`
-   - Email (IMAP/SMTP): `ImapHost`, `ImapPort`, `SmtpHost`, `SmtpPort`, `EmailUser`, `EmailPassword`
    - Box Documents: `BoxClientId`, `BoxClientSecret`
 
 4. **Start development**
@@ -191,23 +201,30 @@ src/
 │   ├── context-builder.ts    # Memory context loading
 │   ├── memory-mcp-server.ts  # MCP server for memory tools
 │   ├── discord-mcp-server.ts # MCP server for message history
+│   ├── email-mcp-server.ts   # MCP server for email operations
+│   ├── inbox-mcp-server.ts   # MCP server for Discord inbox
 │   ├── text-generator.ts     # Lightweight LLM text generation
 │   ├── claude-retry.ts       # Retry logic for Claude API
 │   ├── plugin-loader.ts      # Plugin loading for Agent SDK
 │   ├── session-cleanup.ts    # Session lifecycle management
 │   └── prompts/              # System prompts
 ├── integrations/             # External services
-│   └── discord/              # Discord bot integration
-│       ├── presence/         # Dynamic status updates
-│       │   ├── manager.ts    # Presence state management
-│       │   ├── middleware.ts # Activity state transitions
-│       │   └── status-generator-*.ts  # Status text generators
-│       ├── message-history/  # Message search/caching
-│       │   ├── search.ts     # Search service
-│       │   ├── fetcher.ts    # Discord API fetcher
-│       │   └── summarizer.ts # Overflow summarization
-│       ├── rate-limiter.ts   # Rate limiting
-│       └── retry.ts          # Retry logic
+│   ├── discord/              # Discord bot integration
+│   │   ├── presence/         # Dynamic status updates
+│   │   │   ├── manager.ts    # Presence state management
+│   │   │   ├── middleware.ts # Activity state transitions
+│   │   │   └── status-generator-*.ts  # Status text generators
+│   │   ├── message-history/  # Message search/caching
+│   │   │   ├── search.ts     # Search service
+│   │   │   ├── fetcher.ts    # Discord API fetcher
+│   │   │   └── summarizer.ts # Overflow summarization
+│   │   ├── rate-limiter.ts   # Rate limiting
+│   │   └── retry.ts          # Retry logic
+│   └── email/                # Email integration (IMAP + WildDuck API)
+│       ├── imap-connection.ts # IMAP connection with IDLE
+│       ├── imap-listener.ts  # IDLE listener and inbox polling
+│       ├── wildduck-client.ts # WildDuck HTTP API client
+│       └── outbound-approval-handler.ts  # Admin approval workflow
 ├── storage/                  # DynamoDB layer
 │   ├── memory-tool/          # Three-layer memory system
 │   │   ├── backend*.ts       # Backend operations

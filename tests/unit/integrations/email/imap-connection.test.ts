@@ -946,41 +946,6 @@ describe('ImapConnection', () => {
     });
 
     // -------------------------------------------------------------------
-    // clearFlag
-    // -------------------------------------------------------------------
-    describe('clearFlag()', () => {
-        test('opens folder and calls messageFlagsRemove with uid and flag array', async () => {
-            await connection.connect();
-
-            await connection.clearFlag(42, 'Drafts', '\\DiscordNotifyFailed');
-
-            expect(mockMailboxOpen).toHaveBeenCalledWith('Drafts');
-            expect(mockMessageFlagsRemove).toHaveBeenCalledWith(
-                42,
-                ['\\DiscordNotifyFailed'],
-                expect.objectContaining({ uid: true })
-            );
-        });
-
-        test('wraps error in ImapConnectionError', async () => {
-            mockMessageFlagsRemove.mockImplementation(() => Promise.reject(new Error('flag remove failed')));
-            await connection.connect();
-
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
-            await expect(connection.clearFlag(42, 'Drafts', '\\DiscordNotifyFailed')).rejects.toBeInstanceOf(ImapConnectionError);
-        });
-
-        test('re-throws ImapConnectionError without wrapping', async () => {
-            const original = new ImapConnectionError('already wrapped');
-            mockMessageFlagsRemove.mockImplementation(() => Promise.reject(original));
-            await connection.connect();
-
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
-            await expect(connection.clearFlag(42, 'Drafts', '\\TestFlag')).rejects.toBe(original);
-        });
-    });
-
-    // -------------------------------------------------------------------
     // ensureFolders
     // -------------------------------------------------------------------
     describe('ensureFolders()', () => {

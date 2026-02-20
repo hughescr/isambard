@@ -23,6 +23,7 @@ export interface ImapListenerConfig {
     wildDuckClient?: {
         getMessage:            (mailboxPath: string, uid: number) => Promise<{ id: number, subject?: string, to?: { address: string, name?: string }[], cc?: { address: string, name?: string }[], metaData?: Record<string, unknown> } | null>
         updateMessageMetadata: (mailboxPath: string, uid: number, metadata: Record<string, unknown>) => Promise<void>
+        updateMessageFlags:    (mailboxPath: string, uid: number, options: { addFlags?: string[], removeFlags?: string[] }) => Promise<void>
     }
 }
 
@@ -242,9 +243,9 @@ export class ImapListener {
     }
 
     /**
-     * Search Drafts for messages with \\DiscordNotifyFailed flag and attempt to retry
+     * Search Drafts for messages with DiscordNotifyFailed flag and attempt to retry
      * the Discord notification. On success, clears the flag. On repeated failure,
-     * transitions to \\DiscordNotifyGaveUp after MAX_NOTIFY_ATTEMPTS.
+     * transitions to DiscordNotifyGaveUp after MAX_NOTIFY_ATTEMPTS.
      * Best-effort — errors logged, never thrown.
      */
     /**
@@ -264,10 +265,11 @@ export class ImapListener {
 
             if(attempts >= MAX_NOTIFY_ATTEMPTS) {
                 // Give up — transition to GaveUp flag
-                // Stryker disable next-line StringLiteral: flag name is configuration
-                await this.imap.clearFlag(uid, EmailFolder.Drafts, '\\DiscordNotifyFailed');
-                // Stryker disable next-line StringLiteral: flag name is configuration
-                await this.imap.setFlag(uid, EmailFolder.Drafts, '\\DiscordNotifyGaveUp');
+                // Stryker disable next-line StringLiteral: flag names are configuration
+                await wildDuckClient.updateMessageFlags(EmailFolder.Drafts, uid, {
+                    addFlags:    ['DiscordNotifyGaveUp'],
+                    removeFlags: ['DiscordNotifyFailed'],
+                });
                 await wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, uid, { notifyAttempts: attempts });
             } else {
                 // Increment attempt count, keep flag
@@ -290,7 +292,7 @@ export class ImapListener {
         // Stryker disable BlockStatement: try-catch wraps entire check — best-effort, never throws
         try {
             // Stryker disable next-line StringLiteral: flag name is configuration
-            const pendingUids = await this.imap.searchByFlag(EmailFolder.Drafts, '\\DiscordNotifyFailed');
+            const pendingUids = await this.imap.searchByFlag(EmailFolder.Drafts, 'DiscordNotifyFailed');
 
             for(const uid of pendingUids) {
                 // Stryker disable BlockStatement: try-catch wraps individual notification retry - best-effort
@@ -311,7 +313,7 @@ export class ImapListener {
 
                     // Success — clear the flag and reset attempt count
                     // Stryker disable next-line StringLiteral: flag name is configuration
-                    await this.imap.clearFlag(uid, EmailFolder.Drafts, '\\DiscordNotifyFailed');
+                    await wildDuckClient.updateMessageFlags(EmailFolder.Drafts, uid, { removeFlags: ['DiscordNotifyFailed'] });
                     await wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, uid, { notifyAttempts: 0 });
                 } catch (err) {
                     // Notification retry failed — check if we should give up

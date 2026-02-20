@@ -1589,6 +1589,7 @@ describe('createEmailMCPServer', () => {
                 getUserAddresses:      mockGetUserAddresses,
                 getMailboxId:          mock(_.constant('mbx-drafts')),
                 updateMessageMetadata: mock(async () => { /* intentionally empty */ }),
+                updateMessageFlags:    mock(async () => { /* intentionally empty */ }),
             } as unknown as WildDuckClient;
             mockRateLimiter = {
                 isAtLimit:       mock(_.constant(false)),
@@ -1637,6 +1638,21 @@ describe('createEmailMCPServer', () => {
             expect(payload.subject).toBe('Test Subject');
             expect(payload.text).toBe('Test Body');
             expect(payload.draft).toBe(true);
+        });
+
+        test('should NOT include flags field in sendEmail upload payload', async () => {
+            mockAllowlist.isAllowed = mock(_.constant(true));
+
+            const server = createEmailMCPServer(mockImap, mockCounters, {
+                wildDuckClient: mockWildDuck,
+                allowlist:      mockAllowlist,
+            });
+            const handler = getToolHandler(server, 'sendEmail');
+
+            await handler({ to: 'alice@example.com', subject: 'Test Subject', body: 'Test Body', identity: 'formal' });
+
+            const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload.flags).toBeUndefined();
         });
 
         test('should use formalAddress from getUserAddresses for formal identity', async () => {
@@ -1879,7 +1895,7 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('WildDuck upload failed');
         });
 
-        test('should return failure message and set DiscordNotifyFailed flag when sendApprovalRequest fails', async () => {
+        test('should return failure message and set DiscordNotifyFailed flag via wildDuckClient when sendApprovalRequest fails', async () => {
             mockAllowlist.isAllowed = mock(_.constant(false));
             mockSendApprovalRequest = mock(async () => {
                 throw new Error('Discord unavailable');
@@ -1898,8 +1914,8 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('failed to notify admin');
             expect(getText(result)).toContain('retry automatically');
             expect(mockLogger.warn).toHaveBeenCalled();
-            // Flag should be set on the draft
-            expect(mockImap.setFlag).toHaveBeenCalledWith(99, 'Drafts', '\\DiscordNotifyFailed');
+            // Flag should be set on the draft via wildDuckClient (not IMAP)
+            expect(mockWildDuck.updateMessageFlags).toHaveBeenCalledWith('Drafts', 99, { addFlags: ['DiscordNotifyFailed'] });
             // Attempt count stored in metadata
             expect(mockWildDuck.updateMessageMetadata).toHaveBeenCalledWith('Drafts', 99, { notifyAttempts: 1 });
         });
@@ -1909,9 +1925,7 @@ describe('createEmailMCPServer', () => {
             mockSendApprovalRequest = mock(async () => {
                 throw new Error('Discord unavailable');
             });
-            mockImap.setFlag = mock(async () => {
-                throw new Error('IMAP flag failed');
-            });
+            (mockWildDuck.updateMessageFlags as ReturnType<typeof mock>).mockRejectedValue(new Error('WildDuck flag failed'));
 
             const server = createEmailMCPServer(mockImap, mockCounters, {
                 wildDuckClient:      mockWildDuck,
@@ -2172,6 +2186,19 @@ describe('createEmailMCPServer', () => {
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect((payload.reference as Record<string, unknown>)?.action).toBe('replyAll');
+        });
+
+        test('should NOT include flags field in replyToEmail upload payload', async () => {
+            const server = createEmailMCPServer(mockImap, mockCounters, {
+                wildDuckClient: mockWildDuck,
+                allowlist:      mockAllowlist,
+            });
+            const handler = getToolHandler(server, 'replyToEmail');
+
+            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+
+            const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload.flags).toBeUndefined();
         });
 
         test('should call getMailboxId with mailbox name to resolve mailbox ID', async () => {
@@ -2597,6 +2624,7 @@ describe('createEmailMCPServer', () => {
                 uploadMessage:         mockUploadMessageAmend,
                 getUserAddresses:      mockGetUserAddresses,
                 updateMessageMetadata: mock(async () => { /* intentionally empty */ }),
+                updateMessageFlags:    mock(async () => { /* intentionally empty */ }),
             } as unknown as WildDuckClient;
         });
 
@@ -2630,6 +2658,19 @@ describe('createEmailMCPServer', () => {
 
             const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.subject).toBe('Original Subject');
+        });
+
+        test('should NOT include flags field in amendAndResubmitDraft upload payload', async () => {
+            const server = createEmailMCPServer(mockImap, mockCounters, {
+                wildDuckClient:      mockWildDuckAmend,
+                sendApprovalRequest: mockSendApprovalRequest,
+            });
+            const handler = getToolHandler(server, 'amendAndResubmitDraft');
+
+            await handler({ message: 'Drafts:42' });
+
+            const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload.flags).toBeUndefined();
         });
 
         test('should apply amended body text', async () => {
@@ -2770,7 +2811,7 @@ describe('createEmailMCPServer', () => {
             expect(mockLogger.warn).toHaveBeenCalled();
         });
 
-        test('should return failure message and set DiscordNotifyFailed flag when sendApprovalRequest fails', async () => {
+        test('should return failure message and set DiscordNotifyFailed flag via wildDuckClient when sendApprovalRequest fails', async () => {
             mockSendApprovalRequest = mock(async () => {
                 throw new Error('Discord unavailable');
             });
@@ -2787,8 +2828,8 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('failed to notify admin');
             expect(getText(result)).toContain('retry automatically');
             expect(mockLogger.warn).toHaveBeenCalled();
-            // Flag should be set on the draft
-            expect(mockImap.setFlag).toHaveBeenCalledWith(55, 'Drafts', '\\DiscordNotifyFailed');
+            // Flag should be set on the draft via wildDuckClient (not IMAP)
+            expect(mockWildDuckAmend.updateMessageFlags).toHaveBeenCalledWith('Drafts', 55, { addFlags: ['DiscordNotifyFailed'] });
             // Attempt count stored in metadata
             expect(mockWildDuckAmend.updateMessageMetadata).toHaveBeenCalledWith('Drafts', 55, { notifyAttempts: 1 });
         });
@@ -2797,9 +2838,7 @@ describe('createEmailMCPServer', () => {
             mockSendApprovalRequest = mock(async () => {
                 throw new Error('Discord unavailable');
             });
-            mockImap.setFlag = mock(async () => {
-                throw new Error('IMAP flag failed');
-            });
+            (mockWildDuckAmend.updateMessageFlags as ReturnType<typeof mock>).mockRejectedValue(new Error('WildDuck flag failed'));
 
             const server = createEmailMCPServer(mockImap, mockCounters, {
                 wildDuckClient:      mockWildDuckAmend,
@@ -2842,7 +2881,7 @@ describe('createEmailMCPServer', () => {
             expect((payload.from as { name: string }).name).toBe('Izzy Informal');
         });
 
-        test('should upload with draft flag set to true', async () => {
+        test('should upload with draft flag set to true and no explicit flags field', async () => {
             const server = createEmailMCPServer(mockImap, mockCounters, {
                 wildDuckClient:      mockWildDuckAmend,
                 sendApprovalRequest: mockSendApprovalRequest,
@@ -2853,7 +2892,8 @@ describe('createEmailMCPServer', () => {
 
             const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.draft).toBe(true);
-            expect(payload.flags).toContain('\\Draft');
+            // flags field removed — draft: true is sufficient for WildDuck
+            expect(payload.flags).toBeUndefined();
         });
 
         test('should return error when no sender address is configured', async () => {

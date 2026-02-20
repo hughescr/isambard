@@ -1462,6 +1462,146 @@ describe('WildDuckClient', () => {
     });
 
     // -----------------------------------------------------------------------
+    // updateMessageFlags()
+    // -----------------------------------------------------------------------
+    describe('updateMessageFlags()', () => {
+        test('calls PUT /users/me/mailboxes/{mailboxId}/messages/{uid} with addFlags only', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+
+            await client.updateMessageFlags('Drafts', 42, { addFlags: ['TestFlag'] });
+
+            const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect(url).toBe('https://wildduck-api.example.com/users/me/mailboxes/mbx-drafts/messages/42');
+            expect(options.method).toBe('PUT');
+            const body = JSON.parse(options.body as string) as Record<string, unknown>;
+            expect(body.addFlags).toEqual(['TestFlag']);
+            expect(body.removeFlags).toBeUndefined();
+        });
+
+        test('calls PUT with removeFlags only', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+
+            await client.updateMessageFlags('Drafts', 42, { removeFlags: ['TestFlag'] });
+
+            const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            const body = JSON.parse(options.body as string) as Record<string, unknown>;
+            expect(body.removeFlags).toEqual(['TestFlag']);
+            expect(body.addFlags).toBeUndefined();
+        });
+
+        test('calls PUT with both addFlags and removeFlags', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+
+            await client.updateMessageFlags('Drafts', 42, { addFlags: ['A'], removeFlags: ['B'] });
+
+            const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            const body = JSON.parse(options.body as string) as Record<string, unknown>;
+            expect(body.addFlags).toEqual(['A']);
+            expect(body.removeFlags).toEqual(['B']);
+        });
+
+        test('sends Content-Type application/json header', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+
+            await client.updateMessageFlags('Drafts', 42, { addFlags: ['TestFlag'] });
+
+            const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect((options.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+        });
+
+        test('sends auth token header', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+
+            await client.updateMessageFlags('Drafts', 42, { addFlags: ['TestFlag'] });
+
+            const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect((options.headers as Record<string, string>)['X-Access-Token']).toBe('test-auth-token');
+        });
+
+        test('resolves without value on success', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+
+            await expect(client.updateMessageFlags('Drafts', 42, { addFlags: ['TestFlag'] })).resolves.toBeUndefined();
+        });
+
+        test('throws WildDuckError when mailboxPath not in map', async () => {
+            const client = await makeInitializedClient();
+
+            await expect(client.updateMessageFlags('NonExistentFolder', 42, { addFlags: ['TestFlag'] })).rejects.toThrow(WildDuckError);
+        });
+
+        test('retries on 401 by re-authenticating', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'new-token' }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+
+            await client.updateMessageFlags('Drafts', 42, { addFlags: ['TestFlag'] });
+
+            expect(mockFetch).toHaveBeenCalledTimes(3);
+        });
+
+        test('uses new token on retry after 401', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+
+            await client.updateMessageFlags('Drafts', 42, { addFlags: ['TestFlag'] });
+
+            const [_url, options] = mockFetch.mock.calls[2] as [string, RequestInit];
+            expect((options.headers as Record<string, string>)['X-Access-Token']).toBe('refreshed-token');
+        });
+
+        test('throws WildDuckError on non-2xx non-401 error', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
+
+            await expect(client.updateMessageFlags('Drafts', 42, { addFlags: ['TestFlag'] })).rejects.toThrow(WildDuckError);
+        });
+
+        test('throws WildDuckAuthError when re-auth fails after 401', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+
+            await expect(client.updateMessageFlags('Drafts', 42, { addFlags: ['TestFlag'] })).rejects.toThrow(WildDuckAuthError);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // keyword in SearchCriteria
+    // -----------------------------------------------------------------------
+    describe('search() with keyword criteria', () => {
+        test('includes keyword in URL query params', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
+
+            await client.search({ query: { keyword: 'TestFlag' } });
+
+            const [searchUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect(searchUrl).toContain('keyword=TestFlag');
+        });
+    });
+
+    // -----------------------------------------------------------------------
     // Error body included in WildDuckError message
     // -----------------------------------------------------------------------
     describe('error body included in WildDuckError', () => {

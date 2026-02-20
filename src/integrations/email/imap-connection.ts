@@ -647,27 +647,6 @@ export class ImapConnection {
         });
     }
 
-    /** Remove a flag from a message (e.g. '\\DiscordNotifyFailed'). */
-    async clearFlag(uid: number, folder: string, flag: string): Promise<void> {
-        return this.serialize(async () => {
-            // Stryker disable BlockStatement: try-catch wraps IMAP flags - error handling
-            try {
-                await this.client.mailboxOpen(this.resolveFolder(folder));
-                // Stryker disable next-line ObjectLiteral,BooleanLiteral: IMAP flag options are API configuration constants
-                await this.client.messageFlagsRemove(uid, [flag], { uid: true });
-            } catch (err) {
-                if(err instanceof ImapConnectionError) {
-                    throw err;
-                }
-                throw new ImapConnectionError(
-                    `clearFlag failed (uid=${uid}, folder=${folder}, flag=${flag}): ${_.isError(err) ? err.message : String(err)}`,
-                    // Stryker disable next-line ObjectLiteral,StringLiteral: Error cause wrapping is not behavior-affecting
-                    { cause: String(err) }
-                );
-            }
-        });
-    }
-
     /** Verify that all required email folders exist on the server, resolving paths via specialUse flags. */
     async ensureFolders(): Promise<void> {
         return this.serialize(async () => {
