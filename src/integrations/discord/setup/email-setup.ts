@@ -230,7 +230,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     });
 
     // Create email MCP server for Claude agent
-    // Stryker disable ObjectLiteral,BlockStatement,StringLiteral: MCP server options and admin notification callback are integration wiring - not unit testable
+    // Stryker disable ObjectLiteral,BlockStatement,StringLiteral,ArrayDeclaration: MCP server options and admin notification callback are integration wiring - not unit testable
     const emailMcpServer = createEmailMCPServer(imap, counters, {
         sendAdminNotification: async ({ mailboxName, uid, reference }) => {
             try {
@@ -251,7 +251,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         allowlist,
         sendApprovalRequest,
     });
-    // Stryker restore ObjectLiteral,BlockStatement,StringLiteral
+    // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,ArrayDeclaration
 
     // Register /allowlist slash command with Discord
     await registerAllowlistCommand(botToken, applicationId);

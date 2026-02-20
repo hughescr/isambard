@@ -27,7 +27,24 @@ type MockFn = (...args: unknown[]) => unknown;
 
 /** Plain class whose instance methods delegate to the shared mocks above. */
 class MockImapFlow {
+    static lastInstance: MockImapFlow | null = null;
     usable = false;
+    private _listeners:  Record<string, ((...args: unknown[]) => void)[]> = {};
+
+    constructor() {
+        MockImapFlow.lastInstance = this;
+    }
+
+    on(event: string, fn: (...args: unknown[]) => void) {
+        (this._listeners[event] ??= []).push(fn);
+    }
+
+    emit(event: string, ...args: unknown[]) {
+        for(const fn of this._listeners[event] ?? []) {
+            fn(...args);
+        }
+    }
+
     connect()                           { return mockConnect(); }
     logout()                            { return mockLogout(); }
     mailboxOpen(...args: unknown[])     { return (mockMailboxOpen as MockFn)(...args); }
@@ -165,6 +182,7 @@ describe('ImapConnection', () => {
     beforeEach(() => {
         // Reset each method mock (do NOT reset MockImapFlow constructor — it
         // holds the implementation that assigns these mocks onto `this`)
+        MockImapFlow.lastInstance = null;
         mockConnect.mockReset();
         mockLogout.mockReset();
         mockMailboxOpen.mockReset();
@@ -2563,6 +2581,60 @@ describe('ImapConnection', () => {
             expect(order).toContain('listUnread-ran');
             expect(order.indexOf('idle-started')).toBeLessThan(order.indexOf('listUnread-ran'));
         });
+
+        test("'exists' event on client calls cancelIdle() and resolves pending idle()", async () => {
+            mockMailboxOpen.mockImplementation(() => Promise.resolve({ path: 'INBOX' }));
+            // eslint-disable-next-line lodash/prefer-noop -- intentional never-resolving promise; noop cannot serve as Promise executor
+            mockIdle.mockImplementation(() => new Promise<void>(() => {
+                // Never resolves on its own — only cancelIdle() can unblock it
+            }));
+            await connection.connect();
+
+            // Start idle — blocks forever unless cancelIdle() is called
+            const idlePromise = connection.idle('INBOX');
+
+            // Give the serializer time to enter the idle body and set _idleAbort
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Emit 'exists' on the mock client — should call cancelIdle() and resolve idle()
+            expect(MockImapFlow.lastInstance).not.toBeNull();
+            MockImapFlow.lastInstance!.emit('exists', { path: 'INBOX', count: 5 });
+
+            // idle() should now resolve
+            await idlePromise;
+        });
+
+        test("'exists' event is harmless when not idling", () => {
+            // Emit 'exists' without entering idle — should not throw
+            expect(MockImapFlow.lastInstance).not.toBeNull();
+            const doEmit = (): void => {
+                MockImapFlow.lastInstance!.emit('exists', { path: 'INBOX', count: 1 });
+            };
+            expect(doEmit).not.toThrow();
+        });
+
+        test("'exists' event during mailboxOpen skips IDLE entirely", async () => {
+            await connection.connect();
+
+            expect(MockImapFlow.lastInstance).not.toBeNull();
+            const instance = MockImapFlow.lastInstance!;
+
+            // Make mailboxOpen emit 'exists' during its execution (simulating
+            // a new-mail notification arriving while the mailbox is being opened)
+            mockMailboxOpen.mockImplementationOnce(() => {
+                instance.emit('exists', { path: 'INBOX', count: 1 });
+                return Promise.resolve({ path: 'INBOX' });
+            });
+
+            // idle() should complete immediately — cancelIdle() during mailboxOpen
+            // sets _idleAborted=true, so the if(!this._idleAborted) check skips IDLE
+            await connection.idle('INBOX');
+
+            // client.idle() should NOT have been called since _idleAborted was true
+            expect(mockIdle).not.toHaveBeenCalled();
+        });
     });
 
     // -------------------------------------------------------------------
@@ -2717,7 +2789,7 @@ describe('ImapConnection', () => {
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
             await expect(connection.appendMessage('Drafts', Buffer.from('msg')))
-                .rejects.toBeInstanceOf(ImapConnectionError);
+                .rejects.toThrow('appendMessage failed');
         });
 
         test('should re-throw ImapConnectionError without wrapping', async () => {
@@ -2772,7 +2844,7 @@ describe('ImapConnection', () => {
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
             await expect(connection.searchByFlag('Drafts', '\\Flag'))
-                .rejects.toBeInstanceOf(ImapConnectionError);
+                .rejects.toThrow('searchByFlag failed');
         });
 
         test('should re-throw ImapConnectionError without wrapping', async () => {

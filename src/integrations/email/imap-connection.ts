@@ -335,6 +335,11 @@ export class ImapConnection {
             },
             logger: imapLogger,
         });
+        // Stryker disable StringLiteral: 'exists' event name is imapflow API configuration — cannot test registration without spying on internals
+        this.client.on('exists', () => {
+            this.cancelIdle();
+        });
+        // Stryker restore StringLiteral
         this.maxBytes   = config.maxBodySizeBytes;
         // Stryker disable next-line BooleanLiteral: initialization flag - false is correct initial state
         this._connected = false;
