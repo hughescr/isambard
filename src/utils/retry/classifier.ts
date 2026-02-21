@@ -83,7 +83,7 @@ function classifyHttpStatus(
     }
 
     // Client errors (4xx except 429) - permanent
-    // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator: HTTP status boundary check is fully tested
+    // Stryker disable next-line EqualityOperator: status <= 500 is equivalent — 5xx check above catches 500 first, so this boundary is never reached with status=500
     if(status >= 400 && status < 500) {
         return { category: 'permanent', message };
     }
@@ -100,12 +100,10 @@ function classifyNetworkError(error: object & { code?: unknown, message?: unknow
         return undefined;
     }
 
-    // Stryker disable next-line all: Network error code configuration
+    // Stryker disable next-line StringLiteral: Network error code configuration — exact strings are protocol constants
     const networkErrorCodes = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED'];
 
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Network error classification
     if(_.isString(error.code) && networkErrorCodes.includes(error.code)) {
-        // Stryker disable next-line StringLiteral: Fallback error message for network errors
         const message = 'message' in error && _.isString(error.message) && error.message
             ? error.message
             : 'Unknown error';
@@ -133,7 +131,7 @@ export const createHttpStatusClassifier = (
         }
 
         // Try HTTP status classification
-        // Stryker disable next-line ConditionalExpression: Defensive guard for property existence
+        // Stryker disable next-line ConditionalExpression: always-true mutant is equivalent — classifyHttpStatus with no status returns undefined, falling through to same behavior
         if('status' in error) {
             const result = classifyHttpStatus(error as object & { status: unknown }, permanentStatuses);
             if(result) {

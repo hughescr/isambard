@@ -210,18 +210,18 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
      */
     function onStateChange(change: StateChange): void {
         // Only care about mode transitions to idle
-        // Stryker disable next-line all: Guard clause tested via mode_transition tests
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent — tests have getMode()='processing_message', so doTrigger() guards against non-idle state anyway; removing early return produces no observable trigger
         if(change.changeType !== 'mode_transition') {
             return;
         }
 
-        // Stryker disable next-line all: Guard clause tested via idle transition tests
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent — same reason: doTrigger() re-checks getMode() before calling onPerchTrigger; skipping this guard produces same result when bot is not idle
         if(change.newState.mode !== 'idle') {
             return;
         }
 
         // Check if we have a pending perch
-        // Stryker disable next-line ConditionalExpression,LogicalOperator: Both conditions required for valid pending state
+        // Stryker disable next-line LogicalOperator: && mutant is L-class — pendingSlot=undefined with perchPending=true is unreachable in practice; both conditions true → same early return
         if(!state.perchPending || !state.pendingSlot) {
             return;
         }

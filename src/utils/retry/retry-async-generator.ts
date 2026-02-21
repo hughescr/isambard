@@ -59,7 +59,7 @@ export async function* retryAsyncGenerator<T>(
     const startTime = now();
     let attempt = 0;
 
-    // Stryker disable next-line EqualityOperator,BlockStatement: Retry loop with attempt counter prevents infinite retries
+    // Stryker disable next-line EqualityOperator,BlockStatement: EqualityOperator is undetected due to async/sync assertion race in tests; BlockStatement causes infinite loop
     while(attempt < maxAttempts) {
         // Stryker disable next-line UpdateOperator: Decrement creates infinite retry loop
         attempt++;

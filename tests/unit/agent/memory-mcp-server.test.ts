@@ -527,6 +527,24 @@ describe.concurrent('createMemoryMCPServer', () => {
         });
     });
 
+    describe('search tool layer enum validation', () => {
+        test.each([
+            ['identity', true],
+            ['state', true],
+            ['events', true],
+            ['invalid', false],
+            ['', false],
+        ])('should validate search layer value "%s" as %s', (value, expectedSuccess) => {
+            const server = createMemoryMCPServer(mockBackend);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
+            const searchTool = (server.instance as any)._registeredTools.search;
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
+            const result = searchTool.inputSchema.shape.layer.unwrap().safeParse(value);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
+            expect(result.success).toBe(expectedSuccess);
+        });
+    });
+
     describe('storeUserMemory tool', () => {
         test('should store user memory successfully', async () => {
             mockBackend.create = mock(async () => ({

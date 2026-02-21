@@ -265,19 +265,15 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             currentAbortController = null;
 
             // Check if this is a suspension abort (mode is idle because suspend() called goIdle())
-            // Stryker disable all: Suspension abort path — tested via suspension behavior tests
             if(_.isError(error) && error.name === 'AbortError' && suspendedState !== null) {
                 logger.debug({ msg: 'Catch-up session aborted by suspension' });
                 return;
             }
-            // Stryker restore all
 
             // AbortError without suspend flag - external abort, just return
-            // Stryker disable all: AbortError handling is tested with dedicated test cases for abort vs regular errors
             if(_.isError(error) && error.name === 'AbortError') {
                 return;
             }
-            // Stryker restore all
 
             // For other errors, transition to idle
             // Note: We still call completeCatchUp to clean up state, but this prevents
@@ -367,7 +363,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
         async startCatchUp(): Promise<void> {
             // Guard against duplicate sessions - test verifies no side effects occur when state is catching_up
-            if(deps.stateManager.getMode() === 'catching_up') { // Stryker disable ConditionalExpression,BlockStatement
+            if(deps.stateManager.getMode() === 'catching_up') {
                 return;
             }
 

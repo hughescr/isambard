@@ -2455,6 +2455,25 @@ describe('WildDuckClient', () => {
             expect(result?.bodyText.length).toBeLessThanOrEqual(10);
         });
 
+        test('truncates at valid UTF-8 boundary when cutting inside a multi-byte character', async () => {
+            // 'あ' is 3 bytes (0xE3 0x81 0x82) — maxBodySizeBytes=5 would cut into second char
+            // Content: 'あいう' = 9 bytes; limit=5 → would cut at byte 5 (middle of 'い')
+            // The UTF-8 loop should back up to byte 3, yielding just 'あ'
+            const client = new WildDuckClient({ ...CLIENT_OPTIONS, maxBodySizeBytes: 5 });
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_RESPONSE));
+            await client.init();
+            mockFetch.mockClear();
+
+            const multibyteBody = { ...FULL_MESSAGE_RESPONSE, text: 'あいう' };
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(multibyteBody));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            // Result must be valid UTF-8 (no partial multi-byte sequences)
+            expect(result?.bodyText).toBe('あ');
+        });
+
         test('uses messageId from headers when messageId field missing', async () => {
             const client = await makeInitializedClient();
 
@@ -2560,6 +2579,91 @@ describe('WildDuckClient', () => {
             const result = await client.getFullMessage('CleanInbox', 42);
 
             expect(result?.from).toEqual({ address: '' });
+        });
+
+        test('preserves angle brackets in plain text body (not processed as HTML)', async () => {
+            const client = await makeInitializedClient();
+
+            // Plain text email with a literal < character (like a code snippet or email address)
+            // If treated as HTML, html-to-text would strip or transform it; as plain text it is preserved
+            const plainWithAngles = {
+                ...FULL_MESSAGE_RESPONSE,
+                text: 'Reply to <user@example.com> or <admin@example.com>',
+            };
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(plainWithAngles));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            // Plain text must be returned as-is, with angle brackets preserved
+            expect(result?.bodyText).toContain('<user@example.com>');
+            expect(result?.bodyText).toContain('<admin@example.com>');
+        });
+
+        test('returns empty to array when to field is absent', async () => {
+            const client = await makeInitializedClient();
+
+            const noTo = { ...FULL_MESSAGE_RESPONSE, to: undefined };
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(noTo));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.to).toEqual([]);
+        });
+
+        test('returns empty cc array when cc field is absent', async () => {
+            const client = await makeInitializedClient();
+
+            const noCc = { ...FULL_MESSAGE_RESPONSE, cc: undefined };
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(noCc));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.cc).toEqual([]);
+        });
+
+        test('returns empty attachmentMeta when attachments field is absent', async () => {
+            const client = await makeInitializedClient();
+
+            const noAttachments = { ...FULL_MESSAGE_RESPONSE, attachments: undefined };
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(noAttachments));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.attachmentMeta).toEqual([]);
+            expect(result?.hasAttachments).toBe(false);
+        });
+
+        test('converts HTML to plain text stripping tags when html body present', async () => {
+            const client = await makeInitializedClient();
+
+            const htmlOnly = {
+                ...FULL_MESSAGE_RESPONSE,
+                text: undefined,
+                html: '<h1>Hello</h1><p>World</p>',
+            };
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(htmlOnly));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            // html-to-text strips HTML tags; raw HTML would contain '<h1>'
+            expect(result?.bodyText).not.toContain('<h1>');
+            expect(result?.bodyText).not.toContain('<p>');
+        });
+
+        test('omits name from address when name is absent', async () => {
+            const client = await makeInitializedClient();
+
+            const noName = {
+                ...FULL_MESSAGE_RESPONSE,
+                from: { address: 'noname@example.com' },
+            };
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(noName));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            // Should not have name property at all
+            expect(result?.from).toEqual({ address: 'noname@example.com' });
+            expect((result?.from as unknown as Record<string, unknown>).name).toBeUndefined();
         });
     });
 

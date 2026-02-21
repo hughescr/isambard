@@ -2143,6 +2143,26 @@ describe('runReconciliation', () => {
             expect(result.phaseA.errors).toBeGreaterThan(0);
         });
 
+        test('should report failure when only Phase A has errors (phaseB and phaseC clean)', async () => {
+            // Phase A fails (GSI1 query rejects)
+            ddbMock.on(QueryCommand, {
+                IndexName: 'GSI1',
+            }).rejects(new Error('DynamoDB error'));
+
+            // Phase B succeeds with no tags
+            mockEmptyPhaseB();
+
+            // Phase C: listTagCounts returns empty (no tags to verify)
+            deps.tagIndex.listTagCounts = mock(() => Promise.resolve([]));
+
+            const result = await runReconciliation(deps, options);
+
+            expect(result.success).toBe(false);
+            expect(result.phaseA.errors).toBeGreaterThan(0);
+            expect(result.phaseB.errors).toBe(0);
+            expect(result.phaseC.errors).toBe(0);
+        });
+
         test('should report failure when errors occurred in Phase B only', async () => {
             // Phase A succeeds
             ddbMock.on(QueryCommand, {

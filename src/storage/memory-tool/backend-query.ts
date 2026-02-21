@@ -250,9 +250,7 @@ export class MemoryToolBackendQuery {
 
         stateItems = _chain(scoredItems)
             .orderBy(
-                // Stryker disable next-line all: Sort field and order for sigmoid scoring
                 ['score'],
-                // Stryker disable next-line all: Descending sort order
                 ['desc']
             )
             .take(maxStateItems)
@@ -287,9 +285,7 @@ export class MemoryToolBackendQuery {
         // Sort by score descending and take top N
         return _chain(scoredItems)
             .orderBy(
-                // Stryker disable next-line all: Sort field for sigmoid scoring
                 ['score'],
-                // Stryker disable next-line all: Descending sort order
                 ['desc']
             )
             .take(maxItems)

@@ -187,6 +187,29 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 expect(result.content[0].text).not.toContain('cursor');
             });
         });
+
+        describe('default path', () => {
+            test('should use root path "/" when path is not provided', async () => {
+                const server = createMemoryMCPServer(mockBackend);
+                const handler = getToolHandler(server, 'list');
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+                await handler({});
+
+                // Without path argument, should default to '/' and use backend.list
+                expect(mockBackend.list).toHaveBeenCalledWith('/', undefined);
+            });
+
+            test('should use root path "/" when path is explicitly undefined', async () => {
+                const server = createMemoryMCPServer(mockBackend);
+                const handler = getToolHandler(server, 'list');
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+                await handler({ path: undefined });
+
+                expect(mockBackend.list).toHaveBeenCalledWith('/', undefined);
+            });
+        });
     });
 
     describe('search tool pagination', () => {

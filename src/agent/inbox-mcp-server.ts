@@ -83,13 +83,13 @@ export function createInboxMCPServer(
                     try {
                         const overview = inboxManager.getUnreadOverview();
 
-                        // Stryker disable all: Logger info object
+                        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
                         logger.info({
                             totalUnread:  overview.totalUnread,
                             channelCount: overview.channels.length,
                             msg:          'Unread overview retrieved',
                         });
-                        // Stryker restore all
+                        // Stryker restore ObjectLiteral,StringLiteral
 
                         return textResult(JSON.stringify(overview, null, 2));
                     } catch (error) {
@@ -117,7 +117,6 @@ export function createInboxMCPServer(
                         }
 
                         if(messages.length === 0) {
-                            // Stryker disable all
                             return textResult(JSON.stringify({
                                 channelId:    args.channelId,
                                 channelName:  args.channelId,
@@ -127,11 +126,10 @@ export function createInboxMCPServer(
                                 timeRange:    { start: '', end: '' },
                                 messages:     [],
                             }));
-                            // Stryker restore all
                         }
 
                         // Build message content for summarization
-                        // Stryker disable all
+                        // Stryker disable StringLiteral,ArrowFunction: Format strings and arrow fn for LLM prompt are not behavior-tested (generateTextWithSystemPrompt is mocked)
                         const messagesText = _.map(messages, m =>
                             `[${m.author} at ${m.timestamp}]: ${m.content}`
                         ).join('\n');
@@ -141,7 +139,7 @@ export function createInboxMCPServer(
                             SUMMARY_SYSTEM_PROMPT,
                             `Summarize these ${messages.length} messages:\n\n${messagesText}`
                         );
-                        // Stryker restore all
+                        // Stryker restore StringLiteral,ArrowFunction
 
                         // Build metadata for each message
                         const metadata: MessageMetadata[] = _.map(messages, m => ({
@@ -172,7 +170,7 @@ export function createInboxMCPServer(
                             messages:     metadata,
                         };
 
-                        // Stryker disable all: Logger info object
+                        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
                         logger.info({
                             channelId,
                             channelName:  messages[0].channelName,
@@ -180,7 +178,7 @@ export function createInboxMCPServer(
                             authorCount:  authors.length,
                             msg:          'Channel summary generated',
                         });
-                        // Stryker restore all
+                        // Stryker restore ObjectLiteral,StringLiteral
 
                         return textResult(JSON.stringify(response, null, 2));
                     } catch (error) {
@@ -222,14 +220,14 @@ export function createInboxMCPServer(
                             }
                         }
 
-                        // Stryker disable all: Logger info object
+                        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
                         logger.info({
                             channelId,
                             requestedCount: args.messageIds.length,
                             fetchedCount:   fetchedMessages.length,
                             msg:            'Messages fetched',
                         });
-                        // Stryker restore all
+                        // Stryker restore ObjectLiteral,StringLiteral
 
                         return textResult(JSON.stringify({ messages: fetchedMessages }, null, 2));
                     } catch (error) {
@@ -253,13 +251,13 @@ export function createInboxMCPServer(
                         const channelId = createChannelId(resolveChannelId(args.channelId, channelRegistry));
                         await inboxManager.markAsRead(channelId, args.messageIds);
 
-                        // Stryker disable all: Logger info object
+                        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
                         logger.info({
                             channelId,
                             markedCount: args.messageIds.length,
                             msg:         'Messages marked as read',
                         });
-                        // Stryker restore all
+                        // Stryker restore ObjectLiteral,StringLiteral
 
                         return textResult(JSON.stringify({ success: true, markedCount: args.messageIds.length }));
                     } catch (error) {
@@ -281,12 +279,12 @@ export function createInboxMCPServer(
                         const channelId = createChannelId(resolveChannelId(args.channelId, channelRegistry));
                         await inboxManager.markChannelRead(channelId);
 
-                        // Stryker disable all: Logger info object
+                        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
                         logger.info({
                             channelId,
                             msg: 'Channel marked as read',
                         });
-                        // Stryker restore all
+                        // Stryker restore ObjectLiteral,StringLiteral
 
                         return textResult(JSON.stringify({ success: true }));
                     } catch (error) {

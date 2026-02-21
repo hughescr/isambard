@@ -64,7 +64,6 @@ function transformMessage(message: Message): DiscordSearchResult {
             url:      attachment.url,
             filename: attachment.name ?? 'unnamed',
         };
-        // Stryker disable next-line BlockStatement: Optional contentType assignment tested via integration
         if(attachment.contentType) {
             transformed.contentType = attachment.contentType;
         }
@@ -74,15 +73,12 @@ function transformMessage(message: Message): DiscordSearchResult {
     // Transform embeds
     const embeds: DiscordEmbed[] = _.map(message.embeds, (embed) => {
         const transformed: DiscordEmbed = {};
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Optional property assignment tested via integration
         if(embed.title) {
             transformed.title = embed.title;
         }
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Optional property assignment tested via integration
         if(embed.description) {
             transformed.description = embed.description;
         }
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Optional property assignment tested via integration
         if(embed.url) {
             transformed.url = embed.url;
         }
@@ -91,7 +87,6 @@ function transformMessage(message: Message): DiscordSearchResult {
 
     // Transform reactions
     const reactions: DiscordReaction[] = [];
-    // Stryker disable next-line BlockStatement: Reaction transformation loop tested via integration
     for(const reaction of message.reactions.cache.values()) {
         reactions.push({
             emoji: reaction.emoji.toString(),
@@ -117,7 +112,6 @@ function transformMessage(message: Message): DiscordSearchResult {
     };
 
     // Add replyTo if this is a reply
-    // Stryker disable next-line BlockStatement: Optional replyTo assignment tested via integration
     if(message.reference?.messageId) {
         result.replyTo = message.reference.messageId;
     }
@@ -169,7 +163,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
             }
             return channel;
         } catch (error) {
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Re-throwing original error preserves stack trace
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent — both branches throw ChannelNotAccessibleError(channelId); mutant wraps the existing error in a new one with the same channelId, indistinguishable to callers
             if(error instanceof ChannelNotAccessibleError) {
                 throw error;
             }
@@ -220,7 +214,6 @@ export function createMessageFetcher(client: Client): MessageFetcher {
         const channel = await getChannel(channelId);
 
         const allMessages: Message[] = [];
-        // Stryker disable next-line BooleanLiteral: hasMore initialized false, set true only when pagination stops due to limit
         let hasMore = false;
 
         // Calculate snowflakes for time filtering
@@ -231,12 +224,10 @@ export function createMessageFetcher(client: Client): MessageFetcher {
         const maxMessages = limit ?? Infinity;
 
         try {
-            // Stryker disable next-line BlockStatement: Pagination loop with break conditions prevents infinite loop
             while(true) {
                 const fetchOptions: { limit: number, before?: string } = {
                     limit: Math.min(DISCORD_API_MAX_MESSAGES, Math.max(1, maxMessages - allMessages.length)),
                 };
-                // Stryker disable next-line ConditionalExpression: Cursor check enables pagination continuation, tested via integration
                 if(cursor) {
                     fetchOptions.before = cursor;
                 }
@@ -247,24 +238,20 @@ export function createMessageFetcher(client: Client): MessageFetcher {
                     'fetchMessages'
                 ) as Map<string, Message>;
 
-                // Stryker disable next-line ConditionalExpression,BlockStatement: Empty batch check terminates pagination loop early; break is redundant with line 277 but clearer
                 if(batch.size === 0) {
                     break;
                 }
 
                 // Process batch using helper function
                 const batchResult = processBatch(batch, afterSnowflake, allMessages, maxMessages);
-                // Stryker disable next-line BlockStatement: Array spread tested via integration tests
                 allMessages.push(...batchResult.messages);
                 hasMore = batchResult.hasMore;
 
-                // Stryker disable next-line BlockStatement: Loop exit on shouldStop prevents infinite pagination
                 if(batchResult.shouldStop) {
                     break;
                 }
 
                 // If we got fewer messages than requested, we've reached the end
-                // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: Partial batch detection prevents infinite loop
                 if(batch.size < fetchOptions.limit) {
                     break;
                 }
@@ -319,7 +306,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
      * Returns only the messages that were successfully fetched.
      */
     async function fetchByIds(channelId: string, messageIds: string[]): Promise<DiscordSearchResult[]> {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Early return for empty array avoids unnecessary channel fetch
+        // Stryker disable next-line ConditionalExpression,BlockStatement: No test exercises empty array path - L-class (avoids unnecessary channel fetch)
         if(messageIds.length === 0) {
             return [];
         }

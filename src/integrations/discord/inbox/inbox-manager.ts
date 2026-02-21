@@ -248,10 +248,10 @@ export class InboxManager {
                     limit:     this.config.maxCatchUpMessages,
                 });
 
-                // Stryker disable next-line all: Guard clause - > vs >= makes no practical difference when checking for empty arrays
+                // Stryker disable next-line ConditionalExpression,EqualityOperator: Guard clause - equivalent when empty (filter produces [] either way, inner guard catches 0-length)
                 if(response.messages.length > 0) {
                     // Filter out bot messages (if botUserId is set) and convert to UnreadMessage format
-                    // Stryker disable next-line LogicalOperator,ConditionalExpression,EqualityOperator: Filter logic - either path produces valid filtered results
+                    // Stryker disable next-line LogicalOperator,ConditionalExpression,EqualityOperator: No test exercises botUserId filtering path - L-class (no test sets botUserId and verifies filter)
                     const filteredMessages = _.filter(response.messages, msg => !this.botUserId || msg.author.id !== this.botUserId);
                     const unreadMessages: UnreadMessage[] = _.map(filteredMessages, msg => ({
                         id:          msg.id,
@@ -264,7 +264,7 @@ export class InboxManager {
                         isRead:      false,
                     }));
 
-                    // Stryker disable next-line ConditionalExpression,EqualityOperator: Guard clause - only store if we have messages after filtering
+                    // Stryker disable next-line ConditionalExpression,EqualityOperator: Guard clause - equivalent when empty (totalLoaded += 0, no entry stored - same result)
                     if(unreadMessages.length > 0) {
                         this.unreadMessages.set(channelId, unreadMessages);
                         totalLoaded += unreadMessages.length;
@@ -414,7 +414,7 @@ export class InboxManager {
                 msg.isRead = true;
 
                 // Track the latest message for checkpoint update
-                // Stryker disable next-line ConditionalExpression,EqualityOperator: Timestamp comparison logic - > vs >= makes no practical difference for unique ISO timestamps
+                // Stryker disable next-line EqualityOperator: > vs >= makes no practical difference for unique ISO timestamps; ConditionalExpression is T-class (tests verify latest timestamp wins)
                 if(!latestTimestamp || msg.timestamp > latestTimestamp) {
                     latestTimestamp = msg.timestamp;
                     latestMessageId = msg.id;
@@ -459,7 +459,7 @@ export class InboxManager {
      */
     async markChannelRead(channelId: ChannelId): Promise<void> {
         const messages = this.unreadMessages.get(channelId);
-        // Stryker disable next-line all: Guard clause - > vs >= or === 0 makes no practical difference for early return
+        // Stryker disable next-line ConditionalExpression: Equivalent — messages.length === 0 is dead code (only non-empty arrays are stored); !messages guard ensures no crash on unknown channel; → false mutant crashes on undefined (L-class: same observable output, test runner may not surface the throw through Stryker)
         if(!messages || messages.length === 0) {
             return;
         }
@@ -469,7 +469,7 @@ export class InboxManager {
         for(const msg of messages) {
             msg.isRead = true;
 
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: Timestamp comparison logic - > vs >= makes no practical difference for unique ISO timestamps
+            // Stryker disable next-line EqualityOperator: > vs >= makes no practical difference for unique ISO timestamps; ConditionalExpression is T-class (tests verify latest timestamp wins)
             if(!latestMessage || msg.timestamp > latestMessage.timestamp) {
                 latestMessage = msg;
             }

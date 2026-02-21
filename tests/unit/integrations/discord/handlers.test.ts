@@ -623,6 +623,30 @@ describe('Discord Event Handlers', () => {
             }
         });
 
+        it('should set attachments in context when length > 0 (kills ConditionalExpression → false)', async () => {
+            let contextCaptured: DiscordMessageContext | null = null;
+            const mockCoordinator = {
+                handleMessage: mock((context: DiscordMessageContext) => {
+                    contextCaptured = context;
+                }),
+            } as unknown as import('@/integrations/discord/message-coordinator').MessageCoordinator;
+
+            const handler = createMessageHandler({
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                botUserId, coordinator:     mockCoordinator,
+                botStateManager: createMockBotStateManager() as any,
+            });
+
+            const message = createMockMessage([{ name: 'photo.png', contentType: 'image/png' }]);
+            await handler(message);
+
+            expect(contextCaptured).not.toBeNull();
+            // CRITICAL: If ConditionalExpression mutated to false, attachments would always be undefined
+            expect(contextCaptured!.attachments).toBeDefined();
+            expect(contextCaptured!.attachments).toHaveLength(1);
+            expect(contextCaptured!.attachments![0].filename).toBe('photo.png');
+        });
+
         it('should handle null Discord contentType correctly (test always-true conditional)', async () => {
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,

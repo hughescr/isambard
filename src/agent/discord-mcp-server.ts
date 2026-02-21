@@ -385,16 +385,15 @@ function formatQuestionResult(
     threadId?: string
 ): CallToolResult {
     if(result.timedOut) {
-        // Stryker disable all: Logger info object
+        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
         logger.info({
             questionId,
             channelId,
             threadId,
             msg: 'Question timed out without answer',
         });
-        // Stryker restore all
+        // Stryker restore ObjectLiteral,StringLiteral
 
-        // Stryker disable all: Tool response object
         return {
             content: [{ type: 'text' as const, text: JSON.stringify({
                 questionId: result.questionId,
@@ -404,10 +403,9 @@ function formatQuestionResult(
                 threadId:   result.threadId,
             }) }],
         };
-        // Stryker restore all
     }
 
-    // Stryker disable all: Logger info object
+    // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
     logger.info({
         questionId,
         channelId:         result.channelId,
@@ -416,7 +414,7 @@ function formatQuestionResult(
         hasSelectedOption: Boolean(result.answer?.selectedOption),
         msg:               'Question answered',
     });
-    // Stryker restore all
+    // Stryker restore ObjectLiteral,StringLiteral
 
     return {
         content: [{ type: 'text' as const, text: JSON.stringify({
@@ -812,7 +810,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             'sendQuestion'
                         );
 
-                        // Stryker disable all: Logger info object
+                        // Stryker disable ObjectLiteral,StringLiteral,LogicalOperator: Logger info object - content not behavior-affecting
                         logger.info({
                             questionId,
                             channelId:    args.channelId,
@@ -822,7 +820,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             optionCount:  args.options?.length ?? 0,
                             msg:          'Question asked via MCP tool',
                         });
-                        // Stryker restore all
+                        // Stryker restore ObjectLiteral,StringLiteral,LogicalOperator
 
                         // 7. Register question and wait for answer
                         const result = await registerAndWaitForAnswer(questionRegistry, {
@@ -937,12 +935,10 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         const message = _.isError(error) ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'addReaction', error: message, channelId: args.channelId, messageId: args.messageId }, 'Discord tool returned error');
-                        // Stryker disable all: Error response object structure
                         return {
                             content: [{ type: 'text' as const, text: `Error: ${message}` }],
                             isError: true,
                         };
-                        // Stryker restore all
                     }
                 },
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
@@ -963,11 +959,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         await channelRegistry.muteChannel(channelId);
                         // Stryker disable next-line all: Logging for observability
                         logger.info({ tool: 'muteChannel', channelId, msg: 'Channel muted' });
-                        // Stryker disable all: Tool response object
                         return {
                             content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId, muted: true }) }],
                         };
-                        // Stryker restore all
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
@@ -996,11 +990,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         await channelRegistry.unmuteChannel(channelId);
                         // Stryker disable next-line all: Logging for observability
                         logger.info({ tool: 'unmuteChannel', channelId, msg: 'Channel unmuted' });
-                        // Stryker disable all: Tool response object
                         return {
                             content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId, muted: false }) }],
                         };
-                        // Stryker restore all
                     } catch (error) {
                         const message = _.isError(error) ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability

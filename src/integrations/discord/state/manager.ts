@@ -96,8 +96,8 @@ export class BotStateManagerImpl implements BotStateManager {
      * Deep clone mode context.
      * Handles catching_up context with Set<ChannelId>.
      */
-    // Stryker disable StringLiteral,ConditionalExpression,BlockStatement: Type discrimination and object cloning - tested via behavior
     private cloneModeContext(context: ModeContext): ModeContext {
+        // Stryker disable StringLiteral,BlockStatement: Equivalent — cloning with/without viewedChannels deep copy has same behavior since markChannelViewed always creates a new Set via spread (never mutates in place)
         if('unreadCount' in context) {
             // CatchingUpModeContext - identified by unique property
             return {
@@ -105,10 +105,10 @@ export class BotStateManagerImpl implements BotStateManager {
                 viewedChannels: new Set(context.viewedChannels),
             } as CatchingUpModeContext;
         }
+        // Stryker restore StringLiteral,BlockStatement
         // Other contexts are plain objects
         return { ...context };
     }
-    // Stryker restore StringLiteral,ConditionalExpression,BlockStatement
 
     /**
      * Deep freeze a state object to prevent external mutation.
@@ -407,11 +407,10 @@ export class BotStateManagerImpl implements BotStateManager {
     }
     // Stryker restore BlockStatement,StringLiteral
 
-    // Stryker disable BlockStatement,StringLiteral: Cleanup function - behavior verified by other tests
     stop(): void {
         this.isStopped = true;
         this.subscribers.clear();
+        // Stryker disable next-line StringLiteral: Logging for observability
         this.deps.logger.info('BotStateManager stopped');
     }
-    // Stryker restore BlockStatement,StringLiteral
 }

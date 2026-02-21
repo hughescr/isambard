@@ -191,6 +191,7 @@ describe('createInboxMCPServer', () => {
             expect(parsed.summary).toBe('No unread messages in this channel.');
             expect(parsed.authors).toEqual([]);
             expect(parsed.messages).toEqual([]);
+            expect(parsed.timeRange).toEqual({ start: '', end: '' });
         });
 
         test('should generate summary for messages', async () => {

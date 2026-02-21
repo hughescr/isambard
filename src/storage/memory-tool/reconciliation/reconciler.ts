@@ -992,7 +992,6 @@ export async function runReconciliation(
     /* Stryker restore StringLiteral,ObjectLiteral */
 
     const totalDurationMs = Date.now() - startTime;
-    // Stryker disable next-line ConditionalExpression: Success calculation tested via integration tests
     const success = phaseA.errors === 0 && phaseB.errors === 0 && phaseC.errors === 0;
 
     /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */

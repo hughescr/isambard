@@ -6,7 +6,7 @@ import { reconciliationConfigSchema } from '@/storage/memory-tool/reconciliation
 import { resolveTimezone } from '@/utils/time';
 
 // Log level enum schema
-// Stryker disable next-line all: Log level enum values are configuration
+// Stryker disable next-line StringLiteral: Log level enum values are configuration
 export const logLevelSchema = z.enum(['debug', 'info', 'warn', 'error']);
 
 // App config: nodeEnv (enum), logLevel (default 'info'), port (coerced number)

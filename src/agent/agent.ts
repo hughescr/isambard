@@ -18,7 +18,6 @@ import type { TaskPersistenceCoordinator } from './task-persistence-coordinator'
 
 const MAX_AUTO_RESUME_ATTEMPTS = 3;
 
-// Stryker disable all: Configuration constants validated by integration tests
 /**
  * Explicit list of tools available to Isambard.
  * Excludes NotebookEdit (not useful for Discord bot) and AskUserQuestion
@@ -78,7 +77,6 @@ const EXPLICIT_AGENTS = {
         model:       'sonnet' as const,
     },
 };
-// Stryker restore all
 
 /**
  * Extract text content from an assistant message.
@@ -107,7 +105,7 @@ function extractAssistantText(message: { type: string, message?: { content?: unk
  * @returns Extracted thinking text or empty string
  */
 export function extractThinkingContent(message: { type: string, message?: { content?: unknown } }): string {
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Early return for non-assistant message types is defensive coding
+    // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant - non-assistant with no content returns '' via either path (filter returns [] → '' either way)
     if(message.type !== 'assistant') {
         return '';
     }
@@ -154,13 +152,12 @@ export function parseToolName(toolName: string | undefined): ParsedToolName {
     if(toolName === undefined) {
         return { module: 'claude', tool: 'unknown' };
     }
-    // Stryker disable next-line ConditionalExpression,BlockStatement,StringLiteral: Empty string check is defensive coding for edge case
+    // Stryker disable next-line ConditionalExpression,StringLiteral,BlockStatement: Equivalent mutant - '' falls through to regular tool path returning { module: 'claude', tool: '' } either way
     if(toolName === '') {
         return { module: 'claude', tool: '' };
     }
 
     // MCP tools have format: mcp__module__tool (e.g., mcp__DevTools__find_symbol)
-    // Stryker disable next-line StringLiteral: Protocol constant 'mcp__' defines MCP tool naming convention
     if(_.startsWith(toolName, 'mcp__')) {
         const parts = _.split(toolName.slice(5), '__');
         if(parts.length >= 2) {
@@ -210,7 +207,7 @@ function isSensitiveKey(key: string): boolean {
  */
 export function redactSensitiveArgs(input: unknown): unknown {
     // Handle null/undefined
-    // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement: null/undefined check is defensive coding, both branches return input unchanged
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement: Equivalent mutant - null/undefined pass through isArray/isPlainObject checks unchanged, returning as-is
     if(input === null || input === undefined) {
         return input;
     }
@@ -335,19 +332,15 @@ function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: M
     }
 
     const servers: Record<string, McpServerConfig> = {};
-    // Stryker disable next-line ConditionalExpression: Truthiness check for optional parameter
     if(memoryMcpServer) {
         servers.memory = memoryMcpServer;
     }
-    // Stryker disable next-line ConditionalExpression: Truthiness check for optional parameter
     if(discordMcpServer) {
         servers.discord = discordMcpServer;
     }
-    // Stryker disable next-line ConditionalExpression: Truthiness check for optional parameter
     if(inboxMcpServer && specialMode === 'catchup') {
         servers.inbox = inboxMcpServer;
     }
-    // Stryker disable next-line ConditionalExpression: Truthiness check for optional parameter
     if(emailMcpServer) {
         servers.email = emailMcpServer;
     }
@@ -398,7 +391,6 @@ function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: 
         tools.push('mcp__inbox__*');
     }
 
-    // Stryker disable next-line ConditionalExpression: Truthiness check for optional parameter
     if(emailMcpServer) {
         tools.push('mcp__email__*');
     }
@@ -410,7 +402,7 @@ function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: 
  * Logs error details from result events in the stream.
  * @param message Stream message to check for errors
  */
-// Stryker disable all: Observability - error logging doesn't affect return value
+// Stryker disable StringLiteral,ObjectLiteral,ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement,ArrayDeclaration: Observability - error logging doesn't affect return value
 function logResultErrors(message: { type: string, is_error?: boolean, subtype?: string, errors?: unknown[] }): void {
     if(message.type === 'result' && 'is_error' in message && message.is_error) {
         logger.error({
@@ -420,13 +412,13 @@ function logResultErrors(message: { type: string, is_error?: boolean, subtype?: 
         });
     }
 }
-// Stryker restore all
+// Stryker restore StringLiteral,ObjectLiteral,ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement,ArrayDeclaration
 
 /**
  * Logs error details from assistant events in the stream.
  * @param message Stream message to check for errors
  */
-// Stryker disable all: Observability - error logging doesn't affect return value
+// Stryker disable StringLiteral,ObjectLiteral,ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement: Observability - error logging doesn't affect return value
 function logAssistantErrors(message: { type: string, error?: unknown }): void {
     if(message.type === 'assistant' && 'error' in message && message.error) {
         logger.error({
@@ -435,13 +427,13 @@ function logAssistantErrors(message: { type: string, error?: unknown }): void {
         });
     }
 }
-// Stryker restore all
+// Stryker restore StringLiteral,ObjectLiteral,ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement
 
 /**
  * Logs tool usage from assistant messages with redacted sensitive args.
  * @param message Stream message to extract tool uses from
  */
-// Stryker disable all: Observability - debug logging doesn't affect return value
+// Stryker disable StringLiteral,ObjectLiteral: Observability - debug logging doesn't affect return value
 function logToolUsage(message: { type: string, message?: { content?: unknown } }): void {
     const toolUses = extractToolUses(message);
     for(const toolUse of toolUses) {
@@ -453,7 +445,7 @@ function logToolUsage(message: { type: string, message?: { content?: unknown } }
         });
     }
 }
-// Stryker restore all
+// Stryker restore StringLiteral,ObjectLiteral
 
 /**
  * Module-level state for tracking pending tool requests by the LLM.
@@ -466,7 +458,6 @@ let pendingToolRequests: string[] = [];
 /**
  * Resets the log stream event state for testing purposes.
  */
-// Stryker disable next-line BlockStatement: Test helper function body is simple assignment, tested in agent.test.ts
 export function resetLogStreamState(): void {
     pendingToolRequests = [];
 }
@@ -557,7 +548,7 @@ function logToolResultEvent(message: AgentStreamEvent & { tool_name?: string }):
  */
 function logSystemEvent(message: AgentStreamEvent): void {
     // Type guard: Only SystemEvent has subtype property
-    // Stryker disable next-line ConditionalExpression: Type guard for logging compaction events
+    // Stryker disable next-line ConditionalExpression: Equivalent mutant - message.type === 'system' is always true here (called from switch case 'system')
     if(message.type === 'system' && 'subtype' in message && message.subtype === 'compact_boundary') {
         const compactMessage = message as SDKCompactBoundaryMessage;
         const preTokens = compactMessage.compact_metadata?.pre_tokens;
@@ -584,7 +575,6 @@ function logSystemEvent(message: AgentStreamEvent): void {
  *
  * @param message Stream event to log
  */
-// Stryker disable all: Observability - debug logging doesn't affect return value
 export function logStreamEvent(message: AgentStreamEvent): void {
     switch(message.type) {
         case 'user':
@@ -603,22 +593,25 @@ export function logStreamEvent(message: AgentStreamEvent): void {
             logToolResultEvent(message as AgentStreamEvent & { tool_name?: string });
             break;
 
+        // Stryker disable ConditionalExpression,BlockStatement: Observability - switch case routing and logging don't affect return value
         case 'result': {
             const resultMessage = message as { type: 'result', subtype?: 'success' | 'error_during_execution' | 'error_max_turns' };
+            // Stryker disable StringLiteral,ObjectLiteral: Observability - log content doesn't affect return value
             logger.debug({
                 eventType: 'result',
                 status:    resultMessage.subtype,
                 msg:       'Claude LLM stream complete',
             });
+            // Stryker restore StringLiteral,ObjectLiteral
             break;
         }
+        // Stryker restore ConditionalExpression,BlockStatement
 
         case 'system':
             logSystemEvent(message);
             break;
     }
 }
-// Stryker restore all
 
 /**
  * Build user message content for batch processing.
@@ -726,7 +719,6 @@ async function handleSessionIdExtraction(
             const errorMessage = _.isError(error) ? error.message : String(error);
             logger.warn({ error, sessionId: extractedSessionId }, `Task persistence failed: ${errorMessage}`);
         }
-        // Stryker disable next-line BooleanLiteral: Success flag after try-catch
         return { sessionId: extractedSessionId, persistenceCompleted: true };
     }
 
@@ -831,7 +823,6 @@ async function processStreamEvents(
 
             // Extract assistant text
             const text = extractAssistantText(message as { type: string, message?: { content?: unknown } });
-            // Stryker disable next-line ConditionalExpression: Empty text assignment produces same result due to || null coercion in return
             if(text) {
                 lastAssistantText = text;
             }
@@ -902,8 +893,8 @@ function buildQueryOptions(
             ...process.env,
             CLAUDE_CODE_ENABLE_TASKS: 'true',
         },
-        // Stryker restore StringLiteral
-        // Stryker disable all: Observability - stderr logging doesn't affect behavior
+        // Stryker restore StringLiteral,ObjectLiteral
+        // Stryker disable StringLiteral,ObjectLiteral,ConditionalExpression,LogicalOperator,BlockStatement: Observability - stderr logging doesn't affect behavior
         stderr: (data: string) => {
             // SDK writes "Operation aborted" + stack trace to stderr during expected abort
             if(options?.abortController?.signal.aborted && data.includes('Operation aborted')) {
@@ -912,7 +903,7 @@ function buildQueryOptions(
                 logger.error({ stderr: data }, 'Agent SDK stderr');
             }
         },
-        // Stryker restore all
+        // Stryker restore StringLiteral,ObjectLiteral,ConditionalExpression,LogicalOperator,BlockStatement
     };
 }
 
@@ -953,18 +944,21 @@ async function loadUserTimezoneForFlow(
 ): Promise<string | undefined> {
     // Only load user timezone for normal message flows — catch-up/perch/resume use server TZ
     const isNormalFlow = !options?.catchUpPrompt && !options?.perchPrompt && !options?.resumeContext;
+    // Stryker disable next-line ConditionalExpression: Equivalent mutant - contexts.length === 0 → false is untestable without also crashing downstream code that accesses contexts[0]
     if(!contextBuilder || !isNormalFlow || contexts.length === 0) {
         return undefined;
     }
 
+    // Stryker disable BlockStatement: Equivalent mutant - catch block with empty body still returns undefined implicitly
     try {
         return await contextBuilder.loadUserTimezone(contexts[0].userId);
     } catch (error) {
-        /* Stryker disable all: Logging for observability */
+        /* Stryker disable StringLiteral,ObjectLiteral: Logging for observability */
         logger.warn({ error, userId: contexts[0].userId }, 'Failed to load user timezone, falling back to server timezone');
-        /* Stryker restore all */
+        /* Stryker restore StringLiteral,ObjectLiteral */
         return undefined;
     }
+    // Stryker restore BlockStatement
 }
 
 /**
@@ -992,7 +986,6 @@ function cleanupSessionIfComplete(
     wasInterrupted: boolean,
     capturedSessionId: string | undefined
 ): void {
-    // Stryker disable next-line all: Cleanup is fire-and-forget, not observable in tests
     if(!wasInterrupted && capturedSessionId) {
         // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Fire-and-forget cleanup
         cleanupSession(capturedSessionId);
@@ -1063,12 +1056,12 @@ async function attemptAutoResume(
     options: HandleInputOptions | undefined,
     taskPersistenceCoordinator: TaskPersistenceCoordinator | undefined
 ): Promise<AutoResumeResult> {
-    /* Stryker disable all: Observability - logging for debugging auto-resume */
+    /* Stryker disable StringLiteral,ObjectLiteral: Observability - logging for debugging auto-resume */
     logger.warn({
         sessionId: capturedSessionId,
         msg:       'Stream ended with uncollected background tasks, resuming to collect results',
     });
-    /* Stryker restore all */
+    /* Stryker restore StringLiteral,ObjectLiteral */
 
     let updatedText = lastAssistantText;
     let updatedSessionId: string | undefined = capturedSessionId;
@@ -1094,10 +1087,10 @@ async function attemptAutoResume(
             updatedSessionId = resumeResult.capturedSessionId;
         }
     } catch (resumeError) {
-        /* Stryker disable all: Observability - error logging for debugging auto-resume failures */
+        /* Stryker disable StringLiteral,ObjectLiteral: Observability - error logging for debugging auto-resume failures */
         const errorMessage = _.isError(resumeError) ? resumeError.message : String(resumeError);
         logger.error({ error: resumeError, sessionId: capturedSessionId }, `Auto-resume failed: ${errorMessage}`);
-        /* Stryker restore all */
+        /* Stryker restore StringLiteral,ObjectLiteral */
     }
     // Stryker restore BlockStatement
 
@@ -1168,7 +1161,6 @@ async function collectBackgroundTasks(
 
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, taskPersistenceCoordinator, mainModel } = options;
-    // Stryker disable next-line StringLiteral: Fallback model when secret not configured
     const resolvedModel = mainModel ?? 'sonnet';
 
     // Load retry configuration
@@ -1247,14 +1239,14 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 cleanupSessionIfComplete(wasInterrupted, capturedSessionId);
 
                 // 10. Log completion
-                /* Stryker disable all: Logging for observability */
+                /* Stryker disable StringLiteral,ObjectLiteral: Logging for observability */
                 logger.info({
                     contextCount:   contexts.length,
                     wasInterrupted,
                     responseLength: lastAssistantText.length,
                     msg:            `Batch processing ${wasInterrupted ? 'interrupted' : 'completed'} (${lastAssistantText.length} chars)`,
                 });
-                /* Stryker restore all */
+                /* Stryker restore StringLiteral,ObjectLiteral */
 
                 // 11. Return result
                 return buildHandleInputResult(lastAssistantText, wasInterrupted, capturedSessionId, tracker);

@@ -46,7 +46,6 @@ export function createStorageLayer(
 
     // Create reconciliation scheduler if enabled
     let reconciliationScheduler: ReconciliationScheduler | undefined;
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Optional initialization - equivalent mutant
     if(reconciliationConfig?.enabled) {
         reconciliationScheduler = createReconciliationScheduler({
             config:         reconciliationConfig,

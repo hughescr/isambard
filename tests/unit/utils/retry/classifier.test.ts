@@ -272,6 +272,29 @@ describe.concurrent('createHttpStatusClassifier', () => {
             expect(result.category).toBe('transient');
             expect(result.message).toBe('Unknown error');
         });
+
+        it('should fall through to default classifier for 2xx status codes (kills ConditionalExpression→true on 4xx check)', () => {
+            // Status 200 is not 429, not 5xx, and not 4xx — so classifyHttpStatus returns undefined
+            // and we fall back to defaultClassifier which returns transient/"Unknown error" for plain objects
+            const error = { status: 200, message: 'OK' };
+            const classifier = createHttpStatusClassifier();
+            const result = classifier(error);
+
+            // If the 4xx check were mutated to `true`, 200 would be permanent — killing the mutant
+            expect(result.category).toBe('transient');
+            expect(result.message).toBe('Unknown error');
+        });
+
+        it('should fall through to default classifier for 3xx status codes (kills ConditionalExpression→true on 4xx check)', () => {
+            // Status 301 is not 429, not 5xx, and not 4xx — so classifyHttpStatus returns undefined
+            const error = { status: 301 };
+            const classifier = createHttpStatusClassifier();
+            const result = classifier(error);
+
+            // If the 4xx check were mutated to `true`, 301 would be permanent — killing the mutant
+            expect(result.category).toBe('transient');
+            expect(result.message).toBe('Unknown error');
+        });
     });
 
     describe.concurrent('Edge cases', () => {

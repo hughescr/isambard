@@ -66,13 +66,13 @@ export function loadRetryConfig(): RetryConfig {
     const defaults = retryConfigSchema.parse({});
 
     // Merge with deep merge for nested objects
-    // Stryker disable all: Config merging with env overrides - defaults needed for undefined overrides
+    // Stryker disable ObjectLiteral,LogicalOperator: Config merging with env overrides - defaults needed for undefined overrides
     const merged = {
         claude:   { ...defaults.claude, ...(envOverrides.claude as Record<string, unknown> || {}) },
         discord:  { ...defaults.discord, ...(envOverrides.discord as Record<string, unknown> || {}) },
         dynamodb: { ...defaults.dynamodb, ...(envOverrides.dynamodb as Record<string, unknown> || {}) },
     };
-    // Stryker restore all
+    // Stryker restore ObjectLiteral,LogicalOperator
 
     // Validate merged result
     return retryConfigSchema.parse(merged);

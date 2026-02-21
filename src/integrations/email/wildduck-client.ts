@@ -222,19 +222,17 @@ interface FullMessageResponse {
  */
 function extractBody(content: string, isHtml: boolean, maxBytes: number): string {
     let text: string;
-    // Stryker disable next-line ConditionalExpression: isHtml determines conversion path; mutant-equivalent for same-type content in tests
     if(isHtml) {
         // Stryker disable next-line ObjectLiteral: wordwrap:false is configuration for html-to-text conversion
         text = convert(content, { wordwrap: false });
     } else {
         text = content;
     }
-    // Stryker disable BlockStatement: truncation guard — non-truncating branch is equivalent for short content
     // Stryker disable next-line ConditionalExpression,EqualityOperator: truncation guard; > vs >= differ only at exact boundary, equivalence holds for non-boundary content
     if(Buffer.byteLength(text, 'utf8') > maxBytes) {
         const buf = Buffer.from(text, 'utf8');
         let end   = maxBytes;
-        // Stryker disable ConditionalExpression,EqualityOperator,LogicalOperator,UpdateOperator: UTF-8 continuation byte detection loop is low-level bit manipulation — boundary logic tested by manual inspection
+        // Stryker disable ConditionalExpression,EqualityOperator,LogicalOperator,UpdateOperator: UTF-8 continuation byte detection — infinite loop if condition mutated to true or operand flipped; bit manipulation is tested by the multi-byte truncation test
         // eslint-disable-next-line no-bitwise -- UTF-8 continuation byte detection requires bitwise operations
         while(end > 0 && (buf[end] & 0xC0) === 0x80) {
             end--;
@@ -243,7 +241,6 @@ function extractBody(content: string, isHtml: boolean, maxBytes: number): string
         return buf.subarray(0, end).toString('utf8');
     }
     return text;
-    // Stryker restore BlockStatement
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +270,6 @@ export class WildDuckClient {
         await this.loadMailboxes();
         // Create any missing required folders
         const missingFolders = _(EmailFolder).values().filter(folder => !this.reverseMailboxMap.has(folder)).value();
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: length > 0 guard before create+reload — both branches produce correct result for empty array
         if(missingFolders.length > 0) {
             for(const folder of missingFolders) {
                 await this.createMailbox(folder);
@@ -877,10 +873,8 @@ export class WildDuckClient {
         // Determine body text
         let bodyText: string;
         if(response.text) {
-            // Stryker disable next-line BooleanLiteral: false = isHtml=false for plain text; swapping to true would process as HTML (lossy but still text)
             bodyText = extractBody(response.text, false, maxBodySizeBytes);
         } else if(response.html) {
-            // Stryker disable next-line BooleanLiteral: true = isHtml=true for HTML body; swapping to false would skip HTML-to-text conversion
             bodyText = extractBody(response.html, true, maxBodySizeBytes);
         } else {
             // Stryker disable next-line StringLiteral: empty string fallback is correct for missing body
@@ -890,14 +884,11 @@ export class WildDuckClient {
         // Map addresses
         const mapAddress = (addr: { address: string, name?: string }): EmailAddress => ({
             address: addr.address,
-            // Stryker disable next-line ConditionalExpression: optional name field mapping
             ...(addr.name ? { name: addr.name } : {}),
         });
 
         const from = response.from ? mapAddress(response.from) : { address: '' };
-        // Stryker disable next-line ArrayDeclaration: empty array fallback for missing to/cc
         const to   = _.map(response.to ?? [], mapAddress);
-        // Stryker disable next-line ArrayDeclaration: empty array fallback for missing cc
         const cc   = _.map(response.cc ?? [], mapAddress);
 
         // Map headers
@@ -914,7 +905,6 @@ export class WildDuckClient {
         };
 
         // Map attachment metadata for lazy fetching (data not fetched here)
-        // Stryker disable next-line ArrayDeclaration: empty array fallback for missing attachments
         const attachmentMeta: WildDuckAttachmentMeta[] = _.map(response.attachments ?? [], att => ({
             id:          att.id,
             filename:    att.filename,
@@ -933,7 +923,6 @@ export class WildDuckClient {
             subject:        response.subject ?? '',
             date:           new Date(response.date),
             bodyText,
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: hasAttachments check — length > 0 correctly handles empty/missing
             hasAttachments: (response.attachments?.length ?? 0) > 0,
             headers,
             attachments:    [],

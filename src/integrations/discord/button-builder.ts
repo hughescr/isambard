@@ -17,7 +17,6 @@ export function buildQuestionButtons(config: ButtonBuilderConfig): ActionRowBuil
     // Discord allows max 5 buttons per row
     const BUTTONS_PER_ROW = 5;
 
-    // Stryker disable next-line AssignmentOperator: Loop increment - tested via component behavior
     for(let i = 0; i < options.length; i += BUTTONS_PER_ROW) {
         const rowOptions = options.slice(i, i + BUTTONS_PER_ROW);
         const row = new ActionRowBuilder<ButtonBuilder>();

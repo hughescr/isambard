@@ -303,6 +303,148 @@ describe.concurrent('createMessageFetcher', () => {
             });
         });
 
+        describe('embed field transformation', () => {
+            test('should include title in embed when embed.title is set', async () => {
+                // Kills BlockStatement mutant on if(embed.title) body — no test ever executed this code path
+                const message = createMockMessage({
+                    id:     '100000000000000000',
+                    embeds: [
+                        { title: 'My Embed Title', description: 'Description', url: null },
+                    ],
+                });
+
+                const channel = createMockChannel('123456789012345678', [message]);
+                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+                const client = createMockClient(channels);
+
+                const fetcher = createMessageFetcher(client);
+                const result = await fetcher.fetchMessages({ channelId: '123456789012345678' });
+
+                expect(result.messages[0].embeds).toHaveLength(1);
+                expect(result.messages[0].embeds[0].title).toBe('My Embed Title');
+                expect(result.messages[0].embeds[0].description).toBe('Description');
+            });
+
+            test('should include url in embed when embed.url is set', async () => {
+                // Kills BlockStatement mutant on if(embed.url) body — no test ever executed this code path
+                const message = createMockMessage({
+                    id:     '100000000000000001',
+                    embeds: [
+                        { title: null, description: 'Description', url: 'https://example.com/page' },
+                    ],
+                });
+
+                const channel = createMockChannel('123456789012345678', [message]);
+                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+                const client = createMockClient(channels);
+
+                const fetcher = createMessageFetcher(client);
+                const result = await fetcher.fetchMessages({ channelId: '123456789012345678' });
+
+                expect(result.messages[0].embeds).toHaveLength(1);
+                expect(result.messages[0].embeds[0].url).toBe('https://example.com/page');
+                expect(result.messages[0].embeds[0].description).toBe('Description');
+            });
+
+            test('should include both title and url when both are set', async () => {
+                const message = createMockMessage({
+                    id:     '100000000000000002',
+                    embeds: [
+                        { title: 'Full Embed', description: 'Desc', url: 'https://example.com' },
+                    ],
+                });
+
+                const channel = createMockChannel('123456789012345678', [message]);
+                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+                const client = createMockClient(channels);
+
+                const fetcher = createMessageFetcher(client);
+                const result = await fetcher.fetchMessages({ channelId: '123456789012345678' });
+
+                expect(result.messages[0].embeds[0].title).toBe('Full Embed');
+                expect(result.messages[0].embeds[0].url).toBe('https://example.com');
+                expect(result.messages[0].embeds[0].description).toBe('Desc');
+            });
+        });
+
+        describe('reaction transformation', () => {
+            test('should include reactions when message has reactions', async () => {
+                // Kills BlockStatement mutant on the reactions loop body — no test ever executed this code path
+                const message = createMockMessage({
+                    id:        '100000000000000003',
+                    reactions: [
+                        { emoji: '👍', count: 3 },
+                        { emoji: '❤️', count: 1 },
+                    ],
+                });
+
+                const channel = createMockChannel('123456789012345678', [message]);
+                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+                const client = createMockClient(channels);
+
+                const fetcher = createMessageFetcher(client);
+                const result = await fetcher.fetchMessages({ channelId: '123456789012345678' });
+
+                expect(result.messages[0].reactions).toHaveLength(2);
+                expect(result.messages[0].reactions[0].emoji).toBe('👍');
+                expect(result.messages[0].reactions[0].count).toBe(3);
+                expect(result.messages[0].reactions[1].emoji).toBe('❤️');
+                expect(result.messages[0].reactions[1].count).toBe(1);
+            });
+
+            test('should have empty reactions array when no reactions', async () => {
+                const message = createMockMessage({
+                    id:        '100000000000000004',
+                    reactions: [],
+                });
+
+                const channel = createMockChannel('123456789012345678', [message]);
+                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+                const client = createMockClient(channels);
+
+                const fetcher = createMessageFetcher(client);
+                const result = await fetcher.fetchMessages({ channelId: '123456789012345678' });
+
+                expect(result.messages[0].reactions).toHaveLength(0);
+                expect(result.messages[0].reactions).toEqual([]);
+            });
+        });
+
+        describe('reply reference transformation', () => {
+            test('should include replyTo when message is a reply', async () => {
+                // Kills BlockStatement mutant on if(message.reference?.messageId) body
+                const message = createMockMessage({
+                    id:        '100000000000000005',
+                    replyToId: '999999999999999999',
+                });
+
+                const channel = createMockChannel('123456789012345678', [message]);
+                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+                const client = createMockClient(channels);
+
+                const fetcher = createMessageFetcher(client);
+                const result = await fetcher.fetchMessages({ channelId: '123456789012345678' });
+
+                expect(result.messages[0].replyTo).toBe('999999999999999999');
+            });
+
+            test('should not have replyTo when message is not a reply', async () => {
+                const message = createMockMessage({
+                    id:        '100000000000000006',
+                    replyToId: null,
+                });
+
+                const channel = createMockChannel('123456789012345678', [message]);
+                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+                const client = createMockClient(channels);
+
+                const fetcher = createMessageFetcher(client);
+                const result = await fetcher.fetchMessages({ channelId: '123456789012345678' });
+
+                expect(result.messages[0].replyTo).toBeUndefined();
+            });
+        });
+
         describe('pagination', () => {
             test('should paginate when fetching more than 100 messages', async () => {
                 const messages: Message[] = [];

@@ -197,7 +197,7 @@ export function createMemoryMCPServer(
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     tags:      z.array(z.string()).min(1).describe('Tags to search for (AND semantics — items must have all tags)'),
-                    // Stryker disable next-line all: z.enum array and describe() are schema configuration
+                    // Stryker disable next-line StringLiteral: z.enum values and describe() are schema configuration
                     layer:     z.enum(['identity', 'state', 'events']).optional().describe('Optional layer filter'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit:     z.number().int().positive().optional().describe('Optional result limit'),
@@ -284,11 +284,11 @@ export function createMemoryMCPServer(
                         };
                         const layer = layerPaths[dirPath];
 
-                        // Stryker disable all: Logger debug objects in ternary are observational
+                        // Stryker disable ObjectLiteral,StringLiteral: Logger debug objects - content not behavior-affecting
                         const results = layer
                             ? (logger.debug({ layer, dirPath, msg: 'Using GSI1 listByLayer for layer path' }), await backend.listByLayer(layer, options))
                             : (logger.debug({ dirPath, msg: 'Using directory list for non-layer path' }), await backend.list(dirPath, options));
-                        // Stryker restore all
+                        // Stryker restore ObjectLiteral,StringLiteral
 
                         if(results.items.length === 0) {
                             return {

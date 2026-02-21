@@ -70,7 +70,6 @@ export async function retryAsync<T>(
             const { category, message: errorMessage, retryAfterMs } = classification;
 
             // Permanent errors are not retried
-            // Stryker disable next-line BlockStatement: Permanent error abort prevents infinite retries
             if(category === 'permanent') {
                 // Stryker disable next-line ArithmeticOperator: Elapsed time calculation for logging
                 logger.error({
@@ -99,17 +98,17 @@ export async function retryAsync<T>(
             // Calculate delay for next retry
             const delayMs = retryAfterMs ?? calculateDelay(attempt, policy);
 
-            // Stryker disable all: Logger warn object
             logger.warn({
+                // Stryker disable next-line StringLiteral: log message string is observability-only configuration
                 msg:       'Retrying after error',
                 attempt,
                 maxAttempts,
                 category,
                 errorMessage,
                 delayMs,
+                // Stryker disable next-line ArithmeticOperator: Elapsed time calculation for logging
                 elapsedMs: now() - startTime,
             });
-            // Stryker restore all
 
             // Wait before retrying
             await sleep(delayMs);

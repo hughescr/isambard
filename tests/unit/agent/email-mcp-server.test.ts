@@ -2207,6 +2207,55 @@ describe('createEmailMCPServer', () => {
             expect(payload.flags).toBeUndefined();
         });
 
+        test('should set draft flag to true in replyToEmail upload payload', async () => {
+            const server = createEmailMCPServer({
+                wildDuckClient: mockWildDuck,
+                allowlist:      mockAllowlist,
+            });
+            const handler = getToolHandler(server, 'replyToEmail');
+
+            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+
+            const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload.draft).toBe(true);
+        });
+
+        test('should use informalAddress from getUserAddresses for informal identity in reply', async () => {
+            const server = createEmailMCPServer({
+                wildDuckClient: mockWildDuck,
+                allowlist:      mockAllowlist,
+            });
+            const handler = getToolHandler(server, 'replyToEmail');
+
+            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'informal' });
+
+            const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect((payload.from as { address: string }).address).toBe('informal@example.com');
+            expect((payload.from as { name: string }).name).toBe('Izzy Informal');
+        });
+
+        test('should pass undefined cc to sendApprovalRequest in plain reply mode', async () => {
+            const mockSendApprovalRequestReply = mock(async () => { /* intentionally empty */ });
+            mockAllowlist.isAllowed = mock(_.constant(false));
+
+            const server = createEmailMCPServer({
+                wildDuckClient:      mockWildDuck,
+                allowlist:           mockAllowlist,
+                sendApprovalRequest: mockSendApprovalRequestReply,
+            });
+            const handler = getToolHandler(server, 'replyToEmail');
+
+            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+
+            // In plain reply mode, cc should be undefined (not extracted from original.cc)
+            expect(mockSendApprovalRequestReply).toHaveBeenCalledWith(
+                expect.any(String),
+                expect.any(String),
+                expect.any(Number),
+                undefined
+            );
+        });
+
         test('should call getMailboxId with mailbox name to resolve mailbox ID', async () => {
             const server = createEmailMCPServer({
                 wildDuckClient: mockWildDuck,

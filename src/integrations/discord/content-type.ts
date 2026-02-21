@@ -10,7 +10,7 @@ import _ from 'lodash';
  */
 export function inferImageContentType(filename: string, discordContentType: string | null): string {
     // If Discord provided a valid image content type, use it
-    // Stryker disable next-line StringLiteral: Equivalent mutant - any non-image prefix produces same behavior
+    // Stryker disable next-line StringLiteral: Equivalent — any non-image string ('' or 'Stryker was here!') produces the same false from _.startsWith; the test uses null which goes through ?? to '' anyway
     if(_.startsWith(discordContentType ?? '', 'image/')) {
         return discordContentType!;
     }

@@ -614,11 +614,11 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                 sections.push(`[Recent events]\n${eventSection}`);
             }
 
-            // Stryker disable EqualityOperator,ConditionalExpression,BlockStatement,StringLiteral: Empty sections array can't happen (time header always present)
+            // Stryker disable ConditionalExpression,BlockStatement,StringLiteral: Dead code — sections always has time header; body never executes, return value unreachable
             if(sections.length === 0) {
                 return '';
             }
-            // Stryker restore EqualityOperator,ConditionalExpression,BlockStatement,StringLiteral
+            // Stryker restore ConditionalExpression,BlockStatement,StringLiteral
 
             // Stryker disable next-line StringLiteral: Equivalent - trailing newlines are formatting
             return sections.join('\n\n') + '\n\n';

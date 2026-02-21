@@ -383,6 +383,20 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             const parsed = JSON.parse(result.content[0].text as string) as SearchResponse;
             expect(parsed.messages[0].localTimestamp).toBeUndefined();
         });
+
+        test('should use default limit of 10 when limit not provided', async () => {
+            mockSearchService.searchMessages = mock(async () => createMockSearchResponse());
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'searchMessages');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({ channelId: '123456789012345678' });
+
+            expect(mockSearchService.searchMessages).toHaveBeenCalledWith(
+                expect.objectContaining({ limit: 10 })
+            );
+        });
     });
 
     describe('getRecentMessages tool', () => {
@@ -502,6 +516,18 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             const parsed = JSON.parse(result.content[0].text as string) as SearchResponse;
             expect(parsed.messages[0].localTimestamp).toBeUndefined();
+        });
+
+        test('should use default limit of 10 when limit not provided', async () => {
+            mockSearchService.getRecentMessages = mock(async () => createMockSearchResponse());
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'getRecentMessages');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({ channelId: '123456789012345678' });
+
+            expect(mockSearchService.getRecentMessages).toHaveBeenCalledWith('123456789012345678', 10);
         });
     });
 
@@ -1757,6 +1783,65 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(registerCall.questionText).toBe('Test question?');
         });
 
+        test('should use default timeout of 300 seconds when timeoutSeconds not provided', async () => {
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: _constant(true),
+                isThread:    _constant(false),
+                isDMBased:   _constant(false),
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock message options for testing
+                send:        mock(async (_content: any) => ({ id: 'question-message-id' })),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const beforeMs = Date.now();
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({
+                channelId: '123456789012345678',
+                question:  'Test question?',
+            });
+            const afterMs = Date.now();
+
+            expect(mockQuestionRegistry.register).toHaveBeenCalled();
+            const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
+            // Default timeout is 300 seconds = 300000 ms
+            expect(registerCall.expiresAt).toBeGreaterThanOrEqual(beforeMs + 300 * 1000);
+            expect(registerCall.expiresAt).toBeLessThanOrEqual(afterMs + 300 * 1000);
+        });
+
+        test('should use provided timeoutSeconds for expiration calculation', async () => {
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: _constant(true),
+                isThread:    _constant(false),
+                isDMBased:   _constant(false),
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock message options for testing
+                send:        mock(async (_content: any) => ({ id: 'question-message-id' })),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const beforeMs = Date.now();
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            await handler({
+                channelId:      '123456789012345678',
+                question:       'Test question?',
+                timeoutSeconds: 60,
+            });
+            const afterMs = Date.now();
+
+            expect(mockQuestionRegistry.register).toHaveBeenCalled();
+            const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
+            // 60 seconds = 60000 ms
+            expect(registerCall.expiresAt).toBeGreaterThanOrEqual(beforeMs + 60 * 1000);
+            expect(registerCall.expiresAt).toBeLessThanOrEqual(afterMs + 60 * 1000);
+        });
+
         test('should return answer when resolved', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
@@ -1831,6 +1916,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const parsed = JSON.parse(result.content[0].text as string);
             expect(parsed.questionId).toBe('q1');
             expect(parsed.timedOut).toBe(true);
+            expect(parsed.message).toBe('Question timed out without response');
             expect(parsed.channelId).toBe('123456789012345678');
         });
 
@@ -1900,6 +1986,37 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBe(true);
             expect(result.content[0].text).toContain('maximum of 25 buttons');
+        });
+
+        test('should allow exactly 25 options without error', async () => {
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: _constant(true),
+                isThread:    _constant(false),
+                isDMBased:   _constant(false),
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock message options for testing
+                send:        mock(async (_content: any) => ({ id: 'question-message-id' })),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            // Create exactly 25 options (the maximum allowed)
+            const maxOptions = Array.from({ length: 25 }, (_, i) => ({
+                label: `Option ${i + 1}`,
+                value: `option${i + 1}`,
+            }));
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                question:  'Pick one',
+                options:   maxOptions,
+            });
+
+            // 25 options should NOT trigger the error
+            expect(result.isError).toBeUndefined();
         });
 
         test('should include @mention when targetUserId provided', async () => {
@@ -2908,6 +3025,31 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(result.isError).toBe(true);
             expect(result.content[0].text).toContain('Message not found');
         });
+
+        test('should return error when channel fetch throws exception', async () => {
+            mockClient.channels.fetch = mock(async () => {
+                throw new Error('Discord API unavailable');
+            });
+
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const handler = getToolHandler(server, 'addReaction');
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
+            const result = await handler({
+                channelId: '123456789012345678',
+                messageId: 'message-123',
+                emoji:     '👍',
+            });
+
+            expect(result.isError).toBe(true);
+            expect(result.content[0].text).toBe('Error: Discord API unavailable');
+            // Verify error object structure (kills StringLiteral and ObjectLiteral mutants in catch block)
+            expect(result.content).toHaveLength(1);
+            expect(result.content[0]).toEqual({
+                type: 'text',
+                text: 'Error: Discord API unavailable',
+            });
+        });
     });
 
     describe('muteChannel tool', () => {
@@ -2920,6 +3062,11 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBeUndefined();
             expect(mockChannelRegistry.muteChannel).toHaveBeenCalledWith('1451694737026449581');
+
+            const parsed = JSON.parse(result.content[0].text as string);
+            expect(parsed.success).toBe(true);
+            expect(parsed.muted).toBe(true);
+            expect(parsed.channelId).toBe('1451694737026449581');
         });
 
         test('should mute channel by name with # prefix', async () => {
@@ -2976,6 +3123,11 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBeUndefined();
             expect(mockChannelRegistry.unmuteChannel).toHaveBeenCalledWith('1451694737026449581');
+
+            const parsed = JSON.parse(result.content[0].text as string);
+            expect(parsed.success).toBe(true);
+            expect(parsed.muted).toBe(false);
+            expect(parsed.channelId).toBe('1451694737026449581');
         });
 
         test('should unmute channel by name with # prefix', async () => {

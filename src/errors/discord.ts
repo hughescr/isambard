@@ -75,9 +75,7 @@ export class ChannelNotAccessibleError extends DiscordError {
     declare public readonly context: { channelId: string };
 
     constructor(channelId: string) {
-        // Stryker disable next-line StringLiteral: Error message and error code are not behavior
         super(`Discord channel not accessible: ${channelId}`, ErrorCode.CHANNEL_NOT_ACCESSIBLE, { channelId });
-        // Stryker disable next-line StringLiteral: Error class name is not behavior
         this.name = 'ChannelNotAccessibleError';
     }
 }
@@ -110,13 +108,11 @@ export class MessageFetchError extends DiscordError {
     declare public readonly context: { channelId: string, reason: string };
 
     constructor(channelId: string, reason: string) {
-        // Stryker disable next-line StringLiteral: Error message and error code are not behavior
         super(
             `Failed to fetch messages from channel ${channelId}: ${reason}`,
             ErrorCode.MESSAGE_FETCH_ERROR,
             { channelId, reason }
         );
-        // Stryker disable next-line StringLiteral: Error class name is not behavior
         this.name = 'MessageFetchError';
     }
 }
@@ -128,9 +124,7 @@ export class InvalidSnowflakeError extends DiscordError {
     declare public readonly context: { snowflake: string };
 
     constructor(snowflake: string) {
-        // Stryker disable next-line StringLiteral: Error message and error code are not behavior
         super(`Invalid Discord snowflake: ${snowflake}`, ErrorCode.INVALID_SNOWFLAKE, { snowflake });
-        // Stryker disable next-line StringLiteral: Error class name is not behavior
         this.name = 'InvalidSnowflakeError';
     }
 }

@@ -468,7 +468,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     msg:   'Failed to mute admin email channel — messages there may reach Izzy',
                 });
             }
-            // Stryker enable BlockStatement
+            // Stryker restore BlockStatement
         }
 
         // Create message coordinator if agent is provided (MUST be before setupMessageProcessing)
@@ -542,7 +542,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 });
                 // Continue — email failure is non-fatal
             }
-            // Stryker enable BlockStatement
+            // Stryker restore BlockStatement
         }
     });
 
@@ -610,6 +610,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                         msg:   'Email listener stop failed during shutdown',
                     });
                 }
+                // Stryker restore BlockStatement
                 // Stryker disable BlockStatement: try-catch isolates WildDuck shutdown from Discord cleanup
                 try {
                     await emailSetup.wildDuckClient.shutdown();
@@ -620,6 +621,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                         msg:   'WildDuck client shutdown failed during email teardown',
                     });
                 }
+                // Stryker restore BlockStatement
             }
             // Remove all listeners before destroy to prevent memory leaks
             client.removeAllListeners();

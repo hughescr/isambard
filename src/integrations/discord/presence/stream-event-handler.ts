@@ -200,9 +200,9 @@ export function createStreamEventHandler(
      */
     const handleToolPhaseTransition = (toolName: string): boolean => {
         // Check if this is a new tool transition
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: Rate-limit optimization - prevents redundant Discord API calls
+        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: Rate-limit optimization - prevents redundant Discord API calls for same-tool transitions; no test for same-tool deduplication
         if(currentPhase === 'using_tool' && toolName === lastToolName) {
-            // Stryker disable next-line BooleanLiteral: Return false to skip redundant phase update
+            // Stryker disable next-line BooleanLiteral: Returns false to signal no transition occurred
             return false;
         }
 
@@ -216,7 +216,6 @@ export function createStreamEventHandler(
 
         // Add current tool to recent AFTER capturing (current tool goes into history for next call)
         recentToolCalls.unshift(toolName);
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: Memory optimization - bounds array size
         if(recentToolCalls.length > MAX_RECENT_TOOLS) {
             recentToolCalls.pop();
         }
@@ -384,12 +383,10 @@ export function createStreamEventHandler(
      * Completes the handler and clears activity phase.
      * Call this when processing is done.
      */
-    // Stryker disable BlockStatement: Cleanup function tested via integration
     const complete = (): void => {
         completed = true;
         botStateManager.clearActivityPhase();
     };
-    // Stryker restore BlockStatement
 
     return {
         onStreamEvent,

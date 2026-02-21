@@ -195,7 +195,7 @@ export function getSlotForHour(hour: number): PerchSlot {
  * ```
  */
 export function getSlotConfig(slot: PerchSlot): PerchSlotConfig | undefined {
-    // Stryker disable next-line all: Early return for unscheduled is tested behavior
+    // Stryker disable next-line BlockStatement,StringLiteral,ConditionalExpression: BlockStatement equivalent (_.find returns undefined for 'unscheduled'); StringLiteral equivalent (empty string never equals slot); ConditionalExpression equivalent (_.find returns undefined for 'unscheduled' anyway — same result)
     if(slot === 'unscheduled') {
         return undefined;
     }

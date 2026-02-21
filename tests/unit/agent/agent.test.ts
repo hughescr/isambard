@@ -1825,6 +1825,48 @@ describe('createClaudeAgent', () => {
             expect(taskErrorLog).toBeDefined();
         });
 
+        test('should call taskPersistenceCoordinator only once even with multiple init events', async () => {
+            let prepareNewSessionCallCount = 0;
+            const mockTaskPersistenceCoordinator = {
+                prepareNewSession: async (_sessionId: string): Promise<boolean> => {
+                    prepareNewSessionCallCount++;
+                    return true;
+                },
+            };
+
+            querySpy.mockImplementation((_params: any): any => {
+                async function* mockGenerator() {
+                    // First system init event
+                    yield {
+                        type:       'system' as const,
+                        subtype:    'init' as const,
+                        session_id: 'task-session-once',
+                    };
+                    // Second system init event with same session ID (simulates duplicate init)
+                    yield {
+                        type:       'system' as const,
+                        subtype:    'init' as const,
+                        session_id: 'task-session-once',
+                    };
+                    yield {
+                        type:    'assistant' as const,
+                        message: {
+                            content: [{ type: 'text' as const, text: 'Final response' }],
+                        },
+                    };
+                }
+                return mockGenerator();
+            });
+
+            const agent = createClaudeAgent({ taskPersistenceCoordinator: mockTaskPersistenceCoordinator });
+            await agent.handleInput([mockMessageContext]);
+
+            // Kills BooleanLiteral mutant on persistenceCompleted: true → false
+            // With mutant, persistenceCompleted stays false after first call, so second init
+            // event would call prepareNewSession again (count=2). Real code: count=1.
+            expect(prepareNewSessionCallCount).toBe(1);
+        });
+
         test('should use perchPrompt when provided in perching mode', async () => {
             const agent = createClaudeAgent({});
             const perchPrompt = 'Autonomous perch time: review your memories and plan improvements.';

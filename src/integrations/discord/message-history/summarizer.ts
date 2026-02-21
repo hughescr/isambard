@@ -120,7 +120,7 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
 
     return {
         async summarizeMessages(messages: DiscordSearchResult[]): Promise<OverflowSummary[]> {
-            // Stryker disable next-line all: Early return for empty input prevents unnecessary work
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant - _.map([]) returns [] so early return is redundant; prevents unnecessary pLimit setup
             if(_.isEmpty(messages)) {
                 return [];
             }
@@ -144,7 +144,7 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
         },
 
         async summarizeMessageBatch(messages: DiscordSearchResult[], batchSize = 10): Promise<BatchOverflowSummary[]> {
-            // Stryker disable next-line all: Early return for empty input prevents unnecessary work
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant - _.chunk([], n) produces [] batches so early return is redundant; prevents unnecessary pLimit setup
             if(_.isEmpty(messages)) {
                 return [];
             }

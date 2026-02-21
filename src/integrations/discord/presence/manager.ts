@@ -127,13 +127,10 @@ export class PresenceManager {
         const activity = await this.deps.idleStatusGenerator.generate();
 
         // Check if mode changed while generating - if so, discard stale result
-        // Stryker disable BlockStatement,ObjectLiteral,StringLiteral: Logging for observability and race condition guard
-        // Stryker disable next-line ConditionalExpression: Guard clause - prevents stale status when mode changes during generation
         if(this.presenceDisplayMode !== modeAtStart) {
             this.deps.logger.debug({ modeAtStart, currentMode: this.presenceDisplayMode }, 'Discarding stale idle status (mode changed during generation)');
             return;
         }
-        // Stryker restore BlockStatement,ObjectLiteral,StringLiteral
 
         await this.applyPresenceUpdate(activity);
     }
@@ -142,13 +139,12 @@ export class PresenceManager {
      * Start periodic idle status refresh.
      * Returns a promise that resolves after the first refresh completes.
      */
-    // Stryker disable BlockStatement: Idempotent guard - tested via integration
     private async startIdleRefresh(): Promise<void> {
-        // Stryker disable next-line ConditionalExpression: Guard clause - prevents duplicate interval creation
+        // Stryker disable ConditionalExpression,BlockStatement: Async race condition guard — two concurrent callers could both see null before either sets idleRefreshInterval; no reliable test for this
         if(this.idleRefreshInterval) {
             return; // Already running
         }
-        // Stryker restore BlockStatement
+        // Stryker restore ConditionalExpression,BlockStatement
 
         // Generate immediately and wait for it
         await this.refreshIdleStatus();
@@ -294,7 +290,6 @@ export class PresenceManager {
         if(nowIdle && !wasIdle) {
             // If presence display mode is active, don't start idle refresh yet.
             // The transitionPresenceDisplayMode('none') call will trigger idle refresh with correct mode.
-            // Stryker disable next-line ConditionalExpression: Mode check - prevents idle refresh during catch-up
             if(this.presenceDisplayMode === 'none') {
                 await this.startIdleRefresh();
             }
@@ -308,13 +303,13 @@ export class PresenceManager {
         }
 
         // Transition FROM idle: stop the refresh loop
-        // Stryker disable next-line ConditionalExpression,LogicalOperator: State transition guard - prevents idle refresh when transitioning from idle to active
+        // Stryker disable next-line ConditionalExpression,LogicalOperator: Equivalent — stopIdleRefresh() is idempotent (no-op when no interval running); both →true and &&→|| only add no-op calls when !wasIdle
         if(!nowIdle && wasIdle) {
             this.stopIdleRefresh();
         }
 
         // Handle active phases (throttling is now done upstream by BotStateManager)
-        // Stryker disable next-line ConditionalExpression: Guard clause - active phase handling
+        // Stryker disable next-line ConditionalExpression: Equivalent — !nowIdle is always true here; both nowIdle branches above return early
         if(!nowIdle) {
             const activity = this.deps.activeStatusGenerator.generate(phase, this.presenceDisplayMode);
             await this.applyPresenceUpdate(activity);

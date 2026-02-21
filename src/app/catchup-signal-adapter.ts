@@ -33,7 +33,7 @@ export interface CatchUpSignalAdapter {
 export function createCatchUpSignalAdapter(memoryBackend: MemoryToolBackend): CatchUpSignalAdapter {
     return {
         storeCompletionSignal: async (signal: CatchUpCompletionSignal) => {
-            // Stryker disable BlockStatement: Error handling - equivalent mutant
+            // Stryker disable BlockStatement: Catch-only-logs — emptying catch body is equivalent (error still swallowed)
             try {
                 const path = createMemoryPath('/state/catchup-completion');
                 const existing = await memoryBackend.get(path);
@@ -53,9 +53,9 @@ export function createCatchUpSignalAdapter(memoryBackend: MemoryToolBackend): Ca
                 /* Stryker restore all */
                 // Don't re-throw - allow catch-up to continue
             }
+            // Stryker restore BlockStatement
         },
         loadCompletionSignal: async () => {
-            // Stryker disable BlockStatement: Error handling - equivalent mutant
             try {
                 const path = createMemoryPath('/state/catchup-completion');
                 const result = await memoryBackend.get(path);
@@ -75,7 +75,7 @@ export function createCatchUpSignalAdapter(memoryBackend: MemoryToolBackend): Ca
             }
         },
         storeInProgressSignal: async (signal: CatchUpInProgressSignal) => {
-            // Stryker disable BlockStatement: Error handling - equivalent mutant
+            // Stryker disable BlockStatement: Catch-only-logs — emptying catch body is equivalent (error still swallowed)
             try {
                 const path = createMemoryPath('/state/catchup-inprogress');
                 const existing = await memoryBackend.get(path);
@@ -95,9 +95,9 @@ export function createCatchUpSignalAdapter(memoryBackend: MemoryToolBackend): Ca
                 /* Stryker restore all */
                 // Don't re-throw - allow catch-up to continue
             }
+            // Stryker restore BlockStatement
         },
         loadInProgressSignal: async () => {
-            // Stryker disable BlockStatement: Error handling - equivalent mutant
             try {
                 const path = createMemoryPath('/state/catchup-inprogress');
                 const result = await memoryBackend.get(path);
@@ -117,7 +117,7 @@ export function createCatchUpSignalAdapter(memoryBackend: MemoryToolBackend): Ca
             }
         },
         deleteInProgressSignal: async () => {
-            // Stryker disable BlockStatement: Error handling - equivalent mutant
+            // Stryker disable BlockStatement: Catch-only-logs — emptying catch body is equivalent (error still swallowed)
             try {
                 const path = createMemoryPath('/state/catchup-inprogress');
                 await memoryBackend.delete(path);
@@ -131,6 +131,7 @@ export function createCatchUpSignalAdapter(memoryBackend: MemoryToolBackend): Ca
                 /* Stryker restore all */
                 // Don't re-throw - allow catch-up to continue
             }
+            // Stryker restore BlockStatement
         },
     };
 }

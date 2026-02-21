@@ -230,7 +230,7 @@ function buildPromptContext(
     };
 
     // Extract phase-specific fields
-    // Stryker disable ConditionalExpression: Type checks in conditional chain - all branches tested
+    // Stryker disable ConditionalExpression: Exhaustive else-if chain over 3-member ActivityPhase union; the last else-if(type==='responding') → true is equivalent because only 'responding' can reach it
     if(activityPhase.type === 'thinking') {
         context.userMessage = activity.userMessage ?? activityPhase.userMessage;
     } else if(activityPhase.type === 'using_tool') {

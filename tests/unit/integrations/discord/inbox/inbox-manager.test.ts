@@ -1086,6 +1086,87 @@ describe('InboxManager', () => {
             );
         });
 
+        test('should update checkpoint to highest-timestamp message when messages arrive in reverse chronological order', async () => {
+            // This test kills the ConditionalExpression → true mutant on the latestTimestamp comparison.
+            // With mutant → true, the LAST iterated message wins (second in array, earlier timestamp).
+            // Messages here are in REVERSE order: newer first (222), older second (111).
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                channelRegistry:      mockRegistryWithChannel,
+            });
+
+            managerWithChannel.updateChannelMetadata(channelId, 'general', guildId);
+
+            const checkpoint: DiscordChannelCheckpoint = {
+                service:    'discord',
+                channelId,
+                guildId,
+                lastSeenAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+                updatedAt:  nowIso,
+            };
+
+            // Messages in REVERSE chronological order: newer first
+            const mockMessages = [
+                {
+                    id:          '222',
+                    channelId,
+                    guildId:     null,
+                    author:      { id: createUserId('user2'), username: 'bob', displayName: 'Bob' },
+                    content:     'Second (newer)',
+                    timestamp:   '2025-01-24T10:05:00.000Z',
+                    attachments: [],
+                    embeds:      [],
+                    reactions:   [],
+                },
+                {
+                    id:          '111',
+                    channelId,
+                    guildId:     null,
+                    author:      { id: createUserId('user1'), username: 'alice', displayName: 'Alice' },
+                    content:     'First (older)',
+                    timestamp:   '2025-01-24T10:00:00.000Z',
+                    attachments: [],
+                    embeds:      [],
+                    reactions:   [],
+                },
+            ];
+
+            mockCheckpointManager.load = mock(async () => checkpoint);
+            mockMessageSearchService.searchMessages = mock(async () => ({
+                messages: mockMessages,
+                metadata: {
+                    totalFound: mockMessages.length,
+                    timeRange:  {
+                        start: mockMessages[1].timestamp,
+                        end:   mockMessages[0].timestamp,
+                    },
+                },
+            }));
+
+            await managerWithChannel.loadUnread();
+
+            // Mark both messages as read
+            await managerWithChannel.markAsRead(channelId, ['111', '222']);
+
+            // Should use the HIGHEST timestamp (222 at 10:05), not the last iterated (111 at 10:00)
+            expect(mockCheckpointManager.updateLastSeen).toHaveBeenCalledWith(
+                channelId,
+                guildId,
+                '2025-01-24T10:05:00.000Z',
+                '222'
+            );
+        });
+
         test('should handle marking non-existent messages', async () => {
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
@@ -1222,6 +1303,85 @@ describe('InboxManager', () => {
 
             const messages = managerWithChannel.getChannelMessages(channelId);
             expect(messages).toHaveLength(0);
+        });
+
+        test('should use highest-timestamp message as checkpoint when messages arrive in reverse chronological order', async () => {
+            // This test kills the ConditionalExpression → true mutant on the latestMessage comparison.
+            // With mutant → true, the LAST iterated message wins (second in array, earlier timestamp).
+            // Messages here are in REVERSE order: newer first (222), older second (111).
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                channelRegistry:      mockRegistryWithChannel,
+            });
+
+            managerWithChannel.updateChannelMetadata(channelId, 'general', guildId);
+
+            const checkpoint: DiscordChannelCheckpoint = {
+                service:    'discord',
+                channelId,
+                guildId,
+                lastSeenAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+                updatedAt:  nowIso,
+            };
+
+            // Messages in REVERSE chronological order: newer first
+            const mockMessages = [
+                {
+                    id:          '222',
+                    channelId,
+                    guildId:     null,
+                    author:      { id: createUserId('user2'), username: 'bob', displayName: 'Bob' },
+                    content:     'Second (newer)',
+                    timestamp:   '2025-01-24T10:05:00.000Z',
+                    attachments: [],
+                    embeds:      [],
+                    reactions:   [],
+                },
+                {
+                    id:          '111',
+                    channelId,
+                    guildId:     null,
+                    author:      { id: createUserId('user1'), username: 'alice', displayName: 'Alice' },
+                    content:     'First (older)',
+                    timestamp:   '2025-01-24T10:00:00.000Z',
+                    attachments: [],
+                    embeds:      [],
+                    reactions:   [],
+                },
+            ];
+
+            mockCheckpointManager.load = mock(async () => checkpoint);
+            mockMessageSearchService.searchMessages = mock(async () => ({
+                messages: mockMessages,
+                metadata: {
+                    totalFound: mockMessages.length,
+                    timeRange:  {
+                        start: mockMessages[1].timestamp,
+                        end:   mockMessages[0].timestamp,
+                    },
+                },
+            }));
+
+            await managerWithChannel.loadUnread();
+            await managerWithChannel.markChannelRead(channelId);
+
+            // Should use the HIGHEST timestamp (222 at 10:05), not the last iterated (111 at 10:00)
+            expect(mockCheckpointManager.updateLastSeen).toHaveBeenCalledWith(
+                channelId,
+                guildId,
+                '2025-01-24T10:05:00.000Z',
+                '222'
+            );
         });
     });
 

@@ -200,15 +200,12 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 const addresses = await wildDuckClient.getUserAddresses();
                 const formal    = _.find(addresses, addr => _.includes(addr.tags, 'formal'));
                 const informal  = _.find(addresses, addr => _.includes(addr.tags, 'informal'));
-                // Stryker disable next-line ConditionalExpression,BlockStatement: conditional assignment
                 if(formal) {
                     formalAddress = { address: formal.address, ...(formal.name ? { name: formal.name } : {}) };
                 }
-                // Stryker disable next-line ConditionalExpression,BlockStatement: conditional assignment
                 if(informal) {
                     informalAddress = { address: informal.address, ...(informal.name ? { name: informal.name } : {}) };
                 }
-                // Stryker disable next-line BooleanLiteral: addressesLoaded = true prevents infinite re-loading
                 addressesLoaded = true;
             } catch (err) {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
@@ -250,14 +247,13 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
         // Not on allowlist (or replyAll) — request admin approval
         if(sendApprovalRequest) {
-            // Stryker disable BlockStatement: try-catch wraps approval notification — failure sets flag and informs Izzy
             try {
                 await sendApprovalRequest(toAddress, subject, draftUid, cc);
             } catch (notifErr) {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.warn({ error: _.isError(notifErr) ? notifErr.message : String(notifErr), msg: 'Failed to send outbound approval request' });
                 // Best-effort: flag the draft so periodic recheck can retry notification
-                // Stryker disable BlockStatement: try-catch wraps flag setting — best-effort, draft already saved
+                // Stryker disable BlockStatement: catch block logs best-effort warning — logger.warn call on flagErr not verified by approval tests
                 try {
                     // Stryker disable next-line StringLiteral: flag name is configuration
                     await wildDuckClient.updateMessageFlags(EmailFolder.Drafts, draftUid, { addFlags: ['DiscordNotifyFailed'] });
@@ -270,7 +266,6 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 // Stryker disable next-line StringLiteral: Result message is configuration
                 return `Draft saved as ${EmailFolder.Drafts}:${draftUid} but failed to notify admin. Please ask Craig to check pending drafts, or I will retry automatically.${rateLimitWarning}`;
             }
-            // Stryker restore BlockStatement
         }
 
         // Stryker disable next-line StringLiteral: Result message is configuration
@@ -388,9 +383,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                                 const safeFilename = deduplicateFilename(safeBase, usedFilenames);
                                 usedFilenames.add(safeFilename);
                                 const filePath = join(attachmentDir, safeFilename);
-                                // Stryker disable BlockStatement: try-catch for best-effort file write — email content returned regardless of attachment save failure
                                 try {
-                                    // Stryker disable BlockStatement: inner try-catch for file existence check — fs.access throws when file is absent
                                     // Stryker disable next-line BooleanLiteral: initial false is overwritten in both branches of try/catch — equivalent mutation
                                     let fileExists = false;
                                     try {
@@ -399,8 +392,6 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                                     } catch{
                                         fileExists = false;
                                     }
-                                    // Stryker restore BlockStatement
-                                    // Stryker disable next-line ConditionalExpression,BlockStatement: skip write when file already exists (idempotent)
                                     if(!fileExists) {
                                         // Stryker disable next-line ObjectLiteral,BooleanLiteral: recursive:true is required for nested directory creation
                                         await mkdir(attachmentDir, { recursive: true });
@@ -417,12 +408,10 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                                     // Stryker disable next-line StringLiteral: note format is a configuration constant
                                     attachmentLines.push(`- Note: could not save attachment ${safeFilename}: ${errMsg}`);
                                 }
-                                // Stryker restore BlockStatement
                             }
                         }
 
                         const toList = _(email.to).map(formatAddressForDisplay).join(', ');
-                        // Stryker disable ConditionalExpression: line !== undefined is a defensive runtime guard; undefined used as sentinel to omit absent CC line
                         const lines = _.filter([
                             `From: ${formatAddressForDisplay(email.from)}`,
                             `To: ${toList}`,
@@ -434,7 +423,6 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             // Stryker disable next-line ConditionalExpression,BlockStatement,ArrayDeclaration: attachment section only added when there are attachments
                             ...(attachmentLines.length > 0 ? ['\nAttachments:', ...attachmentLines] : []),
                         ], line => line !== undefined);
-                        // Stryker restore ConditionalExpression
                         // Stryker disable next-line Regex,StringLiteral: /^\n/ and '' are defensive no-ops — the text always starts with 'From:' so the regex never matches; _.trim() on the next line also covers any edge case
                         const text = _.replace(_.join(lines, '\n'), /^\n/, '');
                         return {
@@ -533,7 +521,6 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     try {
                         // Determine which mailboxes to search
                         let mailboxes: string[];
-                        // Stryker disable ConditionalExpression: mailbox parameter presence determines search scope
                         if(!args.mailbox || args.mailbox === 'all-regular') {
                             mailboxes = [...REGULAR_SEARCH_MAILBOXES];
                         } else if(args.mailbox === 'all') {
@@ -541,7 +528,6 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         } else {
                             mailboxes = [args.mailbox];
                         }
-                        // Stryker restore ConditionalExpression
 
                         const results = await wildDuckClient.search({
                             query: {
@@ -617,7 +603,6 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         await loadAddresses();
 
                         // Resolve from address based on identity
-                        // Stryker disable next-line ConditionalExpression: identity selection between formal/informal addresses
                         const fromAddress = args.identity === 'informal' ? informalAddress : formalAddress;
                         const from = fromAddress;
 
@@ -659,12 +644,11 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             text:    args.body,
                             // Stryker disable next-line ConditionalExpression,EqualityOperator,ObjectLiteral: attachments array inclusion guard
                             ...(attachments.length > 0 ? { attachments } : {}),
-                            // Stryker disable next-line BooleanLiteral: draft flag is required for WildDuck draft upload
                             draft:   true,
                         });
 
                         // Fast-path only when ALL recipients are allowlisted (cc is undefined for sendEmail)
-                        // Stryker disable next-line ConditionalExpression,EqualityOperator,BooleanLiteral: all-recipients allowlist check; ?? false unreachable when allowlist always provided
+                        // Stryker disable next-line BooleanLiteral: ?? false unreachable when allowlist always provided
                         const isAllAllowed = _.every(toAddresses, addr => allowlist?.isAllowed(addr.address) ?? false);
                         const toStr        = _.map(toAddresses, 'address').join(', ');
                         const text         = await submitOrRequestApproval(uid, toStr, args.subject, rateLimitWarning, 'Sent successfully.', undefined, isAllAllowed);
@@ -710,7 +694,6 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         await loadAddresses();
 
                         // Resolve from address based on identity
-                        // Stryker disable next-line ConditionalExpression,EqualityOperator: identity selection between formal/informal addresses
                         const fromAddress = args.identity === 'informal' ? informalAddress : formalAddress;
                         const from = fromAddress;
 
@@ -779,22 +762,18 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             subject:   `Re: ${original.subject ?? ''}`,
                             text:      args.body,
                             reference: {
-                                // Stryker disable next-line ConditionalExpression: replyAll vs reply action
                                 action:  args.mode === 'replyAll' ? 'replyAll' : 'reply',
                                 mailbox: mailboxWildDuckId,
                                 id:      originalUid,
                             },
                             // Stryker disable next-line ConditionalExpression,EqualityOperator,ObjectLiteral: attachments array inclusion guard
                             ...(attachments.length > 0 ? { attachments } : {}),
-                            // Stryker disable next-line BooleanLiteral: draft flag is required for WildDuck draft upload
                             draft: true,
                         });
 
                         // For replyAll, always require admin approval (isAllowedOverride = false).
                         // For plain reply, check allowlist for primary recipient.
-                        // Stryker disable next-line ConditionalExpression,EqualityOperator,BooleanLiteral: replyAll forces approval path; plain reply uses allowlist
                         const isAllowedOverride: boolean | undefined = args.mode === 'replyAll' ? false : undefined;
-                        // Stryker disable next-line ConditionalExpression,EqualityOperator: extract cc addresses for replyAll mode only
                         const ccAddresses = args.mode === 'replyAll'
                             ? _(original.cc ?? []).map('address').compact().value()
                             : undefined;
@@ -891,7 +870,6 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         const body    = args.body ?? original.text ?? '';
 
                         // Normalize args.to: undefined → use original recipients; structured/plain string → address objects
-                        // Stryker disable next-line ConditionalExpression: args.to present → normalize to address objects; absent → use original recipients
                         const argToArr = args.to ? _.castArray(args.to) : undefined;
                         const argToAddresses = argToArr
                             ? _.map(argToArr, (addr) => {
@@ -904,7 +882,6 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         const toAddresses    = argToAddresses ?? (original.to ?? []);
 
                         // Resolve from address
-                        // Stryker disable next-line ConditionalExpression: identity selection between formal/informal addresses
                         const fromAddress = args.identity === 'informal' ? informalAddress : formalAddress;
                         const from = fromAddress;
 

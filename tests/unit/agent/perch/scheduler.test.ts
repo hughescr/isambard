@@ -521,7 +521,10 @@ describe('PerchScheduler', () => {
             // Trigger non-mode-transition change
             mockStateManager._triggerStateChange(createStateChange('context_update', 'idle'));
 
-            // Should not trigger
+            // Advance timers to flush any deferred trigger that should NOT have been scheduled
+            jest.advanceTimersByTime(0);
+
+            // Should not trigger — context_update should be ignored regardless of pending state
             expect(mockOnPerchTrigger).not.toHaveBeenCalled();
 
             scheduler.stop();
@@ -545,7 +548,10 @@ describe('PerchScheduler', () => {
             // Transition to still-busy mode
             mockStateManager._triggerStateChange(createStateChange('mode_transition', 'processing_message'));
 
-            // Should not trigger
+            // Advance timers to flush any deferred trigger that should NOT have been scheduled
+            jest.advanceTimersByTime(0);
+
+            // Should not trigger — non-idle transition should not fire pending perch
             expect(mockOnPerchTrigger).not.toHaveBeenCalled();
 
             scheduler.stop();

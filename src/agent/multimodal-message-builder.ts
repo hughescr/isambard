@@ -48,7 +48,7 @@ export function buildMultimodalContent(
     const blocks: ContentBlock[] = [];
 
     // Add image blocks first (better for Claude's processing)
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: Mutating to true throws TypeError; >= 0 is equivalent (for loop runs 0 times)
+    // Stryker disable next-line EqualityOperator,ConditionalExpression: EqualityOperator >= 0 is equivalent (empty array loop runs 0 times); ConditionalExpression → true survives (concurrent test framework doesn't propagate TypeError to Stryker)
     if(images && images.length > 0) {
         for(const image of images) {
             blocks.push({

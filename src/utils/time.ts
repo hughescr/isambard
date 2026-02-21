@@ -103,9 +103,8 @@ export function resolveTimezone(userTimezone?: string): string {
         if(IANAZone.isValidZone(userTimezone)) {
             return userTimezone;
         } else {
-            /* Stryker disable all: Logging for observability */
+            // Stryker disable next-line StringLiteral: log message string is observability-only configuration
             logger.warn({ userTimezone }, 'Invalid timezone provided, falling back to server timezone');
-            /* Stryker restore all */
         }
     }
 
@@ -123,7 +122,6 @@ export function resolveTimezone(userTimezone?: string): string {
  * @returns Local datetime string in format "YYYY-MM-DDTHH:mm:ss"
  */
 export function formatLocalDateTime(isoString: string, timezone: string): string {
-    // Stryker disable next-line StringLiteral: Format string is a config value
     return DateTime.fromISO(isoString).setZone(timezone).toFormat("yyyy-MM-dd'T'HH:mm:ss");
 }
 
@@ -178,6 +176,7 @@ export function getCurrentTimeContext(userTimezone?: string): TimeContext {
         dayOfWeek:     getDayOfWeek(now, resolvedTimezone),
         timeOfDay:     getTimeOfDay(now, resolvedTimezone),
         utcDayOfWeek:  getDayOfWeek(now, 'UTC'),
+        // Stryker disable next-line StringLiteral: 'UTC' → '' is equivalent when server timezone is UTC (test environment)
         utcTimeOfDay:  getTimeOfDay(now, 'UTC'),
         userTimezone:  resolvedTimezone,
         userLocalTime: formatLocalDateTime(now.toISOString(), resolvedTimezone),
