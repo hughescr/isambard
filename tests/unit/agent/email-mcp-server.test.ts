@@ -89,7 +89,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test.each([
-            ['checkInbox',      'Check CleanInbox for unread emails. Returns counter state and list of unread message summaries.'],
+            ['checkInbox',      'Check CleanInbox for emails. Returns counter state and message summaries. By default only unread; set showSeen to include read messages.'],
             ['getEmailContent', 'Fetch the full content of an email by UID. Marks the email as read.'],
             ['archiveEmail',    'Move an email from CleanInbox to Archive.'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
@@ -211,13 +211,48 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('listMessages error string');
         });
 
-        test('should call listMessages with CleanInbox folder and unseen filter', async () => {
+        test('should call listMessages with unseen filter when showSeen is false', async () => {
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const handler = getToolHandler(server, 'checkInbox');
+
+            await handler({ showSeen: false });
+
+            expect(mockWildDuck.listMessages).toHaveBeenCalledWith('CleanInbox', { unseen: true });
+        });
+
+        test('should call listMessages with unseen filter when showSeen is omitted', async () => {
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'checkInbox');
 
             await handler({});
 
             expect(mockWildDuck.listMessages).toHaveBeenCalledWith('CleanInbox', { unseen: true });
+        });
+
+        test('should call listMessages without unseen filter when showSeen is true', async () => {
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const handler = getToolHandler(server, 'checkInbox');
+
+            await handler({ showSeen: true });
+
+            expect(mockWildDuck.listMessages).toHaveBeenCalledWith('CleanInbox', { unseen: false });
+        });
+
+        test('should return both read and unread messages when showSeen is true', async () => {
+            mockWildDuck.listMessages = mock(async () => [
+                { id: 1, from: { address: 'a@example.com' }, subject: 'Read',   date: '2025-01-01T00:00:00.000Z', intro: 'Already read',  attachments: [] },
+                { id: 2, from: { address: 'b@example.com' }, subject: 'Unread', date: '2025-01-02T00:00:00.000Z', intro: 'Not read yet', attachments: [] },
+            ]);
+
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const handler = getToolHandler(server, 'checkInbox');
+
+            const result: CallToolResult = await handler({ showSeen: true });
+
+            const parsed = JSON.parse(getText(result)) as { messages: { uid: string }[] };
+            expect(parsed.messages).toHaveLength(2);
+            expect(parsed.messages[0]?.uid).toBe('CleanInbox:1');
+            expect(parsed.messages[1]?.uid).toBe('CleanInbox:2');
         });
 
         test('should format uid as CleanInbox:UID for each message', async () => {

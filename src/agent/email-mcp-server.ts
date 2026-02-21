@@ -284,16 +284,17 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
             // Stryker disable StringLiteral: Tool name and description are MCP server configuration
             tool(
                 'checkInbox',
-                'Check CleanInbox for unread emails. Returns counter state and list of unread message summaries.',
+                'Check CleanInbox for emails. Returns counter state and message summaries. By default only unread; set showSeen to include read messages.',
                 // Stryker restore StringLiteral
-                {},
-                async (): Promise<CallToolResult> => {
+                // Stryker disable next-line StringLiteral: Zod schema description is MCP parameter documentation
+                { showSeen: z.boolean().describe('When true, include read messages alongside unread. Defaults to false (unread only).').optional() },
+                async ({ showSeen }): Promise<CallToolResult> => {
                     // Stryker disable BlockStatement: try-catch wraps WildDuck operations - error handling
                     try {
                         const [countsData, messages] = await Promise.all([
                             wildDuckClient.getMailboxCounts(EmailFolder.CleanInbox),
                             // Stryker disable next-line StringLiteral,ObjectLiteral: EmailFolder.CleanInbox is configuration constant; unseen filter is configuration
-                            wildDuckClient.listMessages(EmailFolder.CleanInbox, { unseen: true }),
+                            wildDuckClient.listMessages(EmailFolder.CleanInbox, { unseen: !showSeen }),
                         ]);
                         const result = {
                             counters: { total: countsData.total, unread: countsData.unseen },
