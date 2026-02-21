@@ -38,14 +38,6 @@ declare module "sst" {
       "type": "sst.sst.Secret"
       "value": string
     }
-    "ImapHost": {
-      "type": "sst.sst.Secret"
-      "value": string
-    }
-    "ImapPort": {
-      "type": "sst.sst.Secret"
-      "value": string
-    }
     "IsambardMainModel": {
       "type": "sst.sst.Secret"
       "value": string

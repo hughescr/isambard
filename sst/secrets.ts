@@ -21,9 +21,7 @@ export const discordApplicationId = new sst.Secret('DiscordApplicationId');
 // export const caldavUsername = new sst.Secret('CaldavUsername');
 // export const caldavPassword = new sst.Secret('CaldavPassword');
 
-// Email (IMAP/WildDuck)
-export const imapHost = new sst.Secret('ImapHost');
-export const imapPort = new sst.Secret('ImapPort');
+// Email (WildDuck)
 export const emailUser = new sst.Secret('EmailUser');
 export const emailPassword = new sst.Secret('EmailPassword');
 export const adminDiscordUserId = new sst.Secret('AdminDiscordUserId');

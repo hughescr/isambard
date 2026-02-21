@@ -7,8 +7,8 @@ Expand integrations and information sources.
 Priority order for adding read-only access to external services:
 
 ### Email Access (Completed February 2026)
-- [x] IMAP connection (imapflow) with IDLE push support
-- [x] Inbox read queries with CleanInbox management and IMAP IDLE
+- [x] WildDuck HTTP API client with SSE push notifications for real-time inbox updates
+- [x] Inbox read queries with CleanInbox management and SSE-based push
 - [x] MCP tools for email context (checkInbox, getEmailContent, archiveEmail, searchEmail)
 - [x] Outbound email via WildDuck HTTP API with admin approval workflow (sendEmail, replyToEmail, amendAndResubmitDraft, deleteDraft)
 - [x] Allowlist-based access control for outbound sending

@@ -33,8 +33,6 @@ export const mockSstResource: Record<string, { value?: unknown, name?: string }>
     // Planned integrations (commented out - not yet implemented):
     // CaldavUrl:                     { value: 'https://caldav.icloud.com' },
     // CaldavUsername:                { value: 'test@icloud.com' },
-    // ImapHost:                      { value: 'mail.example.com' },
-    // ImapPort:                      { value: '993' },
     // SmtpHost:                      { value: 'mail.example.com' },
     // SmtpPort:                      { value: '587' },
     // EmailUser:                     { value: 'test@example.com' },
@@ -54,8 +52,6 @@ export function resetMockSstResource(): void {
     // Planned integrations (commented out - not yet implemented):
     // mockSstResource.CaldavUrl = { value: 'https://caldav.icloud.com' };
     // mockSstResource.CaldavUsername = { value: 'test@icloud.com' };
-    // mockSstResource.ImapHost = { value: 'mail.example.com' };
-    // mockSstResource.ImapPort = { value: '993' };
     // mockSstResource.SmtpHost = { value: 'mail.example.com' };
     // mockSstResource.SmtpPort = { value: '587' };
     // mockSstResource.EmailUser = { value: 'test@example.com' };

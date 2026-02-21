@@ -17,7 +17,6 @@ function formatAddressForDisplay(addr: { name?: string, address: string }): stri
     return addr.name ? `${addr.name} <${addr.address}>` : addr.address;
 }
 
-import type { ImapConnection } from '@/integrations/email/imap-connection';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient, WildDuckAttachment } from '@/integrations/email/wildduck-client';
 import type { SendRateLimiter } from '@/integrations/email/send-rate-limiter';
@@ -143,7 +142,7 @@ async function buildAttachments(filePaths: string[]): Promise<WildDuckAttachment
  * Access to restricted mailboxes (Quarantine, Junk, Trash, etc.) triggers
  * an admin notification and returns an error.
  *
- * This server wraps ImapConnection for use with the Claude Agent SDK.
+ * This server wraps WildDuckClient for use with the Claude Agent SDK.
  */
 /**
  * Mailboxes searched when mailbox='all-regular' (or omitted).
@@ -176,10 +175,7 @@ const emailAddressSchema = z.union([
 ]);
 // Stryker restore ObjectLiteral,StringLiteral
 
-export function createEmailMCPServer(
-    imap: ImapConnection,
-    options: EmailMCPServerOptions
-) {
+export function createEmailMCPServer(options: EmailMCPServerOptions) {
     const { sendAdminNotification, wildDuckClient, rateLimiter, allowlist, sendApprovalRequest } = options;
 
     // Cache for formal/informal addresses loaded lazily from WildDuck.
@@ -254,7 +250,7 @@ export function createEmailMCPServer(
 
         // Not on allowlist (or replyAll) — request admin approval
         if(sendApprovalRequest) {
-            // Stryker disable BlockStatement: try-catch wraps approval notification — failure sets IMAP flag and informs Izzy
+            // Stryker disable BlockStatement: try-catch wraps approval notification — failure sets flag and informs Izzy
             try {
                 await sendApprovalRequest(toAddress, subject, draftUid, cc);
             } catch (notifErr) {
@@ -292,21 +288,23 @@ export function createEmailMCPServer(
                 // Stryker restore StringLiteral
                 {},
                 async (): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: try-catch wraps IMAP operations - error handling
+                    // Stryker disable BlockStatement: try-catch wraps WildDuck operations - error handling
                     try {
                         const [countsData, messages] = await Promise.all([
                             wildDuckClient.getMailboxCounts(EmailFolder.CleanInbox),
-                            // Stryker disable next-line StringLiteral: EmailFolder.CleanInbox is configuration constant
-                            imap.listUnread(EmailFolder.CleanInbox),
+                            // Stryker disable next-line StringLiteral,ObjectLiteral: EmailFolder.CleanInbox is configuration constant; unseen filter is configuration
+                            wildDuckClient.listMessages(EmailFolder.CleanInbox, { unseen: true }),
                         ]);
                         const result = {
                             counters: { total: countsData.total, unread: countsData.unseen },
                             messages: _.map(messages, m => ({
                                 // Stryker disable next-line StringLiteral: MailboxName is configuration constant
-                                uid:     `${EmailFolder.CleanInbox}:${m.uid}`,
-                                from:    formatAddressForDisplay(m.from),
-                                subject: m.subject,
-                                date:    m.date.toISOString(),
+                                uid:         `${EmailFolder.CleanInbox}:${m.id}`,
+                                from:        formatAddressForDisplay(m.from),
+                                subject:     m.subject,
+                                date:        m.date,
+                                intro:       m.intro,
+                                attachments: m.attachments,
                             })),
                         };
                         return {
@@ -335,8 +333,9 @@ export function createEmailMCPServer(
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     message: z.string().regex(MAILBOX_UID_REGEX, 'Must be in MailboxName:UID format (e.g., CleanInbox:42)').describe('The email reference in Mailbox:UID format (e.g., CleanInbox:42)'),
                 },
+                // eslint-disable-next-line complexity -- getEmailContent handler has inherent branching for access control, null message, attachments, and CC handling
                 async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: try-catch wraps IMAP operations - error handling
+                    // Stryker disable BlockStatement: try-catch wraps WildDuck operations - error handling
                     try {
                         const { mailboxName, uid } = parseMailboxUid(args.message);
 
@@ -361,22 +360,30 @@ export function createEmailMCPServer(
                             };
                         }
 
-                        const email = await imap.fetchMessage(mailboxName, uid);
-                        await imap.setFlag(uid, mailboxName, '\\Seen');
+                        const email = await wildDuckClient.getFullMessage(mailboxName, uid);
+                        if(!email) {
+                            return {
+                                // Stryker disable next-line StringLiteral: Error message is configuration
+                                content: [{ type: 'text' as const, text: `Email ${args.message} not found.` }],
+                                isError: true,
+                            };
+                        }
+                        // Stryker disable next-line StringLiteral,ObjectLiteral: flag name and options are configuration constants
+                        await wildDuckClient.updateMessageFlags(mailboxName, uid, { addFlags: ['\\Seen'] });
 
-                        // Save attachments to disk (keyed by sha1 of messageId).
+                        // Lazy-fetch and save attachments to disk (keyed by sha1 of messageId).
                         // Message-ID is always present: RFC 5322 requires MDAs to add one if missing,
                         // and our Haraka/WildDuck stack guarantees it.
                         const attachmentLines: string[] = [];
                         // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: skip attachment saving when there are none; > 0 and >= 0 are equivalent for empty array
-                        if(email.attachments.length > 0) {
+                        if(email.attachmentMeta.length > 0) {
                             // Stryker disable next-line StringLiteral: sha1 algorithm name is a configuration constant
                             const hash          = createHash('sha1').update(email.messageId).digest('hex');
                             // Stryker disable next-line StringLiteral: 'email-' prefix is a configuration constant for path namespacing
                             const attachmentDir = join(process.cwd(), 'attachments', `email-${hash}`);
                             const usedFilenames = new Set<string>();
-                            for(const attachment of email.attachments) {
-                                const safeBase     = sanitizeFilename(attachment.filename);
+                            for(const meta of email.attachmentMeta) {
+                                const safeBase     = sanitizeFilename(meta.filename);
                                 const safeFilename = deduplicateFilename(safeBase, usedFilenames);
                                 usedFilenames.add(safeFilename);
                                 const filePath = join(attachmentDir, safeFilename);
@@ -396,10 +403,12 @@ export function createEmailMCPServer(
                                     if(!fileExists) {
                                         // Stryker disable next-line ObjectLiteral,BooleanLiteral: recursive:true is required for nested directory creation
                                         await mkdir(attachmentDir, { recursive: true });
-                                        await writeFile(filePath, attachment.data);
+                                        // Lazy-fetch attachment data from WildDuck API
+                                        const data = await wildDuckClient.getAttachment(mailboxName, uid, meta.id);
+                                        await writeFile(filePath, data);
                                     }
                                     // Stryker disable next-line StringLiteral: attachment path format is a configuration constant
-                                    attachmentLines.push(`- attachments/email-${hash}/${safeFilename} (${attachment.contentType})`);
+                                    attachmentLines.push(`- attachments/email-${hash}/${safeFilename} (${meta.contentType})`);
                                 } catch (writeErr) {
                                     const errMsg = _.isError(writeErr) ? writeErr.message : String(writeErr);
                                     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
@@ -454,7 +463,7 @@ export function createEmailMCPServer(
                     message: z.string().regex(MAILBOX_UID_REGEX, 'Must be in MailboxName:UID format (e.g., CleanInbox:42)').describe('The email reference in Mailbox:UID format (e.g., CleanInbox:42)'),
                 },
                 async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: try-catch wraps IMAP operations - error handling
+                    // Stryker disable BlockStatement: try-catch wraps WildDuck operations - error handling
                     try {
                         const { mailboxName, uid } = parseMailboxUid(args.message);
 
@@ -468,7 +477,7 @@ export function createEmailMCPServer(
                         }
 
                         // Stryker disable next-line StringLiteral: EmailFolder values are configuration constants
-                        await imap.moveMessage(uid, mailboxName, EmailFolder.Archive);
+                        await wildDuckClient.moveMessage(mailboxName, uid, EmailFolder.Archive);
                         return {
                             content: [{ type: 'text' as const, text: `Email UID ${uid} archived successfully.` }],
                         };

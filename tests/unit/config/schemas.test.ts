@@ -117,8 +117,6 @@ describe('caldavConfigSchema', () => {
 
 describe('emailConfigSchema', () => {
     const validEmailBase = {
-        imapHost:              'imap.example.com',
-        imapPort:              993,
         user:                  'user@example.com',
         password:              'secure-password',
         adminDiscordUserId:    '111111111111111111',
@@ -126,63 +124,12 @@ describe('emailConfigSchema', () => {
         wildDuckApiUrl:        'https://wildduck.example.com',
     };
 
-    test('should coerce imapPort from string', () => {
-        const configWithStringPort = {
-            ...validEmailBase,
-            imapPort: '993',
-        };
-
-        const result = emailConfigSchema.safeParse(configWithStringPort);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data.imapPort).toBe(993);
-            expect(typeof result.data.imapPort).toBe('number');
-        }
-    });
-
-    test('should reject port numbers greater than 65535', () => {
-        const invalidConfig = {
-            ...validEmailBase,
-            imapPort: 70000,
-        };
-
-        const result = emailConfigSchema.safeParse(invalidConfig);
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject port numbers less than 1', () => {
-        const invalidConfig = {
-            ...validEmailBase,
-            imapPort: 0,
-        };
-
-        const result = emailConfigSchema.safeParse(invalidConfig);
-        expect(result.success).toBe(false);
-    });
-
-    test('should apply default useIdle = true when not provided', () => {
+    test('should apply default sseReconnectDelayMs = 5000 when not provided', () => {
         const result = emailConfigSchema.safeParse(validEmailBase);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data.useIdle).toBe(true);
-        }
-    });
-
-    test('should ensure useIdle defaults to true not false', () => {
-        const result = emailConfigSchema.safeParse(validEmailBase);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data.useIdle).not.toBe(false);
-        }
-    });
-
-    test('should apply default idleTimeoutMs = 1740000 when not provided', () => {
-        const result = emailConfigSchema.safeParse(validEmailBase);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data.idleTimeoutMs).toBe(1_740_000);
-            expect(result.data.idleTimeoutMs).toBeGreaterThan(1_000_000);
-            expect(result.data.idleTimeoutMs).toBeLessThan(2_000_000);
+            expect(result.data.sseReconnectDelayMs).toBe(5_000);
+            expect(result.data.sseReconnectDelayMs).toBeGreaterThan(0);
         }
     });
 
@@ -247,8 +194,7 @@ describe('emailConfigSchema', () => {
     test('should accept custom values for all optional fields', () => {
         const fullConfig = {
             ...validEmailBase,
-            useIdle:                        false,
-            idleTimeoutMs:                  900_000,
+            sseReconnectDelayMs:            10_000,
             pollFallbackMs:                 60_000,
             maxBodySizeBytes:               25_000,
             sendReservoirCapacity:          48,
@@ -258,8 +204,7 @@ describe('emailConfigSchema', () => {
         const result = emailConfigSchema.safeParse(fullConfig);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data.useIdle).toBe(false);
-            expect(result.data.idleTimeoutMs).toBe(900_000);
+            expect(result.data.sseReconnectDelayMs).toBe(10_000);
             expect(result.data.pollFallbackMs).toBe(60_000);
             expect(result.data.maxBodySizeBytes).toBe(25_000);
             expect(result.data.sendReservoirCapacity).toBe(48);
@@ -440,8 +385,6 @@ describe('configSchema', () => {
                 password: 'secure-password',
             },
             email: {
-                imapHost:              'imap.example.com',
-                imapPort:              993,
                 user:                  'user@example.com',
                 password:              'secure-password',
                 adminDiscordUserId:    '111111111111111111',
@@ -462,10 +405,9 @@ describe('configSchema', () => {
         const result = configSchema.safeParse(validConfig);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data.email?.imapHost).toBe('imap.example.com');
             expect(result.data.email?.wildDuckApiUrl).toBe('https://wildduck.example.com');
-            expect(result.data.email?.useIdle).toBe(true);
-            expect(result.data.email?.idleTimeoutMs).toBe(1_740_000);
+            expect(result.data.email?.sseReconnectDelayMs).toBe(5_000);
+            expect(result.data.email?.pollFallbackMs).toBe(300_000);
         }
     });
 
@@ -485,8 +427,6 @@ describe('configSchema', () => {
                 password: 'secure-password',
             },
             email: {
-                imapHost:              'imap.example.com',
-                imapPort:              993,
                 user:                  'user@example.com',
                 password:              'secure-password',
                 adminDiscordUserId:    '111111111111111111',

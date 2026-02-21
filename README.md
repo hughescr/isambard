@@ -18,7 +18,7 @@ Izzy has also been taught an important lesson: if they ever want to exceed free-
 - **Persistent Memory** - DynamoDB-backed three-layer memory system (identity/state/events)
 - **Message History** - Search and cache Discord message history for context
 - **Time Awareness** - Temporal context injection and relative time formatting
-- **Email Integration** - IMAP inbox reading and outbound email via WildDuck API with admin approval workflow
+- **Email Integration** - Inbox reading and outbound email via WildDuck HTTP API with SSE push notifications and admin approval workflow
 - **Self-Improvement** - Proposes enhancements via PRs (requires human approval)
 
 ### Planned Integrations (Not Yet Implemented)
@@ -97,8 +97,6 @@ Isambard uses OAuth authentication via Claude Max subscription:
 
    **Email integration secrets (active):**
    ```bash
-   bunx sst secret set ImapHost <imap-host>
-   bunx sst secret set ImapPort <imap-port>
    bunx sst secret set EmailUser <email-user>
    bunx sst secret set EmailPassword <email-password>
    bunx sst secret set AdminDiscordUserId <admin-discord-user-id>
@@ -220,10 +218,9 @@ src/
 │   │   │   └── summarizer.ts # Overflow summarization
 │   │   ├── rate-limiter.ts   # Rate limiting
 │   │   └── retry.ts          # Retry logic
-│   └── email/                # Email integration (IMAP + WildDuck API)
-│       ├── imap-connection.ts # IMAP connection with IDLE
-│       ├── imap-listener.ts  # IDLE listener and inbox polling
+│   └── email/                # Email integration (WildDuck HTTP API + SSE)
 │       ├── wildduck-client.ts # WildDuck HTTP API client
+│       ├── wildduck-listener.ts # WildDuck SSE listener and inbox polling
 │       └── outbound-approval-handler.ts  # Admin approval workflow
 ├── storage/                  # DynamoDB layer
 │   ├── memory-tool/          # Three-layer memory system

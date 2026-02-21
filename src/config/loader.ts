@@ -85,15 +85,11 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
             : undefined,
         email: resources.EmailUser.value
             ? {
-                imapHost:              resources.ImapHost.value,
-                imapPort:              resources.ImapPort.value,
                 user:                  resources.EmailUser.value,
                 password:              resources.EmailPassword.value,
                 adminDiscordUserId:    resources.AdminDiscordUserId.value,
                 adminDiscordChannelId: resources.AdminDiscordChannelId.value,
                 wildDuckApiUrl:        resources.WildDuckApiUrl.value,
-                // Stryker disable next-line LogicalOperator: ?? undefined is configuration wiring — not behavior-affecting
-                imapDebug:             env.get('EMAIL_IMAP_DEBUG').asBool() ?? undefined,
             }
             : undefined,
         // Planned integrations (commented out until implemented):

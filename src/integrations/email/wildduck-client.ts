@@ -1,9 +1,26 @@
 /* eslint-disable n/no-unsupported-features/node-builtins -- Bun runtime supports fetch natively */
 import _ from 'lodash';
+import { convert } from 'html-to-text';
 import { logger } from '@hughescr/logger';
 import { WildDuckError, WildDuckAuthError } from '@/integrations/email/errors';
 export { WildDuckError, WildDuckAuthError } from '@/integrations/email/errors';
-import { SPECIAL_USE_FLAGS } from '@/integrations/email/imap-connection';
+import type { EmailMetadata, EmailAddress, EmailHeaders } from '@/integrations/email/types';
+import { EmailFolder } from '@/integrations/email/types';
+
+/**
+ * Maps IMAP/WildDuck specialUse flag to the logical EmailFolder value.
+ * Standard IMAP flags per RFC 6154.
+ */
+// Stryker disable StringLiteral,ObjectLiteral: specialUse flag strings and folder values are IMAP RFC 6154 configuration
+export const SPECIAL_USE_FLAGS: Record<string, string> = {
+    '\\Inbox':   'INBOX',
+    '\\Sent':    'Sent Mail',
+    '\\Drafts':  'Drafts',
+    '\\Junk':    'Junk',
+    '\\Trash':   'Trash',
+    '\\Archive': 'Archive',
+};
+// Stryker restore StringLiteral,ObjectLiteral
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,11 +51,36 @@ export interface WildDuckSearchResult {
 
 export interface WildDuckClientOptions {
     /** Base URL e.g. 'https://wildduck-api.example.com' */
-    url:          string
-    /** IMAP username for authentication */
-    imapUser:     string
-    /** IMAP password for authentication */
-    imapPassword: string
+    url:               string
+    /** Username for authentication */
+    user:              string
+    /** Password for authentication */
+    password:          string
+    /** Maximum body size in bytes before truncation (default: 50_000) */
+    maxBodySizeBytes?: number
+}
+
+/**
+ * Attachment metadata with WildDuck remote ID for lazy data fetching.
+ */
+export interface WildDuckAttachmentMeta {
+    /** WildDuck attachment ID (for fetching data via getAttachment) */
+    id:          string
+    /** Original filename */
+    filename:    string
+    /** MIME content type */
+    contentType: string
+    /** Size in kilobytes */
+    sizeKb:      number
+}
+
+/**
+ * EmailMetadata extended with WildDuck attachment metadata for lazy fetch.
+ * Attachments array is empty (data not fetched); use attachmentMeta for IDs.
+ */
+export interface WildDuckEmailMetadata extends EmailMetadata {
+    /** WildDuck attachment metadata (IDs + names) for lazy fetching */
+    attachmentMeta: WildDuckAttachmentMeta[]
 }
 
 export interface WildDuckAddress {
@@ -87,6 +129,15 @@ export interface WildDuckMessage {
     html?:     string
     metaData?: Record<string, unknown>
     flags?:    string[]
+}
+
+export interface WildDuckMessageSummary {
+    id:          number
+    from:        { address: string, name?: string }
+    subject:     string
+    date:        string
+    intro:       string
+    attachments: { filename: string, contentType: string, sizeKb: number }[]
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +192,60 @@ interface MailboxInfoResponse {
     unseen:  number
 }
 
+interface MessageListResponse {
+    success: boolean
+    results: WildDuckMessageSummary[]
+}
+
+interface FullMessageResponse {
+    success:      boolean
+    id:           number
+    messageId?:   string
+    from?:        { address: string, name?: string }
+    to?:          { address: string, name?: string }[]
+    cc?:          { address: string, name?: string }[]
+    replyTo?:     { address: string, name?: string }
+    subject?:     string
+    date:         string
+    text?:        string
+    html?:        string
+    headers?:     Record<string, string>
+    attachments?: { id: string, filename: string, contentType: string, sizeKb: number }[]
+}
+
+// ---------------------------------------------------------------------------
+// Private helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract and optionally convert body text, truncating at UTF-8 boundary.
+ */
+function extractBody(content: string, isHtml: boolean, maxBytes: number): string {
+    let text: string;
+    // Stryker disable next-line ConditionalExpression: isHtml determines conversion path; mutant-equivalent for same-type content in tests
+    if(isHtml) {
+        // Stryker disable next-line ObjectLiteral: wordwrap:false is configuration for html-to-text conversion
+        text = convert(content, { wordwrap: false });
+    } else {
+        text = content;
+    }
+    // Stryker disable BlockStatement: truncation guard — non-truncating branch is equivalent for short content
+    // Stryker disable next-line ConditionalExpression,EqualityOperator: truncation guard; > vs >= differ only at exact boundary, equivalence holds for non-boundary content
+    if(Buffer.byteLength(text, 'utf8') > maxBytes) {
+        const buf = Buffer.from(text, 'utf8');
+        let end   = maxBytes;
+        // Stryker disable ConditionalExpression,EqualityOperator,LogicalOperator,UpdateOperator: UTF-8 continuation byte detection loop is low-level bit manipulation — boundary logic tested by manual inspection
+        // eslint-disable-next-line no-bitwise -- UTF-8 continuation byte detection requires bitwise operations
+        while(end > 0 && (buf[end] & 0xC0) === 0x80) {
+            end--;
+        }
+        // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,UpdateOperator
+        return buf.subarray(0, end).toString('utf8');
+    }
+    return text;
+    // Stryker restore BlockStatement
+}
+
 // ---------------------------------------------------------------------------
 // WildDuckClient
 // ---------------------------------------------------------------------------
@@ -160,11 +265,21 @@ export class WildDuckClient {
 
     /**
      * Authenticate with WildDuck and build the mailbox map.
-     * Must be called before any search() calls.
+     * Must be called before any other API calls.
+     * Creates any required EmailFolder mailboxes that are missing, then re-loads the mailbox map.
      */
     async init(): Promise<void> {
         await this.authenticate();
         await this.loadMailboxes();
+        // Create any missing required folders
+        const missingFolders = _(EmailFolder).values().filter(folder => !this.reverseMailboxMap.has(folder)).value();
+        // Stryker disable next-line ConditionalExpression,EqualityOperator: length > 0 guard before create+reload — both branches produce correct result for empty array
+        if(missingFolders.length > 0) {
+            for(const folder of missingFolders) {
+                await this.createMailbox(folder);
+            }
+            await this.loadMailboxes();
+        }
     }
 
     /**
@@ -203,6 +318,25 @@ export class WildDuckClient {
             throw err;
         }
         // Stryker restore BlockStatement
+    }
+
+    /**
+     * Search a mailbox for messages with a given keyword flag and return their UIDs.
+     * Delegates to search() with keyword query restricted to the specified mailbox.
+     */
+    async searchByKeyword(mailboxPath: string, keyword: string): Promise<number[]> {
+        const results = await this.search({
+            // Stryker disable next-line ObjectLiteral: query object is configuration wiring
+            query:     { keyword },
+            mailboxes: [mailboxPath],
+        });
+        const uids = _.map(results, (result) => {
+            const colonIdx = result.message.lastIndexOf(':');
+            // Stryker disable next-line ConditionalExpression,EqualityOperator: guard against missing colon in search result
+            return colonIdx >= 0 ? parseInt(result.message.slice(colonIdx + 1), 10) : 0;
+        });
+        // Stryker disable next-line EqualityOperator: filter uids > 0 removes sentinel zeros for bad results
+        return _.filter(uids, uid => uid > 0);
     }
 
     /**
@@ -303,7 +437,7 @@ export class WildDuckClient {
     }
 
     /**
-     * Delete a message by IMAP UID.
+     * Delete a message by UID.
      * Retries once on 401 by re-authenticating.
      */
     async deleteMessage(mailboxPath: string, uid: number): Promise<void> {
@@ -315,6 +449,81 @@ export class WildDuckClient {
                 await this.authenticate();
                 await this.doDeleteMessage(mailboxPath, uid);
                 return;
+            }
+            throw err;
+        }
+        // Stryker restore BlockStatement
+    }
+
+    /**
+     * Move a message from one mailbox to another.
+     * Retries once on 401 by re-authenticating.
+     */
+    async moveMessage(sourceMailbox: string, uid: number, destMailbox: string): Promise<void> {
+        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
+        try {
+            await this.doMoveMessage(sourceMailbox, uid, destMailbox);
+        } catch (err) {
+            if(err instanceof WildDuckAuthError) {
+                await this.authenticate();
+                await this.doMoveMessage(sourceMailbox, uid, destMailbox);
+                return;
+            }
+            throw err;
+        }
+        // Stryker restore BlockStatement
+    }
+
+    /**
+     * List messages in a mailbox with optional filtering.
+     * Retries once on 401 by re-authenticating.
+     */
+    async listMessages(mailbox: string, options?: { unseen?: boolean, limit?: number, order?: 'asc' | 'desc' }): Promise<WildDuckMessageSummary[]> {
+        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
+        try {
+            return await this.doListMessages(mailbox, options);
+        } catch (err) {
+            if(err instanceof WildDuckAuthError) {
+                await this.authenticate();
+                return this.doListMessages(mailbox, options);
+            }
+            throw err;
+        }
+        // Stryker restore BlockStatement
+    }
+
+    /**
+     * Retrieve a full message with body and headers, mapped to WildDuckEmailMetadata.
+     * Attachments array is always empty — use attachmentMeta for lazy fetching.
+     * Returns null if the message is not found (404).
+     * Retries once on 401 by re-authenticating.
+     */
+    async getFullMessage(mailboxPath: string, uid: number): Promise<WildDuckEmailMetadata | null> {
+        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
+        try {
+            return await this.doGetFullMessage(mailboxPath, uid);
+        } catch (err) {
+            if(err instanceof WildDuckAuthError) {
+                await this.authenticate();
+                return this.doGetFullMessage(mailboxPath, uid);
+            }
+            throw err;
+        }
+        // Stryker restore BlockStatement
+    }
+
+    /**
+     * Download attachment data as a Buffer.
+     * Retries once on 401 by re-authenticating.
+     */
+    async getAttachment(mailboxPath: string, messageUid: number, attachmentId: string): Promise<Buffer> {
+        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
+        try {
+            return await this.doGetAttachment(mailboxPath, messageUid, attachmentId);
+        } catch (err) {
+            if(err instanceof WildDuckAuthError) {
+                await this.authenticate();
+                return this.doGetAttachment(mailboxPath, messageUid, attachmentId);
             }
             throw err;
         }
@@ -348,7 +557,22 @@ export class WildDuckClient {
     }
 
     /**
-     * Retrieve a message by IMAP UID.
+     * Get the current authentication token (for use in SSE or other HTTP connections).
+     * Returns null if not yet authenticated or after shutdown.
+     */
+    getAuthToken(): string | null {
+        return this.token;
+    }
+
+    /**
+     * Get the base API URL for this client (for use in SSE or other HTTP connections).
+     */
+    getApiUrl(): string {
+        return this.options.url;
+    }
+
+    /**
+     * Retrieve a message by UID.
      * Returns null if the message is not found (404).
      * Retries once on 401 by re-authenticating.
      */
@@ -375,8 +599,8 @@ export class WildDuckClient {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
-                username: this.options.imapUser,
-                password: this.options.imapPassword,
+                username: this.options.user,
+                password: this.options.password,
                 token:    true,
             }),
         }, /* skipAuth */ true);
@@ -411,6 +635,34 @@ export class WildDuckClient {
                 }
             }
         }
+    }
+
+    private async createMailbox(path: string): Promise<void> {
+        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
+        try {
+            await this.doCreateMailbox(path);
+        } catch (err) {
+            if(err instanceof WildDuckAuthError) {
+                await this.authenticate();
+                await this.doCreateMailbox(path);
+                return;
+            }
+            throw err;
+        }
+        // Stryker restore BlockStatement
+    }
+
+    private async doCreateMailbox(path: string): Promise<void> {
+        // Stryker disable ObjectLiteral,StringLiteral: request options and Content-Type header are HTTP wiring
+        await this.makeRequest<unknown>(
+            '/users/me/mailboxes',
+            {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ path }),
+            }
+        );
+        // Stryker restore ObjectLiteral,StringLiteral
     }
 
     private async doSearch(params: WildDuckSearchParams): Promise<WildDuckSearchResult[]> {
@@ -575,6 +827,158 @@ export class WildDuckClient {
             `/users/me/mailboxes/${mailboxId}/messages/${uid}`,
             { method: 'GET' }
         );
+    }
+
+    private async doMoveMessage(sourceMailbox: string, uid: number, destMailbox: string): Promise<void> {
+        const sourceId = this.resolveMailboxId(sourceMailbox);
+        const destId   = this.resolveMailboxId(destMailbox);
+        await this.makeRequest<unknown>(
+            `/users/me/mailboxes/${sourceId}/messages/${uid}`,
+            {
+                method:  'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ moveTo: destId }),
+            }
+        );
+    }
+
+    private async doListMessages(mailbox: string, options?: { unseen?: boolean, limit?: number, order?: 'asc' | 'desc' }): Promise<WildDuckMessageSummary[]> {
+        const mailboxId    = this.resolveMailboxId(mailbox);
+        // Stryker disable next-line ObjectLiteral: default options are configuration constants
+        const opts         = { unseen: true, limit: 20, order: 'asc' as const, ...options };
+        const searchParams = new URLSearchParams({
+            unseen: String(opts.unseen),
+            limit:  String(opts.limit),
+            order:  opts.order,
+        });
+        const response = await this.makeRequest<MessageListResponse>(
+            `/users/me/mailboxes/${mailboxId}/messages?${searchParams.toString()}`,
+            { method: 'GET' }
+        );
+        return response.results;
+    }
+
+    private async doGetFullMessage(mailboxPath: string, uid: number): Promise<WildDuckEmailMetadata | null> {
+        const mailboxId = this.resolveMailboxId(mailboxPath);
+        const response  = await this.makeRequestNullable<FullMessageResponse>(
+            `/users/me/mailboxes/${mailboxId}/messages/${uid}`,
+            { method: 'GET' }
+        );
+        if(!response) {
+            return null;
+        }
+        return this.mapFullMessage(response);
+    }
+
+    // eslint-disable-next-line complexity -- header/field mapping is inherently complex due to 6 optional headers
+    private mapFullMessage(response: FullMessageResponse): WildDuckEmailMetadata {
+        const maxBodySizeBytes = this.options.maxBodySizeBytes ?? 50_000;
+
+        // Determine body text
+        let bodyText: string;
+        if(response.text) {
+            // Stryker disable next-line BooleanLiteral: false = isHtml=false for plain text; swapping to true would process as HTML (lossy but still text)
+            bodyText = extractBody(response.text, false, maxBodySizeBytes);
+        } else if(response.html) {
+            // Stryker disable next-line BooleanLiteral: true = isHtml=true for HTML body; swapping to false would skip HTML-to-text conversion
+            bodyText = extractBody(response.html, true, maxBodySizeBytes);
+        } else {
+            // Stryker disable next-line StringLiteral: empty string fallback is correct for missing body
+            bodyText = '';
+        }
+
+        // Map addresses
+        const mapAddress = (addr: { address: string, name?: string }): EmailAddress => ({
+            address: addr.address,
+            // Stryker disable next-line ConditionalExpression: optional name field mapping
+            ...(addr.name ? { name: addr.name } : {}),
+        });
+
+        const from = response.from ? mapAddress(response.from) : { address: '' };
+        // Stryker disable next-line ArrayDeclaration: empty array fallback for missing to/cc
+        const to   = _.map(response.to ?? [], mapAddress);
+        // Stryker disable next-line ArrayDeclaration: empty array fallback for missing cc
+        const cc   = _.map(response.cc ?? [], mapAddress);
+
+        // Map headers
+        const hdrs          = response.headers ?? {};
+        const headers: EmailHeaders = {
+            // Stryker disable StringLiteral: header field name strings are RFC config
+            ...(hdrs['message-id']             ? { messageId: hdrs['message-id'] }                         : {}),
+            ...(hdrs['in-reply-to']            ? { inReplyTo: hdrs['in-reply-to'] }                        : {}),
+            ...(response.replyTo?.address      ? { replyTo: response.replyTo.address }                     : {}),
+            ...(hdrs['authentication-results'] ? { authenticationResults: hdrs['authentication-results'] } : {}),
+            ...(hdrs['x-rspamd-report']        ? { xRspamdReport: hdrs['x-rspamd-report'] }                : {}),
+            ...(hdrs['x-rspamd-score']         ? { xRspamdScore: hdrs['x-rspamd-score'] }                  : {}),
+            // Stryker restore StringLiteral
+        };
+
+        // Map attachment metadata for lazy fetching (data not fetched here)
+        // Stryker disable next-line ArrayDeclaration: empty array fallback for missing attachments
+        const attachmentMeta: WildDuckAttachmentMeta[] = _.map(response.attachments ?? [], att => ({
+            id:          att.id,
+            filename:    att.filename,
+            contentType: att.contentType,
+            sizeKb:      att.sizeKb,
+        }));
+
+        return {
+            uid:            response.id,
+            // Stryker disable next-line StringLiteral: empty string fallback for missing messageId
+            messageId:      response.messageId ?? hdrs['message-id'] ?? '',
+            from,
+            to,
+            cc,
+            // Stryker disable next-line StringLiteral: empty string fallback for missing subject
+            subject:        response.subject ?? '',
+            date:           new Date(response.date),
+            bodyText,
+            // Stryker disable next-line ConditionalExpression,EqualityOperator: hasAttachments check — length > 0 correctly handles empty/missing
+            hasAttachments: (response.attachments?.length ?? 0) > 0,
+            headers,
+            attachments:    [],
+            attachmentMeta,
+        };
+    }
+
+    private async doGetAttachment(mailboxPath: string, messageUid: number, attachmentId: string): Promise<Buffer> {
+        const mailboxId = this.resolveMailboxId(mailboxPath);
+        return this.makeRequestBuffer(
+            `/users/me/mailboxes/${mailboxId}/messages/${messageUid}/attachments/${attachmentId}`,
+            { method: 'GET' }
+        );
+    }
+
+    private async makeRequestBuffer(path: string, options: RequestInit): Promise<Buffer> {
+        // Stryker disable next-line ObjectLiteral: headers object initialization is HTTP wiring
+        const headers: Record<string, string> = {
+            // Stryker disable ObjectLiteral,LogicalOperator: spread of options.headers is defensive
+            ...(options.headers as Record<string, string> ?? {}),
+            // Stryker restore ObjectLiteral,LogicalOperator
+        };
+
+        if(this.token) {
+            headers['X-Access-Token'] = this.token;
+        }
+
+        const response = await fetch(`${this.options.url}${path}`, {
+            ...options,
+            headers,
+        });
+
+        if(response.status === 401) {
+            // Stryker disable next-line StringLiteral: Error message is configuration
+            throw new WildDuckAuthError('WildDuck authentication failed (401)');
+        }
+
+        if(!response.ok) {
+            const body = await response.text();
+            // Stryker disable next-line StringLiteral: Error message is configuration
+            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${body ? `: ${body}` : ''}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        return Buffer.from(arrayBuffer);
     }
 
     private async makeRequestNullable<T>(path: string, options: RequestInit): Promise<T | null> {

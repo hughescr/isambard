@@ -6,11 +6,10 @@ import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { EmailConfig } from '@/config/schemas';
 import { type ChannelId, createChannelId } from '@/integrations/discord/types';
-import { ImapConnection } from '@/integrations/email/imap-connection';
 import { EmailClassifier } from '@/integrations/email/classifier';
 import { EmailAllowlist } from '@/integrations/email/allowlist';
 import { EmailProcessor } from '@/integrations/email/email-processor';
-import { ImapListener } from '@/integrations/email/imap-listener';
+import { WildDuckListener } from '@/integrations/email/wildduck-listener';
 import { ReviewHandler } from '@/integrations/email/review-handler';
 import { buildReviewEmbed, buildUnsafeAlert, buildRestrictedAccessEmbed } from '@/integrations/email/review-embed-builder';
 import { AllowlistCommandHandler, buildAllowlistCommand } from '@/integrations/email/allowlist-commands';
@@ -38,11 +37,10 @@ export interface EmailSetupOptions {
 }
 
 export interface EmailSetupResult {
-    listener:                ImapListener
+    listener:                WildDuckListener
     reviewHandler:           ReviewHandler
     allowlistHandler:        AllowlistCommandHandler
     emailMcpServer:          McpServerConfig
-    imap:                    ImapConnection
     outboundApprovalHandler: OutboundApprovalHandler
     wildDuckClient:          WildDuckClient
     /** Discord channel ID for the admin email channel, used to auto-mute it at startup */
@@ -57,9 +55,9 @@ export interface EmailSetupResult {
  * Initialize all email integration components and register the /allowlist slash command.
  *
  * Creates:
- * - IMAP connection, classifier, allowlist
+ * - WildDuck client, classifier, allowlist
  * - EmailProcessor with Discord DM callbacks for uncertain/unsafe verdicts
- * - ImapListener (NOT started — caller starts it after Discord client ready)
+ * - WildDuckListener (NOT started — caller starts it after Discord client ready)
  * - ReviewHandler for button interactions
  * - AllowlistCommandHandler for slash command interactions
  * - Email MCP server for Claude agent
@@ -71,17 +69,6 @@ export interface EmailSetupResult {
 export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetupResult> {
     const { emailConfig, docClient, tableName, client, botToken, applicationId } = options;
 
-    // Build IMAP connection
-    // Stryker disable next-line ObjectLiteral: ImapConnection config object is integration wiring
-    const imap = new ImapConnection({
-        host:             emailConfig.imapHost,
-        port:             emailConfig.imapPort,
-        user:             emailConfig.user,
-        password:         emailConfig.password,
-        maxBodySizeBytes: emailConfig.maxBodySizeBytes,
-        imapDebug:        emailConfig.imapDebug,
-    });
-
     // Create classifier, allowlist
     const classifier = new EmailClassifier();
     const allowlist  = new EmailAllowlist(docClient, tableName);
@@ -89,10 +76,21 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Load allowlist from DynamoDB into memory cache
     await allowlist.load();
 
+    // Create WildDuck client (required — wildDuckApiUrl is required in the config schema)
+    // Stryker disable ObjectLiteral,StringLiteral: WildDuck client wiring is integration-only
+    const wildDuckClient = new WildDuckClient({
+        url:              emailConfig.wildDuckApiUrl,
+        user:             emailConfig.user,
+        password:         emailConfig.password,
+        maxBodySizeBytes: emailConfig.maxBodySizeBytes,
+    });
+    await wildDuckClient.init();
+    // Stryker restore ObjectLiteral,StringLiteral
+
     // Create processor with Discord admin channel callbacks
     // Stryker disable ObjectLiteral,BlockStatement,ArrayDeclaration,StringLiteral: EmailProcessor config and callbacks are integration wiring - not unit testable
     const processor = new EmailProcessor(
-        { allowlist, classifier, imap },
+        { allowlist, classifier, wildDuckClient },
         {
             onSafe: async (email, _verdict) => {
                 try {
@@ -143,20 +141,10 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
 
     // Create review handler (handles email-* button interactions)
     // Stryker disable next-line ObjectLiteral: ReviewHandler config object is integration wiring
-    const reviewHandler = new ReviewHandler({ imap, allowlist, adminDiscordUserId: emailConfig.adminDiscordUserId });
+    const reviewHandler = new ReviewHandler({ wildDuckClient, allowlist, adminDiscordUserId: emailConfig.adminDiscordUserId });
 
     // Create allowlist command handler (handles /allowlist interactions)
     const allowlistHandler = new AllowlistCommandHandler(allowlist, emailConfig.adminDiscordUserId);
-
-    // Create WildDuck client (required — wildDuckApiUrl is required in the config schema)
-    // Stryker disable ObjectLiteral,StringLiteral: WildDuck client wiring is integration-only
-    const wildDuckClient = new WildDuckClient({
-        url:          emailConfig.wildDuckApiUrl,
-        imapUser:     emailConfig.user,
-        imapPassword: emailConfig.password,
-    });
-    await wildDuckClient.init();
-    // Stryker restore ObjectLiteral,StringLiteral
 
     // Create rate limiter for outbound email
     // Stryker disable next-line ObjectLiteral: SendRateLimiter config object is integration wiring
@@ -210,13 +198,11 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
 
     // Create listener (not started yet — started in clientReady handler)
     // Must be created after sendApprovalRequest and wildDuckClient are defined.
-    // Stryker disable next-line ObjectLiteral: ImapListener config object is integration wiring
-    const listener = new ImapListener(imap, processor, {
-        useIdle:               emailConfig.useIdle,
-        idleTimeoutMs:         emailConfig.idleTimeoutMs,
+    // Stryker disable next-line ObjectLiteral: WildDuckListener config object is integration wiring
+    const listener = new WildDuckListener(wildDuckClient, processor, {
         pollFallbackMs:        emailConfig.pollFallbackMs,
+        sseReconnectDelayMs:   emailConfig.sseReconnectDelayMs,
         onSendApprovalRequest: sendApprovalRequest,
-        wildDuckClient,
     });
 
     // Create outbound approval handler (handles email-send-* button/modal interactions)
@@ -228,7 +214,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
 
     // Create email MCP server for Claude agent
     // Stryker disable ObjectLiteral,BlockStatement,StringLiteral,ArrayDeclaration: MCP server options and admin notification callback are integration wiring - not unit testable
-    const emailMcpServer = createEmailMCPServer(imap, {
+    const emailMcpServer = createEmailMCPServer({
         sendAdminNotification: async ({ mailboxName, uid, reference }) => {
             try {
                 const { embed, actionRow } = buildRestrictedAccessEmbed(mailboxName, uid, reference);
@@ -262,7 +248,6 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         reviewHandler,
         allowlistHandler,
         emailMcpServer,
-        imap,
         outboundApprovalHandler,
         wildDuckClient,
         adminChannelId: createChannelId(emailConfig.adminDiscordChannelId),

@@ -20,8 +20,6 @@ function createMockResources(
         ClaudeCodeOAuthToken:  { value: 'test-oauth-token-12345' },
         IsambardMainModel:     { value: 'sonnet' },
         // Email secrets default to undefined (email config is optional)
-        ImapHost:              { value: undefined },
-        ImapPort:              { value: undefined },
         EmailUser:             { value: undefined },
         EmailPassword:         { value: undefined },
         AdminDiscordUserId:    { value: undefined },
@@ -40,8 +38,6 @@ function createMockResources(
 /** Minimal email resource overrides for full email config */
 function emailResources(extra?: Partial<Record<keyof ResourceProvider, { value: string | undefined }>>) {
     return createMockResources({
-        ImapHost:              { value: 'imap.rungie.com' },
-        ImapPort:              { value: '993' },
         EmailUser:             { value: 'user@rungie.com' },
         EmailPassword:         { value: 'secret-password' },
         AdminDiscordUserId:    { value: '111111111111111111' },
@@ -288,8 +284,6 @@ describe.concurrent('loadConfig', () => {
             const config = loadConfig(emailResources());
 
             expect(config.email).toBeDefined();
-            expect(config.email?.imapHost).toBe('imap.rungie.com');
-            expect(config.email?.imapPort).toBe(993);
             expect(config.email?.user).toBe('user@rungie.com');
             expect(config.email?.wildDuckApiUrl).toBe('https://wildduck.example.com');
         });
@@ -297,9 +291,8 @@ describe.concurrent('loadConfig', () => {
         test('should apply schema defaults when email secrets are set', () => {
             const config = loadConfig(emailResources());
 
-            expect(config.email?.useIdle).toBe(true);
-            expect(config.email?.idleTimeoutMs).toBe(1_740_000);
             expect(config.email?.pollFallbackMs).toBe(300_000);
+            expect(config.email?.sseReconnectDelayMs).toBe(5_000);
             expect(config.email?.maxBodySizeBytes).toBe(50_000);
             expect(config.email?.sendReservoirCapacity).toBe(24);
             expect(config.email?.sendReservoirRefillRatePerHour).toBe(1);

@@ -2573,12 +2573,11 @@ describe('createContextBuilder loading methods', () => {
                 wildDuckClient: {
                     getMailboxCounts: mock(async () => ({ total: 5, unseen: 2 })),
                     getMessage:       mock(_.constant(Promise.resolve(null))),
-                },
-                imap: {
-                    listUnread: mock(async () => [
-                        { uid: 1, from: { name: 'Alice', address: 'alice@example.com' }, subject: 'Hello', date: new Date('2025-01-15T10:00:00.000Z') },
-                        { uid: 2, from: { address: 'bob@example.com' },                  subject: 'World', date: new Date('2025-01-15T11:00:00.000Z') },
+                    listMessages:     mock(async () => [
+                        { id: 1, from: { name: 'Alice', address: 'alice@example.com' }, subject: 'Hello', date: '2025-01-15T10:00:00.000Z' },
+                        { id: 2, from: { address: 'bob@example.com' },                  subject: 'World', date: '2025-01-15T11:00:00.000Z' },
                     ]),
+                    searchByKeyword: mock(async () => []),
                 },
             };
 
@@ -2607,9 +2606,8 @@ describe('createContextBuilder loading methods', () => {
                 wildDuckClient: {
                     getMailboxCounts: mock(async () => ({ total: 5, unseen: 0 })),
                     getMessage:       mock(_.constant(Promise.resolve(null))),
-                },
-                imap: {
-                    listUnread: mock(async () => []),
+                    listMessages:     mock(async () => []),
+                    searchByKeyword:  mock(async () => []),
                 },
             };
 
@@ -2617,8 +2615,8 @@ describe('createContextBuilder loading methods', () => {
             const result = await contextBuilder.buildPerchContext();
 
             expect(result).not.toContain('## Inbox');
-            // listUnread should NOT be called when unread count is 0
-            expect(emailService.imap.listUnread).not.toHaveBeenCalled();
+            // listMessages should NOT be called when unread count is 0
+            expect(emailService.wildDuckClient.listMessages).not.toHaveBeenCalled();
         });
 
         test('should skip inbox section and log warning when emailService throws', async () => {
@@ -2631,10 +2629,9 @@ describe('createContextBuilder loading methods', () => {
                     getMailboxCounts: mock(async () => {
                         throw new Error('WildDuck timeout');
                     }),
-                    getMessage: mock(_.constant(Promise.resolve(null))),
-                },
-                imap: {
-                    listUnread: mock(async () => []),
+                    getMessage:      mock(_.constant(Promise.resolve(null))),
+                    listMessages:    mock(async () => []),
+                    searchByKeyword: mock(async () => []),
                 },
             };
 
@@ -2647,7 +2644,7 @@ describe('createContextBuilder loading methods', () => {
             expect(mockLogger.warn).toHaveBeenCalled();
         });
 
-        test('should call listUnread with CleanInbox when unread > 0', async () => {
+        test('should call listMessages with CleanInbox when unread > 0', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
             backend.getStateItemsScored = mock(async () => []);
             backend.searchByTimeRange = mock(async () => []);
@@ -2657,11 +2654,10 @@ describe('createContextBuilder loading methods', () => {
                 wildDuckClient: {
                     getMailboxCounts: mock(async () => ({ total: 3, unseen: 1 })),
                     getMessage:       mock(_.constant(Promise.resolve(null))),
-                },
-                imap: {
-                    listUnread: mock(async () => [
-                        { uid: 10, from: { address: 'x@x.com' }, subject: 'Only', date: new Date('2025-01-15T09:00:00.000Z') },
+                    listMessages:     mock(async () => [
+                        { id: 10, from: { address: 'x@x.com' }, subject: 'Only', date: '2025-01-15T09:00:00.000Z' },
                     ]),
+                    searchByKeyword: mock(async () => []),
                 },
             };
 
@@ -2669,7 +2665,7 @@ describe('createContextBuilder loading methods', () => {
             await contextBuilder.buildPerchContext(now);
 
             expect(emailService.wildDuckClient.getMailboxCounts).toHaveBeenCalledWith('CleanInbox');
-            expect(emailService.imap.listUnread).toHaveBeenCalledWith('CleanInbox');
+            expect(emailService.wildDuckClient.listMessages).toHaveBeenCalledWith('CleanInbox', { unseen: true });
         });
 
         test('should format inbox UIDs as CleanInbox:UID for agent reference', async () => {
@@ -2682,11 +2678,10 @@ describe('createContextBuilder loading methods', () => {
                 wildDuckClient: {
                     getMailboxCounts: mock(async () => ({ total: 3, unseen: 1 })),
                     getMessage:       mock(_.constant(Promise.resolve(null))),
-                },
-                imap: {
-                    listUnread: mock(async () => [
-                        { uid: 42, from: { address: 'sender@example.com' }, subject: 'Test', date: new Date('2025-01-15T09:00:00.000Z') },
+                    listMessages:     mock(async () => [
+                        { id: 42, from: { address: 'sender@example.com' }, subject: 'Test', date: '2025-01-15T09:00:00.000Z' },
                     ]),
+                    searchByKeyword: mock(async () => []),
                 },
             };
 
@@ -2717,11 +2712,9 @@ describe('createContextBuilder loading methods', () => {
                             reason:     'Inappropriate content',
                         },
                     })),
-                },
-                imap: {
-                    listUnread:   mock(async () => []),
-                    searchByFlag: mock(async (_folder: string, flag: string) => {
-                        if(flag === 'SendRejectedByAdmin') {
+                    listMessages:    mock(async () => []),
+                    searchByKeyword: mock(async (_folder: string, keyword: string) => {
+                        if(keyword === 'SendRejectedByAdmin') {
                             return [99];
                         }
                         return []; // No gave-up drafts — isolate subject to rejection line only
@@ -2748,54 +2741,8 @@ describe('createContextBuilder loading methods', () => {
                 wildDuckClient: {
                     getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
                     getMessage:       mock(_.constant(Promise.resolve(null))),
-                },
-                imap: {
-                    listUnread:   mock(async () => []),
-                    searchByFlag: mock(async () => []),
-                },
-            };
-
-            const contextBuilder = createContextBuilder({ backend, emailService });
-            const result = await contextBuilder.buildPerchContext();
-
-            expect(result).not.toContain('Messages You Attempted to Send');
-        });
-
-        test('should skip rejected drafts section when imap has no searchByFlag (only)', async () => {
-            backend.getStateItemsScored = mock(async () => []);
-            backend.searchByTimeRange = mock(async () => []);
-            backend.listByLayer = mock(async () => ({ items: [] }));
-
-            const emailService = {
-                wildDuckClient: {
-                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
-                    getMessage:       mock(_.constant(Promise.resolve(null))),
-                },
-                imap: {
-                    listUnread: mock(async () => []),
-                    // no searchByFlag
-                },
-            };
-
-            const contextBuilder = createContextBuilder({ backend, emailService });
-            const result = await contextBuilder.buildPerchContext();
-
-            expect(result).not.toContain('Messages You Attempted to Send');
-        });
-
-        test('should skip rejected drafts section when imap has no searchByFlag', async () => {
-            backend.getStateItemsScored = mock(async () => []);
-            backend.searchByTimeRange = mock(async () => []);
-            backend.listByLayer = mock(async () => ({ items: [] }));
-
-            const emailService = {
-                wildDuckClient: {
-                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
-                    getMessage:       mock(_.constant(Promise.resolve(null))),
-                },
-                imap: {
-                    listUnread: mock(async () => []),
-                    // no searchByFlag
+                    listMessages:     mock(async () => []),
+                    searchByKeyword:  mock(async () => []),
                 },
             };
 
@@ -2821,10 +2768,10 @@ describe('createContextBuilder loading methods', () => {
                             // no rejectedAt — this is a pending draft
                         },
                     })),
-                },
-                imap: {
-                    listUnread:   mock(async () => []),
-                    searchByFlag: mock(async () => [55]),
+                    listMessages:    mock(async () => []),
+                    searchByKeyword: mock(async (_folder: string, keyword: string) => {
+                        return keyword === 'SendRejectedByAdmin' ? [55] : [];
+                    }),
                 },
             };
 
@@ -2834,7 +2781,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result).not.toContain('Messages You Attempted to Send');
         });
 
-        test('should log warning and not crash when searchByFlag throws', async () => {
+        test('should log warning and not crash when searchByKeyword throws', async () => {
             backend.getStateItemsScored = mock(async () => []);
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] }));
@@ -2843,11 +2790,9 @@ describe('createContextBuilder loading methods', () => {
                 wildDuckClient: {
                     getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
                     getMessage:       mock(_.constant(Promise.resolve(null))),
-                },
-                imap: {
-                    listUnread:   mock(async () => []),
-                    searchByFlag: mock(async () => {
-                        throw new Error('IMAP flag search failed');
+                    listMessages:     mock(async () => []),
+                    searchByKeyword:  mock(async () => {
+                        throw new Error('WildDuck keyword search failed');
                     }),
                 },
             };
@@ -2867,7 +2812,6 @@ describe('createContextBuilder loading methods', () => {
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] }));
 
-            let _searchByFlagCallCount = 0;
             const emailService = {
                 wildDuckClient: {
                     getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
@@ -2876,12 +2820,9 @@ describe('createContextBuilder loading methods', () => {
                         subject: 'Urgent email',
                         to:      [{ address: 'frank@example.com' }],
                     })),
-                },
-                imap: {
-                    listUnread:   mock(async () => []),
-                    searchByFlag: mock(async (folder: string, flag: string) => {
-                        _searchByFlagCallCount++;
-                        if(flag === 'DiscordNotifyGaveUp') {
+                    listMessages:    mock(async () => []),
+                    searchByKeyword: mock(async (_folder: string, keyword: string) => {
+                        if(keyword === 'DiscordNotifyGaveUp') {
                             return [101];
                         }
                         return []; // No rejected-by-admin drafts
@@ -2908,10 +2849,8 @@ describe('createContextBuilder loading methods', () => {
                 wildDuckClient: {
                     getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
                     getMessage:       mock(_.constant(Promise.resolve(null))),
-                },
-                imap: {
-                    listUnread:   mock(async () => []),
-                    searchByFlag: mock(async () => []),
+                    listMessages:     mock(async () => []),
+                    searchByKeyword:  mock(async () => []),
                 },
             };
 
@@ -2944,14 +2883,12 @@ describe('createContextBuilder loading methods', () => {
                             to:      [{ address: 'henry@example.com' }],
                         };
                     }),
-                },
-                imap: {
-                    listUnread:   mock(async () => []),
-                    searchByFlag: mock(async (_folder: string, flag: string) => {
-                        if(flag === 'SendRejectedByAdmin') {
+                    listMessages:    mock(async () => []),
+                    searchByKeyword: mock(async (_folder: string, keyword: string) => {
+                        if(keyword === 'SendRejectedByAdmin') {
                             return [200];
                         }
-                        if(flag === 'DiscordNotifyGaveUp') {
+                        if(keyword === 'DiscordNotifyGaveUp') {
                             return [201];
                         }
                         return [];
@@ -2981,11 +2918,9 @@ describe('createContextBuilder loading methods', () => {
                         to: [{ address: 'iris@example.com' }],
                         // no subject
                     })),
-                },
-                imap: {
-                    listUnread:   mock(async () => []),
-                    searchByFlag: mock(async (_folder: string, flag: string) => {
-                        if(flag === 'DiscordNotifyGaveUp') {
+                    listMessages:    mock(async () => []),
+                    searchByKeyword: mock(async (_folder: string, keyword: string) => {
+                        if(keyword === 'DiscordNotifyGaveUp') {
                             return [300];
                         }
                         return [];
@@ -3013,11 +2948,9 @@ describe('createContextBuilder loading methods', () => {
                         subject: 'Multi-recipient draft',
                         to:      [{ address: 'alice@example.com' }, { address: 'bob@example.com' }],
                     })),
-                },
-                imap: {
-                    listUnread:   mock(async () => []),
-                    searchByFlag: mock(async (_folder: string, flag: string) => {
-                        if(flag === 'DiscordNotifyGaveUp') {
+                    listMessages:    mock(async () => []),
+                    searchByKeyword: mock(async (_folder: string, keyword: string) => {
+                        if(keyword === 'DiscordNotifyGaveUp') {
                             return [400];
                         }
                         return [];
@@ -3055,14 +2988,12 @@ describe('createContextBuilder loading methods', () => {
                             to:      [{ address: 'dave@example.com' }],
                         };
                     }),
-                },
-                imap: {
-                    listUnread:   mock(async () => []),
-                    searchByFlag: mock(async (_folder: string, flag: string) => {
-                        if(flag === 'SendRejectedByAdmin') {
+                    listMessages:    mock(async () => []),
+                    searchByKeyword: mock(async (_folder: string, keyword: string) => {
+                        if(keyword === 'SendRejectedByAdmin') {
                             return [500];
                         }
-                        if(flag === 'DiscordNotifyGaveUp') {
+                        if(keyword === 'DiscordNotifyGaveUp') {
                             return [501];
                         }
                         return [];

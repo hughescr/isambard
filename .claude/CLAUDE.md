@@ -110,7 +110,7 @@ The Discord integration provides bot functionality:
   - `catchup-setup.ts` - Catch-up session runner, inbox initialization, and catch-up context building
   - `coordinator-setup.ts` - Message coordinator integration with agent, attachment processing, boundary mapping (Discord→agent types)
   - `event-handler-setup.ts` - Channel registry initialization, message processing setup, channel cleanup handlers
-  - `email-setup.ts` - Email MCP server initialization and IMAP listener lifecycle
+  - `email-setup.ts` - Email MCP server initialization and WildDuck SSE listener lifecycle
 - `src/integrations/discord/index.ts` - Public exports
 
 ### Discord Presence System
@@ -135,12 +135,11 @@ Message search and caching for historical context:
   - `summarizer.ts` - Overflow message summarization
 
 ### Email Integration
-IMAP inbox reading with WildDuck HTTP API for outbound sending and admin approval workflow:
+WildDuck HTTP API for inbox reading with SSE push notifications, outbound sending, and admin approval workflow:
 - `src/integrations/email/types.ts` - Email types (EmailFolder, WildDuckMessage, WildDuckAddress, SearchCriteria)
 - `src/integrations/email/errors.ts` - Email error hierarchy
-- `src/integrations/email/imap-connection.ts` - IMAP connection via imapflow (IDLE push support)
-- `src/integrations/email/imap-listener.ts` - IMAP IDLE listener with checkPendingNotifications loop
-- `src/integrations/email/wildduck-client.ts` - WildDuck HTTP API client (message search, flag management, draft upload, message send, updateMessageFlags)
+- `src/integrations/email/wildduck-client.ts` - WildDuck HTTP API client (message search, flag management, draft upload, message send, updateMessageFlags, folder creation, attachment fetch)
+- `src/integrations/email/wildduck-listener.ts` - WildDuck SSE listener with poll fallback and checkPendingNotifications loop
 - `src/integrations/email/email-processor.ts` - Email processing pipeline
 - `src/integrations/email/email-counters.ts` - CleanInbox unread counter management
 - `src/integrations/email/outbound-approval-handler.ts` - Admin approval workflow for outbound emails via Discord

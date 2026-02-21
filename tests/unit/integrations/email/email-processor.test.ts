@@ -8,7 +8,7 @@ import { EmailFolder } from '@/integrations/email/types';
 import type { EmailMetadata, ClassifierVerdict } from '@/integrations/email/types';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import type { EmailClassifier } from '@/integrations/email/classifier';
-import type { ImapConnection } from '@/integrations/email/imap-connection';
+import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -62,10 +62,10 @@ function makeClassifier(verdict: ClassifierVerdict | Error): EmailClassifier {
     return { classify: mock(async () => verdict) } as unknown as EmailClassifier;
 }
 
-function makeImap(): { conn: ImapConnection, moveMessage: ReturnType<typeof mock> } {
+function makeImap(): { conn: WildDuckClient, moveMessage: ReturnType<typeof mock> } {
     const moveMessage = mock(async () => undefined);
     return {
-        conn: { moveMessage } as unknown as ImapConnection,
+        conn: { moveMessage } as unknown as WildDuckClient,
         moveMessage,
     };
 }
@@ -88,9 +88,9 @@ describe('EmailProcessor', () => {
             const { conn, moveMessage } = makeImap();
 
             const processor = new EmailProcessor({
-                allowlist: makeAllowlist(true),
+                allowlist:      makeAllowlist(true),
                 classifier,
-                imap:      conn,
+                wildDuckClient: conn,
             });
 
             const result = await processor.processEmail(email);
@@ -98,7 +98,7 @@ describe('EmailProcessor', () => {
             expect(result.verdict).toBeNull();
             expect(result.destinationFolder).toBe(EmailFolder.CleanInbox);
             expect(result.allowlistBypassed).toBe(true);
-            expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.CleanInbox);
+            expect(moveMessage).toHaveBeenCalledWith(EmailFolder.Inbox, 42, EmailFolder.CleanInbox);
             expect(classifier.classify).not.toHaveBeenCalled();
         });
 
@@ -110,9 +110,9 @@ describe('EmailProcessor', () => {
             const { conn, moveMessage } = makeImap();
 
             const processor = new EmailProcessor({
-                allowlist: makeAllowlist(true),
+                allowlist:      makeAllowlist(true),
                 classifier,
-                imap:      conn,
+                wildDuckClient: conn,
             });
 
             const result = await processor.processEmail(email);
@@ -120,7 +120,7 @@ describe('EmailProcessor', () => {
             expect(result.verdict).toBeNull();
             expect(result.destinationFolder).toBe(EmailFolder.CleanInbox);
             expect(result.allowlistBypassed).toBe(true);
-            expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.CleanInbox);
+            expect(moveMessage).toHaveBeenCalledWith(EmailFolder.Inbox, 42, EmailFolder.CleanInbox);
             expect(classifier.classify).not.toHaveBeenCalled();
         });
 
@@ -132,9 +132,9 @@ describe('EmailProcessor', () => {
             const { conn, moveMessage } = makeImap();
 
             const processor = new EmailProcessor({
-                allowlist: makeAllowlist(true),
+                allowlist:      makeAllowlist(true),
                 classifier,
-                imap:      conn,
+                wildDuckClient: conn,
             });
 
             const result = await processor.processEmail(email);
@@ -143,7 +143,7 @@ describe('EmailProcessor', () => {
             expect(classifier.classify).toHaveBeenCalledTimes(1);
             // safe → CleanInbox
             expect(result.destinationFolder).toBe(EmailFolder.CleanInbox);
-            expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.CleanInbox);
+            expect(moveMessage).toHaveBeenCalledWith(EmailFolder.Inbox, 42, EmailFolder.CleanInbox);
         });
 
         test('sender on allowlist with no authentication-results header → falls through to classifier', async () => {
@@ -152,9 +152,9 @@ describe('EmailProcessor', () => {
             const { conn, moveMessage } = makeImap();
 
             const processor = new EmailProcessor({
-                allowlist: makeAllowlist(true),
+                allowlist:      makeAllowlist(true),
                 classifier,
-                imap:      conn,
+                wildDuckClient: conn,
             });
 
             const result = await processor.processEmail(email);
@@ -162,7 +162,7 @@ describe('EmailProcessor', () => {
             expect(result.allowlistBypassed).toBe(false);
             expect(classifier.classify).toHaveBeenCalledTimes(1);
             expect(result.destinationFolder).toBe(EmailFolder.Junk);
-            expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.Junk);
+            expect(moveMessage).toHaveBeenCalledWith(EmailFolder.Inbox, 42, EmailFolder.Junk);
         });
     });
 
@@ -174,9 +174,9 @@ describe('EmailProcessor', () => {
             const { conn, moveMessage } = makeImap();
 
             const processor = new EmailProcessor({
-                allowlist: makeAllowlist(false),
+                allowlist:      makeAllowlist(false),
                 classifier,
-                imap:      conn,
+                wildDuckClient: conn,
             });
 
             const result = await processor.processEmail(email);
@@ -184,7 +184,7 @@ describe('EmailProcessor', () => {
             expect(result.verdict).toEqual(verdict);
             expect(result.destinationFolder).toBe(EmailFolder.CleanInbox);
             expect(result.allowlistBypassed).toBe(false);
-            expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.CleanInbox);
+            expect(moveMessage).toHaveBeenCalledWith(EmailFolder.Inbox, 42, EmailFolder.CleanInbox);
         });
 
         test('spam verdict → Junk', async () => {
@@ -193,9 +193,9 @@ describe('EmailProcessor', () => {
             const { conn, moveMessage } = makeImap();
 
             const processor = new EmailProcessor({
-                allowlist: makeAllowlist(false),
+                allowlist:      makeAllowlist(false),
                 classifier,
-                imap:      conn,
+                wildDuckClient: conn,
             });
 
             const result = await processor.processEmail(makeEmail());
@@ -203,7 +203,7 @@ describe('EmailProcessor', () => {
             expect(result.verdict).toEqual(verdict);
             expect(result.destinationFolder).toBe(EmailFolder.Junk);
             expect(result.allowlistBypassed).toBe(false);
-            expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.Junk);
+            expect(moveMessage).toHaveBeenCalledWith(EmailFolder.Inbox, 42, EmailFolder.Junk);
         });
 
         test('safe verdict → onReview and onUnsafe not invoked, onSafe is invoked', async () => {
@@ -217,9 +217,9 @@ describe('EmailProcessor', () => {
 
             const processor = new EmailProcessor(
                 {
-                    allowlist: makeAllowlist(false),
+                    allowlist:      makeAllowlist(false),
                     classifier,
-                    imap:      conn,
+                    wildDuckClient: conn,
                 },
                 { onReview, onUnsafe, onSafe }
             );
@@ -237,9 +237,9 @@ describe('EmailProcessor', () => {
             const { conn }   = makeImap();
 
             const processor = new EmailProcessor({
-                allowlist: makeAllowlist(false),
+                allowlist:      makeAllowlist(false),
                 classifier,
-                imap:      conn,
+                wildDuckClient: conn,
             });
 
             // Should not throw when onSafe is not provided
@@ -258,9 +258,9 @@ describe('EmailProcessor', () => {
 
             const processor = new EmailProcessor(
                 {
-                    allowlist: makeAllowlist(false),
+                    allowlist:      makeAllowlist(false),
                     classifier,
-                    imap:      conn,
+                    wildDuckClient: conn,
                 },
                 { onReview, onUnsafe }
             );
@@ -270,7 +270,7 @@ describe('EmailProcessor', () => {
             expect(result.verdict).toEqual(verdict);
             expect(result.destinationFolder).toBe(EmailFolder.Review);
             expect(result.allowlistBypassed).toBe(false);
-            expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.Review);
+            expect(moveMessage).toHaveBeenCalledWith(EmailFolder.Inbox, 42, EmailFolder.Review);
             expect(onReview).toHaveBeenCalledWith(email, verdict);
             expect(onUnsafe).not.toHaveBeenCalled();
         });
@@ -286,9 +286,9 @@ describe('EmailProcessor', () => {
 
             const processor = new EmailProcessor(
                 {
-                    allowlist: makeAllowlist(false),
+                    allowlist:      makeAllowlist(false),
                     classifier,
-                    imap:      conn,
+                    wildDuckClient: conn,
                 },
                 { onSafe, onReview, onUnsafe }
             );
@@ -309,9 +309,9 @@ describe('EmailProcessor', () => {
 
             const processor = new EmailProcessor(
                 {
-                    allowlist: makeAllowlist(false),
+                    allowlist:      makeAllowlist(false),
                     classifier,
-                    imap:      conn,
+                    wildDuckClient: conn,
                 },
                 { onReview, onUnsafe }
             );
@@ -321,7 +321,7 @@ describe('EmailProcessor', () => {
             expect(result.verdict).toEqual(verdict);
             expect(result.destinationFolder).toBe(EmailFolder.Quarantine);
             expect(result.allowlistBypassed).toBe(false);
-            expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.Quarantine);
+            expect(moveMessage).toHaveBeenCalledWith(EmailFolder.Inbox, 42, EmailFolder.Quarantine);
             expect(onUnsafe).toHaveBeenCalledWith(email, verdict);
             expect(onReview).not.toHaveBeenCalled();
         });
@@ -337,9 +337,9 @@ describe('EmailProcessor', () => {
 
             const processor = new EmailProcessor(
                 {
-                    allowlist: makeAllowlist(false),
+                    allowlist:      makeAllowlist(false),
                     classifier,
-                    imap:      conn,
+                    wildDuckClient: conn,
                 },
                 { onSafe, onReview, onUnsafe }
             );
@@ -362,9 +362,9 @@ describe('EmailProcessor', () => {
 
             const processor = new EmailProcessor(
                 {
-                    allowlist: makeAllowlist(false),
+                    allowlist:      makeAllowlist(false),
                     classifier,
-                    imap:      conn,
+                    wildDuckClient: conn,
                 },
                 // onSafe intentionally not provided — ensures mutant at line 183 is caught
                 { onUnsafe }
@@ -383,15 +383,15 @@ describe('EmailProcessor', () => {
             const { conn, moveMessage } = makeImap();
 
             const processor = new EmailProcessor({
-                allowlist: makeAllowlist(false),
+                allowlist:      makeAllowlist(false),
                 classifier,
-                imap:      conn,
+                wildDuckClient: conn,
             });
 
             const result = await processor.processEmail(makeEmail());
 
             expect(result.destinationFolder).toBe(EmailFolder.Review);
-            expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.Review);
+            expect(moveMessage).toHaveBeenCalledWith(EmailFolder.Inbox, 42, EmailFolder.Review);
         });
 
         test('unsafe verdict routes correctly with no onUnsafe callback', async () => {
@@ -400,15 +400,15 @@ describe('EmailProcessor', () => {
             const { conn, moveMessage } = makeImap();
 
             const processor = new EmailProcessor({
-                allowlist: makeAllowlist(false),
+                allowlist:      makeAllowlist(false),
                 classifier,
-                imap:      conn,
+                wildDuckClient: conn,
             });
 
             const result = await processor.processEmail(makeEmail());
 
             expect(result.destinationFolder).toBe(EmailFolder.Quarantine);
-            expect(moveMessage).toHaveBeenCalledWith(42, EmailFolder.Inbox, EmailFolder.Quarantine);
+            expect(moveMessage).toHaveBeenCalledWith(EmailFolder.Inbox, 42, EmailFolder.Quarantine);
         });
     });
 
@@ -418,9 +418,9 @@ describe('EmailProcessor', () => {
             const { conn }   = makeImap();
 
             const processor = new EmailProcessor({
-                allowlist: makeAllowlist(false),
+                allowlist:      makeAllowlist(false),
                 classifier,
-                imap:      conn,
+                wildDuckClient: conn,
             });
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
@@ -433,12 +433,12 @@ describe('EmailProcessor', () => {
             const moveMessage = mock(async () => {
                 throw new Error('IMAP failed');
             });
-            const conn = { moveMessage } as unknown as ImapConnection;
+            const conn = { moveMessage } as unknown as WildDuckClient;
 
             const processor = new EmailProcessor({
-                allowlist: makeAllowlist(false),
+                allowlist:      makeAllowlist(false),
                 classifier,
-                imap:      conn,
+                wildDuckClient: conn,
             });
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
@@ -450,12 +450,12 @@ describe('EmailProcessor', () => {
             const moveMessage = mock(async () => {
                 throw new Error('IMAP move failed');
             });
-            const conn = { moveMessage } as unknown as ImapConnection;
+            const conn = { moveMessage } as unknown as WildDuckClient;
 
             const processor = new EmailProcessor({
-                allowlist: makeAllowlist(true),
+                allowlist:      makeAllowlist(true),
                 classifier,
-                imap:      conn,
+                wildDuckClient: conn,
             });
 
             // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
@@ -469,9 +469,9 @@ describe('EmailProcessor', () => {
             const { conn } = makeImap();
 
             const processor = new EmailProcessor({
-                allowlist:  makeAllowlist(true),
-                classifier: makeClassifier(makeVerdict('safe')),
-                imap:       conn,
+                allowlist:      makeAllowlist(true),
+                classifier:     makeClassifier(makeVerdict('safe')),
+                wildDuckClient: conn,
             });
 
             await processor.processEmail(email);
@@ -488,9 +488,9 @@ describe('EmailProcessor', () => {
             const { conn } = makeImap();
 
             const processor = new EmailProcessor({
-                allowlist:  makeAllowlist(false),
-                classifier: makeClassifier(verdict),
-                imap:       conn,
+                allowlist:      makeAllowlist(false),
+                classifier:     makeClassifier(verdict),
+                wildDuckClient: conn,
             });
 
             await processor.processEmail(email);

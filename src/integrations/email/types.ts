@@ -51,9 +51,9 @@ export interface AttachmentData {
     data:        Buffer
 }
 
-// Email metadata (from IMAP FETCH)
+// Email metadata (from WildDuck API)
 export interface EmailMetadata {
-    /** IMAP UID */
+    /** Message UID */
     uid:            number
     /** Message-ID header */
     messageId:      string
@@ -100,14 +100,6 @@ export interface AllowlistEntry {
     notes?:  string
     addedAt: string
     addedBy: string
-}
-
-// Email summary for perch/inbox display
-export interface EmailSummary {
-    uid:     number
-    from:    EmailAddress
-    subject: string
-    date:    Date
 }
 
 // Auth check result

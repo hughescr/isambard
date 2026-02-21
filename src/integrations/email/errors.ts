@@ -8,13 +8,6 @@ export class EmailError extends IsambardError {
     }
 }
 
-export class ImapConnectionError extends EmailError {
-    constructor(message: string, context?: Record<string, unknown>) {
-        super(message, ErrorCode.IMAP_CONNECTION_ERROR, context);
-        this.name = 'ImapConnectionError';
-    }
-}
-
 export class ClassifierError extends EmailError {
     constructor(message: string, context?: Record<string, unknown>) {
         super(message, ErrorCode.CLASSIFIER_ERROR, context);

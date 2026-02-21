@@ -3,14 +3,14 @@ import { EmbedBuilder } from 'discord.js';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
-import type { ImapConnection } from '@/integrations/email/imap-connection';
+import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import { EmailFolder } from '@/integrations/email/types';
 
 const GREEN = 0x00AA00;
 const RED   = 0xFF0000;
 
 export interface ReviewHandlerDeps {
-    imap:               ImapConnection
+    wildDuckClient:     WildDuckClient
     allowlist:          EmailAllowlist
     adminDiscordUserId: string
 }
@@ -20,12 +20,12 @@ export interface ReviewHandlerDeps {
  * Supports four actions: trash, junk, allow, and allow+allowlist.
  */
 export class ReviewHandler {
-    private readonly imap:               ImapConnection;
+    private readonly wildDuckClient:     WildDuckClient;
     private readonly allowlist:          EmailAllowlist;
     private readonly adminDiscordUserId: string;
 
     constructor(deps: ReviewHandlerDeps) {
-        this.imap               = deps.imap;
+        this.wildDuckClient     = deps.wildDuckClient;
         this.allowlist          = deps.allowlist;
         this.adminDiscordUserId = deps.adminDiscordUserId;
     }
@@ -101,7 +101,7 @@ export class ReviewHandler {
     }
 
     private async handleTrash(interaction: ButtonInteraction, uid: number, sourceFolder: string): Promise<void> {
-        await this.imap.moveMessage(uid, sourceFolder, EmailFolder.Trash);
+        await this.wildDuckClient.moveMessage(sourceFolder, uid, EmailFolder.Trash);
 
         const updatedEmbed = new EmbedBuilder()
             // Stryker disable next-line StringLiteral: UI label is configuration
@@ -115,7 +115,7 @@ export class ReviewHandler {
     }
 
     private async handleJunk(interaction: ButtonInteraction, uid: number, sourceFolder: string): Promise<void> {
-        await this.imap.moveMessage(uid, sourceFolder, EmailFolder.Junk);
+        await this.wildDuckClient.moveMessage(sourceFolder, uid, EmailFolder.Junk);
 
         const updatedEmbed = new EmbedBuilder()
             // Stryker disable next-line StringLiteral: UI label is configuration
@@ -129,7 +129,7 @@ export class ReviewHandler {
     }
 
     private async handleAllow(interaction: ButtonInteraction, uid: number, sourceFolder: string): Promise<void> {
-        await this.imap.moveMessage(uid, sourceFolder, EmailFolder.CleanInbox);
+        await this.wildDuckClient.moveMessage(sourceFolder, uid, EmailFolder.CleanInbox);
 
         const updatedEmbed = new EmbedBuilder()
             // Stryker disable next-line StringLiteral: UI label is configuration
@@ -144,9 +144,13 @@ export class ReviewHandler {
 
     private async handleAllowlist(interaction: ButtonInteraction, uid: number, sourceFolder: string): Promise<void> {
         // Fetch email to get sender address for allowlist
-        const email = await this.imap.fetchMessage(sourceFolder, uid);
+        const email = await this.wildDuckClient.getFullMessage(sourceFolder, uid);
+        if(!email) {
+            // Stryker disable next-line StringLiteral: Error message is not behavior-affecting
+            throw new Error(`Message UID ${uid} not found in ${sourceFolder}`);
+        }
 
-        await this.imap.moveMessage(uid, sourceFolder, EmailFolder.CleanInbox);
+        await this.wildDuckClient.moveMessage(sourceFolder, uid, EmailFolder.CleanInbox);
 
         const updatedEmbed = new EmbedBuilder()
             // Stryker disable next-line StringLiteral: UI label is configuration

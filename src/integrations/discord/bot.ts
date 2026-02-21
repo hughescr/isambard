@@ -139,7 +139,7 @@ export interface DiscordBotOptions {
 
     /**
      * Optional email setup result for email integration.
-     * If provided, wires in the IMAP listener lifecycle and email button/command routing.
+     * If provided, wires in the email listener lifecycle and email button/command routing.
      */
     emailSetup?: EmailSetupResult
 }
@@ -528,17 +528,17 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             });
         }
 
-        // Start email IMAP listener if email setup is provided
+        // Start email listener if email setup is provided
         if(emailSetup) {
             // Stryker disable BlockStatement: try-catch wraps email listener start - error handling
             try {
                 await emailSetup.listener.start();
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                logger.info({ msg: 'Email IMAP listener started' });
+                logger.info({ msg: 'Email listener started' });
             } catch (err) {
                 logger.error({
                     error: _.isError(err) ? err.message : String(err),
-                    msg:   'Failed to start email IMAP listener',
+                    msg:   'Failed to start email listener',
                 });
                 // Continue — email failure is non-fatal
             }
@@ -598,7 +598,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             if(rateLimiter) {
                 rateLimiter.stop();
             }
-            // Stop email IMAP listener if it exists
+            // Stop email listener if it exists
             if(emailSetup) {
                 // Stryker disable BlockStatement: try-catch isolates email stop from Discord cleanup
                 try {

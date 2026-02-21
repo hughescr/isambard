@@ -14,29 +14,16 @@ import { createMemoryPath, createLayerName } from '../storage/memory-tool/types'
 import { formatShortRelativeTime, formatTimeHeader } from '../utils/time';
 import type { SummarizeEventBatchesFn } from './event-summarizer';
 
-/** Summary of a single unread email (subset of EmailMetadata, kept DI-friendly) */
-export interface UnreadEmailSummary {
-    uid:     number
-    from:    { name?: string, address: string }
-    subject: string
-    date:    Date
-}
-
-/** Minimal interface for listing unread messages and searching by flag */
-export interface ImapService {
-    listUnread:    (folder: string) => Promise<UnreadEmailSummary[]>
-    searchByFlag?: (folder: string, flag: string) => Promise<number[]>
-}
-
 /** Minimal interface for retrieving message metadata from WildDuck */
 export interface WildDuckService {
     getMessage:       (mailboxPath: string, uid: number) => Promise<{ id: number, subject?: string, to?: { address: string, name?: string }[], metaData?: Record<string, unknown> } | null>
     getMailboxCounts: (mailboxPath: string) => Promise<{ total: number, unseen: number }>
+    listMessages:     (mailboxPath: string, options?: { unseen?: boolean }) => Promise<{ id: number, from: { address: string, name?: string }, subject: string, date: string }[]>
+    searchByKeyword:  (mailboxPath: string, keyword: string) => Promise<number[]>
 }
 
 /** Combined email service dependency for perch inbox section */
 export interface EmailService {
-    imap:           ImapService
     wildDuckClient: WildDuckService
 }
 
@@ -298,15 +285,16 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         try {
             const counts = await emailService.wildDuckClient.getMailboxCounts('CleanInbox');
             if(counts.unseen > 0) {
-                const summaries = await emailService.imap.listUnread('CleanInbox');
+                const summaries = await emailService.wildDuckClient.listMessages('CleanInbox', { unseen: true });
                 // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for inboxLines
                 const inboxLines: string[] = [];
                 for(const summary of summaries) {
-                    const age = formatShortRelativeTime(summary.date, now);
+                    // Stryker disable next-line ObjectLiteral: new Date() wrapping is structural, not behavior-affecting
+                    const age = formatShortRelativeTime(new Date(summary.date), now);
                     // Stryker disable next-line StringLiteral,ObjectLiteral: Cosmetic inbox line format
                     const fromStr = summary.from.name ? `${summary.from.name} <${summary.from.address}>` : summary.from.address;
                     // Stryker disable next-line StringLiteral: UID reference prefix is configuration
-                    inboxLines.push(`- [CleanInbox:${summary.uid}] From: ${fromStr} | Subject: ${summary.subject} | ${age}`);
+                    inboxLines.push(`- [CleanInbox:${summary.id}] From: ${fromStr} | Subject: ${summary.subject} | ${age}`);
                 }
                 // Stryker disable next-line StringLiteral: Cosmetic section header text
                 return `## Inbox\nYou have mail (${counts.unseen} unread):\n${inboxLines.join('\n')}`;
@@ -375,16 +363,13 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         if(!emailService) {
             return undefined;
         }
-        const { imap, wildDuckClient } = emailService;
-        if(!imap.searchByFlag) {
-            return undefined;
-        }
+        const { wildDuckClient } = emailService;
         // Stryker disable BlockStatement: try-catch guards rejected draft errors from breaking perch context
         try {
             // Stryker disable next-line StringLiteral: EmailFolder.Drafts is configuration constant
-            const rejectedUids = await imap.searchByFlag('Drafts', 'SendRejectedByAdmin');
+            const rejectedUids = await wildDuckClient.searchByKeyword('Drafts', 'SendRejectedByAdmin');
             // Stryker disable next-line StringLiteral: EmailFolder.Drafts is configuration constant
-            const gaveUpUids   = await imap.searchByFlag('Drafts', 'DiscordNotifyGaveUp');
+            const gaveUpUids   = await wildDuckClient.searchByKeyword('Drafts', 'DiscordNotifyGaveUp');
 
             // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
             const sections: string[] = [];

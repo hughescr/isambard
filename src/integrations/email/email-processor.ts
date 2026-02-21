@@ -5,13 +5,13 @@ import { EmailFolder } from '@/integrations/email/types';
 import type { EmailMetadata, ClassifierVerdict } from '@/integrations/email/types';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import type { EmailClassifier } from '@/integrations/email/classifier';
-import type { ImapConnection } from '@/integrations/email/imap-connection';
+import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import { EmailProcessingError } from '@/integrations/email/errors';
 
 export interface EmailProcessorDeps {
-    allowlist:  EmailAllowlist
-    classifier: EmailClassifier
-    imap:       ImapConnection
+    allowlist:      EmailAllowlist
+    classifier:     EmailClassifier
+    wildDuckClient: WildDuckClient
 }
 
 export interface ProcessEmailCallbacks {
@@ -30,16 +30,16 @@ export interface ProcessingResult {
 }
 
 export class EmailProcessor {
-    private readonly allowlist:  EmailAllowlist;
-    private readonly classifier: EmailClassifier;
-    private readonly imap:       ImapConnection;
-    private readonly callbacks:  ProcessEmailCallbacks;
+    private readonly allowlist:      EmailAllowlist;
+    private readonly classifier:     EmailClassifier;
+    private readonly wildDuckClient: WildDuckClient;
+    private readonly callbacks:      ProcessEmailCallbacks;
 
     constructor(deps: EmailProcessorDeps, callbacks: ProcessEmailCallbacks = {}) {
-        this.allowlist  = deps.allowlist;
-        this.classifier = deps.classifier;
-        this.imap       = deps.imap;
-        this.callbacks  = callbacks;
+        this.allowlist      = deps.allowlist;
+        this.classifier     = deps.classifier;
+        this.wildDuckClient = deps.wildDuckClient;
+        this.callbacks      = callbacks;
     }
 
     /**
@@ -65,7 +65,7 @@ export class EmailProcessor {
     private async routeAllowlistBypass(email: EmailMetadata): Promise<ProcessingResult> {
         // Stryker disable BlockStatement
         try {
-            await this.imap.moveMessage(email.uid, EmailFolder.Inbox, EmailFolder.CleanInbox);
+            await this.wildDuckClient.moveMessage(EmailFolder.Inbox, email.uid, EmailFolder.CleanInbox);
         } catch (err) {
             // Stryker disable StringLiteral,ObjectLiteral: Error message content is not behavior-affecting
             throw new EmailProcessingError(
@@ -110,7 +110,7 @@ export class EmailProcessor {
 
         // Stryker disable BlockStatement
         try {
-            await this.imap.moveMessage(email.uid, EmailFolder.Inbox, destination);
+            await this.wildDuckClient.moveMessage(EmailFolder.Inbox, email.uid, destination);
         } catch (err) {
             // Stryker disable next-line StringLiteral,ObjectLiteral: Error message content is not behavior-affecting
             throw new EmailProcessingError(
