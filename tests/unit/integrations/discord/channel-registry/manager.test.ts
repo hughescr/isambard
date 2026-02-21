@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Test mocks use expect().toHaveBeenCalled() on mock methods */
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import _ from 'lodash';
 import type { Client } from 'discord.js';

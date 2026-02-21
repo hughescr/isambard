@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Test mocks use expect().toHaveBeenCalled() on mock methods */
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import _ from 'lodash';
 import type { Client } from 'discord.js';
@@ -271,8 +270,7 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
                 const wk = createMockChannel({ isWellKnown: 'general' });
                 await manager.upsertChannel(wk);
 
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- access internal cache for mutation testing
-                const cache = (manager as any).wellKnownCache as Map<string, string>;
+                const cache = (manager as unknown as { wellKnownCache: Map<string, string> }).wellKnownCache;
                 expect(cache.has('general')).toBe(true);
 
                 manager.invalidateCache(wk.channelId);

@@ -18,8 +18,7 @@ import type { MemoryToolItem, MemoryToolItemData, MemoryPath, ContentType, Layer
 describe('MemoryToolBackend', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let backend: MemoryToolBackend;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Spy type is complex
-    let dateNowSpy: any = null;
+    let dateNowSpy: { mockRestore: () => void } | null = null;
 
     beforeEach(() => {
         ddbMock.reset();
@@ -35,7 +34,6 @@ describe('MemoryToolBackend', () => {
     afterEach(() => {
         ddbMock.reset();
         if(dateNowSpy) {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access -- Spy cleanup
             dateNowSpy.mockRestore();
             dateNowSpy = null;
         }

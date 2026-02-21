@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import _ from 'lodash';
 import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
@@ -8,9 +7,19 @@ import type { SendRateLimiter } from '../../../src/integrations/email/send-rate-
 import type { EmailAllowlist } from '../../../src/integrations/email/allowlist';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
+interface RegisteredTool {
+    handler:     (...args: unknown[]) => Promise<CallToolResult>
+    description: string
+    inputSchema: {
+        shape:          Record<string, unknown>
+        safeParseAsync: (args: unknown) => Promise<{ success: boolean }>
+    }
+    annotations: Record<string, boolean>
+}
+interface RegisteredToolInstance { _registeredTools: Record<string, RegisteredTool>, server: { _serverInfo: { version: string } } }
+
 describe('createEmailMCPServer', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock send function
-    let mockSendAdminNotification: ReturnType<typeof mock<(msg: any) => Promise<void>>>;
+    let mockSendAdminNotification: ReturnType<typeof mock<(msg: unknown) => Promise<void>>>;
     let mockWildDuck: WildDuckClient;
 
     beforeEach(() => {
@@ -61,10 +70,8 @@ describe('createEmailMCPServer', () => {
     });
 
     // Helper to get tool handler from server instance
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Need to access private _registeredTools
-    const getToolHandler = (server: any, toolName: string): (args: any) => Promise<CallToolResult> => {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Accessing private property
-        return server.instance._registeredTools[toolName].handler;
+    const getToolHandler = (server: ReturnType<typeof createEmailMCPServer>, toolName: string): ((...args: unknown[]) => Promise<CallToolResult>) => {
+        return (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName].handler;
     };
 
     // Helper to extract text from CallToolResult
@@ -84,8 +91,7 @@ describe('createEmailMCPServer', () => {
             expect(server.name).toBe('email');
             expect(server.instance).toBeDefined();
             expect(server.type).toBe('sdk');
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing server version
-            expect((server.instance as any).server._serverInfo.version).toBe('1.0.0');
+            expect((server.instance as unknown as RegisteredToolInstance).server._serverInfo.version).toBe('1.0.0');
         });
 
         test.each([
@@ -94,8 +100,7 @@ describe('createEmailMCPServer', () => {
             ['archiveEmail',    'Move an email from CleanInbox to Archive.'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-            const toolDef = (server.instance as any)._registeredTools[toolName] as { description: string };
+            const toolDef = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
 
             expect(toolDef.description).toBe(expectedDescription);
         });
@@ -106,10 +111,8 @@ describe('createEmailMCPServer', () => {
             ['archiveEmail',    { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
         ])('should have %s tool with correct annotations', (toolName, expectedAnnotations) => {
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment -- Accessing registered tools
-            const toolDef = (server.instance as any)._registeredTools[toolName];
+            const toolDef = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking tool annotations
             expect(toolDef.annotations).toEqual(expectedAnnotations);
         });
     });
@@ -198,7 +201,6 @@ describe('createEmailMCPServer', () => {
 
         test('should handle non-Error listMessages failure gracefully', async () => {
             mockWildDuck.listMessages = mock(async () => {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw 'listMessages error string';
             });
 
@@ -425,7 +427,6 @@ describe('createEmailMCPServer', () => {
 
         test('should handle non-Error getFullMessage failure gracefully', async () => {
             mockWildDuck.getFullMessage = mock(async () => {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw { code: 'IMAP_ERR' };
             });
 
@@ -813,8 +814,7 @@ describe('createEmailMCPServer', () => {
             const writeFileCall = mockFsPromises.writeFile.mock.calls[0];
             expect(writeFileCall?.[0]).toContain('report.pdf');
             expect(writeFileCall?.[0]).toContain('email-');
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Buffer comparison in mock call args
-            expect(writeFileCall?.[1] as any).toEqual(pdfData);
+            expect(writeFileCall?.[1] as unknown as Buffer).toEqual(pdfData);
             // Attachment section in output
             const text = getText(result);
             expect(text).toContain('Attachments:');
@@ -1221,7 +1221,6 @@ describe('createEmailMCPServer', () => {
 
         test('should handle non-Error move failure gracefully', async () => {
             mockWildDuck.moveMessage = mock(async () => {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw 'Network timeout';
             });
 
@@ -1309,10 +1308,8 @@ describe('createEmailMCPServer', () => {
         let mockSearch: ReturnType<typeof mock<(params: WildDuckSearchParams) => Promise<never[]>>>;
         let mockWildDuck: WildDuckClient;
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing private registered tools by computed key
-        const getRegisteredTool = (server: any, toolName: string): any => {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing private _registeredTools property
-            return server.instance._registeredTools[toolName];
+        const getRegisteredTool = (server: ReturnType<typeof createEmailMCPServer>, toolName: string): RegisteredTool => {
+            return (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
         };
 
         beforeEach(() => {
@@ -1546,7 +1543,6 @@ describe('createEmailMCPServer', () => {
 
         test('should handle non-Error WildDuck failure gracefully', async () => {
             mockWildDuck.search = mock(async () => {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw 'connection refused';
             });
 
@@ -2025,8 +2021,7 @@ describe('createEmailMCPServer', () => {
 
         test('should reject empty array for to via input schema (min(1) constraint)', async () => {
             const server  = createEmailMCPServer({ wildDuckClient: mockWildDuck });
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Accessing private MCP SDK internals
-            const toolDef = (server.instance as any)._registeredTools.sendEmail as { inputSchema: { safeParseAsync: (args: unknown) => Promise<{ success: boolean }> } };
+            const toolDef = (server.instance as unknown as RegisteredToolInstance)._registeredTools.sendEmail;
 
             const result = await toolDef.inputSchema.safeParseAsync({ to: [], subject: 'Hi', body: 'Hello' });
 
@@ -2644,9 +2639,7 @@ describe('createEmailMCPServer', () => {
 
         test('should have destructiveHint: true annotation', () => {
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuckDelete });
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment -- Accessing registered tools
-            const toolDef = (server.instance as any)._registeredTools.deleteDraft;
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking tool annotations
+            const toolDef = (server.instance as unknown as RegisteredToolInstance)._registeredTools.deleteDraft;
             expect(toolDef.annotations.destructiveHint).toBe(true);
         });
     });
@@ -2833,7 +2826,6 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should return error when original draft not found', async () => {
-            // eslint-disable-next-line lodash/prefer-constant -- async mock must return Promise
             mockGetMessageAmend = mock(async () => null);
             mockWildDuckAmend.getMessage = mockGetMessageAmend;
 

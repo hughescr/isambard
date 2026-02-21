@@ -410,7 +410,6 @@ describe('createMessageSummarizer', () => {
             expect(result[0].endTimestamp).toBe('2025-01-15T10:10:00.000Z');
             expect(result[0].messageCount).toBe(3);
             const expectedAuthors: string[] = ['alice', 'bob'];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- expect.arrayContaining type inference issue
             expect(result[0].authors).toEqual(expect.arrayContaining(expectedAuthors));
             expect(result[0].authors).toHaveLength(2); // Deduplicated
             expect(result[0].synopsis).toBe('Group discussion summary');

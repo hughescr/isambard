@@ -1,8 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks */
-/* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
-/* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
-/* eslint-disable lodash/prefer-constant -- Test callbacks */
 import { describe, test, expect, afterEach, mock, spyOn, jest } from 'bun:test';
 import { filter as _filter, noop as _noop } from 'lodash';
 import type { Client } from 'discord.js';
@@ -14,8 +9,9 @@ import type { ChannelRegistryManager } from '@/integrations/discord/channel-regi
 import * as clientModule from '@/integrations/discord/client';
 import * as channelRegistryModule from '@/integrations/discord/channel-registry';
 import * as presenceModule from '@/integrations/discord/presence';
+import type { PresenceManager } from '@/integrations/discord/presence/manager';
 import * as messageCoordinatorModule from '@/integrations/discord/message-coordinator';
-import type { MessageProcessor } from '@/integrations/discord/message-coordinator';
+import type { MessageProcessor, MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import { BotStateManagerImpl } from '@/integrations/discord/state';
 import type { Logger } from '@hughescr/logger';
 import * as loggerModule from '@hughescr/logger';
@@ -225,7 +221,8 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mockUpdatePhase,
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            spies.push(spyOn(presenceModule as any, 'PresenceManager').mockImplementation(((): any => mockPresenceManager) as any));
+            // @ts-expect-error - Mocking constructor
+            spies.push(spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager));
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
                 generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
@@ -255,7 +252,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady to set up subscriptions
 
-            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
@@ -283,7 +280,6 @@ describe('createDiscordBot', () => {
 
             // Now it should have been called
             expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any is safe here
             expect(mockUpdatePhase).toHaveBeenCalledWith({ type: 'responding', startedAt: expect.any(Date) });
         });
 
@@ -325,7 +321,8 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mockUpdatePhase,
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            spies.push(spyOn(presenceModule as any, 'PresenceManager').mockImplementation(((): any => mockPresenceManager) as any));
+            // @ts-expect-error - Mocking constructor
+            spies.push(spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager));
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
                 generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
@@ -359,7 +356,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady to set up subscriptions
 
-            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
@@ -399,7 +396,8 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mockUpdatePhase,
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            spies.push(spyOn(presenceModule as any, 'PresenceManager').mockImplementation(((): any => mockPresenceManager) as any));
+            // @ts-expect-error - Mocking constructor
+            spies.push(spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager));
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
                 generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
@@ -427,7 +425,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady to set up subscriptions
 
-            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
@@ -452,7 +450,6 @@ describe('createDiscordBot', () => {
 
             // Step 5: Verify presenceManager.updatePhase was called (throttle allowed)
             expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any is safe here
             expect(mockUpdatePhase).toHaveBeenCalledWith({ type: 'thinking', startedAt: expect.any(Date) });
 
             // Clear mock for next phase
@@ -481,7 +478,6 @@ describe('createDiscordBot', () => {
             expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
             expect(mockUpdatePhase).toHaveBeenCalledWith({
                 type:      'using_tool',
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any is safe here
                 startedAt: expect.any(Date),
                 toolName:  'test-tool',
             });
@@ -520,7 +516,8 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mockUpdatePhase,
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            spies.push(spyOn(presenceModule as any, 'PresenceManager').mockImplementation(((): any => mockPresenceManager) as any));
+            // @ts-expect-error - Mocking constructor
+            spies.push(spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager));
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
                 generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
@@ -547,7 +544,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady to set up subscriptions
 
-            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
@@ -618,7 +615,8 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mockUpdatePhase,
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            spies.push(spyOn(presenceModule as any, 'PresenceManager').mockImplementation(((): any => mockPresenceManager) as any));
+            // @ts-expect-error - Mocking constructor
+            spies.push(spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager));
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
                 generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
@@ -646,7 +644,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady to set up subscriptions
 
-            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
@@ -703,7 +701,7 @@ describe('createDiscordBot', () => {
 
             // Verify client.once() was called with 'clientReady' (not client.on())
 
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (...args: unknown[]) => void][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (...args: unknown[]) => void][];
             const clientReadyCalls = _filter(onceCalls, ([event]) => event === 'clientReady');
 
             // Should have at least one clientReady handler registered with once()
@@ -778,7 +776,7 @@ describe('createDiscordBot', () => {
 
             // Verify that clientReady was registered with once()
 
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (...args: unknown[]) => void][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (...args: unknown[]) => void][];
             const clientReadyOnceCalls = _filter(onceCalls, ([event]) => event === 'clientReady');
             expect(clientReadyOnceCalls.length).toBeGreaterThan(0);
 
@@ -852,7 +850,7 @@ describe('createDiscordBot', () => {
 
             // Get and fire the clientReady handler
 
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
 
@@ -897,7 +895,8 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mock(async () => undefined),
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            const presenceManagerSpy = spyOn(presenceModule as any, 'PresenceManager').mockImplementation(((): any => mockPresenceManager) as any);
+            // @ts-expect-error - Mocking constructor
+            const presenceManagerSpy = spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager);
             spies.push(presenceManagerSpy);
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
@@ -918,7 +917,7 @@ describe('createDiscordBot', () => {
 
             // Simulate clientReady event
 
-            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
@@ -965,7 +964,7 @@ describe('createDiscordBot', () => {
 
             // Simulate clientReady event - call ALL handlers to avoid order dependency
 
-            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             for(const [, handler] of readyHandlers) {
                 handler(mockClient);
@@ -1002,7 +1001,8 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mock(async () => undefined),
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            spies.push(spyOn(presenceModule as any, 'PresenceManager').mockImplementation(((): any => mockPresenceManager) as any));
+            // @ts-expect-error - Mocking constructor
+            spies.push(spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager));
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
                 generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
@@ -1022,7 +1022,7 @@ describe('createDiscordBot', () => {
 
             // Simulate clientReady event to create presenceManager
 
-            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
@@ -1065,7 +1065,8 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mock(async () => undefined),
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            spies.push(spyOn(presenceModule as any, 'PresenceManager').mockImplementation(((): any => mockPresenceManager) as any));
+            // @ts-expect-error - Mocking constructor
+            spies.push(spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager));
 
             spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
                 generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
@@ -1085,7 +1086,7 @@ describe('createDiscordBot', () => {
 
             // Simulate clientReady event to create presenceManager
 
-            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandlers[0]?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
@@ -1346,7 +1347,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady event
 
-            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const clientReadyHandler = readyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -1410,7 +1411,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady event
 
-            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const clientReadyHandler = readyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -1420,7 +1421,7 @@ describe('createDiscordBot', () => {
             // Verify notification was sent
             expect(mockSendToChannel).toHaveBeenCalled();
 
-            const sentMessage = (mockSendToChannel as any).mock.calls[0]?.[0] as string;
+            const sentMessage = (mockSendToChannel as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[0] as string;
             expect(sentMessage).toContain('⚠️ **Channel Registry Error**');
             expect(sentMessage).toContain('DynamoDB connection failed');
         });
@@ -1473,7 +1474,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady event
 
-            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const clientReadyHandler = readyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -1529,7 +1530,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady event
 
-            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const clientReadyHandler = readyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -1594,7 +1595,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady event
 
-            const calls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const readyHandlers = _filter(calls, ([event]) => event === 'clientReady');
             const clientReadyHandler = readyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -1735,7 +1736,8 @@ describe('createDiscordBot', () => {
                 removeGuildChannels: mock(() => undefined),
                 stop:                mock(() => undefined),
             };
-            spies.push(spyOn(messageCoordinatorModule as any, 'MessageCoordinator').mockImplementation(((): any => mockCoordinator) as any));
+            // @ts-expect-error - Mocking constructor
+            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator));
 
             // Mock channel registry functions
             spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
@@ -1758,7 +1760,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -1814,7 +1816,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady to register event handlers
 
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -1858,7 +1860,8 @@ describe('createDiscordBot', () => {
                 removeGuildChannels: mockRemoveGuildChannels,
                 stop:                mock(() => undefined),
             };
-            spies.push(spyOn(messageCoordinatorModule as any, 'MessageCoordinator').mockImplementation(((): any => mockCoordinator) as any));
+            // @ts-expect-error - Mocking constructor
+            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator));
 
             // Mock channel registry to return guild's channels
             const guildId = createGuildId('guild-123');
@@ -1897,7 +1900,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -1947,7 +1950,8 @@ describe('createDiscordBot', () => {
                 removeGuildChannels: mockRemoveGuildChannels,
                 stop:                mock(() => undefined),
             };
-            spies.push(spyOn(messageCoordinatorModule as any, 'MessageCoordinator').mockImplementation(((): any => mockCoordinator) as any));
+            // @ts-expect-error - Mocking constructor
+            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator));
 
             // Mock channel registry to return empty channels array
             const guildId = createGuildId('guild-123');
@@ -1977,7 +1981,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -2035,7 +2039,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady to complete setup
 
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -2081,7 +2085,8 @@ describe('createDiscordBot', () => {
                 removeGuildChannels: mock(() => undefined),
                 stop:                mock(() => undefined),
             };
-            spies.push(spyOn(messageCoordinatorModule as any, 'MessageCoordinator').mockImplementation(((): any => mockCoordinator) as any));
+            // @ts-expect-error - Mocking constructor
+            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator));
 
             // Mock channel registry functions
             spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
@@ -2114,7 +2119,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -2181,7 +2186,8 @@ describe('createDiscordBot', () => {
                 removeGuildChannels: mock(() => undefined),
                 stop:                mock(() => undefined),
             };
-            spies.push(spyOn(messageCoordinatorModule as any, 'MessageCoordinator').mockImplementation(((): any => mockCoordinator) as any));
+            // @ts-expect-error - Mocking constructor
+            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator));
 
             // Mock channel registry functions
             spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
@@ -2217,7 +2223,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -2281,7 +2287,8 @@ describe('createDiscordBot', () => {
                 removeGuildChannels: mock(() => undefined),
                 stop:                mock(() => undefined),
             };
-            spies.push(spyOn(messageCoordinatorModule as any, 'MessageCoordinator').mockImplementation(((): any => mockCoordinator) as any));
+            // @ts-expect-error - Mocking constructor
+            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator));
 
             // Mock channel registry functions
             spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
@@ -2314,7 +2321,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -2418,7 +2425,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady to register interactionCreate handler
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -2479,7 +2486,7 @@ describe('createDiscordBot', () => {
             expect(mockEmailSetup.listener.start).not.toHaveBeenCalled();
 
             // Fire clientReady handler
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -2520,7 +2527,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady — listener.start() will throw, but clientReady must not throw
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -2571,7 +2578,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady to register interactionCreate handler
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -2635,7 +2642,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -2697,7 +2704,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady to register interactionCreate handler
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -2759,7 +2766,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -2825,7 +2832,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady to register interactionCreate handler
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -2888,7 +2895,7 @@ describe('createDiscordBot', () => {
                 emailSetup:      mockEmailSetup,
             });
 
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -2949,7 +2956,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady to register interactionCreate handler
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -3019,7 +3026,7 @@ describe('createDiscordBot', () => {
             expect(muteChannelMock).not.toHaveBeenCalled();
 
             // Fire clientReady handler
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -3070,7 +3077,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady — muteChannel will throw, but clientReady must not throw
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {
@@ -3119,7 +3126,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady handler
-            const onceCalls = (mockClient.once as any).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandlers = _filter(onceCalls, ([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandlers[0]?.[1];
             if(clientReadyHandler) {

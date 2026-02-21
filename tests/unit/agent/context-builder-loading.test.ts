@@ -1,11 +1,11 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import _ from 'lodash';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { mockLogger } from '../../setup';
 import { createContextBuilder } from '../../../src/agent/context-builder';
 import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
-import { createMemoryPath } from '../../../src/storage/memory-tool/types';
+import { createMemoryPath, type MemoryToolItemData } from '../../../src/storage/memory-tool/types';
+import type { ListResult } from '../../../src/storage/memory-tool/backend-query';
 
 describe('createContextBuilder loading methods', () => {
     let mockDocClient: DynamoDBDocumentClient;
@@ -40,11 +40,9 @@ describe('createContextBuilder loading methods', () => {
                 path,
                 content:     'Test content',
                 contentType: 'text/markdown' as const,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
                 metadata:    { accessCount: 6, lastAccessed: expect.any(String) },
                 version:     2,
                 createdAt:   '2025-01-01T00:00:00Z',
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
                 updatedAt:   expect.any(String),
             }));
 
@@ -55,10 +53,8 @@ describe('createContextBuilder loading methods', () => {
                 path,
 
                 expect.objectContaining({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
                     metadata: expect.objectContaining({
                         accessCount:  6,
-                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
                         lastAccessed: expect.any(String),
                     }),
                 })
@@ -82,11 +78,9 @@ describe('createContextBuilder loading methods', () => {
                 path,
                 content:     'New content',
                 contentType: 'text/markdown' as const,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
                 metadata:    { accessCount: 1, lastAccessed: expect.any(String) },
                 version:     2,
                 createdAt:   '2025-01-01T00:00:00Z',
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
                 updatedAt:   expect.any(String),
             }));
 
@@ -97,10 +91,8 @@ describe('createContextBuilder loading methods', () => {
                 path,
 
                 expect.objectContaining({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
                     metadata: expect.objectContaining({
                         accessCount:  1,
-                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
                         lastAccessed: expect.any(String),
                     }),
                 })
@@ -125,11 +117,9 @@ describe('createContextBuilder loading methods', () => {
                 path:        path1,
                 content:     'Content',
                 contentType: 'text/markdown' as const,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
                 metadata:    { accessCount: 2, lastAccessed: expect.any(String) },
                 version:     2,
                 createdAt:   '2025-01-01T00:00:00Z',
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
                 updatedAt:   expect.any(String),
             }));
 
@@ -183,11 +173,9 @@ describe('createContextBuilder loading methods', () => {
                 path,
                 content:     'Content',
                 contentType: 'text/markdown' as const,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
                 metadata:    { accessCount: 1, lastAccessed: expect.any(String) },
                 version:     2,
                 createdAt:   '2025-01-01T00:00:00Z',
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
                 updatedAt:   expect.any(String),
             }));
 
@@ -199,10 +187,8 @@ describe('createContextBuilder loading methods', () => {
                 path,
 
                 expect.objectContaining({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
                     metadata: expect.objectContaining({
                         accessCount:  1,
-                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
                         lastAccessed: expect.any(String),
                     }),
                 })
@@ -227,11 +213,9 @@ describe('createContextBuilder loading methods', () => {
                 path,
                 content:     'Content',
                 contentType: 'text/markdown' as const,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
                 metadata:    { otherField: 'value', accessCount: 1, lastAccessed: expect.any(String) },
                 version:     2,
                 createdAt:   '2025-01-01T00:00:00Z',
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
                 updatedAt:   expect.any(String),
             }));
 
@@ -243,11 +227,9 @@ describe('createContextBuilder loading methods', () => {
                 path,
 
                 expect.objectContaining({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining for dynamic type
                     metadata: expect.objectContaining({
                         otherField:   'value',
                         accessCount:  1,
-                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() for dynamic type
                         lastAccessed: expect.any(String),
                     }),
                 })
@@ -1015,15 +997,13 @@ describe('createContextBuilder loading methods', () => {
         test('should use preview format when content is undefined but contentPreview exists', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Testing edge case where content is undefined (tag index items)
-            backend.list = mock(async (): Promise<any> => ({
+            backend.list = mock(async (): Promise<ListResult<MemoryToolItemData>> => ({
                 items: [{
                     path:           createMemoryPath('/users/user123/note'),
-                    content:        undefined, // No full content (tag index item)
+                    content:        undefined as unknown as string, // No full content (tag index item)
                     contentPreview: 'A brief note about the user',
                     contentType:    'text/plain' as const,
                     metadata:       {},
-                    version:        1,
                     createdAt:      '2025-01-15T10:00:00.000Z',
                     updatedAt:      '2025-01-15T10:00:00.000Z',
                 }],
@@ -1039,15 +1019,13 @@ describe('createContextBuilder loading methods', () => {
         test('should use no-content format when both content and contentPreview are undefined', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Testing edge case where both content fields are undefined
-            backend.list = mock(async (): Promise<any> => ({
+            backend.list = mock(async (): Promise<ListResult<MemoryToolItemData>> => ({
                 items: [{
                     path:           createMemoryPath('/users/user123/empty'),
-                    content:        undefined,
+                    content:        undefined as unknown as string,
                     contentPreview: undefined,
                     contentType:    'text/plain' as const,
                     metadata:       {},
-                    version:        1,
                     createdAt:      '2025-01-15T10:00:00.000Z',
                     updatedAt:      '2025-01-15T10:00:00.000Z',
                 }],

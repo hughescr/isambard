@@ -1701,7 +1701,6 @@ describe('MessageCoordinator', () => {
             await Promise.resolve(); // Flush microtasks so async IIFE executes
 
             // Verify markStart was called
-            // eslint-disable-next-line @typescript-eslint/unbound-method -- Mock method assertion on cast object
             expect(mockTracker.markStart).toHaveBeenCalledTimes(1);
         });
 
@@ -1745,7 +1744,6 @@ describe('MessageCoordinator', () => {
             // Verify resume context has actual events
             expect(resumeContextReceived).not.toBeNull();
             expect(resumeContextReceived!.newEvents).toEqual(testEvents);
-            // eslint-disable-next-line @typescript-eslint/unbound-method -- Mock method assertion on cast object
             expect(mockTracker.getNewEvents).toHaveBeenCalledTimes(1);
         });
 
@@ -1804,7 +1802,6 @@ describe('MessageCoordinator', () => {
             jest.advanceTimersByTime(100);
 
             // getNewEvents should not be called since no resume occurred
-            // eslint-disable-next-line @typescript-eslint/unbound-method -- Mock method assertion on cast object
             expect(mockTracker.getNewEvents).not.toHaveBeenCalled();
         });
     });
@@ -2348,9 +2345,7 @@ describe('MessageCoordinator', () => {
 
         it('should handle errors in typing indicator refresh gracefully', async () => {
             // Spy on _.noop to verify it's called in the catch handler
-            // eslint-disable-next-line @typescript-eslint/unbound-method -- Storing function reference for mock restoration
             const originalNoop = _.noop;
-            // eslint-disable-next-line lodash/prefer-noop -- Intentionally mocking noop itself
             const noopSpy = mock(() => { /* intentionally empty - mocking noop */ });
             _.noop = noopSpy;
 
@@ -2405,9 +2400,7 @@ describe('MessageCoordinator', () => {
 
         it('should handle errors in initial typing indicator gracefully', async () => {
             // Spy on _.noop to verify it's called in the catch handler
-            // eslint-disable-next-line @typescript-eslint/unbound-method -- Storing function reference for mock restoration
             const originalNoop = _.noop;
-            // eslint-disable-next-line lodash/prefer-noop -- Intentionally mocking noop itself
             const noopSpy = mock(() => { /* intentionally empty - mocking noop */ });
             _.noop = noopSpy;
 

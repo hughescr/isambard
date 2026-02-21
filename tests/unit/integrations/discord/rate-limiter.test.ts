@@ -9,8 +9,6 @@
  * - Errors in one send don't break subsequent sends in the queue
  */
 
-/* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
-
 import { describe, expect, test, mock } from 'bun:test';
 import _ from 'lodash';
 import type { TextChannel, Message } from 'discord.js';

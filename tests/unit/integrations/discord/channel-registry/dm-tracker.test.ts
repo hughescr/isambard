@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Test mocks require type assertions and unsafe operations */
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { Client, DMChannel } from 'discord.js';
 import _ from 'lodash';
@@ -105,7 +104,7 @@ describe('DMTracker', () => {
 
             mockClient.users = {
                 fetch: mock(async () => mockUser),
-            } as any;
+            } as unknown as typeof mockClient.users;
 
             // Track the DM first
             await tracker.trackFromMessage(userId, channelId, username);
@@ -156,7 +155,7 @@ describe('DMTracker', () => {
 
             mockClient.users = {
                 fetch: mock(async () => mockUser),
-            } as any;
+            } as unknown as typeof mockClient.users;
 
             const result = await tracker.getOrCreateDM(userId);
 
@@ -169,7 +168,7 @@ describe('DMTracker', () => {
             expect(mockManager.upsertChannel).toHaveBeenCalledTimes(1);
 
             // Verify upsertChannel called with correct metadata
-            const upsertCall = (mockManager.upsertChannel as any).mock.calls[0][0];
+            const upsertCall = (mockManager.upsertChannel as ReturnType<typeof mock>).mock.calls[0][0] as Record<string, unknown>;
             expect(upsertCall.channelId).toBe(channelId);
             expect(upsertCall.guildId).toBe('DM');
             expect(upsertCall.channelName).toBe('@alice');
@@ -462,7 +461,7 @@ describe('DMTracker', () => {
             expect(mockManager.upsertChannel).toHaveBeenCalledTimes(1);
 
             // Verify upsertChannel called with correct metadata
-            const upsertCall = (mockManager.upsertChannel as any).mock.calls[0][0];
+            const upsertCall = (mockManager.upsertChannel as ReturnType<typeof mock>).mock.calls[0][0] as Record<string, unknown>;
             expect(upsertCall.channelId).toBe(channelId);
             expect(upsertCall.guildId).toBe('DM');
             expect(upsertCall.channelName).toBe('@alice');
@@ -484,7 +483,7 @@ describe('DMTracker', () => {
 
             await tracker.trackFromMessage(userId, channelId, username);
 
-            const upsertCall = (mockManager.upsertChannel as any).mock.calls[0][0];
+            const upsertCall = (mockManager.upsertChannel as ReturnType<typeof mock>).mock.calls[0][0] as Record<string, unknown>;
             expect(upsertCall.channelName).toBe('@alice_123');
         });
     });

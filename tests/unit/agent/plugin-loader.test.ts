@@ -164,7 +164,6 @@ describe('loadPlugins', () => {
             expect(mockLogger.warn).toHaveBeenCalledWith(
                 expect.objectContaining({
                     name: 'not-a-plugin',
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test matcher
                     msg:  expect.stringContaining('not a valid plugin'),
                 })
             );
@@ -214,7 +213,6 @@ describe('loadPlugins', () => {
             expect(mockLogger.warn).toHaveBeenCalledWith(
                 expect.objectContaining({
                     path: '/nonexistent/plugin',
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg:  expect.stringContaining('not found'),
                 })
             );
@@ -236,7 +234,6 @@ describe('loadPlugins', () => {
             expect(mockLogger.warn).toHaveBeenCalledWith(
                 expect.objectContaining({
                     path: invalidPlugin,
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg:  expect.stringContaining('missing .claude-plugin'),
                 })
             );
@@ -289,7 +286,6 @@ describe('loadPlugins', () => {
             expect(mockLogger.warn).toHaveBeenCalledWith(
                 expect.objectContaining({
                     name: 'nonexistent-plugin',
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg:  expect.stringContaining('not found'),
                 })
             );
@@ -448,7 +444,6 @@ describe('loadPlugins', () => {
             if(expectedWarning) {
                 expect(mockLogger.warn).toHaveBeenCalledWith(
                     expect.objectContaining({
-                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                         msg: expect.stringContaining(expectedWarning),
                     })
                 );

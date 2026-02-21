@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
 import { describe, it, expect, beforeEach, mock, type Mock, afterEach } from 'bun:test';
 import type { Client, Guild, GuildChannel } from 'discord.js';
 import _ from 'lodash';
@@ -17,33 +16,27 @@ describe('discovery', () => {
 
     beforeEach(() => {
         // Mock manager
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock
         mockManager = {
             getChannel:    mock(_.constant(Promise.resolve(null))),
             upsertChannel: mock(_.noop),
             deleteChannel: mock(_.noop),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock
-        } as any;
+        } as unknown as ChannelRegistryManager;
 
         // Mock guild
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock
         mockGuild = {
             id:       'guild-123',
             channels: {
                 fetch: mock(async () => new Map()),
             },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock
-        } as any;
+        } as unknown as Guild;
 
         // Mock client
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock
         mockClient = {
             guilds: {
                 cache: new Map(),
             },
             on: mock(_.noop),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock
-        } as any;
+        } as unknown as Client;
     });
 
     afterEach(() => {
@@ -122,9 +115,7 @@ describe('discovery', () => {
             expect(mockManager.upsertChannel).toHaveBeenCalledTimes(1);
 
             // Verify the updated metadata
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
-            const call = (mockManager.upsertChannel as any).mock.calls[0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Test assertion
+            const call = (mockManager.upsertChannel as ReturnType<typeof mock>).mock.calls[0];
             const metadata = call?.[0] as ChannelMetadata;
 
             expect(metadata.channelName).toBe('general-renamed');
@@ -167,9 +158,7 @@ describe('discovery', () => {
             expect(result.updated).toBe(1);
 
             // Verify user settings are preserved
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
-            const call = (mockManager.upsertChannel as any).mock.calls[0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Test assertion
+            const call = (mockManager.upsertChannel as ReturnType<typeof mock>).mock.calls[0];
             const metadata = call?.[0] as ChannelMetadata;
 
             expect(metadata.channelName).toBe('general-renamed');  // Updated from Discord
@@ -221,7 +210,6 @@ describe('discovery', () => {
         });
 
         it('should handle multiple guilds', async () => {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock
             const mockGuild1 = {
                 id:       'guild-1',
                 channels: {
@@ -235,10 +223,8 @@ describe('discovery', () => {
                         return map;
                     }),
                 },
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock
-            } as any;
+            } as unknown as Guild;
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock
             const mockGuild2 = {
                 id:       'guild-2',
                 channels: {
@@ -252,12 +238,9 @@ describe('discovery', () => {
                         return map;
                     }),
                 },
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test mock
-            } as any;
+            } as unknown as Guild;
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- Test mock
             mockClient.guilds.cache.set('guild-1', mockGuild1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- Test mock
             mockClient.guilds.cache.set('guild-2', mockGuild2);
 
             const result = await discoverAllChannels(mockClient, mockManager);
@@ -288,7 +271,6 @@ describe('discovery', () => {
 
         it('should handle non-Error exceptions', async () => {
             mockGuild.channels.fetch = mock(async () => {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing error handling
                 throw 'String error';
             }) as unknown as typeof mockGuild.channels.fetch;
 
@@ -321,9 +303,7 @@ describe('discovery', () => {
             await discoverAllChannels(mockClient, mockManager);
 
             expect(mockManager.upsertChannel).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
-            const call = (mockManager.upsertChannel as any).mock.calls[0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Test assertion
+            const call = (mockManager.upsertChannel as ReturnType<typeof mock>).mock.calls[0];
             const metadata = call?.[0] as ChannelMetadata;
 
             expect(metadata.channelId).toBe(createChannelId('channel-1'));
@@ -350,8 +330,7 @@ describe('discovery', () => {
             it('should upsert new text channel', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
-                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelCreate'])?.[1];
+                const handler = _.find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelCreate'])?.[1];
 
                 const mockChannel = {
                     id:    'channel-1',
@@ -360,12 +339,11 @@ describe('discovery', () => {
                     send:  mock(_.noop),
                 } as unknown as GuildChannel;
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
                 await handler(mockChannel);
 
                 expect(mockManager.upsertChannel).toHaveBeenCalledTimes(1);
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
-                const metadata = (mockManager.upsertChannel as any).mock.calls[0]?.[0] as ChannelMetadata;
+
+                const metadata = (mockManager.upsertChannel as ReturnType<typeof mock>).mock.calls[0]?.[0] as ChannelMetadata;
                 expect(metadata.channelId).toBe(createChannelId('channel-1'));
                 expect(metadata.channelName).toBe('new-channel');
             });
@@ -373,15 +351,13 @@ describe('discovery', () => {
             it('should ignore channels without guild', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
-                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelCreate'])?.[1];
+                const handler = _.find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelCreate'])?.[1];
 
                 const mockChannel = {
                     id:   'channel-1',
                     name: 'dm-channel',
                 } as unknown as GuildChannel;
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
                 await handler(mockChannel);
 
                 expect(mockManager.upsertChannel).not.toHaveBeenCalled();
@@ -390,8 +366,7 @@ describe('discovery', () => {
             it('should ignore channels with null guild', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
-                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelCreate'])?.[1];
+                const handler = _.find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelCreate'])?.[1];
 
                 const mockChannel = {
                     id:    'channel-1',
@@ -400,7 +375,6 @@ describe('discovery', () => {
                     send:  mock(_.noop),
                 } as unknown as GuildChannel;
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
                 await handler(mockChannel);
 
                 expect(mockManager.upsertChannel).not.toHaveBeenCalled();
@@ -409,8 +383,7 @@ describe('discovery', () => {
             it('should ignore non-text channels', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
-                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelCreate'])?.[1];
+                const handler = _.find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelCreate'])?.[1];
 
                 const mockChannel = {
                     id:    'category-1',
@@ -419,7 +392,6 @@ describe('discovery', () => {
                     type:  4,
                 } as unknown as GuildChannel;
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
                 await handler(mockChannel);
 
                 expect(mockManager.upsertChannel).not.toHaveBeenCalled();
@@ -430,8 +402,7 @@ describe('discovery', () => {
             it('should update existing channel name', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
-                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelUpdate'])?.[1];
+                const handler = _.find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelUpdate'])?.[1];
 
                 const oldChannel = {
                     id:    'channel-1',
@@ -457,15 +428,13 @@ describe('discovery', () => {
                     updatedAt:    '2025-01-01T00:00:00.000Z',
                 };
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-explicit-any -- Test mock
-                (mockManager.getChannel as any).mockResolvedValue(existingMetadata);
+                (mockManager.getChannel as ReturnType<typeof mock>).mockResolvedValue(existingMetadata);
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
                 await handler(oldChannel, newChannel);
 
                 expect(mockManager.upsertChannel).toHaveBeenCalledTimes(1);
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
-                const metadata = (mockManager.upsertChannel as any).mock.calls[0]?.[0] as ChannelMetadata;
+
+                const metadata = (mockManager.upsertChannel as ReturnType<typeof mock>).mock.calls[0]?.[0] as ChannelMetadata;
                 expect(metadata.channelName).toBe('new-name');
                 expect(metadata.updatedAt).not.toBe(existingMetadata.updatedAt);
             });
@@ -473,8 +442,7 @@ describe('discovery', () => {
             it('should ignore updates to non-existing channels', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
-                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelUpdate'])?.[1];
+                const handler = _.find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelUpdate'])?.[1];
 
                 const oldChannel = {
                     id:    'channel-1',
@@ -492,7 +460,6 @@ describe('discovery', () => {
 
                 (mockManager.getChannel as Mock<() => Promise<ChannelMetadata | null>>).mockResolvedValue(null);
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
                 await handler(oldChannel, newChannel);
 
                 expect(mockManager.upsertChannel).not.toHaveBeenCalled();
@@ -501,8 +468,7 @@ describe('discovery', () => {
             it('should ignore channels without guild', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
-                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelUpdate'])?.[1];
+                const handler = _.find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelUpdate'])?.[1];
 
                 const oldChannel = {
                     id:   'channel-1',
@@ -514,7 +480,6 @@ describe('discovery', () => {
                     name: 'new-name',
                 } as unknown as GuildChannel;
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
                 await handler(oldChannel, newChannel);
 
                 expect(mockManager.getChannel).not.toHaveBeenCalled();
@@ -523,8 +488,7 @@ describe('discovery', () => {
             it('should ignore channels with null guild', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
-                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelUpdate'])?.[1];
+                const handler = _.find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelUpdate'])?.[1];
 
                 const oldChannel = {
                     id:    'channel-1',
@@ -540,7 +504,6 @@ describe('discovery', () => {
                     send:  mock(_.noop),
                 } as unknown as GuildChannel;
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
                 await handler(oldChannel, newChannel);
 
                 expect(mockManager.getChannel).not.toHaveBeenCalled();
@@ -549,8 +512,7 @@ describe('discovery', () => {
             it('should ignore non-text channels', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
-                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelUpdate'])?.[1];
+                const handler = _.find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelUpdate'])?.[1];
 
                 const oldChannel = {
                     id:    'category-1',
@@ -566,7 +528,6 @@ describe('discovery', () => {
                     type:  4,
                 } as unknown as GuildChannel;
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
                 await handler(oldChannel, newChannel);
 
                 expect(mockManager.getChannel).not.toHaveBeenCalled();
@@ -577,14 +538,12 @@ describe('discovery', () => {
             it('should delete channel from registry', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
-                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelDelete'])?.[1];
+                const handler = _.find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelDelete'])?.[1];
 
                 const mockChannel = {
                     id: 'channel-1',
                 } as unknown as GuildChannel;
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
                 await handler(mockChannel);
 
                 expect(mockManager.deleteChannel).toHaveBeenCalledTimes(1);
@@ -594,12 +553,10 @@ describe('discovery', () => {
             it('should ignore channels without id', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test assertion
-                const handler = _.find((mockClient.on as any).mock.calls, ['0', 'channelDelete'])?.[1];
+                const handler = _.find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelDelete'])?.[1];
 
                 const mockChannel = {} as unknown as GuildChannel;
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Test handler
                 await handler(mockChannel);
 
                 expect(mockManager.deleteChannel).not.toHaveBeenCalled();

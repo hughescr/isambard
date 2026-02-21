@@ -2,11 +2,19 @@
  * Tests for Discord infrastructure factory.
  */
 
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unnecessary-type-assertion -- Test mocks */
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mockLogger } from '../../setup';
 import { createGuildId } from '@/integrations/discord/types';
 import type { DiscordConfig } from '@/config/schemas';
+import type { Client } from 'discord.js';
+import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import type { MemoryToolBackend } from '@/storage/memory-tool';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
+import type { MessageFetcher } from '@/integrations/discord/message-history/fetcher';
+import type { MessageSummarizer } from '@/integrations/discord/message-history/summarizer';
+import type { MessageSearchService } from '@/integrations/discord/message-history/search';
+import type { InboxManager } from '@/integrations/discord/inbox';
+import type { BotStateManager } from '@/integrations/discord/state';
 
 describe('createDiscordInfrastructure', () => {
     let spies: ReturnType<typeof spyOn>[];
@@ -27,9 +35,9 @@ describe('createDiscordInfrastructure', () => {
         },
     };
 
-    const mockDocClient = {} as any;
+    const mockDocClient = {} as unknown as DynamoDBDocumentClient;
     const mockTableName = 'test-table';
-    const mockMemoryBackend = {} as any;
+    const mockMemoryBackend = {} as unknown as MemoryToolBackend;
 
     beforeEach(() => {
         spies = [];
@@ -60,29 +68,29 @@ describe('createDiscordInfrastructure', () => {
         const inboxModule = await import('@/integrations/discord/inbox');
         const stateModule = await import('@/integrations/discord/state');
 
-        const mockDiscordClient = {} as any;
-        const mockChannelRegistryBackend = {} as any;
-        const mockChannelRegistry = {} as any;
-        const mockMessageFetcher = {} as any;
-        const mockMessageSummarizer = {} as any;
-        const mockMessageSearchService = {} as any;
-        const mockCheckpointManager = {} as any;
-        const mockInboxManager = {} as any;
-        const mockBotStateManager = {} as any;
+        const mockDiscordClient = {} as unknown as Client;
+        const mockChannelRegistryBackend = {};
+        const mockChannelRegistry = {} as unknown as ChannelRegistryManager;
+        const mockMessageFetcher = {} as unknown as MessageFetcher;
+        const mockMessageSummarizer = {} as unknown as MessageSummarizer;
+        const mockMessageSearchService = {} as unknown as MessageSearchService;
+        const mockCheckpointManager = {};
+        const mockInboxManager = {} as unknown as InboxManager;
+        const mockBotStateManager = {} as unknown as BotStateManager;
 
         const clientSpy = spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockDiscordClient);
         spies.push(clientSpy);
 
         // @ts-expect-error - Mocking constructor
-        const backendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(function() {
+        const backendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => {
             return mockChannelRegistryBackend;
-        } as any);
+        });
         spies.push(backendSpy);
 
         // @ts-expect-error - Mocking constructor
-        const managerSpy = spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(function() {
+        const managerSpy = spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => {
             return mockChannelRegistry;
-        } as any);
+        });
         spies.push(managerSpy);
 
         const fetcherSpy = spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue(mockMessageFetcher);
@@ -95,15 +103,15 @@ describe('createDiscordInfrastructure', () => {
         spies.push(searchSpy);
 
         // @ts-expect-error - Mocking constructor
-        const checkpointSpy = spyOn(inboxModule, 'CheckpointManager').mockImplementation(function() {
+        const checkpointSpy = spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => {
             return mockCheckpointManager;
-        } as any);
+        });
         spies.push(checkpointSpy);
 
         // @ts-expect-error - Mocking constructor
-        const inboxSpy = spyOn(inboxModule, 'InboxManager').mockImplementation(function() {
+        const inboxSpy = spyOn(inboxModule, 'InboxManager').mockImplementation(() => {
             return mockInboxManager;
-        } as any);
+        });
         spies.push(inboxSpy);
 
         // @ts-expect-error - Mocking constructor
@@ -138,21 +146,21 @@ describe('createDiscordInfrastructure', () => {
         const inboxModule = await import('@/integrations/discord/inbox');
         const stateModule = await import('@/integrations/discord/state');
 
-        const clientSpy = spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as any);
+        const clientSpy = spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as unknown as Client);
         spies.push(clientSpy);
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({}) as any));
-        spies.push(spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as any));
-        spies.push(spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as any));
-        spies.push(spyOn(searchModule, 'createMessageSearchService').mockReturnValue({} as any));
+        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({})));
+        spies.push(spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as MessageFetcher));
+        spies.push(spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as MessageSummarizer));
+        spies.push(spyOn(searchModule, 'createMessageSearchService').mockReturnValue({} as unknown as MessageSearchService));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any)));
+        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({})));
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
 
@@ -175,23 +183,23 @@ describe('createDiscordInfrastructure', () => {
         const inboxModule = await import('@/integrations/discord/inbox');
         const stateModule = await import('@/integrations/discord/state');
 
-        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as any));
+        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as unknown as Client));
         // @ts-expect-error - Mocking constructor
-        const backendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(function() {
+        const backendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => {
             return {};
-        } as any);
+        });
         spies.push(backendSpy);
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({}) as any));
-        spies.push(spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as any));
-        spies.push(spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as any));
-        spies.push(spyOn(searchModule, 'createMessageSearchService').mockReturnValue({} as any));
+        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({})));
+        spies.push(spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as MessageFetcher));
+        spies.push(spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as MessageSummarizer));
+        spies.push(spyOn(searchModule, 'createMessageSearchService').mockReturnValue({} as unknown as MessageSearchService));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any)));
+        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({})));
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
 
@@ -214,26 +222,26 @@ describe('createDiscordInfrastructure', () => {
         const inboxModule = await import('@/integrations/discord/inbox');
         const stateModule = await import('@/integrations/discord/state');
 
-        const mockDiscordClient = {} as any;
-        const mockBackend = {} as any;
+        const mockDiscordClient = {} as unknown as Client;
+        const mockBackend = {};
 
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockDiscordClient));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => mockBackend as any));
+        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => mockBackend));
         // @ts-expect-error - Mocking constructor
-        const managerSpy = spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(function() {
+        const managerSpy = spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => {
             return {};
-        } as any);
+        });
         spies.push(managerSpy);
-        spies.push(spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as any));
-        spies.push(spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as any));
-        spies.push(spyOn(searchModule, 'createMessageSearchService').mockReturnValue({} as any));
+        spies.push(spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as MessageFetcher));
+        spies.push(spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as MessageSummarizer));
+        spies.push(spyOn(searchModule, 'createMessageSearchService').mockReturnValue({} as unknown as MessageSearchService));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any)));
+        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({})));
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
 
@@ -260,27 +268,27 @@ describe('createDiscordInfrastructure', () => {
         const inboxModule = await import('@/integrations/discord/inbox');
         const stateModule = await import('@/integrations/discord/state');
 
-        const mockDiscordClient = {} as any;
-        const mockFetcher = {} as any;
-        const mockSummarizer = {} as any;
+        const mockDiscordClient = {} as unknown as Client;
+        const mockFetcher = {} as unknown as MessageFetcher;
+        const mockSummarizer = {} as unknown as MessageSummarizer;
 
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockDiscordClient));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({})));
         const fetcherSpy = spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue(mockFetcher);
         spies.push(fetcherSpy);
         const summarizerSpy = spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue(mockSummarizer);
         spies.push(summarizerSpy);
-        const searchSpy = spyOn(searchModule, 'createMessageSearchService').mockReturnValue({} as any);
+        const searchSpy = spyOn(searchModule, 'createMessageSearchService').mockReturnValue({} as unknown as MessageSearchService);
         spies.push(searchSpy);
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any)));
+        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({})));
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
 
@@ -308,23 +316,23 @@ describe('createDiscordInfrastructure', () => {
         const inboxModule = await import('@/integrations/discord/inbox');
         const stateModule = await import('@/integrations/discord/state');
 
-        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as any));
+        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as unknown as Client));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({}) as any));
-        spies.push(spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as any));
-        spies.push(spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as any));
-        spies.push(spyOn(searchModule, 'createMessageSearchService').mockReturnValue({} as any));
+        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({})));
+        spies.push(spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as MessageFetcher));
+        spies.push(spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as MessageSummarizer));
+        spies.push(spyOn(searchModule, 'createMessageSearchService').mockReturnValue({} as unknown as MessageSearchService));
         // @ts-expect-error - Mocking constructor
-        const checkpointSpy = spyOn(inboxModule, 'CheckpointManager').mockImplementation(function() {
+        const checkpointSpy = spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => {
             return {};
-        } as any);
+        });
         spies.push(checkpointSpy);
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any)));
+        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({})));
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
 
@@ -347,27 +355,27 @@ describe('createDiscordInfrastructure', () => {
         const inboxModule = await import('@/integrations/discord/inbox');
         const stateModule = await import('@/integrations/discord/state');
 
-        const mockCheckpointManager = {} as any;
-        const mockSearchService = {} as any;
-        const mockRegistry = {} as any;
+        const mockCheckpointManager = {};
+        const mockSearchService = {} as unknown as MessageSearchService;
+        const mockRegistry = {} as unknown as ChannelRegistryManager;
 
-        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as any));
+        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as unknown as Client));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => mockRegistry as any));
-        spies.push(spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as any));
-        spies.push(spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as any));
+        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => mockRegistry));
+        spies.push(spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as MessageFetcher));
+        spies.push(spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as MessageSummarizer));
         spies.push(spyOn(searchModule, 'createMessageSearchService').mockReturnValue(mockSearchService));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => mockCheckpointManager as any));
+        spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => mockCheckpointManager));
         // @ts-expect-error - Mocking constructor
-        const inboxSpy = spyOn(inboxModule, 'InboxManager').mockImplementation(function() {
+        const inboxSpy = spyOn(inboxModule, 'InboxManager').mockImplementation(() => {
             return {};
-        } as any);
+        });
         spies.push(inboxSpy);
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any)));
+        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({})));
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
 
@@ -395,20 +403,20 @@ describe('createDiscordInfrastructure', () => {
         const inboxModule = await import('@/integrations/discord/inbox');
         const stateModule = await import('@/integrations/discord/state');
 
-        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as any));
+        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as unknown as Client));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({}) as any));
-        spies.push(spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as any));
-        spies.push(spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as any));
-        spies.push(spyOn(searchModule, 'createMessageSearchService').mockReturnValue({} as any));
+        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({})));
+        spies.push(spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as MessageFetcher));
+        spies.push(spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as MessageSummarizer));
+        spies.push(spyOn(searchModule, 'createMessageSearchService').mockReturnValue({} as unknown as MessageSearchService));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        const stateSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any));
+        const stateSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}));
         spies.push(stateSpy);
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
@@ -451,7 +459,7 @@ describe('createDiscordInfrastructure', () => {
 
         const testError = new Error('Backend creation failed');
 
-        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as any));
+        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as unknown as Client));
         // @ts-expect-error - Mocking constructor that throws
         const backendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => {
             throw testError;
@@ -477,20 +485,20 @@ describe('createDiscordInfrastructure', () => {
         const inboxModule = await import('@/integrations/discord/inbox');
         const stateModule = await import('@/integrations/discord/state');
 
-        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as any));
+        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as unknown as Client));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({}) as any));
-        spies.push(spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as any));
-        spies.push(spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as any));
-        spies.push(spyOn(searchModule, 'createMessageSearchService').mockReturnValue({} as any));
+        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({})));
+        spies.push(spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as MessageFetcher));
+        spies.push(spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as MessageSummarizer));
+        spies.push(spyOn(searchModule, 'createMessageSearchService').mockReturnValue({} as unknown as MessageSearchService));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        const stateSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any));
+        const stateSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}));
         spies.push(stateSpy);
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
@@ -522,25 +530,25 @@ describe('createDiscordInfrastructure', () => {
         const inboxModule = await import('@/integrations/discord/inbox');
         const stateModule = await import('@/integrations/discord/state');
 
-        const mockSearchService = {} as any;
-        const mockRegistry = {} as any;
-        const mockCheckpointManager = {} as any;
+        const mockSearchService = {} as unknown as MessageSearchService;
+        const mockRegistry = {} as unknown as ChannelRegistryManager;
+        const mockCheckpointManager = {};
 
-        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as any));
+        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as unknown as Client));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({}) as any));
+        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({})));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => mockRegistry as any));
-        spies.push(spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as any));
-        spies.push(spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as any));
+        spies.push(spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => mockRegistry));
+        spies.push(spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as MessageFetcher));
+        spies.push(spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as MessageSummarizer));
         spies.push(spyOn(searchModule, 'createMessageSearchService').mockReturnValue(mockSearchService));
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => mockCheckpointManager as any));
+        spies.push(spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => mockCheckpointManager));
         // @ts-expect-error - Mocking constructor
-        const inboxSpy = spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}) as any);
+        const inboxSpy = spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}));
         spies.push(inboxSpy);
         // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as any)));
+        spies.push(spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({})));
 
         const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
 

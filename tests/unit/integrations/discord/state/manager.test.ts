@@ -3,7 +3,6 @@
  * Following TDD: these tests are written first and will fail until the implementation is complete.
  */
 
-/* eslint-disable @typescript-eslint/no-empty-function, lodash/prefer-noop -- test mocks use empty functions to avoid unbound-method errors */
 import { describe, it, expect, beforeEach } from 'bun:test';
 import _ from 'lodash';
 import { BotStateManagerImpl, type BotStateManager, type BotStateManagerDeps } from '@/integrations/discord/state/manager';
@@ -242,12 +241,9 @@ describe('BotStateManager', () => {
 
             it('should log warning when not in catching_up mode', () => {
                 const warnCalls: unknown[][] = [];
-                /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Test spy needs to capture calls */
                 mockLogger.warn = ((...args: unknown[]) => {
                     warnCalls.push(args);
-                    return mockLogger;
-                }) as any;
-                /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Re-enable rules after spy setup */
+                }) as BotStateManagerDeps['logger']['warn'];
 
                 manager.markChannelViewed(testChannelId);
 

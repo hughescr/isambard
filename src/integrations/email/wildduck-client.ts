@@ -866,7 +866,22 @@ export class WildDuckClient {
         return this.mapFullMessage(response);
     }
 
-    // eslint-disable-next-line complexity -- header/field mapping is inherently complex due to 6 optional headers
+    /**
+     * Map raw header record and replyTo into a typed EmailHeaders object.
+     */
+    // Stryker disable StringLiteral: header field name strings are RFC config
+    private mapHeaders(hdrs: Record<string, string>, replyTo: { address: string, name?: string } | undefined): EmailHeaders {
+        return {
+            ...(hdrs['message-id']             ? { messageId: hdrs['message-id'] }                         : {}),
+            ...(hdrs['in-reply-to']            ? { inReplyTo: hdrs['in-reply-to'] }                        : {}),
+            ...(replyTo?.address               ? { replyTo: replyTo.address }                               : {}),
+            ...(hdrs['authentication-results'] ? { authenticationResults: hdrs['authentication-results'] } : {}),
+            ...(hdrs['x-rspamd-report']        ? { xRspamdReport: hdrs['x-rspamd-report'] }                : {}),
+            ...(hdrs['x-rspamd-score']         ? { xRspamdScore: hdrs['x-rspamd-score'] }                  : {}),
+        };
+    }
+    // Stryker restore StringLiteral
+
     private mapFullMessage(response: FullMessageResponse): WildDuckEmailMetadata {
         const maxBodySizeBytes = this.options.maxBodySizeBytes ?? 50_000;
 
@@ -892,17 +907,7 @@ export class WildDuckClient {
         const cc   = _.map(response.cc ?? [], mapAddress);
 
         // Map headers
-        const hdrs          = response.headers ?? {};
-        const headers: EmailHeaders = {
-            // Stryker disable StringLiteral: header field name strings are RFC config
-            ...(hdrs['message-id']             ? { messageId: hdrs['message-id'] }                         : {}),
-            ...(hdrs['in-reply-to']            ? { inReplyTo: hdrs['in-reply-to'] }                        : {}),
-            ...(response.replyTo?.address      ? { replyTo: response.replyTo.address }                     : {}),
-            ...(hdrs['authentication-results'] ? { authenticationResults: hdrs['authentication-results'] } : {}),
-            ...(hdrs['x-rspamd-report']        ? { xRspamdReport: hdrs['x-rspamd-report'] }                : {}),
-            ...(hdrs['x-rspamd-score']         ? { xRspamdScore: hdrs['x-rspamd-score'] }                  : {}),
-            // Stryker restore StringLiteral
-        };
+        const headers = this.mapHeaders(response.headers ?? {}, response.replyTo);
 
         // Map attachment metadata for lazy fetching (data not fetched here)
         const attachmentMeta: WildDuckAttachmentMeta[] = _.map(response.attachments ?? [], att => ({
@@ -915,7 +920,7 @@ export class WildDuckClient {
         return {
             uid:            response.id,
             // Stryker disable next-line StringLiteral: empty string fallback for missing messageId
-            messageId:      response.messageId ?? hdrs['message-id'] ?? '',
+            messageId:      response.messageId ?? response.headers?.['message-id'] ?? '',
             from,
             to,
             cc,

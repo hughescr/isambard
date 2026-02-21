@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test assertions with expect matchers */
 /**
  * Tests for task directory copier
  *
@@ -456,7 +455,6 @@ describe('copyTaskDirectory with cleanup processor', () => {
 
     test('should handle non-Error exceptions from cleanup processor', async () => {
         const mockProcessor: TaskCleanupProcessor = {
-            // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing error handling
             processTaskDirectory: mock(async () => { throw 'String error from processor'; }),
         };
 

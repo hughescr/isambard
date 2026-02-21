@@ -1,8 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks */
-
 /**
  * Stream Event Handler Test Suite
  *
@@ -24,17 +19,30 @@ import type { StreamEventHandlerDeps } from '../../../../../src/integrations/dis
 import type { PresenceManager } from '../../../../../src/integrations/discord/presence/manager.js';
 import type { DynamicStatusGenerator } from '../../../../../src/integrations/discord/presence/status-generator-dynamic.js';
 import type { AgentStreamEvent } from '../../../../../src/agent/types.js';
+import type { BotStateManager } from '../../../../../src/integrations/discord/state/index.js';
+import type { SynopsisContext } from '../../../../../src/integrations/discord/presence/types.js';
 
 // Helper to wait for async promises to settle
 const flushPromises = (): Promise<void> => new Promise((resolve) => {
     queueMicrotask(resolve);
 });
 
+// Typed mock shape for BotStateManager that exposes mock methods
+type MockFn = ReturnType<typeof mock>;
+interface MockedBotStateManager {
+    shouldUpdatePresence: MockFn
+    updateActivityPhase:  MockFn
+    clearActivityPhase:   MockFn
+    recordPresenceUpdate: MockFn
+    getMode:              MockFn
+    goIdle:               MockFn
+}
+
 describe('StreamEventHandler', () => {
     let mockPresenceManager: PresenceManager;
     let mockDynamicStatusGenerator: DynamicStatusGenerator;
-    let mockLogger: any;
-    let mockBotStateManager: any;
+    let mockLogger: StreamEventHandlerDeps['logger'];
+    let mockBotStateManager: MockedBotStateManager;
     let baseDeps: StreamEventHandlerDeps;
 
     beforeEach(() => {
@@ -42,12 +50,10 @@ describe('StreamEventHandler', () => {
             updatePhase: mock(async () => undefined),
             start:       mock(constant(undefined)),
             stop:        mock(constant(undefined)),
-        } as any;
+        } as unknown as PresenceManager;
 
         mockDynamicStatusGenerator = {
-            // eslint-disable-next-line lodash/prefer-constant -- Async function
             generateSynopsis:        mock(async () => 'Generated synopsis'),
-            // eslint-disable-next-line lodash/prefer-constant -- Async function
             generateCatchUpSynopsis: mock(async () => 'Catch-up status'),
         };
 
@@ -71,19 +77,19 @@ describe('StreamEventHandler', () => {
             userMessage:            'Test message',
             messageId:              'msg-123',
             thinkingSynopsis:       'Pre-generated thinking synopsis',
-            botStateManager:        mockBotStateManager,
+            botStateManager:        mockBotStateManager as unknown as BotStateManager,
         };
     });
 
     describe('Mutant 2643 - Type guard for thinking blocks', () => {
         it('should NOT accumulate thinking content from non-thinking blocks (type: "text")', async () => {
-            const capturedContexts: any[] = [];
+            const capturedContexts: SynopsisContext[] = [];
             mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
                 capturedContexts.push(ctx);
                 return 'Test status';
             });
 
-            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager });
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Send assistant event with text block (NOT thinking)
             onStreamEvent({
@@ -105,13 +111,13 @@ describe('StreamEventHandler', () => {
         });
 
         it('should accumulate thinking content ONLY from blocks with type: "thinking" AND non-empty thinking property', async () => {
-            const capturedContexts: any[] = [];
+            const capturedContexts: SynopsisContext[] = [];
             mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
                 capturedContexts.push(ctx);
                 return 'Test status';
             });
 
-            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager });
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Send assistant event with thinking blocks
             onStreamEvent({
@@ -348,7 +354,6 @@ describe('StreamEventHandler', () => {
     describe('Null synopsis handling', () => {
         it('should NOT update phase when generateSynopsis returns null', async () => {
             // Configure generateSynopsis to return null (simulating in-flight/failed Haiku call)
-            // eslint-disable-next-line lodash/prefer-constant -- Async function
             mockDynamicStatusGenerator.generateSynopsis = mock(async () => null);
 
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
@@ -366,7 +371,6 @@ describe('StreamEventHandler', () => {
 
         it('should NOT update thinking phase when generateSynopsis returns null', async () => {
             // Configure generateSynopsis to return null
-            // eslint-disable-next-line lodash/prefer-constant -- Async function
             mockDynamicStatusGenerator.generateSynopsis = mock(async () => null);
 
             const { onStreamEvent } = createStreamEventHandler(baseDeps);
@@ -431,13 +435,13 @@ describe('StreamEventHandler', () => {
 
     describe('Tool input storage and redaction', () => {
         it('should store redacted tool inputs from tool_use blocks', async () => {
-            const capturedContexts: any[] = [];
+            const capturedContexts: SynopsisContext[] = [];
             mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
                 capturedContexts.push(ctx);
                 return 'Test status';
             });
 
-            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager });
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Send assistant event with tool_use containing sensitive data
             onStreamEvent({
@@ -464,8 +468,8 @@ describe('StreamEventHandler', () => {
             // Verify toolInput was stored and redacted
             const toolContext = find(capturedContexts, { phase: 'using_tool' });
             expect(toolContext?.toolInput).toBeDefined();
-            expect(toolContext?.toolInput.url).toBe('https://example.com');
-            expect(toolContext?.toolInput.apiKey).toBe('[REDACTED]');
+            expect((toolContext?.toolInput as Record<string, string>).url).toBe('https://example.com');
+            expect((toolContext?.toolInput as Record<string, string>).apiKey).toBe('[REDACTED]');
         });
     });
 
@@ -513,13 +517,13 @@ describe('StreamEventHandler', () => {
 
     describe('Accumulated state management', () => {
         it('should accumulate response text with 200-char limit', async () => {
-            const capturedContexts: any[] = [];
+            const capturedContexts: SynopsisContext[] = [];
             mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
                 capturedContexts.push(ctx);
                 return 'Test status';
             });
 
-            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager });
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Send multiple text chunks exceeding 200 chars
             const longText1 = repeat('X', 150);
@@ -534,19 +538,19 @@ describe('StreamEventHandler', () => {
 
             const toolContext = find(capturedContexts, { phase: 'using_tool' });
             expect(toolContext?.accumulatedText).toBeDefined();
-            expect(toolContext?.accumulatedText.length).toBe(200);
+            expect(toolContext!.accumulatedText!.length).toBe(200);
             // Should end with most recent text
-            expect(endsWith(toolContext?.accumulatedText as string, repeat('Y', 60))).toBe(true);
+            expect(endsWith(toolContext!.accumulatedText, repeat('Y', 60))).toBe(true);
         });
 
         it('should track recent tool calls with MAX_RECENT_TOOLS limit', async () => {
-            const capturedContexts: any[] = [];
+            const capturedContexts: SynopsisContext[] = [];
             mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
                 capturedContexts.push(ctx);
                 return 'Test status';
             });
 
-            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager });
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Send 5 tool calls (exceeds MAX_RECENT_TOOLS of 3)
             onStreamEvent({ type: 'tool_progress', tool_name: 'Tool1' } as AgentStreamEvent);
@@ -574,7 +578,6 @@ describe('StreamEventHandler', () => {
                 generateSynopsis: mock(() => new Promise<string>((resolve) => {
                     synopsisResolve = resolve;
                 })),
-                // eslint-disable-next-line lodash/prefer-constant -- Async function
                 generateCatchUpSynopsis: mock(async () => 'Catch-up status'),
             };
 
@@ -590,7 +593,6 @@ describe('StreamEventHandler', () => {
             onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
 
             // Synopsis should have been requested
-            // eslint-disable-next-line @typescript-eslint/unbound-method -- Test mock method
             expect(controlledGenerator.generateSynopsis).toHaveBeenCalled();
 
             // Complete the handler BEFORE synopsis resolves
@@ -615,7 +617,6 @@ describe('StreamEventHandler', () => {
                 generateSynopsis: mock(() => new Promise<string>((_resolve, reject) => {
                     synopsisReject = reject;
                 })),
-                // eslint-disable-next-line lodash/prefer-constant -- Async function
                 generateCatchUpSynopsis: mock(async () => 'Catch-up status'),
             };
 
@@ -654,7 +655,6 @@ describe('StreamEventHandler', () => {
                 generateSynopsis: mock(() => new Promise<string>((resolve) => {
                     synopsisResolve = resolve;
                 })),
-                // eslint-disable-next-line lodash/prefer-constant -- Async function
                 generateCatchUpSynopsis: mock(async () => 'Catch-up status'),
             };
 
@@ -683,12 +683,11 @@ describe('StreamEventHandler', () => {
             // Step 3: Clear mocks and transition back to thinking — this triggers the
             // inline thinking synopsis async block (because hasThinkingContent is true)
             mockBotStateManager.updateActivityPhase.mockClear();
-            (controlledGenerator.generateSynopsis as any).mockClear();
+            (controlledGenerator.generateSynopsis as ReturnType<typeof mock>).mockClear();
 
             onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
 
             // Synopsis should have been requested for thinking phase
-            // eslint-disable-next-line @typescript-eslint/unbound-method -- Test mock method
             expect(controlledGenerator.generateSynopsis).toHaveBeenCalled();
 
             // Complete the handler BEFORE synopsis resolves
@@ -713,7 +712,6 @@ describe('StreamEventHandler', () => {
                 generateSynopsis: mock(() => new Promise<string>((_resolve, reject) => {
                     synopsisReject = reject;
                 })),
-                // eslint-disable-next-line lodash/prefer-constant -- Async function
                 generateCatchUpSynopsis: mock(async () => 'Catch-up status'),
             };
 

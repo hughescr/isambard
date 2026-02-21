@@ -105,7 +105,6 @@ class MockDynamoDBDocumentClient {
     }
 }
 // Add sinon-compatible properties for aws-sdk-client-mock
-// eslint-disable-next-line @typescript-eslint/unbound-method -- Intentionally modifying prototype
 assign(MockDynamoDBDocumentClient.prototype.send, {
     isSinonProxy: false,
     restore:      undefined,

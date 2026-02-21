@@ -782,8 +782,7 @@ describe('MemoryToolBackendTagIndex', () => {
                 call.args[0].input.RequestItems?.TestTable?.[0]?.DeleteRequest
             );
             expect(deleteRequests).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access,@typescript-eslint/no-explicit-any -- Mock command call structure
-            expect((deleteRequests as any).args[0].input.RequestItems?.TestTable?.[0]?.DeleteRequest?.Key?.PK).toBe('TAG#old');
+            expect((deleteRequests as unknown as { args: [{ input: { RequestItems?: Record<string, { DeleteRequest?: { Key?: Record<string, unknown> } }[]> } }] }).args[0].input.RequestItems?.TestTable?.[0]?.DeleteRequest?.Key?.PK).toBe('TAG#old');
         });
 
         test('should refresh unchanged tags with current data', async () => {
@@ -1026,7 +1025,6 @@ describe('MemoryToolBackendTagIndex', () => {
             const result = await backend.queryByTag('important');
 
             expect(result.nextCursor).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- JSON parse returns any
             const decodedCursor = JSON.parse(Buffer.from(result.nextCursor!, 'base64').toString('utf-8'));
             expect(decodedCursor).toEqual(lastEvaluatedKey);
         });

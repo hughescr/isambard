@@ -1,6 +1,3 @@
-/* eslint-disable lodash/prefer-constant -- arrow functions needed for test mocks */
-/* eslint-disable @typescript-eslint/unbound-method -- test uses mock() with lodash and checks toHaveBeenCalled */
-/* eslint-disable @typescript-eslint/no-empty-function, lodash/prefer-noop -- test mocks use empty functions to avoid unbound-method errors */
 import { describe, test, expect, beforeEach, afterEach, mock, jest, type Mock } from 'bun:test';
 import _ from 'lodash';
 import type { Logger } from '@hughescr/logger';
@@ -654,7 +651,6 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Verify that debug log was called with scheduling info
-            /* eslint-disable @typescript-eslint/no-unsafe-assignment -- checking mock was called */
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     delaySeconds: expect.any(Number),
@@ -662,7 +658,6 @@ describe('PerchScheduler', () => {
                 }),
                 expect.stringContaining('Next perch trigger scheduled')
             );
-            /* eslint-enable @typescript-eslint/no-unsafe-assignment -- end mock assertion check */
 
             scheduler.stop();
         });
@@ -1094,14 +1089,12 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Verify debug log was called with positive delay
-            /* eslint-disable @typescript-eslint/no-unsafe-assignment -- checking mock was called */
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     delaySeconds: expect.any(Number),
                 }),
                 expect.any(String)
             );
-            /* eslint-enable @typescript-eslint/no-unsafe-assignment -- end mock check */
 
             scheduler.stop();
         });

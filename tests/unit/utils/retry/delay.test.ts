@@ -1,4 +1,3 @@
-/* eslint-disable lodash/prefer-constant -- test uses simple arrow functions for clarity */
 import { describe, expect, it, mock } from 'bun:test';
 import { calculateDelay } from '../../../../src/utils/retry/delay';
 import type { RetryPolicy } from '../../../../src/utils/retry/types';

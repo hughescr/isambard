@@ -1,6 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
-
 import { describe, it, expect, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import _ from 'lodash';
 import { constant as _constant, repeat as _repeat } from 'lodash';
@@ -314,7 +311,7 @@ describe('DynamicStatusGenerator', () => {
                 const replaceCalls: string[] = [];
 
                 // Temporarily override _.replace to track what patterns are being replaced
-                ((_ as any).replace) = (str: string, pattern: string, replacement: string) => {
+                (_ as unknown as { replace: (str: string, pattern: string, replacement: string) => string }).replace = (str: string, pattern: string, replacement: string) => {
                     replaceCalls.push(pattern);
                     return originalReplace(str, pattern, replacement);
                 };
@@ -338,7 +335,7 @@ describe('DynamicStatusGenerator', () => {
                     expect(replaceCalls).not.toContain('{responseFragment}');
                 } finally {
                     // Restore original _.replace
-                    ((_ as any).replace) = originalReplace;
+                    (_ as unknown as { replace: typeof _.replace }).replace = originalReplace;
                 }
             });
 
@@ -348,7 +345,7 @@ describe('DynamicStatusGenerator', () => {
                 const replaceCalls: string[] = [];
 
                 // Temporarily override _.replace to track what patterns are being replaced
-                ((_ as any).replace) = (str: string, pattern: string, replacement: string) => {
+                (_ as unknown as { replace: (str: string, pattern: string, replacement: string) => string }).replace = (str: string, pattern: string, replacement: string) => {
                     replaceCalls.push(pattern);
                     return originalReplace(str, pattern, replacement);
                 };
@@ -375,7 +372,7 @@ describe('DynamicStatusGenerator', () => {
                     expect(replaceCalls).not.toContain('{responseFragment}');
                 } finally {
                     // Restore original _.replace
-                    ((_ as any).replace) = originalReplace;
+                    (_ as unknown as { replace: typeof _.replace }).replace = originalReplace;
                 }
             });
 
@@ -385,7 +382,7 @@ describe('DynamicStatusGenerator', () => {
                 const replaceCalls: string[] = [];
 
                 // Temporarily override _.replace to track what patterns are being replaced
-                ((_ as any).replace) = (str: string, pattern: string, replacement: string) => {
+                (_ as unknown as { replace: (str: string, pattern: string, replacement: string) => string }).replace = (str: string, pattern: string, replacement: string) => {
                     replaceCalls.push(pattern);
                     return originalReplace(str, pattern, replacement);
                 };
@@ -413,7 +410,7 @@ describe('DynamicStatusGenerator', () => {
                     expect(replaceCalls).not.toContain('{accumulatedText}');
                 } finally {
                     // Restore original _.replace
-                    ((_ as any).replace) = originalReplace;
+                    (_ as unknown as { replace: typeof _.replace }).replace = originalReplace;
                 }
             });
 

@@ -40,8 +40,7 @@ export class ReviewHandler {
             return;
         }
 
-        // eslint-disable-next-line lodash/prefer-lodash-method -- simple string split doesn't need lodash
-        const parts = interaction.customId.split(':');
+        const parts = _.split(interaction.customId, ':');
         const prefix    = parts[0];
         const uidStr    = parts[1];
         const folderStr = parts[2];

@@ -987,8 +987,7 @@ function cleanupSessionIfComplete(
     capturedSessionId: string | undefined
 ): void {
     if(!wasInterrupted && capturedSessionId) {
-        // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Fire-and-forget cleanup
-        cleanupSession(capturedSessionId);
+        void cleanupSession(capturedSessionId);
     }
 }
 

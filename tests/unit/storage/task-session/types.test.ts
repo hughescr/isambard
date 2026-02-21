@@ -51,8 +51,7 @@ describe('createSessionId', () => {
         const validUuid = '550e8400-e29b-41d4-a716-446655440000';
         const result = createSessionId(validUuid);
         // TypeScript ensures branded type is correct at compile time
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument -- Testing branded type matches input string
-        expect(result).toBe(validUuid as any);
+        expect(result as string).toBe(validUuid);
     });
 
     test('should throw error for invalid UUID', () => {

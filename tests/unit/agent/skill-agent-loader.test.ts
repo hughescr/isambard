@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test assertions with expect matchers */
 /**
  * Tests for skill-agent loader
  *

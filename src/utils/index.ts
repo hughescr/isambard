@@ -26,3 +26,5 @@ export {
     truncateToWordBoundary,
     HARD_MAX_STATUS_LENGTH
 } from './text.js';
+
+export { safeAsyncHandler } from './safe-async-handler';

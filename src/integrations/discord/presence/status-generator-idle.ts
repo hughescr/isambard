@@ -29,12 +29,9 @@ export interface IdleStatusGenerator {
 export interface IdleStatusGeneratorDeps {
     /** Logger instance for structured logging */
     logger: {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
-        debug: (message: any, ...args: any[]) => void
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
-        info:  (message: any, ...args: any[]) => void
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
-        error: (message: any, ...args: any[]) => void
+        debug: (message: unknown, ...args: unknown[]) => void
+        info:  (message: unknown, ...args: unknown[]) => void
+        error: (message: unknown, ...args: unknown[]) => void
     }
     /** Discord activity type (e.g., ActivityType.Custom) */
     activityType:            ActivityType

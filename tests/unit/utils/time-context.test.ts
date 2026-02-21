@@ -220,8 +220,7 @@ describe('resolveTimezone', () => {
 
         try {
             // Mock Intl.DateTimeFormat to throw when resolvedOptions() is called
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Mocking global Intl for test
-            (Intl as any).DateTimeFormat = class {
+            (Intl as unknown as { DateTimeFormat: unknown }).DateTimeFormat = class {
                 resolvedOptions(): never {
                     throw new Error('DateTimeFormat not supported');
                 }

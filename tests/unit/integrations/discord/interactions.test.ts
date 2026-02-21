@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- test mocks don't preserve 'this' binding */
 import { constant as _constant } from 'lodash';
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { createInteractionHandler } from '@/integrations/discord/interactions';

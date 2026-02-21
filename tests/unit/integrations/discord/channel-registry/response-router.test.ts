@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Test mocks require accessing methods */
-
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import _ from 'lodash';
 import { ResponseRouter } from '../../../../../src/integrations/discord/channel-registry/response-router';

@@ -1,7 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment -- test mock values */
-/* eslint-disable @typescript-eslint/no-empty-function -- test mocks */
-/* eslint-disable lodash/prefer-noop -- test clarity */
-/* eslint-disable require-yield -- testing generators that throw before yield */
 import _ from 'lodash';
 import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
 import { retryAsyncGenerator } from '../../../../src/utils/retry/retry-async-generator';

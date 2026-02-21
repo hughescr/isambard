@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Test assertions on mock methods */
 import _ from 'lodash';
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { mockLogger } from '../../../setup';
@@ -423,7 +422,6 @@ describe('EmailProcessor', () => {
                 wildDuckClient: conn,
             });
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
             await expect(processor.processEmail(makeEmail())).rejects.toBeInstanceOf(EmailProcessingError);
         });
 
@@ -441,7 +439,6 @@ describe('EmailProcessor', () => {
                 wildDuckClient: conn,
             });
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
             await expect(processor.processEmail(makeEmail())).rejects.toBeInstanceOf(EmailProcessingError);
         });
 
@@ -458,7 +455,6 @@ describe('EmailProcessor', () => {
                 wildDuckClient: conn,
             });
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
             await expect(processor.processEmail(makeEmail())).rejects.toBeInstanceOf(EmailProcessingError);
         });
     });

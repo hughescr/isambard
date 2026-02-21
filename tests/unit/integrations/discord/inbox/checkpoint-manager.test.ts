@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { CheckpointManager } from '@/integrations/discord/inbox/checkpoint-manager';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
@@ -139,8 +138,7 @@ describe.concurrent('CheckpointManager', () => {
             expect(mockBackend.create).toHaveBeenCalledTimes(1);
             expect(mockBackend.update).not.toHaveBeenCalled();
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Accessing mock internals
-            const createCall = (mockBackend.create as any).mock.calls[0][0] as { path: string, content: string, contentType: string };
+            const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0][0] as { path: string, content: string, contentType: string };
             expect(createCall.path).toBe('/state/services/discord/channels/123456789/checkpoint');
             expect(createCall.content).toBe(JSON.stringify(checkpoint));
             expect(createCall.contentType).toBe('application/json');
@@ -178,8 +176,7 @@ describe.concurrent('CheckpointManager', () => {
             expect(mockBackend.update).toHaveBeenCalledTimes(1);
             expect(mockBackend.create).not.toHaveBeenCalled();
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Accessing mock internals
-            const updateCall = (mockBackend.update as any).mock.calls[0] as [string, { content: string }];
+            const updateCall = (mockBackend.update as ReturnType<typeof mock>).mock.calls[0] as [string, { content: string }];
             expect(updateCall[0]).toBe('/state/services/discord/channels/123456789/checkpoint');
             expect(updateCall[1].content).toBe(JSON.stringify(updatedCheckpoint));
         });
@@ -198,8 +195,7 @@ describe.concurrent('CheckpointManager', () => {
             await manager.save(checkpoint);
 
             expect(mockBackend.create).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Accessing mock internals
-            const createCall = (mockBackend.create as any).mock.calls[0][0] as { content: string };
+            const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0][0] as { content: string };
             const savedContent = JSON.parse(createCall.content) as { lastSeenMessageId?: string };
             expect(savedContent.lastSeenMessageId).toBeUndefined();
         });

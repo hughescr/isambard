@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Tests use mock() with method references */
-/* eslint-disable @typescript-eslint/no-empty-function, lodash/prefer-noop -- test mocks use empty functions to avoid unbound-method errors */
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import _ from 'lodash';
 import type { Logger } from '@hughescr/logger';
@@ -2810,5 +2808,3 @@ describe('PerchSessionRunner - Wrap-Up Timeout', () => {
         );
     });
 });
-
-/* eslint-enable @typescript-eslint/unbound-method -- End of tests using mock method references */

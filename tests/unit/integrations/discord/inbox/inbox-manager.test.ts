@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { CheckpointManager } from '@/integrations/discord/inbox/checkpoint-manager';
@@ -249,8 +248,7 @@ describe('InboxManager', () => {
             await managerWithChannel.loadUnread();
 
             expect(mockMessageSearchService.searchMessages).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Accessing mock internals
-            const call = (mockMessageSearchService.searchMessages as any).mock.calls[0][0] as { startTime: Date, limit: number };
+            const call = (mockMessageSearchService.searchMessages as ReturnType<typeof mock>).mock.calls[0][0] as { startTime: Date, limit: number };
 
             // Check that startTime is not 30 days ago, but limited to maxCatchUpAgeDays (7 days)
             // With fake timers, this is deterministic
@@ -288,8 +286,7 @@ describe('InboxManager', () => {
 
             await managerWithChannel.loadUnread();
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Accessing mock internals
-            const call = (mockMessageSearchService.searchMessages as any).mock.calls[0][0] as { limit: number };
+            const call = (mockMessageSearchService.searchMessages as ReturnType<typeof mock>).mock.calls[0][0] as { limit: number };
             expect(call.limit).toBe(100); // Default maxCatchUpMessages
         });
 
@@ -563,16 +560,13 @@ describe('InboxManager', () => {
 
             // Verify the summary log message contains correct counts
             // Look for the log call with successCount and failCount
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock call array access
-            const infoCalls = mockLogger.info.mock.calls as any[][];
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Mock call argument access
-            const summaryLogCall = _.find(infoCalls, (call: any) => call[0] && _.isObject(call[0]) && call[0] !== null && 'successCount' in call[0] && 'failCount' in call[0]);
+            const infoCalls = (mockLogger.info as ReturnType<typeof mock>).mock.calls as unknown[][];
+            const summaryLogCall = _.find(infoCalls, (call: unknown[]) => _.isObject(call[0]) && 'successCount' in call[0] && 'failCount' in call[0]);
 
             expect(summaryLogCall).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Mock call argument access
-            expect((summaryLogCall as any)?.[0].successCount).toBe(1);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Mock call argument access
-            expect((summaryLogCall as any)?.[0].failCount).toBe(1);
+            const summaryArg = summaryLogCall![0] as Record<string, unknown>;
+            expect(summaryArg.successCount).toBe(1);
+            expect(summaryArg.failCount).toBe(1);
         });
 
         test('should handle empty message results', async () => {

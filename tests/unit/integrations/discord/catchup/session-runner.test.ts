@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Tests require direct method references */
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { createCatchUpSessionRunner } from '@/integrations/discord/catchup/session-runner';
 import type {

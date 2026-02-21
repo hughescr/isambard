@@ -1,7 +1,8 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- Test mocks */
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mockLogger } from '../../setup';
 import type { MemoryToolBackend } from '@/storage/memory-tool';
+import type { ContextBuilder } from '@/agent/context-builder';
+import type { EventDeltaTracker } from '@/agent/event-delta-tracker';
 
 describe('createContextLayer', () => {
     let spies: ReturnType<typeof spyOn>[];
@@ -29,14 +30,15 @@ describe('createContextLayer', () => {
     test('should return ContextLayer with contextBuilder and eventDeltaTracker', async () => {
         // Mock createContextBuilder
         const contextBuilderModule = await import('@/agent/context-builder');
-        const mockContextBuilder = {} as any;
+        const mockContextBuilder = {} as unknown as ContextBuilder;
         const createContextBuilderSpy = spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue(mockContextBuilder);
         spies.push(createContextBuilderSpy);
 
         // Mock EventDeltaTracker constructor
         const eventDeltaTrackerModule = await import('@/agent/event-delta-tracker');
-        const mockEventDeltaTracker = {} as any;
-        const EventDeltaTrackerSpy = spyOn(eventDeltaTrackerModule as any, 'EventDeltaTracker').mockImplementation(((): any => mockEventDeltaTracker) as any);
+        const mockEventDeltaTracker = {} as unknown as EventDeltaTracker;
+        // @ts-expect-error - Mocking class constructor
+        const EventDeltaTrackerSpy = spyOn(eventDeltaTrackerModule, 'EventDeltaTracker').mockImplementation((() => mockEventDeltaTracker) as unknown as typeof eventDeltaTrackerModule.EventDeltaTracker);
         spies.push(EventDeltaTrackerSpy);
 
         // Import and call createContextLayer
@@ -53,13 +55,13 @@ describe('createContextLayer', () => {
     test('should pass memoryBackend and summarizeEventBatches to createContextBuilder', async () => {
         // Mock createContextBuilder
         const contextBuilderModule = await import('@/agent/context-builder');
-        const createContextBuilderSpy = spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue({} as any);
+        const createContextBuilderSpy = spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue({} as unknown as ContextBuilder);
         spies.push(createContextBuilderSpy);
 
         // Mock EventDeltaTracker constructor
         const eventDeltaTrackerModule = await import('@/agent/event-delta-tracker');
-
-        spies.push(spyOn(eventDeltaTrackerModule as any, 'EventDeltaTracker').mockImplementation(((): any => ({})) as any));
+        // @ts-expect-error - Mocking class constructor
+        spies.push(spyOn(eventDeltaTrackerModule, 'EventDeltaTracker').mockImplementation((() => ({})) as unknown as typeof eventDeltaTrackerModule.EventDeltaTracker));
 
         // Import summarizeEventBatches
         const eventSummarizerModule = await import('@/agent/event-summarizer');
@@ -76,13 +78,13 @@ describe('createContextLayer', () => {
     test('should pass contextBuilder to EventDeltaTracker', async () => {
         // Mock createContextBuilder
         const contextBuilderModule = await import('@/agent/context-builder');
-        const mockContextBuilder = {} as any;
+        const mockContextBuilder = {} as unknown as ContextBuilder;
         spies.push(spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue(mockContextBuilder));
 
         // Mock EventDeltaTracker constructor
         const eventDeltaTrackerModule = await import('@/agent/event-delta-tracker');
-
-        const EventDeltaTrackerSpy = spyOn(eventDeltaTrackerModule as any, 'EventDeltaTracker').mockImplementation(((): any => ({})) as any);
+        // @ts-expect-error - Mocking class constructor
+        const EventDeltaTrackerSpy = spyOn(eventDeltaTrackerModule, 'EventDeltaTracker').mockImplementation((() => ({})) as unknown as typeof eventDeltaTrackerModule.EventDeltaTracker);
         spies.push(EventDeltaTrackerSpy);
 
         // Import and call createContextLayer
@@ -109,11 +111,12 @@ describe('createContextLayer', () => {
     test('should throw when EventDeltaTracker constructor throws', async () => {
         // Mock createContextBuilder to succeed
         const contextBuilderModule = await import('@/agent/context-builder');
-        spies.push(spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue({} as any));
+        spies.push(spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue({} as unknown as ContextBuilder));
 
         // Mock EventDeltaTracker constructor to throw
         const eventDeltaTrackerModule = await import('@/agent/event-delta-tracker');
-        const EventDeltaTrackerSpy = spyOn(eventDeltaTrackerModule as any, 'EventDeltaTracker').mockImplementation((): any => {
+        // @ts-expect-error - Mocking class constructor that throws
+        const EventDeltaTrackerSpy = spyOn(eventDeltaTrackerModule, 'EventDeltaTracker').mockImplementation((): EventDeltaTracker => {
             throw new Error('Event delta tracker initialization failed');
         });
         spies.push(EventDeltaTrackerSpy);

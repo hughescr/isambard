@@ -211,12 +211,9 @@ describe.concurrent('loadConfig', () => {
                 expect(errorMessage).toContain('app.port');
 
                 // Should have actual error messages for non-sensitive fields
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Parsing JSON from error message
                 const parsed = JSON.parse(_.replace(errorMessage, 'Config validation failed: ', ''));
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Lodash find needed for partial object matching
                 const portError = _.find(parsed, { path: 'app.port' });
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Testing error message property
                 expect(portError?.message).not.toBe('[REDACTED]');
             }
         });

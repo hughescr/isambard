@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument -- Test mocks require unsafe type operations */
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { generateText, generateTextWithSystemPrompt } from '../../../src/agent/text-generator';
 // Import the shared mocks from setup.ts (already registered via mock.module in preload)
@@ -47,7 +46,7 @@ describe('generateText', () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  '  Hello, world!  ',
-            } as any);
+            });
 
             const result = await generateText('Test prompt');
 
@@ -59,8 +58,7 @@ describe('generateText', () => {
         test('should return empty string when subtype is error_during_execution', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'error_during_execution',
-                errors:  ['Something went wrong'],
-            } as any);
+            } as Awaited<ReturnType<typeof mockUnstableV2Prompt>>);
 
             const result = await generateText('Test prompt');
 
@@ -72,9 +70,8 @@ describe('generateText', () => {
             // An error response shouldn't have .result, but if it does, we still return ''
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'error_during_execution',
-                errors:  ['Something went wrong'],
                 result:  'This text should NOT be returned',
-            } as any);
+            } as Awaited<ReturnType<typeof mockUnstableV2Prompt>>);
 
             const result = await generateText('Test prompt');
 
@@ -89,7 +86,7 @@ describe('generateText', () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  '```status```',
-            } as any);
+            });
 
             const result = await generateText('Test prompt');
 
@@ -106,7 +103,7 @@ describe('generateText', () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  input,
-            } as any);
+            });
 
             const result = await generateText('Test prompt', { stripMarkdown: true });
 
@@ -168,7 +165,7 @@ describe('generateTextWithSystemPrompt', () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  '  Hello, world!  ',
-            } as any);
+            });
 
             const result = await generateTextWithSystemPrompt('System', 'User');
 
@@ -180,8 +177,7 @@ describe('generateTextWithSystemPrompt', () => {
         test('should return empty string when subtype is error_during_execution', async () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'error_during_execution',
-                errors:  ['Something went wrong'],
-            } as any);
+            } as Awaited<ReturnType<typeof mockUnstableV2Prompt>>);
 
             const result = await generateTextWithSystemPrompt('System', 'User');
 
@@ -192,9 +188,8 @@ describe('generateTextWithSystemPrompt', () => {
             // This test kills the mutation: if(result.subtype === 'success') -> if(true)
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'error_during_execution',
-                errors:  ['Something went wrong'],
                 result:  'This text should NOT be returned',
-            } as any);
+            } as Awaited<ReturnType<typeof mockUnstableV2Prompt>>);
 
             const result = await generateTextWithSystemPrompt('System', 'User');
 
@@ -208,7 +203,7 @@ describe('generateTextWithSystemPrompt', () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  '```status```',
-            } as any);
+            });
 
             const result = await generateTextWithSystemPrompt('System', 'User');
 
@@ -225,7 +220,7 @@ describe('generateTextWithSystemPrompt', () => {
             mockUnstableV2Prompt.mockResolvedValue({
                 subtype: 'success',
                 result:  input,
-            } as any);
+            });
 
             const result = await generateTextWithSystemPrompt('System', 'User', { stripMarkdown: true });
 

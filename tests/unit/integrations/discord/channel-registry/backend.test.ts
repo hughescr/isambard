@@ -228,7 +228,6 @@ describe('ChannelRegistryBackend', () => {
             const result = await backend.getChannelsByGuild(guildId);
 
             expect(result).toHaveLength(2);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- expect.arrayContaining requires any[] type
             expect(result).toEqual(expect.arrayContaining([
                 expect.objectContaining({ channelId: channel1.channelId }),
                 expect.objectContaining({ channelId: channel2.channelId }),
@@ -407,7 +406,6 @@ describe('ChannelRegistryBackend', () => {
             const result = await backend.getAllWellKnownChannels();
 
             expect(result).toHaveLength(2);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- expect.arrayContaining requires any[] type
             expect(result).toEqual(expect.arrayContaining([
                 expect.objectContaining({ channelId: generalChannel.channelId }),
                 expect.objectContaining({ channelId: catchUpChannel.channelId }),

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/await-thenable -- Bun-specific APIs */
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { mockLogger, mockGenerateTextWithSystemPrompt } from '../../../setup';
 import { EmailClassifier } from '@/integrations/email/classifier';

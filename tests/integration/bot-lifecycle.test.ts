@@ -1,9 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks */
-/* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-argument -- Test mocks */
-/* eslint-disable lodash/prefer-constant -- Test callbacks */
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import '../setup'; // SST mock is applied via side effects
 import { createApp, type App } from '@/index';
@@ -12,9 +6,10 @@ import * as discordBot from '@/integrations/discord/bot';
 import * as agentAgent from '@/agent/agent';
 import * as contextBuilder from '@/agent/context-builder';
 import * as memoryMcpServer from '@/agent/memory-mcp-server';
+import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
 import * as dynamoClient from '@/storage/client';
 import * as channelRegistryModule from '@/integrations/discord/channel-registry';
-import type { DiscordConfig, DynamoDBConfig, AgentConfig } from '@/config/schemas';
+import type { DiscordConfig, DynamoDBConfig, AgentConfig, Config } from '@/config/schemas';
 import type { DiscordBot } from '@/integrations/discord/bot';
 import type { ClaudeAgent } from '@/agent/agent';
 import type { StreamTracker } from '@/agent/stream-tracker';
@@ -34,8 +29,7 @@ import { createGuildId } from '@/integrations/discord/types';
  * 5. Error conditions are handled appropriately
  */
 describe('Bot Lifecycle Integration', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Spies have different return types
-    const spies: any[] = [];
+    const spies: ReturnType<typeof spyOn>[] = [];
     let mockDiscordConfig: DiscordConfig;
     let mockAgentConfig: AgentConfig;
     let mockDynamoDBConfig: DynamoDBConfig;
@@ -106,13 +100,11 @@ describe('Bot Lifecycle Integration', () => {
             getUnmutedChannels: mock(async () => []),
             getAllChannels:     mock(() => []),
         };
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mocking class constructors
-        const backendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend') as any;
-        backendSpy.mockReturnValue(mockChannelRegistryBackend);
+        // @ts-expect-error - Mocking class constructor
+        const backendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockReturnValue(mockChannelRegistryBackend as unknown as InstanceType<typeof channelRegistryModule.ChannelRegistryBackend>);
         spies.push(backendSpy);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mocking class constructors
-        const managerSpy = spyOn(channelRegistryModule, 'ChannelRegistryManager') as any;
-        managerSpy.mockReturnValue(mockChannelRegistryManager);
+        // @ts-expect-error - Mocking class constructor
+        const managerSpy = spyOn(channelRegistryModule, 'ChannelRegistryManager').mockReturnValue(mockChannelRegistryManager as unknown as InstanceType<typeof channelRegistryModule.ChannelRegistryManager>);
         spies.push(managerSpy);
     });
 
@@ -137,8 +129,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
-            } as any));
+            } as unknown as Config));
             spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
@@ -154,8 +145,7 @@ describe('Bot Lifecycle Integration', () => {
             const loadConfigSpy = spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
-            } as any);
+            } as unknown as Config);
             spies.push(loadConfigSpy);
             spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
@@ -171,8 +161,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
-            } as any));
+            } as unknown as Config));
             spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
@@ -186,8 +175,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
-            } as any));
+            } as unknown as Config));
             spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             const createClaudeAgentSpy = spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent);
             spies.push(createClaudeAgentSpy);
@@ -202,8 +190,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
-            } as any));
+            } as unknown as Config));
             spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
@@ -240,8 +227,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
-            } as any));
+            } as unknown as Config));
             spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             const createDynamoDBClientSpy = spyOn(dynamoClient, 'createDynamoDBClient').mockReturnValue({
                 client:    mockClient,
@@ -249,11 +235,9 @@ describe('Bot Lifecycle Integration', () => {
                 tableName: 'IsambardMemory',
             });
             spies.push(createDynamoDBClientSpy);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock context builder
-            const createContextBuilderSpy = spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder as any);
+            const createContextBuilderSpy = spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder as unknown as ContextBuilder);
             spies.push(createContextBuilderSpy);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock MCP server
-            const createMemoryMCPServerSpy = spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as any);
+            const createMemoryMCPServerSpy = spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as unknown as ReturnType<typeof createMemoryMCPServer>);
             spies.push(createMemoryMCPServerSpy);
             const createClaudeAgentSpy = spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent);
             spies.push(createClaudeAgentSpy);
@@ -279,8 +263,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
-            } as any));
+            } as unknown as Config));
             spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(dynamoClient, 'createDynamoDBClient').mockImplementation(() => {
                 throw new Error('Failed to connect to DynamoDB');
@@ -298,8 +281,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
-            } as any));
+            } as unknown as Config));
             spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
@@ -322,8 +304,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
-            } as any));
+            } as unknown as Config));
             spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockErrorBot));
@@ -339,8 +320,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
-            } as any));
+            } as unknown as Config));
             spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
@@ -356,8 +336,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
-            } as any));
+            } as unknown as Config));
             spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
@@ -379,8 +358,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
-            } as any));
+            } as unknown as Config));
             spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             spies.push(spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent));
             spies.push(spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
@@ -400,8 +378,7 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock config
-            } as any));
+            } as unknown as Config));
             spies.push(spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig));
             const createDynamoDBClientSpy = spyOn(dynamoClient, 'createDynamoDBClient').mockReturnValue({
                 client:    mockClient,
@@ -409,11 +386,9 @@ describe('Bot Lifecycle Integration', () => {
                 tableName: 'IsambardMemory',
             });
             spies.push(createDynamoDBClientSpy);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock context builder
-            const createContextBuilderSpy = spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder as any);
+            const createContextBuilderSpy = spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder as unknown as ContextBuilder);
             spies.push(createContextBuilderSpy);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock MCP server
-            const createMemoryMCPServerSpy = spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as any);
+            const createMemoryMCPServerSpy = spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as unknown as ReturnType<typeof createMemoryMCPServer>);
             spies.push(createMemoryMCPServerSpy);
             const createClaudeAgentSpy = spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent);
             spies.push(createClaudeAgentSpy);

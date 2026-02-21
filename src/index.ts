@@ -17,6 +17,7 @@ import { loadIdentityContext } from './app/identity-loader';
 import { createDiscordBot } from './integrations/discord/bot';
 import type { DiscordBot } from './integrations/discord/bot';
 import { resolveTimezone } from './utils/time';
+import { safeAsyncHandler } from './utils/safe-async-handler';
 import { logger, setTimezone } from '@hughescr/logger';
 import { createCatchUpSignalAdapter } from './app/catchup-signal-adapter';
 import { setupEmail } from './integrations/discord/setup/email-setup';
@@ -235,24 +236,22 @@ if(import.meta.main) {
     await app.start();
 
     // Store handler references so we can remove them on hot reload
-    const sigintHandler = async () => {
+    const sigintHandler = safeAsyncHandler(async () => {
         logger.info('Received SIGINT, shutting down gracefully...');
         await app.stop();
         // eslint-disable-next-line n/no-process-exit -- Graceful shutdown requires exit
         process.exit(0);
-    };
+    }, logger, 'SIGINT handler');
 
-    const sigtermHandler = async () => {
+    const sigtermHandler = safeAsyncHandler(async () => {
         logger.info('Received SIGTERM, shutting down gracefully...');
         await app.stop();
         // eslint-disable-next-line n/no-process-exit -- Graceful shutdown requires exit
         process.exit(0);
-    };
+    }, logger, 'SIGTERM handler');
 
     // Handle graceful shutdown
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async shutdown handler is intentional
     process.on('SIGINT', sigintHandler);
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async shutdown handler is intentional
     process.on('SIGTERM', sigtermHandler);
 
     // Hot reload cleanup for bun --hot
@@ -260,9 +259,7 @@ if(import.meta.main) {
         import.meta.hot.dispose(async () => {
             logger.info('Hot reload detected, cleaning up...');
             // Remove signal handlers before cleanup to prevent duplicate calls
-            // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async shutdown handler is intentional
             process.off('SIGINT', sigintHandler);
-            // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async shutdown handler is intentional
             process.off('SIGTERM', sigtermHandler);
             await app.stop();
         });

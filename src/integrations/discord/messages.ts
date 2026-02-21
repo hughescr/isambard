@@ -50,8 +50,7 @@ function splitWordByCharacters(word: string, maxLength: number): string[] {
  */
 function splitByWords(text: string, maxLength: number): string[] {
     // Stryker disable next-line Regex: Equivalent - _.compact() filters empty strings from single \s split
-    // eslint-disable-next-line lodash/prefer-lodash-method -- split with regex not supported by lodash
-    const words = _.compact(text.split(/\s+/));
+    const words = _.compact(_.split(text, /\s+/));
 
     // Pre-condition: callers guarantee non-empty trimmed text, so words is non-empty
     const chunks: string[] = [];
@@ -222,8 +221,7 @@ function splitBySentences(text: string, maxLength: number): string[] {
  */
 function splitByParagraphs(text: string, maxLength: number): string[] {
     // Split on paragraph breaks (two or more newlines)
-    // eslint-disable-next-line lodash/prefer-wrapper-method, lodash/prefer-lodash-method, lodash/chaining -- split with regex not supported by lodash
-    const paragraphs = _.compact(_(text.split(/\n{2,}/)).map(p => _.trim(p)).value());
+    const paragraphs = _.compact(_(_.split(text, /\n{2,}/)).map(p => _.trim(p)).value());
 
     // Pre-condition: caller guarantees non-empty trimmed text
     // The text will produce at least one paragraph (even without \n\n)

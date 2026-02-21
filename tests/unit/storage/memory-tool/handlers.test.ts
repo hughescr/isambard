@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Mock functions don't have proper this binding */
-
 import { describe, it, expect, beforeEach, spyOn } from 'bun:test';
 import { mock } from 'bun:test';
 import { split as _split, some as _some, includes as _includes, repeat as _repeat } from 'lodash';
@@ -526,7 +524,6 @@ describe('Memory Tool Handlers', () => {
                 expect.objectContaining({
                     path:  '/test/old.md',
                     error: 'Cleanup failed',
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg:   expect.stringContaining('Failed to delete original'),
                 })
             );

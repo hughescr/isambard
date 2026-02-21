@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test assertions with expect matchers */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test task metadata access */
 /**
  * Tests for task cleanup processor
  *
@@ -16,16 +14,11 @@ import { homedir } from 'node:os';
 import { filter, constant } from 'lodash';
 
 // Create local mocks for fs operations
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mocks use simplified types for testing
-const mockReaddir = mock((_path: any) => Promise.resolve([] as string[]));
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mocks use simplified types for testing
-const mockReadFile = mock((_path: any, _encoding?: any) => Promise.resolve(''));
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mocks use simplified types for testing
-const mockWriteFile = mock((_path: any, _content: any) => Promise.resolve());
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mocks use simplified types for testing
-const mockStat = mock((_path: any) => Promise.resolve({ mtime: new Date(), isDirectory: constant(false), isFile: constant(true) }));
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mocks use simplified types for testing
-const mockMkdir = mock((_path: any, _options?: any) => Promise.resolve());
+const mockReaddir = mock((_path: string) => Promise.resolve([] as string[]));
+const mockReadFile = mock((_path: string, _encoding?: string) => Promise.resolve(''));
+const mockWriteFile = mock((_path: string, _content: string) => Promise.resolve());
+const mockStat = mock((_path: string) => Promise.resolve({ mtime: new Date(), isDirectory: constant(false), isFile: constant(true) }));
+const mockMkdir = mock((_path: string, _options?: object) => Promise.resolve());
 
 // Import after setup.ts has mocked the modules
 import { createTaskCleanupProcessor, getTaskDirectoryPath, type TaskCleanupDeps } from '@/agent/task-cleanup-processor';
@@ -33,13 +26,11 @@ import type { SessionId } from '@/storage/task-session/types';
 
 // Create a deps object that can be used in tests with proper type cast
 const createTestDeps = (now: () => number): TaskCleanupDeps => ({
-    /* eslint-disable @typescript-eslint/no-explicit-any -- Mocks for testing use any to avoid complex fs types */
-    readdir:   mockReaddir as any,
-    readFile:  mockReadFile as any,
-    writeFile: mockWriteFile as any,
-    stat:      mockStat as any,
-    mkdir:     mockMkdir as any,
-    /* eslint-enable @typescript-eslint/no-explicit-any -- End mock type overrides */
+    readdir:   mockReaddir as unknown as TaskCleanupDeps['readdir'],
+    readFile:  mockReadFile as unknown as TaskCleanupDeps['readFile'],
+    writeFile: mockWriteFile as unknown as TaskCleanupDeps['writeFile'],
+    stat:      mockStat as unknown as TaskCleanupDeps['stat'],
+    mkdir:     mockMkdir as unknown as TaskCleanupDeps['mkdir'],
     now,
 });
 
@@ -716,7 +707,6 @@ describe('processTaskDirectory', () => {
 
             // Verify completedAt was added
             const writeCall = mockWriteFile.mock.calls[0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- Mock call arg is typed as any
             const writtenTask = JSON.parse(writeCall[1]);
             expect(writtenTask.metadata.completedAt).toBe(FIFTEEN_DAYS_AGO);
         });
@@ -749,7 +739,6 @@ describe('processTaskDirectory', () => {
 
             // Verify completedAt was preserved
             const writeCall = mockWriteFile.mock.calls[0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- Mock call arg is typed as any
             const writtenTask = JSON.parse(writeCall[1]);
             expect(writtenTask.metadata.completedAt).toBe(TEN_DAYS_AGO);
         });

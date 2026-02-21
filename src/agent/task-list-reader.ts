@@ -43,8 +43,7 @@ export interface TaskListReaderOptions {
     getCurrentSessionId: () => string | undefined
     /** Logger for debug messages */
     logger: {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
-        debug: (...args: any[]) => void
+        debug: (...args: unknown[]) => void
     }
     /** Optional readdir override for testing */
     readdir?:  typeof readdir

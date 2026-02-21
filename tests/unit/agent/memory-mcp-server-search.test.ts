@@ -1,10 +1,9 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment -- Handler return values are typed as any in tests */
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { repeat as _repeat } from 'lodash';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { MemoryPath, ContentType, MemoryToolItemData } from '../../../src/storage/memory-tool/types';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 // Helper to create mock memory item data
 const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryToolItemData => ({
@@ -33,10 +32,9 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
     });
 
     // Helper function to get tool handler from server instance
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Need to access private _registeredTools
-    const getToolHandler = (server: any, toolName: string): any => {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing private property
-        return server.instance._registeredTools[toolName].handler;
+    const getToolHandler = (server: ReturnType<typeof createMemoryMCPServer>, toolName: string): ((...args: unknown[]) => Promise<CallToolResult>) => {
+        const instance = server.instance as unknown as { _registeredTools: Record<string, { handler: (...args: unknown[]) => Promise<CallToolResult> }> };
+        return instance._registeredTools[toolName].handler;
     };
 
     describe('search tool', () => {
@@ -68,20 +66,13 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const server = createMemoryMCPServer(mockBackend);
             const handler = getToolHandler(server, 'search');
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             const result = await handler({ tags: ['tag1'] });
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].type).toBe('text');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toContain('/memories/test1.md');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toContain('/memories/test2.md');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toContain('First memory content');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBeUndefined();
         });
 
@@ -94,16 +85,11 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const server = createMemoryMCPServer(mockBackend);
             const handler = getToolHandler(server, 'search');
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             const result = await handler({ tags: ['nonexistent'] });
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].type).toBe('text');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toBe('No memories found matching tags');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBeUndefined();
         });
 
@@ -130,18 +116,13 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const server = createMemoryMCPServer(mockBackend);
             const handler = getToolHandler(server, 'search');
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             const result = await handler({ tags: ['tag1'] });
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toContain(_repeat(char, 200));
             if(shouldTruncate) {
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain('...');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).not.toContain(_repeat(char, 201));
             } else {
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).not.toContain('...');
             }
         });
@@ -174,12 +155,9 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const server = createMemoryMCPServer(mockBackend);
             const handler = getToolHandler(server, 'search');
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             const result = await handler({ tags: ['tag1'] });
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toContain('\n\n');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toMatch(/test1\.md.*\n\n.*test2\.md/);
         });
 
@@ -191,36 +169,26 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const server = createMemoryMCPServer(mockBackend);
             const handler = getToolHandler(server, 'search');
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             const result = await handler({ tags: ['tag1'] });
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].type).toBe('text');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toBe('Error searching memories: Search failed');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBe(true);
         });
 
         test('should return error when backend.searchByTags throws non-Error', async () => {
             mockBackend.searchByTags = mock(async () => {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw 'Database timeout';
             });
 
             const server = createMemoryMCPServer(mockBackend);
             const handler = getToolHandler(server, 'search');
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             const result = await handler({ tags: ['tag1'] });
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].type).toBe('text');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toBe('Error searching memories: Database timeout');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBe(true);
         });
 
@@ -243,10 +211,8 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const server = createMemoryMCPServer(mockBackend);
             const handler = getToolHandler(server, 'search');
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             const result = await handler({ tags: ['tag1'] });
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toBe('/memories/note.md: This is my note content');
         });
     });
@@ -278,18 +244,12 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const server = createMemoryMCPServer(mockBackend);
             const handler = getToolHandler(server, 'list');
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             const result = await handler({ path: '/' });
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].type).toBe('text');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toContain('/identity/core-values');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toContain('/identity/beliefs');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBeUndefined();
         });
 
@@ -302,16 +262,11 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const server = createMemoryMCPServer(mockBackend);
             const handler = getToolHandler(server, 'list');
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             const result = await handler({ path: '/empty' });
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].type).toBe('text');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toBe('Directory is empty');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBeUndefined();
         });
 
@@ -323,34 +278,25 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const server = createMemoryMCPServer(mockBackend);
             const handler = getToolHandler(server, 'list');
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             const result = await handler({ path: '/' });
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].type).toBe('text');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toBe('Error listing directory: Database connection failed');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBe(true);
         });
 
         test('should return error when backend.list throws non-Error', async () => {
             mockBackend.list = mock(async () => {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw
                 throw 'Network error';
             });
 
             const server = createMemoryMCPServer(mockBackend);
             const handler = getToolHandler(server, 'list');
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             const result = await handler({ path: '/' });
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toBe('Error listing directory: Network error');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.isError).toBe(true);
         });
 
@@ -380,10 +326,8 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const server = createMemoryMCPServer(mockBackend);
             const handler = getToolHandler(server, 'list');
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
             const result = await handler({ path: '/users/alice' });
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
             expect(result.content[0].text).toBe('/users/alice/pref-1\n/users/alice/pref-2');
         });
 
@@ -406,12 +350,10 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 const result = await handler({ path: '/events' });
 
                 expect(mockBackend.listByLayer).toHaveBeenCalledWith('events', undefined);
                 expect(mockBackend.list).not.toHaveBeenCalled();
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain('/events/conversation/2025-01-01T00-00-00Z');
             });
 
@@ -424,7 +366,6 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ path: '/identity' });
 
                 expect(mockBackend.listByLayer).toHaveBeenCalledWith('identity', undefined);
@@ -440,7 +381,6 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ path: '/state' });
 
                 expect(mockBackend.listByLayer).toHaveBeenCalledWith('state', undefined);
@@ -451,7 +391,6 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ path: '/users/alice' });
 
                 expect(mockBackend.list).toHaveBeenCalledWith('/users/alice', undefined);
@@ -462,7 +401,6 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ path: '/' });
 
                 expect(mockBackend.list).toHaveBeenCalledWith('/', undefined);
@@ -474,7 +412,6 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ path: '/events/conversation' });
 
                 expect(mockBackend.list).toHaveBeenCalledWith('/events/conversation', undefined);

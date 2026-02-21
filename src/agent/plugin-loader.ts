@@ -43,8 +43,7 @@ async function pathExists(filePath: string): Promise<boolean> {
     try {
         await access(filePath);
         return true;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Catch clause requires parameter
-    } catch (_e: unknown) {
+    } catch{
         return false;
     }
 }
@@ -58,8 +57,7 @@ async function isDirectory(dirPath: string): Promise<boolean> {
     try {
         const stats = await stat(dirPath);
         return stats.isDirectory();
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Catch clause requires parameter
-    } catch (_e: unknown) {
+    } catch{
         // Stryker disable next-line BooleanLiteral: Error path tested indirectly through callers
         return false;
     }

@@ -1,7 +1,12 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/await-thenable, @typescript-eslint/no-empty-function, @typescript-eslint/no-unnecessary-type-assertion, lodash/prefer-noop -- Test mocks */
 import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import { mockLogger } from '../../setup';
 import type { DynamoDBConfig, ReconciliationConfig } from '@/config/schemas';
+import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import type { ReconciliationScheduler } from '@/storage/memory-tool/reconciliation';
+import type { TaskCleanupProcessor } from '@/agent/task-cleanup-processor';
+import type { TaskDirectoryCopier } from '@/agent/task-directory-copier';
+import type { TaskPersistenceCoordinator } from '@/agent/task-persistence-coordinator';
 
 describe('createStorageLayer', () => {
     let spies: ReturnType<typeof spyOn>[];
@@ -41,9 +46,9 @@ describe('createStorageLayer', () => {
     test('should return StorageLayer with all required fields', async () => {
         // Mock createDynamoDBClient
         const storageClientModule = await import('@/storage/client');
-        const mockDocClient = {} as any;
+        const mockDocClient = {} as unknown as DynamoDBDocumentClient;
         const createClientSpy = spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
-            client:    {} as any,
+            client:    {} as unknown as DynamoDBClient,
             docClient: mockDocClient,
             tableName: 'TestTable',
         });
@@ -68,28 +73,28 @@ describe('createStorageLayer', () => {
             getState:   mock(() => ({ isRunning: false, currentPhase: null })),
             triggerNow: mock(async () => undefined),
         };
-        const createReconciliationSchedulerSpy = spyOn(reconciliationModule, 'createReconciliationScheduler').mockReturnValue(mockReconciliationScheduler as any);
+        const createReconciliationSchedulerSpy = spyOn(reconciliationModule, 'createReconciliationScheduler').mockReturnValue(mockReconciliationScheduler);
         spies.push(createReconciliationSchedulerSpy);
 
         // Mock task persistence components
         const taskSessionModule = await import('@/storage/task-session');
-        const mockTaskSessionBackend = {} as any;
+        const mockTaskSessionBackend = {};
         // @ts-expect-error - Mocking constructor
         const TaskSessionBackendSpy = spyOn(taskSessionModule, 'TaskSessionBackend').mockImplementation(() => mockTaskSessionBackend);
         spies.push(TaskSessionBackendSpy);
 
         const taskCleanupModule = await import('@/agent/task-cleanup-processor');
-        const mockTaskCleanupProcessor = {} as any;
+        const mockTaskCleanupProcessor = {} as unknown as TaskCleanupProcessor;
         const createTaskCleanupProcessorSpy = spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue(mockTaskCleanupProcessor);
         spies.push(createTaskCleanupProcessorSpy);
 
         const taskDirectoryCopierModule = await import('@/agent/task-directory-copier');
-        const mockTaskDirectoryCopier = {} as any;
-        const createTaskDirectoryCopierSpy = spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue(mockTaskDirectoryCopier as any);
+        const mockTaskDirectoryCopier = {} as unknown as TaskDirectoryCopier;
+        const createTaskDirectoryCopierSpy = spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue(mockTaskDirectoryCopier);
         spies.push(createTaskDirectoryCopierSpy);
 
         const taskPersistenceModule = await import('@/agent/task-persistence-coordinator');
-        const mockTaskPersistenceCoordinator = {} as any;
+        const mockTaskPersistenceCoordinator = {} as unknown as TaskPersistenceCoordinator;
         const createTaskPersistenceCoordinatorSpy = spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue(mockTaskPersistenceCoordinator);
         spies.push(createTaskPersistenceCoordinatorSpy);
 
@@ -116,8 +121,8 @@ describe('createStorageLayer', () => {
         // Mock all dependencies
         const storageClientModule = await import('@/storage/client');
         const createClientSpy = spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
-            client:    {} as any,
-            docClient: {} as any,
+            client:    {} as unknown as DynamoDBClient,
+            docClient: {} as unknown as DynamoDBDocumentClient,
             tableName: 'TestTable',
         });
         spies.push(createClientSpy);
@@ -135,13 +140,13 @@ describe('createStorageLayer', () => {
         spies.push(spyOn(taskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({})));
 
         const taskCleanupModule = await import('@/agent/task-cleanup-processor');
-        spies.push(spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as any));
+        spies.push(spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as TaskCleanupProcessor));
 
         const taskDirectoryCopierModule = await import('@/agent/task-directory-copier');
-        spies.push(spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as any));
+        spies.push(spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as TaskDirectoryCopier));
 
         const taskPersistenceModule = await import('@/agent/task-persistence-coordinator');
-        spies.push(spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as any));
+        spies.push(spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as TaskPersistenceCoordinator));
 
         // Import and call createStorageLayer
         const { createStorageLayer } = await import('@/app/storage-layer');
@@ -154,9 +159,9 @@ describe('createStorageLayer', () => {
     test('should create MemoryToolBackend with correct args', async () => {
         // Mock createDynamoDBClient
         const storageClientModule = await import('@/storage/client');
-        const mockDocClient = {} as any;
+        const mockDocClient = {} as unknown as DynamoDBDocumentClient;
         spies.push(spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
-            client:    {} as any,
+            client:    {} as unknown as DynamoDBClient,
             docClient: mockDocClient,
             tableName: 'TestTable',
         }));
@@ -177,13 +182,13 @@ describe('createStorageLayer', () => {
         spies.push(spyOn(taskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({})));
 
         const taskCleanupModule = await import('@/agent/task-cleanup-processor');
-        spies.push(spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as any));
+        spies.push(spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as TaskCleanupProcessor));
 
         const taskDirectoryCopierModule = await import('@/agent/task-directory-copier');
-        spies.push(spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as any));
+        spies.push(spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as TaskDirectoryCopier));
 
         const taskPersistenceModule = await import('@/agent/task-persistence-coordinator');
-        spies.push(spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as any));
+        spies.push(spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as TaskPersistenceCoordinator));
 
         // Import and call createStorageLayer
         const { createStorageLayer } = await import('@/app/storage-layer');
@@ -197,8 +202,8 @@ describe('createStorageLayer', () => {
         // Mock all dependencies
         const storageClientModule = await import('@/storage/client');
         spies.push(spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
-            client:    {} as any,
-            docClient: {} as any,
+            client:    {} as unknown as DynamoDBClient,
+            docClient: {} as unknown as DynamoDBDocumentClient,
             tableName: 'TestTable',
         }));
 
@@ -216,15 +221,15 @@ describe('createStorageLayer', () => {
         spies.push(TaskSessionBackendSpy);
 
         const taskCleanupModule = await import('@/agent/task-cleanup-processor');
-        const createTaskCleanupProcessorSpy = spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as any);
+        const createTaskCleanupProcessorSpy = spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as TaskCleanupProcessor);
         spies.push(createTaskCleanupProcessorSpy);
 
         const taskDirectoryCopierModule = await import('@/agent/task-directory-copier');
-        const createTaskDirectoryCopierSpy = spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as any);
+        const createTaskDirectoryCopierSpy = spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as TaskDirectoryCopier);
         spies.push(createTaskDirectoryCopierSpy);
 
         const taskPersistenceModule = await import('@/agent/task-persistence-coordinator');
-        const createTaskPersistenceCoordinatorSpy = spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as any);
+        const createTaskPersistenceCoordinatorSpy = spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as TaskPersistenceCoordinator);
         spies.push(createTaskPersistenceCoordinatorSpy);
 
         // Import and call createStorageLayer
@@ -241,9 +246,9 @@ describe('createStorageLayer', () => {
     test('should create reconciliation scheduler when config.enabled is true', async () => {
         // Mock all dependencies
         const storageClientModule = await import('@/storage/client');
-        const mockDocClient = {} as any;
+        const mockDocClient = {} as unknown as DynamoDBDocumentClient;
         spies.push(spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
-            client:    {} as any,
+            client:    {} as unknown as DynamoDBClient,
             docClient: mockDocClient,
             tableName: 'TestTable',
         }));
@@ -258,7 +263,7 @@ describe('createStorageLayer', () => {
         spies.push(spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => mockMemoryBackend));
 
         const reconciliationModule = await import('@/storage/memory-tool/reconciliation');
-        const createReconciliationSchedulerSpy = spyOn(reconciliationModule, 'createReconciliationScheduler').mockReturnValue({} as any);
+        const createReconciliationSchedulerSpy = spyOn(reconciliationModule, 'createReconciliationScheduler').mockReturnValue({} as unknown as ReconciliationScheduler);
         spies.push(createReconciliationSchedulerSpy);
 
         const taskSessionModule = await import('@/storage/task-session');
@@ -266,13 +271,13 @@ describe('createStorageLayer', () => {
         spies.push(spyOn(taskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({})));
 
         const taskCleanupModule = await import('@/agent/task-cleanup-processor');
-        spies.push(spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as any));
+        spies.push(spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as TaskCleanupProcessor));
 
         const taskDirectoryCopierModule = await import('@/agent/task-directory-copier');
-        spies.push(spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as any));
+        spies.push(spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as TaskDirectoryCopier));
 
         const taskPersistenceModule = await import('@/agent/task-persistence-coordinator');
-        spies.push(spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as any));
+        spies.push(spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as TaskPersistenceCoordinator));
 
         // Import and call createStorageLayer with reconciliation enabled
         const { createStorageLayer } = await import('@/app/storage-layer');
@@ -287,8 +292,8 @@ describe('createStorageLayer', () => {
         // Mock all dependencies
         const storageClientModule = await import('@/storage/client');
         spies.push(spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
-            client:    {} as any,
-            docClient: {} as any,
+            client:    {} as unknown as DynamoDBClient,
+            docClient: {} as unknown as DynamoDBDocumentClient,
             tableName: 'TestTable',
         }));
 
@@ -301,7 +306,7 @@ describe('createStorageLayer', () => {
         })));
 
         const reconciliationModule = await import('@/storage/memory-tool/reconciliation');
-        const createReconciliationSchedulerSpy = spyOn(reconciliationModule, 'createReconciliationScheduler').mockReturnValue({} as any);
+        const createReconciliationSchedulerSpy = spyOn(reconciliationModule, 'createReconciliationScheduler').mockReturnValue({} as unknown as ReconciliationScheduler);
         spies.push(createReconciliationSchedulerSpy);
 
         const taskSessionModule = await import('@/storage/task-session');
@@ -309,13 +314,13 @@ describe('createStorageLayer', () => {
         spies.push(spyOn(taskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({})));
 
         const taskCleanupModule = await import('@/agent/task-cleanup-processor');
-        spies.push(spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as any));
+        spies.push(spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as TaskCleanupProcessor));
 
         const taskDirectoryCopierModule = await import('@/agent/task-directory-copier');
-        spies.push(spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as any));
+        spies.push(spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as TaskDirectoryCopier));
 
         const taskPersistenceModule = await import('@/agent/task-persistence-coordinator');
-        spies.push(spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as any));
+        spies.push(spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as TaskPersistenceCoordinator));
 
         // Import and call createStorageLayer without reconciliation config
         const { createStorageLayer } = await import('@/app/storage-layer');
@@ -330,8 +335,8 @@ describe('createStorageLayer', () => {
         // Mock all dependencies
         const storageClientModule = await import('@/storage/client');
         spies.push(spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
-            client:    {} as any,
-            docClient: {} as any,
+            client:    {} as unknown as DynamoDBClient,
+            docClient: {} as unknown as DynamoDBDocumentClient,
             tableName: 'TestTable',
         }));
 
@@ -344,7 +349,7 @@ describe('createStorageLayer', () => {
         })));
 
         const reconciliationModule = await import('@/storage/memory-tool/reconciliation');
-        const createReconciliationSchedulerSpy = spyOn(reconciliationModule, 'createReconciliationScheduler').mockReturnValue({} as any);
+        const createReconciliationSchedulerSpy = spyOn(reconciliationModule, 'createReconciliationScheduler').mockReturnValue({} as unknown as ReconciliationScheduler);
         spies.push(createReconciliationSchedulerSpy);
 
         const taskSessionModule = await import('@/storage/task-session');
@@ -352,13 +357,13 @@ describe('createStorageLayer', () => {
         spies.push(spyOn(taskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({})));
 
         const taskCleanupModule = await import('@/agent/task-cleanup-processor');
-        spies.push(spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as any));
+        spies.push(spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as TaskCleanupProcessor));
 
         const taskDirectoryCopierModule = await import('@/agent/task-directory-copier');
-        spies.push(spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as any));
+        spies.push(spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as TaskDirectoryCopier));
 
         const taskPersistenceModule = await import('@/agent/task-persistence-coordinator');
-        spies.push(spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as any));
+        spies.push(spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as TaskPersistenceCoordinator));
 
         // Import and call createStorageLayer with reconciliation disabled
         const { createStorageLayer } = await import('@/app/storage-layer');
@@ -390,8 +395,8 @@ describe('createStorageLayer', () => {
         // Mock createDynamoDBClient to succeed
         const storageClientModule = await import('@/storage/client');
         spies.push(spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
-            client:    {} as any,
-            docClient: {} as any,
+            client:    {} as unknown as DynamoDBClient,
+            docClient: {} as unknown as DynamoDBDocumentClient,
             tableName: 'TestTable',
         }));
 

@@ -52,8 +52,7 @@ export async function generateText(
     // Stryker disable next-line all: Cleanup is fire-and-forget, not observable in tests
     if(result.session_id) {
         // Stryker disable next-line ObjectLiteral,BooleanLiteral: Fire-and-forget cleanup options not observable in tests
-        // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Fire-and-forget cleanup
-        cleanupSession(result.session_id, { skipSubAgentScan: true });
+        void cleanupSession(result.session_id, { skipSubAgentScan: true });
     }
 
     if(result.subtype === 'success') {
@@ -98,8 +97,7 @@ export async function generateTextWithSystemPrompt(
     // Stryker disable next-line all: Cleanup is fire-and-forget, not observable in tests
     if(result.session_id) {
         // Stryker disable next-line ObjectLiteral,BooleanLiteral: Fire-and-forget cleanup options not observable in tests
-        // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Fire-and-forget cleanup
-        cleanupSession(result.session_id, { skipSubAgentScan: true });
+        void cleanupSession(result.session_id, { skipSubAgentScan: true });
     }
 
     if(result.subtype === 'success') {

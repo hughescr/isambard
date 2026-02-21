@@ -197,7 +197,6 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
         // Abort after Phase B
         controller.abort();
 
-        // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
         await expect(
             runReconciliation(deps, { ...options, signal: controller.signal })
         ).rejects.toThrow('Aborted');
@@ -232,7 +231,6 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
         // Abort after first tag is processed (the abort check at start of for-loop next iteration will catch it)
         controller.abort();
 
-        // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
         await expect(
             runReconciliation(deps, { ...options, signal: controller.signal })
         ).rejects.toThrow('Aborted');

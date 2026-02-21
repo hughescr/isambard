@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test mocks */
-/* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import _ from 'lodash';
 import type { Client, Message, Collection, Attachment } from 'discord.js';
@@ -12,6 +10,8 @@ import {
 } from '@/integrations/discord/handlers';
 import { createChannelId, createUserId } from '@/integrations/discord/types';
 import type { DiscordMessageContext } from '@/integrations/discord/types';
+import type { BotStateManager } from '@/integrations/discord/state';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
 
 // Helper to create a mock coordinator for tests
 function createMockCoordinator() {
@@ -178,10 +178,10 @@ describe('Discord Event Handlers', () => {
 
         it('should infer image/heic for .heic files with null contentType', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.heic', contentType: null }]);
@@ -192,10 +192,10 @@ describe('Discord Event Handlers', () => {
 
         it('should infer image/heif for .heif files with null contentType', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.heif', contentType: null }]);
@@ -206,10 +206,10 @@ describe('Discord Event Handlers', () => {
 
         it('should infer image/jpeg for .jpg files with null contentType', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.jpg', contentType: null }]);
@@ -220,10 +220,10 @@ describe('Discord Event Handlers', () => {
 
         it('should infer image/png for .png files with null contentType', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'image.png', contentType: null }]);
@@ -234,10 +234,10 @@ describe('Discord Event Handlers', () => {
 
         it('should fallback to application/octet-stream for unknown extensions with null contentType', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'file.xyz', contentType: null }]);
@@ -248,10 +248,10 @@ describe('Discord Event Handlers', () => {
 
         it('should use provided contentType when Discord provides a valid image type', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.heic', contentType: 'image/webp' }]);
@@ -262,10 +262,10 @@ describe('Discord Event Handlers', () => {
 
         it('should infer from extension when Discord provides application/octet-stream', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.heic', contentType: 'application/octet-stream' }]);
@@ -276,10 +276,10 @@ describe('Discord Event Handlers', () => {
 
         it('should handle case-insensitive file extensions', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.HEIC', contentType: null }]);
@@ -290,10 +290,10 @@ describe('Discord Event Handlers', () => {
 
         it('should reject contentType that ends with image/ instead of starting with it', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             // Discord provides invalid contentType 'text/image/' - should be ignored
@@ -305,10 +305,10 @@ describe('Discord Event Handlers', () => {
 
         it('should prefer Discord contentType over extension when valid image type provided', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'file.txt', contentType: 'image/png' }]);
@@ -319,10 +319,10 @@ describe('Discord Event Handlers', () => {
 
         it('should return exact image/heic string for .heic extension', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.heic', contentType: null }]);
@@ -333,10 +333,10 @@ describe('Discord Event Handlers', () => {
 
         it('should return exact image/jpeg string for .jpg extension', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.jpg', contentType: null }]);
@@ -347,10 +347,10 @@ describe('Discord Event Handlers', () => {
 
         it('should return exact image/png string for .png extension', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'image.png', contentType: null }]);
@@ -361,10 +361,10 @@ describe('Discord Event Handlers', () => {
 
         it('should return exact application/octet-stream string for unknown extension', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'file.xyz', contentType: null }]);
@@ -375,10 +375,10 @@ describe('Discord Event Handlers', () => {
 
         it('should handle file without extension and return octet-stream', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'README', contentType: null }]);
@@ -389,10 +389,10 @@ describe('Discord Event Handlers', () => {
 
         it('should use filename "unknown" when attachment name is null', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: null, contentType: 'image/png' }]);
@@ -403,10 +403,10 @@ describe('Discord Event Handlers', () => {
 
         it('should use actual filename when attachment name is provided', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'my-photo.jpg', contentType: 'image/jpeg' }]);
@@ -417,10 +417,10 @@ describe('Discord Event Handlers', () => {
 
         it('should include attachments in context when present', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([
@@ -434,10 +434,10 @@ describe('Discord Event Handlers', () => {
 
         it('should NOT include attachments in context when empty', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([]);
@@ -448,10 +448,10 @@ describe('Discord Event Handlers', () => {
 
         it('should verify startsWith not endsWith for image/ prefix', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             // This ends with 'image/' but doesn't start with it - should be rejected
@@ -463,10 +463,10 @@ describe('Discord Event Handlers', () => {
 
         it('should return non-empty string for heic contentType', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.heic', contentType: null }]);
@@ -477,10 +477,10 @@ describe('Discord Event Handlers', () => {
 
         it('should return non-empty string for heif contentType', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.heif', contentType: null }]);
@@ -491,10 +491,10 @@ describe('Discord Event Handlers', () => {
 
         it('should return non-empty string for jpeg contentType', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.jpeg', contentType: null }]);
@@ -505,10 +505,10 @@ describe('Discord Event Handlers', () => {
 
         it('should return non-empty string for png contentType', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'image.png', contentType: null }]);
@@ -519,10 +519,10 @@ describe('Discord Event Handlers', () => {
 
         it('should return non-empty string for gif contentType', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'animation.gif', contentType: null }]);
@@ -533,10 +533,10 @@ describe('Discord Event Handlers', () => {
 
         it('should return non-empty string for webp contentType', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.webp', contentType: null }]);
@@ -547,10 +547,10 @@ describe('Discord Event Handlers', () => {
 
         it('should return non-empty string for unknown filename', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: null, contentType: 'image/png' }]);
@@ -561,10 +561,10 @@ describe('Discord Event Handlers', () => {
 
         it('should return non-empty string for octet-stream', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'file.unknown', contentType: null }]);
@@ -582,9 +582,9 @@ describe('Discord Event Handlers', () => {
             } as unknown as import('@/integrations/discord/message-coordinator').MessageCoordinator;
 
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId, coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([]);
@@ -606,9 +606,9 @@ describe('Discord Event Handlers', () => {
             } as unknown as import('@/integrations/discord/message-coordinator').MessageCoordinator;
 
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId, coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             // Test with zero attachments
@@ -632,9 +632,9 @@ describe('Discord Event Handlers', () => {
             } as unknown as import('@/integrations/discord/message-coordinator').MessageCoordinator;
 
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId, coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.png', contentType: 'image/png' }]);
@@ -649,10 +649,10 @@ describe('Discord Event Handlers', () => {
 
         it('should handle null Discord contentType correctly (test always-true conditional)', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             // Discord provides null contentType
@@ -700,7 +700,7 @@ describe('Discord Event Handlers', () => {
             };
 
             const handler = createMessageHandler({
-                channelRegistry:      { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry:      { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:          createMockCoordinator(),
                 catchUpSessionRunner: mockCatchUpSessionRunner as unknown as import('@/integrations/discord/catchup').CatchUpSessionRunner,
@@ -728,7 +728,7 @@ describe('Discord Event Handlers', () => {
             };
 
             const handler = createMessageHandler({
-                channelRegistry:      { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry:      { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:          createMockCoordinator(),
                 catchUpSessionRunner: mockCatchUpSessionRunner as unknown as import('@/integrations/discord/catchup').CatchUpSessionRunner,
@@ -749,7 +749,7 @@ describe('Discord Event Handlers', () => {
             };
 
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
                 // catchUpSessionRunner is undefined
@@ -779,7 +779,7 @@ describe('Discord Event Handlers', () => {
             };
 
             const handler = createMessageHandler({
-                channelRegistry:      { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry:      { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 catchUpSessionRunner: mockCatchUpSessionRunner as unknown as import('@/integrations/discord/catchup').CatchUpSessionRunner,
                 coordinator:          mockCoordinator as unknown as import('@/integrations/discord/message-coordinator').MessageCoordinator,
@@ -810,7 +810,7 @@ describe('Discord Event Handlers', () => {
             };
 
             const handler = createMessageHandler({
-                channelRegistry:      { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry:      { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 catchUpSessionRunner: mockCatchUpSessionRunner as unknown as import('@/integrations/discord/catchup').CatchUpSessionRunner,
                 coordinator:          mockCoordinator as unknown as import('@/integrations/discord/message-coordinator').MessageCoordinator,
@@ -865,7 +865,7 @@ describe('Discord Event Handlers', () => {
             };
 
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
                 botStateManager: mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
@@ -889,7 +889,7 @@ describe('Discord Event Handlers', () => {
             };
 
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
                 botStateManager: mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
@@ -909,7 +909,7 @@ describe('Discord Event Handlers', () => {
             };
 
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
                 botStateManager: mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
@@ -924,10 +924,10 @@ describe('Discord Event Handlers', () => {
 
         it('should handle undefined botStateManager gracefully', async () => {
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessageForState();
@@ -977,7 +977,7 @@ describe('Discord Event Handlers', () => {
             };
 
             const handler = createMessageHandler({
-                channelRegistry:    { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry:    { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:        createMockCoordinator(),
                 perchSessionRunner: mockPerchSessionRunner as unknown as import('@/agent/perch').PerchSessionRunner,
@@ -1005,7 +1005,7 @@ describe('Discord Event Handlers', () => {
             };
 
             const handler = createMessageHandler({
-                channelRegistry:    { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry:    { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:        createMockCoordinator(),
                 perchSessionRunner: mockPerchSessionRunner as unknown as import('@/agent/perch').PerchSessionRunner,
@@ -1035,7 +1035,7 @@ describe('Discord Event Handlers', () => {
             };
 
             const handler = createMessageHandler({
-                channelRegistry:    { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry:    { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:        createMockCoordinator(),
                 perchSessionRunner: mockPerchSessionRunner as unknown as import('@/agent/perch').PerchSessionRunner,
@@ -1087,7 +1087,7 @@ describe('Discord Event Handlers', () => {
             };
 
             const handler = createMessageHandler({
-                channelRegistry:    { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry:    { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:        createMockCoordinator(),
                 perchSessionRunner: mockPerchSessionRunner as unknown as import('@/agent/perch').PerchSessionRunner,
@@ -1107,7 +1107,7 @@ describe('Discord Event Handlers', () => {
                 startProcessingMessage: mock(() => _.noop()),
             };
 
-            const mockChannelRegistry = { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(_.constant(Promise.resolve())) } as any;
+            const mockChannelRegistry = { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(_.constant(Promise.resolve())) } as unknown as ChannelRegistryManager;
             const handler = createMessageHandler({
                 channelRegistry: mockChannelRegistry,
                 botUserId,
@@ -1141,7 +1141,7 @@ describe('Discord Event Handlers', () => {
             const mockChannelRegistry = { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(_.constant(Promise.resolve())) };
 
             const handler = createMessageHandler({
-                channelRegistry:    mockChannelRegistry as any,
+                channelRegistry:    mockChannelRegistry as unknown as ChannelRegistryManager,
                 botUserId, perchSessionRunner: mockPerchSessionRunner as unknown as import('@/agent/perch').PerchSessionRunner,
                 coordinator:        mockCoordinator as unknown as import('@/integrations/discord/message-coordinator').MessageCoordinator,
                 botStateManager:    mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
@@ -1173,7 +1173,7 @@ describe('Discord Event Handlers', () => {
             const mockChannelRegistry = { shouldProcess: mock(_.constant(true)), getChannel: mock(_.constant(null)), warmCache: mock(_.constant(Promise.resolve())) };
 
             const handler = createMessageHandler({
-                channelRegistry:    mockChannelRegistry as any,
+                channelRegistry:    mockChannelRegistry as unknown as ChannelRegistryManager,
                 botUserId, perchSessionRunner: mockPerchSessionRunner as unknown as import('@/agent/perch').PerchSessionRunner,
                 coordinator:        mockCoordinator as unknown as import('@/integrations/discord/message-coordinator').MessageCoordinator,
                 botStateManager:    mockBotStateManager as unknown as import('@/integrations/discord/state').BotStateManager,
@@ -1367,7 +1367,7 @@ describe('Discord Event Handlers', () => {
         const monitoredChannelId = createChannelId('channel-456');
 
         const createMockMessageForReply = (hasReference: boolean, referencedAuthorId: string | null, fetchFails: boolean): Message => {
-            const message: any = {
+            const message: Record<string, unknown> = {
                 id:     'msg-123',
                 author: {
                     id:  'user-789',
@@ -1389,18 +1389,15 @@ describe('Discord Event Handlers', () => {
             };
 
             if(hasReference) {
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Test mock
                 message.reference = {
                     messageId: 'referenced-msg-id',
                 };
 
                 if(fetchFails) {
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Test mock
                     message.fetchReference = mock(async () => {
                         throw new Error('Failed to fetch reference');
                     });
                 } else {
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Test mock
                     message.fetchReference = mock(async () => ({
                         author: {
                             id: referencedAuthorId,
@@ -1408,26 +1405,25 @@ describe('Discord Event Handlers', () => {
                     }));
                 }
             } else {
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Test mock
                 message.reference = undefined;
             }
 
-            return message as Message;
+            return message as unknown as Message;
         };
 
         it('should pass isReplyToBot=true to shouldProcess when message references bot message', async () => {
             // Capture shouldProcess arguments to verify isReplyToBot is true
-            let shouldProcessArgs: any[] = [];
-            const mockShouldProcess = mock((...args: any[]) => {
+            let shouldProcessArgs: unknown[] = [];
+            const mockShouldProcess = mock((...args: unknown[]) => {
                 shouldProcessArgs = args;
                 return true;
             });
 
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mockShouldProcess, getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mockShouldProcess, getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessageForReply(true, botUserId, false);
@@ -1440,17 +1436,17 @@ describe('Discord Event Handlers', () => {
 
         it('should pass isReplyToBot=false to shouldProcess when message.reference.messageId is missing', async () => {
             // Capture shouldProcess arguments to verify isReplyToBot is false
-            let shouldProcessArgs: any[] = [];
-            const mockShouldProcess = mock((...args: any[]) => {
+            let shouldProcessArgs: unknown[] = [];
+            const mockShouldProcess = mock((...args: unknown[]) => {
                 shouldProcessArgs = args;
                 return true;
             });
 
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mockShouldProcess, getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mockShouldProcess, getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessageForReply(false, null, false);
@@ -1463,17 +1459,17 @@ describe('Discord Event Handlers', () => {
 
         it('should pass isReplyToBot=false to shouldProcess when referenced message is from different user', async () => {
             // Capture shouldProcess arguments to verify isReplyToBot is false
-            let shouldProcessArgs: any[] = [];
-            const mockShouldProcess = mock((...args: any[]) => {
+            let shouldProcessArgs: unknown[] = [];
+            const mockShouldProcess = mock((...args: unknown[]) => {
                 shouldProcessArgs = args;
                 return true;
             });
 
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mockShouldProcess, getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mockShouldProcess, getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessageForReply(true, 'other-user-id', false);
@@ -1486,17 +1482,17 @@ describe('Discord Event Handlers', () => {
 
         it('should pass isReplyToBot=false to shouldProcess when fetchReference throws', async () => {
             // Capture shouldProcess arguments to verify isReplyToBot is false
-            let shouldProcessArgs: any[] = [];
-            const mockShouldProcess = mock((...args: any[]) => {
+            let shouldProcessArgs: unknown[] = [];
+            const mockShouldProcess = mock((...args: unknown[]) => {
                 shouldProcessArgs = args;
                 return true;
             });
 
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mockShouldProcess, getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mockShouldProcess, getChannel: mock(_.constant(null)), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
                 coordinator:     createMockCoordinator(),
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessageForReply(true, botUserId, true);

@@ -1,9 +1,8 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment -- Handler return values are typed as any in tests */
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { MemoryPath, ContentType, MemoryToolItemData, TagIndexItem } from '../../../src/storage/memory-tool/types';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 // Helper to create mock memory item data
 const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryToolItemData => ({
@@ -43,23 +42,23 @@ describe.concurrent('Memory MCP Server Pagination', () => {
         } as unknown as MemoryToolBackend;
     });
 
+    interface SafeParseResult { success: boolean }
+    interface UnwrappedSchema { safeParse: (v: unknown) => SafeParseResult }
+    interface ToolInputSchema { shape: Record<string, { unwrap: () => UnwrappedSchema }> }
+    interface RegisteredTool { handler: (...args: unknown[]) => Promise<CallToolResult>, inputSchema: ToolInputSchema }
+    interface RegisteredToolInstance { _registeredTools: Record<string, RegisteredTool> }
     // Helper function to get tool handler from server instance
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Need to access private _registeredTools
-    const getToolHandler = (server: any, toolName: string): any => {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing private property
-        return server.instance._registeredTools[toolName].handler;
+    const getToolHandler = (server: ReturnType<typeof createMemoryMCPServer>, toolName: string): ((...args: unknown[]) => Promise<CallToolResult>) => {
+        return (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName].handler;
     };
 
     describe('list tool pagination', () => {
         describe('schema', () => {
             test('should have pagination parameters in input schema', () => {
                 const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const listTool = (server.instance as any)._registeredTools.list;
+                const listTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.list;
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema
                 expect(listTool.inputSchema.shape.limit).toBeDefined();
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema
                 expect(listTool.inputSchema.shape.cursor).toBeDefined();
             });
 
@@ -70,11 +69,8 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 ['non-integer', 1.5, false],
             ])('should validate limit: %s', (_label, value, shouldPass) => {
                 const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const listTool = (server.instance as any)._registeredTools.list;
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
+                const listTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.list;
                 const result = listTool.inputSchema.shape.limit.unwrap().safeParse(value);
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.success).toBe(shouldPass);
             });
         });
@@ -89,7 +85,6 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ path: '/users/alice', ...handlerArgs });
 
                 expect(mockBackend.list).toHaveBeenCalledWith('/users/alice', expectedOptions);
@@ -109,7 +104,6 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ path: '/events', ...handlerArgs });
 
                 expect(mockBackend.listByLayer).toHaveBeenCalledWith('events', expectedOptions);
@@ -129,16 +123,11 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 const result = await handler({ path: '/users/alice', limit: 1 });
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain('/users/alice/pref1');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain('---');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain('More results available. Use cursor:');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain(returnedCursor);
             });
 
@@ -154,14 +143,10 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 const result = await handler({ path: '/events', limit: 1 });
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain('/events/test/2025-01-01');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain('More results available. Use cursor:');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain(returnedCursor);
             });
 
@@ -176,14 +161,10 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 const result = await handler({ path: '/users/alice' });
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toBe('/users/alice/pref1');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).not.toContain('---');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).not.toContain('cursor');
             });
         });
@@ -193,7 +174,6 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({});
 
                 // Without path argument, should default to '/' and use backend.list
@@ -204,7 +184,6 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ path: undefined });
 
                 expect(mockBackend.list).toHaveBeenCalledWith('/', undefined);
@@ -216,14 +195,10 @@ describe.concurrent('Memory MCP Server Pagination', () => {
         describe('schema', () => {
             test('should have cursor parameter in input schema', () => {
                 const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const searchTool = (server.instance as any)._registeredTools.search;
+                const searchTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.search;
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema
                 expect(searchTool.inputSchema.shape.cursor).toBeDefined();
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
                 const result = searchTool.inputSchema.shape.cursor.unwrap().safeParse('some-cursor-value');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.success).toBe(true);
             });
         });
@@ -238,7 +213,6 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'search');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler(handlerArgs);
 
                 expect(mockBackend.searchByTags).toHaveBeenCalledWith(expectedTags, expectedLayer, expectedOptions);
@@ -265,16 +239,11 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'search');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 const result = await handler({ tags: ['important'], limit: 1 });
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain('/memories/result1');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain('---');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain('More results available. Use cursor:');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain(returnedCursor);
             });
 
@@ -295,14 +264,10 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'search');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 const result = await handler({ tags: ['tag1'] });
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toBe('/memories/result1: Only result');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).not.toContain('---');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).not.toContain('cursor');
             });
 
@@ -331,16 +296,11 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'search');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 const result = await handler({ tags: ['tag1'], limit: 2 });
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain('/memories/result1');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain('/memories/result2');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain('\n\n---\nMore results available. Use cursor:');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.content[0].text).toContain(returnedCursor);
             });
         });
@@ -350,12 +310,9 @@ describe.concurrent('Memory MCP Server Pagination', () => {
         describe('schema', () => {
             test('should have date parameters in input schema', () => {
                 const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const listTool = (server.instance as any)._registeredTools.list;
+                const listTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.list;
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema
                 expect(listTool.inputSchema.shape.startDate).toBeDefined();
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema
                 expect(listTool.inputSchema.shape.endDate).toBeDefined();
             });
 
@@ -364,11 +321,8 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 ['invalid string', 'not-a-date', false],
             ])('should validate startDate: %s', (_label, value, shouldPass) => {
                 const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const listTool = (server.instance as any)._registeredTools.list;
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
+                const listTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.list;
                 const result = listTool.inputSchema.shape.startDate.unwrap().safeParse(value);
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.success).toBe(shouldPass);
             });
         });
@@ -388,7 +342,6 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ path: '/events', ...handlerArgs });
 
                 expect(mockBackend.listByLayer).toHaveBeenCalledWith('events', expectedOptions);
@@ -398,7 +351,6 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ path: '/users/alice', startDate: '2024-01-01T00:00:00.000Z' });
 
                 expect(mockBackend.list).toHaveBeenCalledWith('/users/alice', { startDate: '2024-01-01T00:00:00.000Z' });
@@ -410,16 +362,11 @@ describe.concurrent('Memory MCP Server Pagination', () => {
         describe('schema', () => {
             test('should have date parameters in input schema', () => {
                 const server = createMemoryMCPServer(mockBackend);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-                const searchTool = (server.instance as any)._registeredTools.search;
+                const searchTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.search;
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema
                 expect(searchTool.inputSchema.shape.startDate).toBeDefined();
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Checking schema
                 expect(searchTool.inputSchema.shape.endDate).toBeDefined();
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Accessing schema
                 const result = searchTool.inputSchema.shape.startDate.unwrap().safeParse('2024-01-01T00:00:00.000Z');
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Accessing result
                 expect(result.success).toBe(true);
             });
         });
@@ -437,7 +384,6 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const tags = ['test'];
                 const layer = 'layer' in handlerArgs ? handlerArgs.layer : undefined;
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Calling handler
                 await handler({ tags, ...handlerArgs });
 
                 expect(mockBackend.searchByTags).toHaveBeenCalledWith(new Set(tags), layer, expectedOptions);

@@ -81,7 +81,6 @@ describe('createCatchUpSignalAdapter', () => {
 
         test('should handle non-Error exceptions', async () => {
             mockBackend.get = mock(async () => {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing error handling for non-Error exceptions
                 throw 'string error';
             });
 
@@ -141,7 +140,6 @@ describe('createCatchUpSignalAdapter', () => {
 
         test('should handle non-Error exceptions and return null', async () => {
             mockBackend.get = mock(async () => {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing error handling for non-Error exceptions
                 throw 'string error';
             });
 
@@ -208,7 +206,6 @@ describe('createCatchUpSignalAdapter', () => {
 
         test('should handle non-Error exceptions', async () => {
             mockBackend.get = mock(async () => {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing error handling for non-Error exceptions
                 throw 'string error';
             });
 
@@ -266,7 +263,6 @@ describe('createCatchUpSignalAdapter', () => {
 
         test('should handle non-Error exceptions and return null', async () => {
             mockBackend.get = mock(async () => {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing error handling for non-Error exceptions
                 throw 'string error';
             });
 
@@ -297,7 +293,6 @@ describe('createCatchUpSignalAdapter', () => {
 
         test('should handle non-Error exceptions', async () => {
             mockBackend.delete = mock(async () => {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing error handling for non-Error exceptions
                 throw 'string error';
             });
 

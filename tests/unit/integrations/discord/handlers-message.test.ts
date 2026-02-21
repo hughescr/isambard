@@ -1,8 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
-/* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
-/* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
-/* eslint-disable lodash/prefer-constant -- Test callbacks */
 import _ from 'lodash';
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import type { Message, User, Guild, TextChannel, DMChannel, Client } from 'discord.js';
@@ -14,6 +9,9 @@ import type { QuestionRegistry } from '@/agent/question-registry';
 import type { PendingQuestion } from '@/agent/question-registry/types';
 import type { AnswerClassifier } from '@/agent/answer-classifier';
 import type { ClassificationResult } from '@/agent/answer-classifier/types';
+import type { BotStateManager } from '@/integrations/discord/state';
+import type { ChannelRegistryManager, DMTracker } from '@/integrations/discord/channel-registry';
+import type { PerchSessionRunner } from '@/agent/perch';
 // Note: We don't need to mock the rate limiter module because:
 // 1. The rate limiter internally calls message.reply() which we mock in tests
 // 2. The sendResponse function uses the rate limiter transparently
@@ -105,10 +103,10 @@ describe('Discord Event Handlers', () => {
         it('should ignore messages from bots', async () => {
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       '999999999999999999' as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             mockMessage.author.bot = true;
@@ -121,10 +119,10 @@ describe('Discord Event Handlers', () => {
             const botId = '999999999999999999';
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       botId as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             mockMessage.author.id = botId;
@@ -137,10 +135,10 @@ describe('Discord Event Handlers', () => {
         it('should process DM messages', async () => {
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       '999999999999999999' as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const dmMessage = {
@@ -165,11 +163,11 @@ describe('Discord Event Handlers', () => {
 
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       '999999999999999999' as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as any,
-                dmTracker:       mockDmTracker as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                dmTracker:       mockDmTracker as unknown as DMTracker,
             });
 
             const dmMessage = {
@@ -205,10 +203,10 @@ describe('Discord Event Handlers', () => {
             const botId = '999999999999999999';
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       botId as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             mockMessage.content = `<@${botId}> hello there`;
@@ -222,10 +220,10 @@ describe('Discord Event Handlers', () => {
         it('should process messages in monitored channels', async () => {
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       '999999999999999999' as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             await handler(mockMessage);
@@ -236,10 +234,10 @@ describe('Discord Event Handlers', () => {
         it('should ignore messages in non-monitored channels without mention', async () => {
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => false), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(() => false), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       '999999999999999999' as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             await handler(mockMessage);
@@ -250,10 +248,10 @@ describe('Discord Event Handlers', () => {
         it('should pass correct context to onMessage callback', async () => {
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       '999999999999999999' as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             await handler(mockMessage);
@@ -272,10 +270,10 @@ describe('Discord Event Handlers', () => {
         it('should handle DM messages with null guild', async () => {
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       '999999999999999999' as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const dmMessage = {
@@ -296,10 +294,10 @@ describe('Discord Event Handlers', () => {
         it('should format timestamp as ISO datetime', async () => {
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       '999999999999999999' as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const timestampMessage = {
@@ -319,10 +317,10 @@ describe('Discord Event Handlers', () => {
             const botId = '999999999999999999';
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       botId as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as any,
+                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             // Some clients use <@!userId> format
@@ -344,10 +342,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(dmMessage);
@@ -367,10 +365,10 @@ describe('Discord Event Handlers', () => {
             it('should log isDM as false when guild exists', async () => {
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(mockMessage);
@@ -401,10 +399,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(guildMessage);
@@ -442,10 +440,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(dmMessage);
@@ -475,10 +473,10 @@ describe('Discord Event Handlers', () => {
             it('should not create context or attempt reply when message is from a bot', async () => {
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 mockMessage.author.bot = true;
@@ -493,10 +491,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       botId as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 mockMessage.author.id = botId;
@@ -510,10 +508,10 @@ describe('Discord Event Handlers', () => {
             it('should process non-bot user messages normally in monitored channel', async () => {
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Ensure message is from a non-bot, non-self user
@@ -530,10 +528,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       botId as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Test 1: Bot message (author.bot = true) - should be ignored
@@ -568,10 +566,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       botId as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Message is from a bot, in monitored channel, with mention
@@ -591,10 +589,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       botId as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Message is from the bot itself (not marked as bot but same ID)
@@ -614,10 +612,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       botId as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Message is NOT from a bot (author.bot = false) and NOT from self
@@ -635,10 +633,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Message from a different bot (not our bot)
@@ -656,10 +654,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       botId as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Test: non-bot user with bot's ID (edge case - shouldn't happen but tests the check)
@@ -714,12 +712,12 @@ describe('Discord Event Handlers', () => {
             it('should resolve pending question when message is classified as answer', async () => {
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as any,
+                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(mockMessage);
@@ -760,12 +758,12 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as any,
+                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(mockMessage);
@@ -787,12 +785,12 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as any,
+                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(mockMessage);
@@ -824,12 +822,12 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as any,
+                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(mockMessage);
@@ -882,12 +880,12 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as any,
+                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Wait for handler to complete (retry will happen automatically)
@@ -904,12 +902,12 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as any,
+                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(mockMessage);
@@ -924,11 +922,11 @@ describe('Discord Event Handlers', () => {
             it('should proceed normally when question registry is not configured', async () => {
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
                     // No questionRegistry or answerClassifier
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(mockMessage);
@@ -955,12 +953,12 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as any,
+                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(threadMessage);
@@ -983,12 +981,12 @@ describe('Discord Event Handlers', () => {
             it('should use channel ID directly for regular channels (not threads)', async () => {
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as any,
+                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(mockMessage);
@@ -1017,12 +1015,12 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as any,
+                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(replyMessage);
@@ -1079,10 +1077,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: mockChannelRegistry as any,
+                    channelRegistry: mockChannelRegistry as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(threadMessage);
@@ -1122,10 +1120,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: mockChannelRegistry as any,
+                    channelRegistry: mockChannelRegistry as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(threadMessage);
@@ -1176,10 +1174,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: mockChannelRegistry as any,
+                    channelRegistry: mockChannelRegistry as unknown as ChannelRegistryManager,
                     botUserId:       botId as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(threadMessage);
@@ -1241,10 +1239,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: mockChannelRegistry as any,
+                    channelRegistry: mockChannelRegistry as unknown as ChannelRegistryManager,
                     botUserId:       botId as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(threadMessage);
@@ -1282,10 +1280,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
-                    channelRegistry: mockChannelRegistry as any,
+                    channelRegistry: mockChannelRegistry as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as any,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(threadMessage);
@@ -1303,14 +1301,14 @@ describe('Discord Event Handlers', () => {
 
                 const mockBotState = createMockBotStateManager();
                 // Override to return 'perching' mode
-                (mockBotState.getMode as any) = mock(() => 'perching' as const);
+                _.assign(mockBotState, { getMode: mock(() => 'perching' as const) });
 
                 const handler = createMessageHandler({
                     botUserId:          '999999999999999999' as UserId,
-                    channelRegistry:    { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as any,
+                    channelRegistry:    { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     coordinator:        createMockCoordinator(),
-                    botStateManager:    mockBotState as any,
-                    perchSessionRunner: mockPerchRunner as any,
+                    botStateManager:    mockBotState as unknown as BotStateManager,
+                    perchSessionRunner: mockPerchRunner as unknown as PerchSessionRunner,
                 });
 
                 await handler(mockMessage);

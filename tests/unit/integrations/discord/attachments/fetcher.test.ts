@@ -20,8 +20,7 @@ describe('Attachment Fetcher', () => {
         mockFsPromises.writeFile.mockClear();
         mockFetch.mockClear();
         // Replace global fetch with our mock for testing
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any -- Testing mock needs to override global fetch type
-        globalThis.fetch = mockFetch as any;
+        globalThis.fetch = mockFetch as unknown as typeof globalThis.fetch;
     });
 
     afterEach(() => {

@@ -23,7 +23,6 @@ describe('loadIdentityContext', () => {
 
     test('should return identity from contextBuilder.loadCoreIdentity() when both available', async () => {
         const mockContextBuilder = {
-            // eslint-disable-next-line lodash/prefer-constant -- async mock must return Promise
             loadCoreIdentity: async () => 'Custom Identity',
         } as unknown as ContextBuilder;
 
@@ -33,7 +32,6 @@ describe('loadIdentityContext', () => {
 
     test('should return default string when loadCoreIdentity returns empty string', async () => {
         const mockContextBuilder = {
-            // eslint-disable-next-line lodash/prefer-constant -- async mock must return Promise
             loadCoreIdentity: async () => '',
         } as unknown as ContextBuilder;
 
@@ -66,7 +64,7 @@ describe('loadIdentityContext', () => {
     test('should handle non-Error thrown values', async () => {
         const mockContextBuilder = {
             loadCoreIdentity: async () => {
-                throw 'string error'; // eslint-disable-line @typescript-eslint/only-throw-error -- Testing non-Error throw handling
+                throw 'string error';
             },
         } as unknown as ContextBuilder;
 

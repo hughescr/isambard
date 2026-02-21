@@ -1,8 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @stylistic/max-statements-per-line, @typescript-eslint/no-unsafe-argument -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks */
-/* eslint-disable @typescript-eslint/unbound-method -- Test mocks */
+/* eslint-disable @stylistic/max-statements-per-line -- Test mocks  */
 
 /**
  * StatusMiddleware Test Suite
@@ -46,10 +42,12 @@ import { shouldGenerateSynopsis } from '@/integrations/discord/presence/stream-e
 import type { PresencePhase, SynopsisContext } from '@/integrations/discord/presence/types';
 import type { AgentStreamEvent, MessageContext } from '@/agent/types';
 import type { StreamTracker } from '@/agent/stream-tracker';
-import type { DiscordMessageContext } from '@/integrations/discord/types';
+import { type DiscordMessageContext, createChannelId, createUserId, createGuildId } from '@/integrations/discord/types';
 import type { DynamicStatusGenerator } from '@/integrations/discord/presence/status-generator-dynamic';
-import type { BotStateManager } from '@/integrations/discord/state/types';
+import type { BotStateManager, ActivityPhase } from '@/integrations/discord/state/types';
 import type { PresenceManager } from '@/integrations/discord/presence/manager';
+import type { ClaudeAgent } from '@/agent/agent';
+import type { StatusMiddlewareDeps } from '@/integrations/discord/presence/middleware';
 
 // Helper to wait for async safeUpdatePhase promises to settle
 // Using queueMicrotask instead of setImmediate for faster promise resolution
@@ -116,10 +114,10 @@ describe('shouldGenerateSynopsis', () => {
 });
 
 describe('StatusMiddleware', () => {
-    let mockPresenceManager: any;
-    let mockAgent: any;
-    let mockLogger: any;
-    let mockBotStateManager: any;
+    let mockPresenceManager: PresenceManager;
+    let mockAgent: ClaudeAgent;
+    let mockLogger: StatusMiddlewareDeps['logger'];
+    let mockBotStateManager: BotStateManager;
     let messageContext: DiscordMessageContext;
 
     beforeEach(() => {
@@ -128,15 +126,14 @@ describe('StatusMiddleware', () => {
             transitionPresenceDisplayMode: mock(() => undefined),
             start:                         mock(() => undefined),
             stop:                          mock(() => undefined),
-        };
+        } as unknown as PresenceManager;
 
         mockAgent = {
             handleInput: mock(_constant(Promise.resolve({ response: 'Test response', wasInterrupted: false, streamTracker: {} }))),
-        };
+        } as unknown as ClaudeAgent;
 
         mockLogger = {
             debug: mock(() => undefined),
-            warn:  mock(() => undefined),
             error: mock(() => undefined),
             info:  mock(() => undefined),
         };
@@ -148,16 +145,16 @@ describe('StatusMiddleware', () => {
             recordPresenceUpdate: mock(() => undefined),
             getMode:              mock(_constant('idle' as const)),
             goIdle:               mock(() => undefined),
-        };
+        } as unknown as BotStateManager;
 
         messageContext = {
             messageId: 'msg-123',
-            channelId: 'channel-456' as any,
-            userId:    'user-789' as any,
-            guildId:   'guild-101' as any,
+            channelId: createChannelId('channel-456'),
+            userId:    createUserId('user-789'),
+            guildId:   createGuildId('guild-101'),
             content:   'Test message',
             timestamp: new Date().toISOString(),
-            botUserId: 'bot-999' as any,
+            botUserId: createUserId('bot-999'),
         };
     });
 
@@ -176,7 +173,7 @@ describe('StatusMiddleware', () => {
 
             const middleware = createStatusMiddleware({
                 presenceManager: mockPresenceManager,
-                agent:           wrappedAgent as any,
+                agent:           wrappedAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: mockBotStateManager,
             });
@@ -201,7 +198,7 @@ describe('StatusMiddleware', () => {
 
             const middleware = createStatusMiddleware({
                 presenceManager: mockPresenceManager,
-                agent:           wrappedAgent as any,
+                agent:           wrappedAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: mockBotStateManager,
             });
@@ -228,7 +225,7 @@ describe('StatusMiddleware', () => {
 
             const middleware = createStatusMiddleware({
                 presenceManager: mockPresenceManager,
-                agent:           wrappedAgent as any,
+                agent:           wrappedAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: mockBotStateManager,
             });
@@ -252,7 +249,7 @@ describe('StatusMiddleware', () => {
 
             const middleware = createStatusMiddleware({
                 presenceManager: mockPresenceManager,
-                agent:           wrappedAgent as any,
+                agent:           wrappedAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: mockBotStateManager,
             });
@@ -277,7 +274,7 @@ describe('StatusMiddleware', () => {
                 botStateManager: mockBotStateManager,
             });
 
-            await middleware(messageContext, mockChannel as any);
+            await middleware(messageContext, mockChannel as unknown as Parameters<typeof middleware>[1]);
 
             expect(mockChannel.sendTyping).toHaveBeenCalled();
         });
@@ -298,12 +295,12 @@ describe('StatusMiddleware', () => {
 
             const middleware = createStatusMiddleware({
                 presenceManager: mockPresenceManager,
-                agent:           wrappedAgent as any,
+                agent:           wrappedAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: mockBotStateManager,
             });
 
-            await middleware(messageContext, mockChannel as any);
+            await middleware(messageContext, mockChannel as unknown as Parameters<typeof middleware>[1]);
 
             // Typing started
             expect(mockChannel.sendTyping).toHaveBeenCalled();
@@ -323,7 +320,7 @@ describe('StatusMiddleware', () => {
 
             const middleware = createStatusMiddleware({
                 presenceManager: mockPresenceManager,
-                agent:           errorAgent as any,
+                agent:           errorAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: mockBotStateManager,
             });
@@ -375,7 +372,7 @@ describe('StatusMiddleware', () => {
 
             const middleware = createStatusMiddleware({
                 presenceManager: errorPresenceManager,
-                agent:           wrappedAgent as any,
+                agent:           wrappedAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: errorBotStateManager as unknown as BotStateManager,
             });
@@ -394,7 +391,7 @@ describe('StatusMiddleware', () => {
                 handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                     if(options?.onStreamEvent) {
                         // Send an unknown event type that the middleware doesn't recognize
-                        options?.onStreamEvent?.({ type: 'unexpected_event_type' } as any);
+                        options?.onStreamEvent?.({ type: 'unexpected_event_type' } as unknown as AgentStreamEvent);
                     }
                     return { response: 'Response', wasInterrupted: false, streamTracker: {} };
                 }),
@@ -402,7 +399,7 @@ describe('StatusMiddleware', () => {
 
             const middleware = createStatusMiddleware({
                 presenceManager: mockPresenceManager,
-                agent:           wrappedAgent as any,
+                agent:           wrappedAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: mockBotStateManager,
             });
@@ -440,12 +437,12 @@ describe('StatusMiddleware', () => {
 
             const middleware = createStatusMiddleware({
                 presenceManager: mockPresenceManager,
-                agent:           wrappedAgent as any,
+                agent:           wrappedAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: mockBotStateManager,
             });
 
-            const context2 = { ...messageContext, messageId: 'msg-456' as any };
+            const context2 = { ...messageContext, messageId: 'msg-456' };
 
             // Process two messages concurrently
             const [result1, result2] = await Promise.all([
@@ -468,7 +465,7 @@ describe('StatusMiddleware', () => {
 
             const middleware = createStatusMiddleware({
                 presenceManager: mockPresenceManager,
-                agent:           legacyAgent as any,
+                agent:           legacyAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: mockBotStateManager,
             });
@@ -495,7 +492,7 @@ describe('StatusMiddleware', () => {
 
             const capturingBotStateManager = {
                 shouldUpdatePresence: mock(_constant(true)),
-                updateActivityPhase:  mock((phase: any) => {
+                updateActivityPhase:  mock((phase: ActivityPhase) => {
                     if(phase.type === 'using_tool') {
                         toolNames.push(phase.toolName);
                     }
@@ -516,8 +513,8 @@ describe('StatusMiddleware', () => {
             };
 
             const middleware = createStatusMiddleware({
-                presenceManager: capturingPresenceManager as any,
-                agent:           wrappedAgent as any,
+                presenceManager: capturingPresenceManager as unknown as PresenceManager,
+                agent:           wrappedAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: capturingBotStateManager as unknown as BotStateManager,
             });
@@ -540,7 +537,7 @@ describe('StatusMiddleware', () => {
 
             const middleware = createStatusMiddleware({
                 presenceManager: mockPresenceManager,
-                agent:           wrappedAgent as any,
+                agent:           wrappedAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: mockBotStateManager,
             });
@@ -592,7 +589,7 @@ describe('StatusMiddleware', () => {
 
             const capturingBotStateManager = {
                 shouldUpdatePresence: mock(_constant(true)),
-                updateActivityPhase:  mock((phase: any) => {
+                updateActivityPhase:  mock((phase: ActivityPhase) => {
                     phases.push(phase);
                 }),
                 clearActivityPhase: mock(() => undefined),
@@ -609,8 +606,8 @@ describe('StatusMiddleware', () => {
             };
 
             const middleware = createStatusMiddleware({
-                presenceManager: capturingPresenceManager as any,
-                agent:           wrappedAgent as any,
+                presenceManager: capturingPresenceManager as unknown as PresenceManager,
+                agent:           wrappedAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: capturingBotStateManager as unknown as BotStateManager,
             });
@@ -637,7 +634,7 @@ describe('StatusMiddleware', () => {
 
             const middleware = createStatusMiddleware({
                 presenceManager: mockPresenceManager,
-                agent:           agent as any,
+                agent:           agent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: capturingBotStateManager as unknown as BotStateManager,
             });
@@ -666,7 +663,7 @@ describe('StatusMiddleware', () => {
             });
 
             // Error is caught in try/catch, returns null
-            const result = await middleware(messageContext, mockChannel as any);
+            const result = await middleware(messageContext, mockChannel as unknown as Parameters<typeof middleware>[1]);
 
             expect(result).toBe(null);
             expect(mockLogger.error).toHaveBeenCalledWith(
@@ -718,7 +715,7 @@ describe('StatusMiddleware', () => {
 
             const middleware = createStatusMiddleware({
                 presenceManager: errorPresenceManager,
-                agent:           wrappedAgent as any,
+                agent:           wrappedAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: errorBotStateManager as unknown as BotStateManager,
             });
@@ -747,7 +744,7 @@ describe('StatusMiddleware', () => {
 
             const capturingBotStateManager = {
                 shouldUpdatePresence: mock(_constant(true)),
-                updateActivityPhase:  mock((phase: any) => {
+                updateActivityPhase:  mock((phase: ActivityPhase) => {
                     phases.push(phase);
                 }),
                 clearActivityPhase: mock(() => undefined),
@@ -764,8 +761,8 @@ describe('StatusMiddleware', () => {
             };
 
             const middleware = createStatusMiddleware({
-                presenceManager: capturingPresenceManager as any,
-                agent:           wrappedAgent as any,
+                presenceManager: capturingPresenceManager as unknown as PresenceManager,
+                agent:           wrappedAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: capturingBotStateManager as unknown as BotStateManager,
             });
@@ -795,7 +792,7 @@ describe('StatusMiddleware', () => {
                 botStateManager: mockBotStateManager,
             });
 
-            const result = await middleware(messageContext, mockChannel as any);
+            const result = await middleware(messageContext, mockChannel as unknown as Parameters<typeof middleware>[1]);
 
             expect(result).toBe(null);
             // agent.handleInput should not be called because sendTyping is before it in try block
@@ -834,7 +831,7 @@ describe('StatusMiddleware', () => {
                                     { type: 'thinking', thinking: 'Second thought' }
                                 ]
                             }
-                        } as any);
+                        } as unknown as AgentStreamEvent);
                         // Trigger thinking phase update
                         options?.onStreamEvent?.({ type: 'assistant' });
                         // Second tool call
@@ -846,9 +843,9 @@ describe('StatusMiddleware', () => {
 
             const middleware = createStatusMiddleware({
                 presenceManager:        mockPresenceManager,
-                agent:                  wrappedAgent as any,
+                agent:                  wrappedAgent as unknown as ClaudeAgent,
                 logger:                 mockLogger,
-                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as unknown as DynamicStatusGenerator,
                 botStateManager:        mockBotStateManager,
             });
 
@@ -896,9 +893,9 @@ describe('StatusMiddleware', () => {
 
             const middleware = createStatusMiddleware({
                 presenceManager:        mockPresenceManager,
-                agent:                  wrappedAgent as any,
+                agent:                  wrappedAgent as unknown as ClaudeAgent,
                 logger:                 mockLogger,
-                dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+                dynamicStatusGenerator: mockDynamicStatusGenerator as unknown as DynamicStatusGenerator,
                 botStateManager:        mockBotStateManager,
             });
 
@@ -915,9 +912,8 @@ describe('StatusMiddleware', () => {
 
     describe('typing indicator logging', () => {
         test('should log debug with messageId object and specific string when typing starts', async () => {
-            const localMockLogger = {
+            const localMockLogger: StatusMiddlewareDeps['logger'] = {
                 debug: mock(() => undefined),
-                warn:  mock(() => undefined),
                 error: mock(() => undefined),
                 info:  mock(() => undefined),
             };
@@ -929,15 +925,15 @@ describe('StatusMiddleware', () => {
             const middleware = createStatusMiddleware({
                 presenceManager: mockPresenceManager,
                 agent:           mockAgent,
-                logger:          localMockLogger as any,
+                logger:          localMockLogger,
                 botStateManager: mockBotStateManager,
             });
 
-            await middleware(messageContext, mockChannel as any);
+            await middleware(messageContext, mockChannel as unknown as Parameters<typeof middleware>[1]);
 
             // Kill StringLiteral mutant on line 124 col 64 - verify second arg is the specific string
-            const debugCalls = localMockLogger.debug.mock.calls as any[];
-            const typingStartCall = _find(debugCalls, ['1', 'Started typing indicator']) as any[] | undefined;
+            const debugCalls = (localMockLogger.debug as ReturnType<typeof mock>).mock.calls;
+            const typingStartCall = _find(debugCalls, ['1', 'Started typing indicator']) as unknown[] | undefined;
 
             expect(typingStartCall).toBeDefined();
             if(typingStartCall) {
@@ -968,7 +964,7 @@ describe('StatusMiddleware', () => {
 
             const capturingBotStateManager = {
                 shouldUpdatePresence: mock(_constant(true)),
-                updateActivityPhase:  mock((phase: any) => {
+                updateActivityPhase:  mock((phase: ActivityPhase) => {
                     phases.push(phase);
                 }),
                 clearActivityPhase: mock(() => undefined),
@@ -985,8 +981,8 @@ describe('StatusMiddleware', () => {
             };
 
             const middleware = createStatusMiddleware({
-                presenceManager: capturingPresenceManager as any,
-                agent:           wrappedAgent as any,
+                presenceManager: capturingPresenceManager as unknown as PresenceManager,
+                agent:           wrappedAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: capturingBotStateManager as unknown as BotStateManager,
             });
@@ -1021,7 +1017,7 @@ describe('StatusMiddleware', () => {
 
             const middleware = createStatusMiddleware({
                 presenceManager: mockPresenceManager,
-                agent:           wrappedAgent as any,
+                agent:           wrappedAgent as unknown as ClaudeAgent,
                 logger:          mockLogger,
                 botStateManager: mockBotStateManager,
             });
@@ -1069,7 +1065,7 @@ describe('StatusMiddleware', () => {
                 const wrappedAgent = {
                     handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                         if(options?.onStreamEvent) {
-                            options?.onStreamEvent?.(event as any);
+                            options?.onStreamEvent?.(event as AgentStreamEvent);
                         }
                         return { response: 'Response', wasInterrupted: false, streamTracker: {} };
                     }),
@@ -1077,7 +1073,7 @@ describe('StatusMiddleware', () => {
 
                 const middleware = createStatusMiddleware({
                     presenceManager:        mockPresenceManager,
-                    agent:                  wrappedAgent as any,
+                    agent:                  wrappedAgent as unknown as ClaudeAgent,
                     logger:                 mockLogger,
                     dynamicStatusGenerator: mockDynamicStatusGenerator,
                     botStateManager:        mockBotStateManager,
@@ -1112,14 +1108,14 @@ describe('StatusMiddleware', () => {
                 },
             ])('should pass generatedStatus to updatePhase for $phaseType phase', async ({ phaseType, event, generatedStatus }) => {
                 const phases: PresencePhase[] = [];
-                (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
+                (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mockImplementation(
                     _constant(Promise.resolve(generatedStatus))
                 );
 
                 const wrappedAgent = {
                     handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
                         if(options?.onStreamEvent) {
-                            options?.onStreamEvent?.(event as any);
+                            options?.onStreamEvent?.(event as AgentStreamEvent);
                         }
                         return { response: 'Response', wasInterrupted: false, streamTracker: {} };
                     }),
@@ -1136,7 +1132,7 @@ describe('StatusMiddleware', () => {
                 // Capture phases from botStateManager instead
                 const capturingBotStateManager = {
                     shouldUpdatePresence: mock(_constant(true)),
-                    updateActivityPhase:  mock((phase: any) => {
+                    updateActivityPhase:  mock((phase: ActivityPhase) => {
                         phases.push(phase);
                     }),
                     clearActivityPhase: mock(() => undefined),
@@ -1145,8 +1141,8 @@ describe('StatusMiddleware', () => {
                 };
 
                 const middleware = createStatusMiddleware({
-                    presenceManager:        capturingPresenceManager as any,
-                    agent:                  wrappedAgent as any,
+                    presenceManager:        capturingPresenceManager as unknown as PresenceManager,
+                    agent:                  wrappedAgent as unknown as ClaudeAgent,
                     logger:                 mockLogger,
                     dynamicStatusGenerator: mockDynamicStatusGenerator,
                     botStateManager:        capturingBotStateManager as unknown as BotStateManager,
@@ -1165,7 +1161,7 @@ describe('StatusMiddleware', () => {
         describe('generateSynopsis edge cases', () => {
             test('should handle empty string return from generateSynopsis gracefully', async () => {
                 const phases: PresencePhase[] = [];
-                (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
+                (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mockImplementation(
                     _constant(Promise.resolve(''))
                 );
 
@@ -1180,7 +1176,7 @@ describe('StatusMiddleware', () => {
 
                 const capturingBotStateManager = {
                     shouldUpdatePresence: mock(_constant(true)),
-                    updateActivityPhase:  mock((phase: any) => {
+                    updateActivityPhase:  mock((phase: ActivityPhase) => {
                         phases.push(phase);
                     }),
                     clearActivityPhase: mock(() => undefined),
@@ -1190,7 +1186,7 @@ describe('StatusMiddleware', () => {
 
                 const middleware = createStatusMiddleware({
                     presenceManager:        mockPresenceManager,
-                    agent:                  wrappedAgent as any,
+                    agent:                  wrappedAgent as unknown as ClaudeAgent,
                     logger:                 mockLogger,
                     dynamicStatusGenerator: mockDynamicStatusGenerator,
                     botStateManager:        capturingBotStateManager as unknown as BotStateManager,
@@ -1220,7 +1216,7 @@ describe('StatusMiddleware', () => {
             test('should handle very long string (1000+ chars) return from generateSynopsis gracefully', async () => {
                 const phases: PresencePhase[] = [];
                 const veryLongStatus = _repeat('A', 1500);
-                (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
+                (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mockImplementation(
                     _constant(Promise.resolve(veryLongStatus))
                 );
 
@@ -1235,7 +1231,7 @@ describe('StatusMiddleware', () => {
 
                 const capturingBotStateManager = {
                     shouldUpdatePresence: mock(_constant(true)),
-                    updateActivityPhase:  mock((phase: any) => {
+                    updateActivityPhase:  mock((phase: ActivityPhase) => {
                         phases.push(phase);
                     }),
                     clearActivityPhase: mock(() => undefined),
@@ -1245,7 +1241,7 @@ describe('StatusMiddleware', () => {
 
                 const middleware = createStatusMiddleware({
                     presenceManager:        mockPresenceManager,
-                    agent:                  wrappedAgent as any,
+                    agent:                  wrappedAgent as unknown as ClaudeAgent,
                     logger:                 mockLogger,
                     dynamicStatusGenerator: mockDynamicStatusGenerator,
                     botStateManager:        capturingBotStateManager as unknown as BotStateManager,
@@ -1277,7 +1273,7 @@ describe('StatusMiddleware', () => {
         describe('fallback behavior', () => {
             test('should use exact type "using_tool" in fallback when generateSynopsis throws for tool_progress', async () => {
                 const phases: PresencePhase[] = [];
-                (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
+                (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mockImplementation(
                     () => Promise.reject(new Error('Synopsis generation failed'))
                 );
 
@@ -1301,7 +1297,7 @@ describe('StatusMiddleware', () => {
                 // Capture phases from botStateManager instead
                 const capturingBotStateManager = {
                     shouldUpdatePresence: mock(_constant(true)),
-                    updateActivityPhase:  mock((phase: any) => {
+                    updateActivityPhase:  mock((phase: ActivityPhase) => {
                         phases.push(phase);
                     }),
                     clearActivityPhase: mock(() => undefined),
@@ -1310,8 +1306,8 @@ describe('StatusMiddleware', () => {
                 };
 
                 const middleware = createStatusMiddleware({
-                    presenceManager:        capturingPresenceManager as any,
-                    agent:                  wrappedAgent as any,
+                    presenceManager:        capturingPresenceManager as unknown as PresenceManager,
+                    agent:                  wrappedAgent as unknown as ClaudeAgent,
                     logger:                 mockLogger,
                     dynamicStatusGenerator: mockDynamicStatusGenerator,
                     botStateManager:        capturingBotStateManager as unknown as BotStateManager,
@@ -1345,7 +1341,7 @@ describe('StatusMiddleware', () => {
 
                 const capturingBotStateManager = {
                     shouldUpdatePresence: mock(_constant(true)),
-                    updateActivityPhase:  mock((phase: any) => {
+                    updateActivityPhase:  mock((phase: ActivityPhase) => {
                         phases.push(phase);
                     }),
                     clearActivityPhase: mock(() => undefined),
@@ -1363,8 +1359,8 @@ describe('StatusMiddleware', () => {
 
                 // No dynamicStatusGenerator provided
                 const middleware = createStatusMiddleware({
-                    presenceManager: capturingPresenceManager as any,
-                    agent:           wrappedAgent as any,
+                    presenceManager: capturingPresenceManager as unknown as PresenceManager,
+                    agent:           wrappedAgent as unknown as ClaudeAgent,
                     logger:          mockLogger,
                     botStateManager: capturingBotStateManager as unknown as BotStateManager,
                 });
@@ -1383,7 +1379,7 @@ describe('StatusMiddleware', () => {
 
             test('should update phase without generatedStatus when generateSynopsis throws', async () => {
                 const phases: PresencePhase[] = [];
-                (mockDynamicStatusGenerator.generateSynopsis as any).mockImplementation(
+                (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mockImplementation(
                     () => Promise.reject(new Error('Synopsis generation failed'))
                 );
 
@@ -1407,7 +1403,7 @@ describe('StatusMiddleware', () => {
                 // Capture phases from botStateManager instead
                 const capturingBotStateManager = {
                     shouldUpdatePresence: mock(_constant(true)),
-                    updateActivityPhase:  mock((phase: any) => {
+                    updateActivityPhase:  mock((phase: ActivityPhase) => {
                         phases.push(phase);
                     }),
                     clearActivityPhase: mock(() => undefined),
@@ -1416,8 +1412,8 @@ describe('StatusMiddleware', () => {
                 };
 
                 const middleware = createStatusMiddleware({
-                    presenceManager:        capturingPresenceManager as any,
-                    agent:                  wrappedAgent as any,
+                    presenceManager:        capturingPresenceManager as unknown as PresenceManager,
+                    agent:                  wrappedAgent as unknown as ClaudeAgent,
                     logger:                 mockLogger,
                     dynamicStatusGenerator: mockDynamicStatusGenerator,
                     botStateManager:        capturingBotStateManager as unknown as BotStateManager,
@@ -1464,7 +1460,7 @@ describe('StatusMiddleware', () => {
                                         input: { file_path: '/test.txt' }
                                     }]
                                 }
-                            } as any);
+                            } as AgentStreamEvent);
                             // Send tool_progress
                             options?.onStreamEvent?.({ type: 'tool_progress', tool_name: 'Read' });
                         }
@@ -1474,9 +1470,9 @@ describe('StatusMiddleware', () => {
 
                 const middleware = createStatusMiddleware({
                     presenceManager:        mockPresenceManager,
-                    agent:                  wrappedAgent as any,
+                    agent:                  wrappedAgent as unknown as ClaudeAgent,
                     logger:                 mockLogger,
-                    dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator as unknown as DynamicStatusGenerator,
                     botStateManager:        mockBotStateManager,
                 });
 
@@ -1524,7 +1520,7 @@ describe('StatusMiddleware', () => {
                                         }
                                     }]
                                 }
-                            } as any);
+                            } as AgentStreamEvent);
                             options?.onStreamEvent?.({ type: 'tool_progress', tool_name: 'WebFetch' });
                         }
                         return { response: 'Response', wasInterrupted: false, streamTracker: {} };
@@ -1533,9 +1529,9 @@ describe('StatusMiddleware', () => {
 
                 const middleware = createStatusMiddleware({
                     presenceManager:        mockPresenceManager,
-                    agent:                  wrappedAgent as any,
+                    agent:                  wrappedAgent as unknown as ClaudeAgent,
                     logger:                 mockLogger,
-                    dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator as unknown as DynamicStatusGenerator,
                     botStateManager:        mockBotStateManager,
                 });
 
@@ -1578,9 +1574,9 @@ describe('StatusMiddleware', () => {
 
                 const middleware = createStatusMiddleware({
                     presenceManager:        mockPresenceManager,
-                    agent:                  wrappedAgent as any,
+                    agent:                  wrappedAgent as unknown as ClaudeAgent,
                     logger:                 mockLogger,
-                    dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator as unknown as DynamicStatusGenerator,
                     botStateManager:        mockBotStateManager,
                 });
 
@@ -1619,9 +1615,9 @@ describe('StatusMiddleware', () => {
 
                 const middleware = createStatusMiddleware({
                     presenceManager:        mockPresenceManager,
-                    agent:                  wrappedAgent as any,
+                    agent:                  wrappedAgent as unknown as ClaudeAgent,
                     logger:                 mockLogger,
-                    dynamicStatusGenerator: mockDynamicStatusGenerator as any,
+                    dynamicStatusGenerator: mockDynamicStatusGenerator as unknown as DynamicStatusGenerator,
                     botStateManager:        mockBotStateManager,
                 });
 

@@ -889,7 +889,6 @@ describe.concurrent('createMessageFetcher', () => {
                     isTextBased: _.constant(true),
                     messages:    {
                         fetch: mock(async () => {
-                            // eslint-disable-next-line @typescript-eslint/only-throw-error -- Testing non-Error throw to trigger 'Unknown error' branch
                             throw 'network failure';
                         }),
                     },

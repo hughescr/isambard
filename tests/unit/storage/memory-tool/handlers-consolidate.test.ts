@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Mock functions don't have proper this binding */
-/* eslint-disable @typescript-eslint/only-throw-error -- Some tests intentionally throw non-Error values */
 import { describe, it, test, expect, beforeEach } from 'bun:test';
 import { mock } from 'bun:test';
 import { mockLogger } from '../../../setup';
@@ -183,7 +181,6 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
             expect(mockLogger.warn).toHaveBeenCalledTimes(1);
             expect(mockLogger.warn).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg: expect.stringContaining('Failed to delete source /test/source1.md during consolidation'),
                 })
             );
@@ -214,7 +211,6 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
             expect(mockLogger.warn).toHaveBeenCalledTimes(1);
             expect(mockLogger.warn).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg: expect.stringContaining('string error'),
                 })
             );
@@ -304,7 +300,6 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     path: '/test/file.md',
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg:  expect.stringContaining('Memory create:'),
                 })
             );
@@ -335,7 +330,6 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     path: '/test/file.md',
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg:  expect.stringContaining('Memory insert:'),
                 })
             );
@@ -366,7 +360,6 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     path: '/test/file.md',
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg:  expect.stringContaining('Memory str_replace:'),
                 })
             );

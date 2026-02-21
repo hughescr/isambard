@@ -1,5 +1,4 @@
 /* eslint-disable n/no-unsupported-features/node-builtins -- Bun runtime supports fetch and Response */
-/* eslint-disable @typescript-eslint/await-thenable -- Bun-specific APIs */
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import _ from 'lodash';
 import { mockLogger } from '../../../setup';
@@ -103,8 +102,7 @@ describe('WildDuckClient', () => {
     beforeEach(() => {
         mockFetch.mockClear();
         mockLogger.warn.mockClear();
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any -- Testing mock needs to override global fetch type
-        globalThis.fetch = mockFetch as any;
+        globalThis.fetch = mockFetch as unknown as typeof fetch;
     });
 
     afterEach(() => {

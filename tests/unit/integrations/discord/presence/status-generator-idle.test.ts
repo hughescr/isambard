@@ -1,22 +1,15 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-call -- Test mocks require unsafe calls */
-
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return -- Test mocks */
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { ActivityType } from 'discord.js';
 import { constant as _constant, keys as _keys, repeat as _repeat, replace as _replace, size as _size, isString as _isString } from 'lodash';
-import { createIdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
+import { createIdleStatusGenerator, type IdleStatusGeneratorDeps } from '@/integrations/discord/presence/status-generator-idle';
 import { mockGenerateTextWithSystemPrompt } from '../../../../setup';
 
 describe('IdleStatusGenerator', () => {
-    const mockLogger = {
+    const mockLogger: IdleStatusGeneratorDeps['logger'] = {
         debug: mock(() => undefined),
-        warn:  mock(() => undefined),
-        error: mock(() => undefined),
         info:  mock(() => undefined),
-        child: mock(() => mockLogger),
-    } as any;
+        error: mock(() => undefined),
+    };
 
     beforeEach(() => {
         mockGenerateTextWithSystemPrompt.mockReset();
@@ -24,10 +17,9 @@ describe('IdleStatusGenerator', () => {
     });
 
     afterEach(() => {
-        mockLogger.debug.mockClear();
-        mockLogger.warn.mockClear();
-        mockLogger.error.mockClear();
-        mockLogger.info.mockClear();
+        (mockLogger.debug as ReturnType<typeof mock>).mockClear();
+        (mockLogger.error as ReturnType<typeof mock>).mockClear();
+        (mockLogger.info as ReturnType<typeof mock>).mockClear();
     });
 
     describe('generate', () => {
@@ -78,8 +70,8 @@ describe('IdleStatusGenerator', () => {
         });
 
         test.each([
-            { property: 'name', check: (val: any) => _isString(val) && val.length > 0 },
-            { property: 'type', check: (val: any) => val !== undefined },
+            { property: 'name', check: (val: unknown) => _isString(val) && val.length > 0 },
+            { property: 'type', check: (val: unknown) => val !== undefined },
         ])('should return object with $property property (kills ObjectLiteral mutant)', async ({ property, check }) => {
             mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve('Deep in thought')));
 
@@ -235,13 +227,11 @@ describe('IdleStatusGenerator', () => {
         test('should log info with statusText when generation succeeds', async () => {
             mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve('Generated status text')));
 
-            const localMockLogger = {
+            const localMockLogger: IdleStatusGeneratorDeps['logger'] = {
                 debug: mock(() => undefined),
-                warn:  mock(() => undefined),
                 error: mock(() => undefined),
                 info:  mock(() => undefined),
-                child: mock(() => localMockLogger),
-            } as any;
+            };
 
             const generator = createIdleStatusGenerator({
                 logger:          localMockLogger,
@@ -261,13 +251,11 @@ describe('IdleStatusGenerator', () => {
             const testError = new Error('Test API failure');
             mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.reject(testError));
 
-            const localMockLogger = {
+            const localMockLogger: IdleStatusGeneratorDeps['logger'] = {
                 debug: mock(() => undefined),
-                warn:  mock(() => undefined),
                 error: mock(() => undefined),
                 info:  mock(() => undefined),
-                child: mock(() => localMockLogger),
-            } as any;
+            };
 
             const generator = createIdleStatusGenerator({
                 logger:          localMockLogger,
@@ -629,13 +617,11 @@ describe('IdleStatusGenerator', () => {
 
     describe('logging behavior', () => {
         test('should log debug with specific string when generating idle status', async () => {
-            const localMockLogger = {
+            const localMockLogger: IdleStatusGeneratorDeps['logger'] = {
                 debug: mock(() => undefined),
-                warn:  mock(() => undefined),
                 error: mock(() => undefined),
                 info:  mock(() => undefined),
-                child: mock(() => mockLogger),
-            } as any;
+            };
 
             const generator = createIdleStatusGenerator({
                 logger:          localMockLogger,
@@ -646,7 +632,7 @@ describe('IdleStatusGenerator', () => {
             await generator.generate();
 
             // Kill StringLiteral mutant - verify the debug message
-            const debugCalls = localMockLogger.debug.mock.calls;
+            const debugCalls = (localMockLogger.debug as ReturnType<typeof mock>).mock.calls;
             expect(debugCalls.length).toBeGreaterThan(0);
             const firstCall = debugCalls[0];
             expect(firstCall[0]).toBe('Generating idle status with Haiku');

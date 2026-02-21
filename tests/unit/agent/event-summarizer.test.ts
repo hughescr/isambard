@@ -204,7 +204,6 @@ describe('event-summarizer', () => {
                 createMockEvent('/events/e1', '2025-01-15T11:00:00Z', 'Event content'),
             ];
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- bun test expect.rejects returns a thenable
             await expect(summarizeEventBatches(events, 5, now)).rejects.toThrow('LLM service unavailable');
         });
     });

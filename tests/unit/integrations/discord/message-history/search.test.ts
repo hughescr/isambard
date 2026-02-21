@@ -1,8 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Test mocks */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment -- Test mocks */
-/* eslint-disable @typescript-eslint/unbound-method -- Mock methods */
-
 import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
 import _ from 'lodash';
 import {
@@ -10,7 +5,7 @@ import {
     type MessageSearchService
 } from '@/integrations/discord/message-history/search';
 import type { DiscordSearchResult } from '@/integrations/discord/message-history/types';
-import { createChannelId } from '@/integrations/discord/types';
+import { createChannelId, createGuildId } from '@/integrations/discord/types';
 import type { MessageFetcher } from '@/integrations/discord/message-history/fetcher';
 import type { MessageSummarizer } from '@/integrations/discord/message-history/summarizer';
 
@@ -30,7 +25,7 @@ function createMockSearchResult(overrides: Partial<{
     // Handle guildId: null if explicitly set, otherwise null
     let guildId = null;
     if(overrides.guildId !== null && overrides.guildId !== undefined) {
-        guildId = createChannelId(overrides.guildId) as any;
+        guildId = createGuildId(overrides.guildId);
     }
 
     return {
@@ -612,7 +607,7 @@ describe('createMessageSearchService', () => {
                     })
                 );
 
-                (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mockImplementation((msgs: any[]) =>
+                (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mockImplementation((msgs: DiscordSearchResult[]) =>
                     Promise.resolve([{
                         startTimestamp: '2025-01-15T12:00:00.000Z',
                         endTimestamp:   '2025-01-15T12:05:00.000Z',
@@ -726,7 +721,7 @@ describe('createMessageSearchService', () => {
                     })
                 );
 
-                (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mockImplementation((msgs: any[]) =>
+                (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mockImplementation((msgs: DiscordSearchResult[]) =>
                     Promise.resolve([{
                         startTimestamp: '2025-01-15T12:00:00.000Z',
                         endTimestamp:   '2025-01-15T12:05:00.000Z',

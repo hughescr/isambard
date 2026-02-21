@@ -36,12 +36,9 @@ export interface PresenceManagerDeps {
     config:                  PresenceConfig
     /** Logger instance */
     logger: {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
-        debug: (message: any, ...args: any[]) => void
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
-        info:  (message: any, ...args: any[]) => void
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
-        error: (message: any, ...args: any[]) => void
+        debug: (message: unknown, ...args: unknown[]) => void
+        info:  (message: unknown, ...args: unknown[]) => void
+        error: (message: unknown, ...args: unknown[]) => void
     }
 }
 

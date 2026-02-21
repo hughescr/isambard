@@ -40,12 +40,9 @@ export interface ActiveStatusGenerator {
 export interface ActiveStatusGeneratorDeps {
     /** Logger instance for structured logging */
     logger: {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
-        debug: (message: any, ...args: any[]) => void
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
-        warn:  (message: any, ...args: any[]) => void
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Logger interface accepts any args
-        error: (message: any, ...args: any[]) => void
+        debug: (message: unknown, ...args: unknown[]) => void
+        warn:  (message: unknown, ...args: unknown[]) => void
+        error: (message: unknown, ...args: unknown[]) => void
     }
     /** Discord activity type (e.g., ActivityType.Custom) */
     activityType: ActivityType

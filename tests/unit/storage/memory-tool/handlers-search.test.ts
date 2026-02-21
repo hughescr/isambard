@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Mock functions don't have proper this binding */
 import { describe, it, test, expect, beforeEach } from 'bun:test';
 import { mock } from 'bun:test';
 import { split as _split, repeat as _repeat } from 'lodash';
@@ -873,7 +872,6 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 expect.objectContaining({
                     query:       'tag1,tag2',
                     resultCount: 1,
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg:         expect.stringContaining('Memory search:'),
                 })
             );
@@ -901,7 +899,6 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 expect.objectContaining({
                     query:       'identity',
                     resultCount: 1,
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg:         expect.stringContaining('Memory search:'),
                 })
             );
@@ -928,7 +925,6 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 expect.objectContaining({
                     query:       'time_range',
                     resultCount: 1,
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg:         expect.stringContaining('Memory search:'),
                 })
             );
@@ -941,7 +937,6 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 expect.objectContaining({
                     query:       '',
                     resultCount: 0,
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg:         expect.stringContaining('Memory search:'),
                 })
             );

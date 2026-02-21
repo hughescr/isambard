@@ -276,7 +276,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // Register clientReady handler for messageCreate setup
     // This runs after the client is authenticated and ready
     // Use .once() to ensure this setup only runs once, even on reconnects
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises, complexity -- clientReady handler must be async; complexity added by admin channel mute; needs refactoring to reduce
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises, complexity -- clientReady handler must be async; complexity is inherent — it orchestrates presence, coordinator, perch, catch-up, inbox, and email lifecycle in sequence
     client.once('clientReady', async (readyClient: Client): Promise<void> => {
         // Log that the bot is ready (preserving functionality from removed logging handler)
         createReadyHandler()(readyClient);

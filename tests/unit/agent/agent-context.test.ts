@@ -1,12 +1,13 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any -- Test mocks require unsafe type operations */
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import _ from 'lodash';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import { mockLogger } from '../../setup';
 import { createClaudeAgent } from '../../../src/agent/agent';
 import type { DiscordMessageContext } from '../../../src/integrations/discord/types';
 import { createGuildId, createChannelId, createUserId } from '../../../src/integrations/discord/types';
 import type { ContextBuilder } from '../../../src/agent/context-builder';
+import type { AgentStreamEvent } from '../../../src/agent/types';
 
 describe('createClaudeAgent context integration', () => {
     let mockMessageContext: DiscordMessageContext;
@@ -36,7 +37,6 @@ describe('createClaudeAgent context integration', () => {
             loadCoreIdentity:       mock(_.constant(Promise.resolve(''))),
             loadHotState:           mock(_.constant(Promise.resolve(''))),
             loadUserMemories:       mock(_.constant(Promise.resolve(''))),
-            // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock function
             recordAccess:           mock(async () => {}),
             loadRecentEvents:       mock(_.constant(Promise.resolve({ items: [], isFallback: false }))),
             loadUserTimezone:       mock(_.constant(Promise.resolve(undefined))),
@@ -56,7 +56,7 @@ describe('createClaudeAgent context integration', () => {
 
                 const eventsResult = await mockContextBuilder.loadRecentEvents(50);
                 if(eventsResult.items.length > 0) {
-                    sections.push(`[Recent events]\n${_.map(eventsResult.items, (item: any) => `${item.path}: ${item.content}`).join('\n\n')}`);
+                    sections.push(`[Recent events]\n${_.map(eventsResult.items, (item: Record<string, unknown>) => `${String(item.path)}: ${String(item.content)}`).join('\n\n')}`);
                 }
 
                 if(sections.length === 0) {
@@ -68,7 +68,7 @@ describe('createClaudeAgent context integration', () => {
 
         // Mock query() to return an async generator with assistant message
 
-        querySpy = spyOn(agentSdk, 'query').mockImplementation((_params: any): any => {
+        querySpy = spyOn(agentSdk, 'query').mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
             async function* mockGenerator() {
                 yield {
                     type:    'assistant' as const,
@@ -82,7 +82,7 @@ describe('createClaudeAgent context integration', () => {
                     },
                 };
             }
-            return mockGenerator();
+            return mockGenerator() as unknown as Query;
         });
     });
 
@@ -343,7 +343,7 @@ describe('createClaudeAgent context integration', () => {
 
     describe('message stream processing', () => {
         test('should ignore non-assistant messages in stream', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'user' as const,
@@ -368,7 +368,7 @@ describe('createClaudeAgent context integration', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -378,7 +378,7 @@ describe('createClaudeAgent context integration', () => {
         });
 
         test('should return null when stream has only non-assistant messages', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'user' as const,
@@ -403,7 +403,7 @@ describe('createClaudeAgent context integration', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -419,11 +419,11 @@ describe('createClaudeAgent context integration', () => {
             ['no message field', { type: 'assistant' as const }],
             ['undefined message property', { type: 'assistant' as const, message: undefined }],
         ])('should handle assistant message with %s gracefully', async (_scenario, messageData) => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield messageData;
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -433,7 +433,7 @@ describe('createClaudeAgent context integration', () => {
         });
 
         test('should filter out non-text blocks and combine multiple text blocks', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -460,7 +460,7 @@ describe('createClaudeAgent context integration', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -470,7 +470,7 @@ describe('createClaudeAgent context integration', () => {
         });
 
         test('should trim whitespace from combined text blocks', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -484,7 +484,7 @@ describe('createClaudeAgent context integration', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -494,7 +494,7 @@ describe('createClaudeAgent context integration', () => {
         });
 
         test('should return null when text is only whitespace', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -508,7 +508,7 @@ describe('createClaudeAgent context integration', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -518,7 +518,7 @@ describe('createClaudeAgent context integration', () => {
         });
 
         test('should update lastAssistantText only when text is non-empty', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -543,7 +543,7 @@ describe('createClaudeAgent context integration', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -553,7 +553,7 @@ describe('createClaudeAgent context integration', () => {
         });
 
         test('should join multiple text blocks with newlines', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -575,7 +575,7 @@ describe('createClaudeAgent context integration', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -585,7 +585,7 @@ describe('createClaudeAgent context integration', () => {
         });
 
         test('should filter out content blocks without type property', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -597,7 +597,7 @@ describe('createClaudeAgent context integration', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -609,8 +609,8 @@ describe('createClaudeAgent context integration', () => {
 
     describe('stream event callbacks', () => {
         test('should invoke callback for each stream event', async () => {
-            const events: any[] = [];
-            querySpy.mockImplementation((_params: any): any => {
+            const events: AgentStreamEvent[] = [];
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -632,7 +632,7 @@ describe('createClaudeAgent context integration', () => {
                         subtype: 'success',
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -647,8 +647,8 @@ describe('createClaudeAgent context integration', () => {
         });
 
         test('should receive correct event data in callback', async () => {
-            let receivedEvent: any = null;
-            querySpy.mockImplementation((_params: any): any => {
+            let receivedEvent: AgentStreamEvent | null = null;
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:                 'tool_progress' as const,
@@ -657,7 +657,7 @@ describe('createClaudeAgent context integration', () => {
                         elapsed_time_seconds: 1.5,
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -665,7 +665,7 @@ describe('createClaudeAgent context integration', () => {
                 receivedEvent = event;
             } });
 
-            expect(receivedEvent).toEqual({
+            expect(receivedEvent!).toEqual({
                 type:                 'tool_progress',
                 tool_name:            'mcp__memory__search',
                 tool_use_id:          'tool_123',
@@ -693,7 +693,7 @@ describe('createClaudeAgent context integration', () => {
 
         test('should invoke callback for all event types', async () => {
             const eventTypes: string[] = [];
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield { type: 'user' as const };
                     yield { type: 'assistant' as const, message: { content: [{ type: 'text', text: 'hi' }] } };
@@ -701,7 +701,7 @@ describe('createClaudeAgent context integration', () => {
                     yield { type: 'tool_result' as const, tool_name: 'test' };
                     yield { type: 'result' as const, subtype: 'success' };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -716,7 +716,7 @@ describe('createClaudeAgent context integration', () => {
     describe('error handling and logging', () => {
         test('should return full long responses without truncation (handlers do chunking)', async () => {
             const longText = _.repeat('x', 2000);
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -730,7 +730,7 @@ describe('createClaudeAgent context integration', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -743,7 +743,7 @@ describe('createClaudeAgent context integration', () => {
 
         test('should log error with message and user details', async () => {
             const testError = new Error('Test error message');
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 throw testError;
             });
 
@@ -802,7 +802,7 @@ describe('createClaudeAgent context integration', () => {
         });
 
         test('should log tool usage from assistant messages', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -822,7 +822,7 @@ describe('createClaudeAgent context integration', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -838,7 +838,7 @@ describe('createClaudeAgent context integration', () => {
         });
 
         test('should log multiple tool uses from a single assistant message', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -860,7 +860,7 @@ describe('createClaudeAgent context integration', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -883,7 +883,7 @@ describe('createClaudeAgent context integration', () => {
         });
 
         test('should not log tool usage for messages without tool_use blocks', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -897,7 +897,7 @@ describe('createClaudeAgent context integration', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});

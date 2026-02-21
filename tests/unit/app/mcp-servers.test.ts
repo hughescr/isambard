@@ -1,7 +1,15 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- Test mocks */
 import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import { mockLogger } from '../../setup';
 import type { MCPServersOptions } from '@/app/mcp-servers';
+import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
+type McpServerInstance = ReturnType<typeof createMemoryMCPServer>;
+import type { MemoryToolBackend } from '@/storage/memory-tool';
+import type { MessageSearchService } from '@/integrations/discord/message-history/search';
+import type { Client } from 'discord.js';
+import type { QuestionRegistry } from '@/agent/question-registry';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
+import type { InboxManager } from '@/integrations/discord/inbox';
+import type { BotStateManager } from '@/integrations/discord/state';
 
 describe('createMCPServers', () => {
     let spies: ReturnType<typeof spyOn>[];
@@ -16,13 +24,13 @@ describe('createMCPServers', () => {
 
         // Create mock options with all required properties
         mockOptions = {
-            memoryBackend:        {} as any,
-            messageSearchService: {} as any,
-            discordClient:        {} as any,
-            questionRegistry:     {} as any,
-            channelRegistry:      {} as any,
-            inboxManager:         {} as any,
-            botStateManager:      {} as any,
+            memoryBackend:        {} as unknown as MemoryToolBackend,
+            messageSearchService: {} as unknown as MessageSearchService,
+            discordClient:        {} as unknown as Client,
+            questionRegistry:     {} as unknown as QuestionRegistry,
+            channelRegistry:      {} as unknown as ChannelRegistryManager,
+            inboxManager:         {} as unknown as InboxManager,
+            botStateManager:      {} as unknown as BotStateManager,
             timezone:             'America/New_York',
         };
     });
@@ -41,17 +49,17 @@ describe('createMCPServers', () => {
     test('should return all three MCP server configs', async () => {
         // Mock all three MCP server creation functions
         const memoryMcpModule = await import('@/agent/memory-mcp-server');
-        const mockMemoryMcpServer = { name: 'memory', version: '1.0.0' } as any;
+        const mockMemoryMcpServer = { name: 'memory', version: '1.0.0' } as unknown as McpServerInstance;
         const createMemoryMcpServerSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcpServer);
         spies.push(createMemoryMcpServerSpy);
 
         const discordMcpModule = await import('@/agent/discord-mcp-server');
-        const mockDiscordMcpServer = { name: 'discord', version: '1.0.0' } as any;
+        const mockDiscordMcpServer = { name: 'discord', version: '1.0.0' } as unknown as McpServerInstance;
         const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue(mockDiscordMcpServer);
         spies.push(createDiscordMcpServerSpy);
 
         const inboxMcpModule = await import('@/agent/inbox-mcp-server');
-        const mockInboxMcpServer = { name: 'inbox', version: '1.0.0' } as any;
+        const mockInboxMcpServer = { name: 'inbox', version: '1.0.0' } as unknown as McpServerInstance;
         const createInboxMcpServerSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue(mockInboxMcpServer);
         spies.push(createInboxMcpServerSpy);
 
@@ -69,15 +77,15 @@ describe('createMCPServers', () => {
     test('should pass correct args to createMemoryMCPServer', async () => {
         // Mock all three MCP server creation functions
         const memoryMcpModule = await import('@/agent/memory-mcp-server');
-        const createMemoryMcpServerSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as any);
+        const createMemoryMcpServerSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance);
         spies.push(createMemoryMcpServerSpy);
 
         const discordMcpModule = await import('@/agent/discord-mcp-server');
-        const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as any);
+        const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance);
         spies.push(createDiscordMcpServerSpy);
 
         const inboxMcpModule = await import('@/agent/inbox-mcp-server');
-        const createInboxMcpServerSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as any);
+        const createInboxMcpServerSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance);
         spies.push(createInboxMcpServerSpy);
 
         // Import and call createMCPServers
@@ -97,14 +105,14 @@ describe('createMCPServers', () => {
         const optionsWithRecordAccess = { ...mockOptions, recordAccess: mockRecordAccess };
 
         const memoryMcpModule = await import('@/agent/memory-mcp-server');
-        const createMemoryMcpServerSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as any);
+        const createMemoryMcpServerSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance);
         spies.push(createMemoryMcpServerSpy);
 
         const discordMcpModule = await import('@/agent/discord-mcp-server');
-        spies.push(spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as any));
+        spies.push(spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance));
 
         const inboxMcpModule = await import('@/agent/inbox-mcp-server');
-        spies.push(spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as any));
+        spies.push(spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance));
 
         const { createMCPServers } = await import('@/app/mcp-servers');
         createMCPServers(optionsWithRecordAccess);
@@ -117,15 +125,15 @@ describe('createMCPServers', () => {
     test('should pass correct args to createDiscordMCPServer', async () => {
         // Mock all three MCP server creation functions
         const memoryMcpModule = await import('@/agent/memory-mcp-server');
-        const createMemoryMcpServerSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as any);
+        const createMemoryMcpServerSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance);
         spies.push(createMemoryMcpServerSpy);
 
         const discordMcpModule = await import('@/agent/discord-mcp-server');
-        const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as any);
+        const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance);
         spies.push(createDiscordMcpServerSpy);
 
         const inboxMcpModule = await import('@/agent/inbox-mcp-server');
-        const createInboxMcpServerSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as any);
+        const createInboxMcpServerSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance);
         spies.push(createInboxMcpServerSpy);
 
         // Import and call createMCPServers
@@ -146,15 +154,15 @@ describe('createMCPServers', () => {
     test('should pass correct args to createInboxMCPServer', async () => {
         // Mock all three MCP server creation functions
         const memoryMcpModule = await import('@/agent/memory-mcp-server');
-        const createMemoryMcpServerSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as any);
+        const createMemoryMcpServerSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance);
         spies.push(createMemoryMcpServerSpy);
 
         const discordMcpModule = await import('@/agent/discord-mcp-server');
-        const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as any);
+        const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance);
         spies.push(createDiscordMcpServerSpy);
 
         const inboxMcpModule = await import('@/agent/inbox-mcp-server');
-        const createInboxMcpServerSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as any);
+        const createInboxMcpServerSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance);
         spies.push(createInboxMcpServerSpy);
 
         // Import and call createMCPServers
@@ -180,11 +188,11 @@ describe('createMCPServers', () => {
 
         // Mock other MCP servers (shouldn't be called due to early failure)
         const discordMcpModule = await import('@/agent/discord-mcp-server');
-        const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as any);
+        const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance);
         spies.push(createDiscordMcpServerSpy);
 
         const inboxMcpModule = await import('@/agent/inbox-mcp-server');
-        const createInboxMcpServerSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as any);
+        const createInboxMcpServerSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance);
         spies.push(createInboxMcpServerSpy);
 
         // Import and verify createMCPServers throws
@@ -195,7 +203,7 @@ describe('createMCPServers', () => {
     test('should throw when createDiscordMCPServer throws', async () => {
         // Mock createMemoryMCPServer to succeed
         const memoryMcpModule = await import('@/agent/memory-mcp-server');
-        const createMemoryMcpServerSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as any);
+        const createMemoryMcpServerSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance);
         spies.push(createMemoryMcpServerSpy);
 
         // Mock createDiscordMCPServer to throw
@@ -207,7 +215,7 @@ describe('createMCPServers', () => {
 
         // Mock createInboxMCPServer (shouldn't be called due to early failure)
         const inboxMcpModule = await import('@/agent/inbox-mcp-server');
-        const createInboxMcpServerSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as any);
+        const createInboxMcpServerSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance);
         spies.push(createInboxMcpServerSpy);
 
         // Import and verify createMCPServers throws
@@ -218,11 +226,11 @@ describe('createMCPServers', () => {
     test('should throw when createInboxMCPServer throws', async () => {
         // Mock createMemoryMCPServer and createDiscordMCPServer to succeed
         const memoryMcpModule = await import('@/agent/memory-mcp-server');
-        const createMemoryMcpServerSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as any);
+        const createMemoryMcpServerSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance);
         spies.push(createMemoryMcpServerSpy);
 
         const discordMcpModule = await import('@/agent/discord-mcp-server');
-        const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as any);
+        const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance);
         spies.push(createDiscordMcpServerSpy);
 
         // Mock createInboxMCPServer to throw

@@ -18,9 +18,7 @@ function createMockAllowlist(): {
 } {
     return {
         list:        mock(async (): Promise<AllowlistEntry[]> => []),
-        // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock returns void
         addEntry:    mock(async (_entry: AllowlistEntry): Promise<void> => {}),
-        // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock returns void
         removeEntry: mock(async (_email: string): Promise<void> => {}),
     };
 }
@@ -37,11 +35,8 @@ function createMockInteraction(
     subcommand: string,
     options:    Record<string, string | null> = {}
 ): MockInteraction {
-    // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock returns void
     const replyMock: Mock<(...args: unknown[]) => Promise<void>> = mock(async () => {});
-    // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock returns void
     const editReplyMock: Mock<(...args: unknown[]) => Promise<void>> = mock(async () => {});
-    // eslint-disable-next-line @typescript-eslint/no-empty-function -- Mock returns void
     const deferReplyMock: Mock<(...args: unknown[]) => Promise<void>> = mock(async () => {});
 
     const interaction = {

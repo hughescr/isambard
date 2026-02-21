@@ -18,7 +18,7 @@ function formatAddressForDisplay(addr: { name?: string, address: string }): stri
 }
 
 import { EmailFolder } from '@/integrations/email/types';
-import type { WildDuckClient, WildDuckAttachment } from '@/integrations/email/wildduck-client';
+import type { WildDuckClient, WildDuckAttachment, WildDuckAttachmentMeta } from '@/integrations/email/wildduck-client';
 import type { SendRateLimiter } from '@/integrations/email/send-rate-limiter';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { sanitizeFilename, deduplicateFilename } from '@/utils/filename';
@@ -127,6 +127,54 @@ async function buildAttachments(filePaths: string[]): Promise<WildDuckAttachment
         result.push({ filename, contentType, content: data.toString('base64') });
     }
     return result;
+}
+// Stryker restore all
+
+/**
+ * Save email attachments to disk (lazy-fetch from WildDuck, keyed by sha1 of messageId).
+ * Returns lines suitable for appending to the email content display.
+ */
+// Stryker disable all
+async function saveEmailAttachments(
+    wildDuckClient: WildDuckClient,
+    mailboxName:    string,
+    uid:            number,
+    messageId:      string,
+    attachmentMeta: WildDuckAttachmentMeta[]
+): Promise<string[]> {
+    if(attachmentMeta.length === 0) {
+        return [];
+    }
+    const hash          = createHash('sha1').update(messageId).digest('hex');
+    const attachmentDir = join(process.cwd(), 'attachments', `email-${hash}`);
+    const usedFilenames = new Set<string>();
+    const attachmentLines: string[] = [];
+    for(const meta of attachmentMeta) {
+        const safeBase     = sanitizeFilename(meta.filename);
+        const safeFilename = deduplicateFilename(safeBase, usedFilenames);
+        usedFilenames.add(safeFilename);
+        const filePath = join(attachmentDir, safeFilename);
+        try {
+            let fileExists = false;
+            try {
+                await access(filePath);
+                fileExists = true;
+            } catch{
+                fileExists = false;
+            }
+            if(!fileExists) {
+                await mkdir(attachmentDir, { recursive: true });
+                const data = await wildDuckClient.getAttachment(mailboxName, uid, meta.id);
+                await writeFile(filePath, data);
+            }
+            attachmentLines.push(`- attachments/email-${hash}/${safeFilename} (${meta.contentType})`);
+        } catch (writeErr) {
+            const errMsg = _.isError(writeErr) ? writeErr.message : String(writeErr);
+            logger.warn({ error: errMsg, filename: safeFilename, msg: 'Failed to save attachment (best-effort)' });
+            attachmentLines.push(`- Note: could not save attachment ${safeFilename}: ${errMsg}`);
+        }
+    }
+    return attachmentLines;
 }
 // Stryker restore all
 
@@ -329,7 +377,6 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     message: z.string().regex(MAILBOX_UID_REGEX, 'Must be in MailboxName:UID format (e.g., CleanInbox:42)').describe('The email reference in Mailbox:UID format (e.g., CleanInbox:42)'),
                 },
-                // eslint-disable-next-line complexity -- getEmailContent handler has inherent branching for access control, null message, attachments, and CC handling
                 async (args): Promise<CallToolResult> => {
                     // Stryker disable BlockStatement: try-catch wraps WildDuck operations - error handling
                     try {
@@ -370,46 +417,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         // Lazy-fetch and save attachments to disk (keyed by sha1 of messageId).
                         // Message-ID is always present: RFC 5322 requires MDAs to add one if missing,
                         // and our Haraka/WildDuck stack guarantees it.
-                        const attachmentLines: string[] = [];
-                        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: skip attachment saving when there are none; > 0 and >= 0 are equivalent for empty array
-                        if(email.attachmentMeta.length > 0) {
-                            // Stryker disable next-line StringLiteral: sha1 algorithm name is a configuration constant
-                            const hash          = createHash('sha1').update(email.messageId).digest('hex');
-                            // Stryker disable next-line StringLiteral: 'email-' prefix is a configuration constant for path namespacing
-                            const attachmentDir = join(process.cwd(), 'attachments', `email-${hash}`);
-                            const usedFilenames = new Set<string>();
-                            for(const meta of email.attachmentMeta) {
-                                const safeBase     = sanitizeFilename(meta.filename);
-                                const safeFilename = deduplicateFilename(safeBase, usedFilenames);
-                                usedFilenames.add(safeFilename);
-                                const filePath = join(attachmentDir, safeFilename);
-                                try {
-                                    // Stryker disable next-line BooleanLiteral: initial false is overwritten in both branches of try/catch — equivalent mutation
-                                    let fileExists = false;
-                                    try {
-                                        await access(filePath);
-                                        fileExists = true;
-                                    } catch{
-                                        fileExists = false;
-                                    }
-                                    if(!fileExists) {
-                                        // Stryker disable next-line ObjectLiteral,BooleanLiteral: recursive:true is required for nested directory creation
-                                        await mkdir(attachmentDir, { recursive: true });
-                                        // Lazy-fetch attachment data from WildDuck API
-                                        const data = await wildDuckClient.getAttachment(mailboxName, uid, meta.id);
-                                        await writeFile(filePath, data);
-                                    }
-                                    // Stryker disable next-line StringLiteral: attachment path format is a configuration constant
-                                    attachmentLines.push(`- attachments/email-${hash}/${safeFilename} (${meta.contentType})`);
-                                } catch (writeErr) {
-                                    const errMsg = _.isError(writeErr) ? writeErr.message : String(writeErr);
-                                    // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                                    logger.warn({ error: errMsg, filename: safeFilename, msg: 'Failed to save attachment (best-effort)' });
-                                    // Stryker disable next-line StringLiteral: note format is a configuration constant
-                                    attachmentLines.push(`- Note: could not save attachment ${safeFilename}: ${errMsg}`);
-                                }
-                            }
-                        }
+                        const attachmentLines = await saveEmailAttachments(wildDuckClient, mailboxName, uid, email.messageId, email.attachmentMeta);
 
                         const toList = _(email.to).map(formatAddressForDisplay).join(', ');
                         const lines = _.filter([

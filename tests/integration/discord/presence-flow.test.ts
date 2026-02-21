@@ -15,6 +15,7 @@ import { PresenceManager } from '@/integrations/discord/presence/manager';
 import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
 import type { ClaudeAgent } from '@/agent/agent';
 import type { MessageContext, AgentStreamEvent } from '@/agent/types';
+import type { BotStateManager } from '@/integrations/discord/state';
 import type { DiscordMessageContext, ChannelId, UserId, GuildId } from '@/integrations/discord/types';
 // Import shared mocks from setup.ts (already registered via mock.module in preload)
 import { mockGenerateText, mockGenerateTextWithSystemPrompt } from '../../setup';
@@ -96,7 +97,6 @@ describe('Discord Presence Flow (Integration)', () => {
         } as ClaudeAgent;
 
         // Create mock bot state manager
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock type is intentionally loose
         const mockBotStateManager = {
             shouldUpdatePresence:   mock(_constant(true)),
             updateActivityPhase:    mock(() => undefined),
@@ -104,15 +104,13 @@ describe('Discord Presence Flow (Integration)', () => {
             getMode:                mock(_constant('idle' as const)),
             goIdle:                 mock(() => undefined),
             startProcessingMessage: mock(() => undefined),
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Mock type doesn't match interface exactly
-        } as any;
+        } as unknown as BotStateManager;
 
         // Create status middleware
         const statusMiddleware = createStatusMiddleware({
             presenceManager,
             agent:           mockAgent,
             logger,
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock type is intentionally loose
             botStateManager: mockBotStateManager,
         });
 

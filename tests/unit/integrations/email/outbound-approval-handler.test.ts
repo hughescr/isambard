@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import _ from 'lodash';
 import { mockLogger } from '../../../setup';
@@ -190,11 +189,8 @@ describe('OutboundApprovalHandler', () => {
                 // Should show select menu via editReply, NOT submit
                 expect(deps.wildDuckClient.submitMessage).not.toHaveBeenCalled();
                 expect(editReply).toHaveBeenCalledTimes(1);
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- accessing mock call args
                 const replyArg = editReply.mock.calls[0]?.[0];
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- accessing mock call args
                 expect(replyArg.components).toBeDefined();
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- accessing mock call args
                 expect(replyArg.components).toHaveLength(1);
             });
 
@@ -214,7 +210,6 @@ describe('OutboundApprovalHandler', () => {
                 const handler = new OutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
-                // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
                 await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
                 // Falls back to simple approve — submit is called
                 expect(deps.wildDuckClient.submitMessage).toHaveBeenCalledTimes(1);
@@ -227,7 +222,6 @@ describe('OutboundApprovalHandler', () => {
                 const handler = new OutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
 
-                // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
                 await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
                 // Falls back to simple approve
                 expect(deps.wildDuckClient.submitMessage).toHaveBeenCalledTimes(1);
@@ -244,7 +238,6 @@ describe('OutboundApprovalHandler', () => {
                 const handler = new OutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
 
-                // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
                 await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
                 // Falls back to simple approve
                 expect(deps.wildDuckClient.submitMessage).toHaveBeenCalledTimes(1);
@@ -267,7 +260,6 @@ describe('OutboundApprovalHandler', () => {
                 expect(deps.wildDuckClient.submitMessage).not.toHaveBeenCalled();
                 expect(editReply).toHaveBeenCalledTimes(1);
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- accessing mock call args
                 const replyArg = editReply.mock.calls[0]?.[0];
                 // The select menu component should have deduplicated options
                 const menuOptions = (replyArg as { components: { components: { options: { data: { value: string } }[] }[] }[] })
@@ -349,13 +341,9 @@ describe('OutboundApprovalHandler', () => {
 
                 await handler.handleButton(interaction);
 
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- accessing mock call args
                 const editReplyArg = editReply.mock.calls[0]?.[0];
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- accessing mock call args
                 expect(editReplyArg.embeds).toEqual([]);
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- accessing mock call args
                 expect(editReplyArg.components).toEqual([]);
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- accessing mock call args
                 expect(editReplyArg.content).toContain('error occurred');
             });
 
@@ -479,7 +467,6 @@ describe('OutboundApprovalHandler', () => {
             const handler = new OutboundApprovalHandler(deps);
             const { interaction } = makeModalInteraction('email-send-reject-reason:42', '');
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
             await expect(handler.handleModalSubmit(interaction)).resolves.toBeUndefined();
 
             const updateArgs = (deps.wildDuckClient.updateMessageMetadata as ReturnType<typeof mock>).mock.calls[0];
@@ -560,13 +547,9 @@ describe('OutboundApprovalHandler', () => {
             await handler.handleSelectMenu(interaction);
 
             expect(deps.allowlist.addEntry).toHaveBeenCalledTimes(2);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- accessing mock call args
             const firstArg = (deps.allowlist.addEntry as ReturnType<typeof mock>).mock.calls[0]?.[0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- accessing mock call args
             expect(firstArg.email).toBe('a@example.com');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- accessing mock call args
             const secondArg = (deps.allowlist.addEntry as ReturnType<typeof mock>).mock.calls[1]?.[0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- accessing mock call args
             expect(secondArg.email).toBe('b@example.com');
         });
 
@@ -587,7 +570,6 @@ describe('OutboundApprovalHandler', () => {
             const handler = new OutboundApprovalHandler(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', ['addr@example.com']);
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
             await expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
             expect(mockLogger.warn).toHaveBeenCalled();
             // Edit reply still called to show success
@@ -600,13 +582,10 @@ describe('OutboundApprovalHandler', () => {
             const handler = new OutboundApprovalHandler(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
             await expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
             expect(mockLogger.error).toHaveBeenCalled();
             expect(editReply).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- accessing mock call args
             const replyArg = editReply.mock.calls[0]?.[0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- accessing mock call args
             expect(replyArg.content).toContain('error occurred');
         });
 
@@ -617,7 +596,6 @@ describe('OutboundApprovalHandler', () => {
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
             editReply.mockRejectedValue(new Error('Discord error'));
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
             await expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
             expect(mockLogger.error).toHaveBeenCalledTimes(2);
         });
@@ -629,13 +607,9 @@ describe('OutboundApprovalHandler', () => {
 
             await handler.handleSelectMenu(interaction);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- accessing mock call args
             const replyArg = editReply.mock.calls[0]?.[0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- accessing mock call args
             expect(replyArg.embeds).toHaveLength(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- accessing mock call args
             expect(replyArg.components).toHaveLength(0);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- accessing mock call args
             expect(replyArg.content).toBeNull();
         });
     });

@@ -13,7 +13,6 @@ describe('delay', () => {
         const controller = new AbortController();
         controller.abort();
 
-        // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
         await expect(delay(100, controller.signal)).rejects.toThrow('Aborted');
     });
 
@@ -23,7 +22,6 @@ describe('delay', () => {
         // Abort after 10ms
         setTimeout(() => controller.abort(), 10);
 
-        // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
         await expect(delay(100, controller.signal)).rejects.toThrow('Aborted');
     });
 
@@ -118,7 +116,6 @@ describe('retryWithBackoff', () => {
             return Promise.reject({ name: 'ProvisionedThroughputExceededException' });
         });
 
-        // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
         await expect(
             retryWithBackoff(
                 operation,

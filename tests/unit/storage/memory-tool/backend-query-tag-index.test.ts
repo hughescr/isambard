@@ -156,7 +156,6 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
         const result = await queryOps.searchByTags(new Set(['important']));
 
         expect(result.nextCursor).toBeDefined();
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- JSON.parse returns any
         const decodedCursor = JSON.parse(
             Buffer.from(result.nextCursor!, 'base64').toString('utf-8')
         );

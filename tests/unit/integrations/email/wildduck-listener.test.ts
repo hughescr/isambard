@@ -227,7 +227,6 @@ describe('WildDuckListener', () => {
 
             const listener = new WildDuckListener(client, processor, DEFAULT_CONFIG);
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun matchers return void but are awaitable
             await expect(listener.start()).rejects.toThrow('List failed on startup');
             expect(listener.running).toBe(false);
         });
@@ -436,7 +435,6 @@ describe('WildDuckListener', () => {
 
             expect(processEmail).toHaveBeenCalledTimes(2);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining matcher
                 msg: expect.stringContaining('email'),
             }));
 
@@ -602,7 +600,6 @@ describe('WildDuckListener', () => {
                 if(listCount === 1) {
                     return [];
                 }
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- testing non-Error throw path
                 throw 'string error during poll';
             });
             const { client } = makeWildDuckClient({ listMessages });
@@ -949,7 +946,6 @@ describe('WildDuckListener', () => {
             await listener.start();
 
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining matcher
                 msg: expect.stringContaining('pending notification'),
             }));
 
@@ -981,7 +977,6 @@ describe('WildDuckListener', () => {
             await listener.start();
 
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining matcher
                 msg: expect.stringContaining('notification attempt metadata'),
             }));
 

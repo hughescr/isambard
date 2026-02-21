@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import _ from 'lodash';
 import { createInboxMCPServer } from '@/agent/inbox-mcp-server';
@@ -35,17 +34,15 @@ describe('createInboxMCPServer', () => {
     afterEach(() => {
         // Restore all spies to prevent test interference when running concurrently
         for(const spy of spies) {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access -- Bun spyOn return type lacks mockRestore signature
             spy.mockRestore();
         }
         spies.length = 0;
     });
 
     // Helper function to get tool handler from server instance
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Need to access private _registeredTools
-    const getToolHandler = (server: any, toolName: string): (args: any) => Promise<CallToolResult> => {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Accessing private property
-        return server.instance._registeredTools[toolName].handler;
+    const getToolHandler = (server: ReturnType<typeof createInboxMCPServer>, toolName: string): ((args: Record<string, unknown>) => Promise<CallToolResult>) => {
+        const instance = server.instance as unknown as { _registeredTools: Record<string, { handler: (args: Record<string, unknown>) => Promise<CallToolResult> }> };
+        return instance._registeredTools[toolName].handler;
     };
 
     // Helper function to extract text content from CallToolResult
@@ -70,8 +67,7 @@ describe('createInboxMCPServer', () => {
             expect(server.name).toBe('inbox');
             expect(server.instance).toBeDefined();
             expect(server.type).toBe('sdk');
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing server version
-            expect((server.instance as any).server._serverInfo.version).toBe('1.0.0');
+            expect((server.instance as unknown as { server: { _serverInfo: { version: string } } }).server._serverInfo.version).toBe('1.0.0');
         });
 
         test.each([
@@ -82,8 +78,7 @@ describe('createInboxMCPServer', () => {
             ['markChannelRead', 'Mark all messages in a channel as read. Updates the checkpoint to the latest message. Accepts channel ID or #channel-name format.'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
             const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access -- Accessing registered tools
-            const tool = (server.instance as any)._registeredTools[toolName] as { description: string };
+            const tool = (server.instance as unknown as { _registeredTools: Record<string, { description: string }> })._registeredTools[toolName];
 
             expect(tool.description).toBe(expectedDescription);
         });

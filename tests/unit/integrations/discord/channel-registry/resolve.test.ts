@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks require type assertions */
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { resolveChannelId } from '../../../../../src/integrations/discord/channel-registry/resolve';
 import type { ChannelRegistryManager } from '../../../../../src/integrations/discord/channel-registry/manager';
@@ -38,7 +37,7 @@ describe('resolveChannelId', () => {
 
         mockRegistry = {
             getAllChannels: () => channels,
-        } as any as ChannelRegistryManager;
+        } as unknown as ChannelRegistryManager;
     });
 
     describe('channel name resolution (#channel-name format)', () => {
@@ -112,7 +111,7 @@ describe('resolveChannelId', () => {
         test('should handle registry with no channels', () => {
             const emptyRegistry = {
                 getAllChannels: () => [],
-            } as any as ChannelRegistryManager;
+            } as unknown as ChannelRegistryManager;
 
             expect(() => {
                 resolveChannelId('#general', emptyRegistry);
@@ -144,7 +143,7 @@ describe('resolveChannelId', () => {
 
             const duplicateRegistry = {
                 getAllChannels: () => duplicateChannels,
-            } as any as ChannelRegistryManager;
+            } as unknown as ChannelRegistryManager;
 
             // Should return first match
             const result = resolveChannelId('#duplicate', duplicateRegistry);

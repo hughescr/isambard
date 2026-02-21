@@ -25,7 +25,6 @@ describe('delay', () => {
     test('should reject if signal already aborted', async () => {
         const controller = new AbortController();
         controller.abort();
-        // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
         await expect(delay(100, controller.signal)).rejects.toThrow('Aborted');
     });
 
@@ -34,7 +33,6 @@ describe('delay', () => {
         const delayPromise = delay(100, controller.signal);
         // Advance time to fire the abort timeout (simulated as immediate abort)
         controller.abort();
-        // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
         await expect(delayPromise).rejects.toThrow('Aborted');
     });
 
@@ -118,7 +116,6 @@ describe('retryWithBackoff', () => {
             // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
             return Promise.reject({ name: 'ThrottlingException' });
         });
-        // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
         await expect(
             retryWithBackoff(op, { baseDelayMs: 50, maxAttempts: 3 }, 'test', controller.signal)
         ).rejects.toThrow('Aborted');
@@ -925,7 +922,6 @@ describe('runReconciliation', () => {
             // Abort immediately
             controller.abort();
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
             await expect(
                 runReconciliation(deps, { ...options, signal: controller.signal })
             ).rejects.toThrow('Aborted');
@@ -946,7 +942,6 @@ describe('runReconciliation', () => {
                 return Promise.resolve({ Items: [] });
             });
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
             await expect(
                 runReconciliation(deps, { ...options, signal: controller.signal })
             ).rejects.toThrow('Aborted');
@@ -968,7 +963,6 @@ describe('runReconciliation', () => {
                     return Promise.resolve({ Items: [] });
                 });
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
             await expect(
                 runReconciliation(deps, { ...options, signal: controller.signal })
             ).rejects.toThrow('Aborted');
@@ -1770,7 +1764,6 @@ describe('runReconciliation', () => {
             // Abort before Phase B
             controller.abort();
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
             await expect(
                 runReconciliation(deps, { ...options, signal: controller.signal })
             ).rejects.toThrow('Aborted');
@@ -1786,7 +1779,6 @@ describe('runReconciliation', () => {
             // Abort before Phase B starts - the abort check at the start of the for loop will catch it
             controller.abort();
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
             await expect(
                 runReconciliation(deps, { ...options, signal: controller.signal })
             ).rejects.toThrow('Aborted');
@@ -2051,7 +2043,6 @@ describe('runReconciliation', () => {
             // We abort synchronously before runReconciliation starts
             controller.abort();
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- expect().rejects is a thenable
             await expect(
                 runReconciliation(deps, { ...options, signal: controller.signal })
             ).rejects.toThrow('Aborted');

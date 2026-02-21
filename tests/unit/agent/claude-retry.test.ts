@@ -1,7 +1,3 @@
-/* eslint-disable @typescript-eslint/no-empty-function -- test mocks */
-/* eslint-disable lodash/prefer-noop -- test clarity */
-/* eslint-disable require-yield -- testing generators that throw before yield */
-/* eslint-disable @typescript-eslint/only-throw-error -- testing HTTP error objects */
 import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import { classifyClaudeError, createRetryableQuery } from '../../../src/agent/claude-retry';

@@ -112,8 +112,7 @@ describe('ID creator functions', () => {
     test.each(idSchemas)('create%s should create branded type from valid string', (_name, _schema, validId, _invalidNumber, creator) => {
         const result = creator(validId);
         // TypeScript ensures branded type is correct at compile time
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument -- Parameterized test requires type assertion across different branded types
-        expect(result).toBe(validId as any);
+        expect(result as string).toBe(validId);
     });
 
     test.each(idSchemas)('create%s should throw error for invalid input', (_name, _schema, _validId, invalidNumber, creator) => {

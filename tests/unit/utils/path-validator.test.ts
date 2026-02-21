@@ -41,37 +41,27 @@ describe('path-validator', () => {
         });
 
         test('should reject path outside CWD with ..', async () => {
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- bun test expect.rejects returns a thenable
             await expect(validateFilePath('../etc/passwd')).rejects.toThrow(PathSecurityError);
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- bun test expect.rejects returns a thenable
             await expect(validateFilePath('../etc/passwd')).rejects.toThrow('SECURITY');
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- bun test expect.rejects returns a thenable
             await expect(validateFilePath('../etc/passwd')).rejects.toThrow('outside the working directory');
         });
 
         test('should reject absolute path outside CWD', async () => {
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- bun test expect.rejects returns a thenable
             await expect(validateFilePath('/etc/passwd')).rejects.toThrow(PathSecurityError);
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- bun test expect.rejects returns a thenable
             await expect(validateFilePath('/etc/passwd')).rejects.toThrow('SECURITY');
         });
 
         test('should reject non-existent files', async () => {
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- bun test expect.rejects returns a thenable
             await expect(validateFilePath(join(testDir, 'nonexistent.txt'))).rejects.toThrow(PathSecurityError);
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- bun test expect.rejects returns a thenable
             await expect(validateFilePath(join(testDir, 'nonexistent.txt'))).rejects.toThrow('not found');
         });
 
         test('should reject directories', async () => {
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- bun test expect.rejects returns a thenable
             await expect(validateFilePath(subDir)).rejects.toThrow(PathSecurityError);
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- bun test expect.rejects returns a thenable
             await expect(validateFilePath(subDir)).rejects.toThrow('Not a file');
         });
 
         test('should include "Do NOT circumvent" in security errors', async () => {
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- bun test expect.rejects returns a thenable
             await expect(validateFilePath('../etc/passwd')).rejects.toThrow('Do NOT circumvent');
         });
 
@@ -80,11 +70,8 @@ describe('path-validator', () => {
             // Create a symlink in the mock filesystem
             void mockFsPromises.symlink(validFile, symlinkPath);
 
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- bun test expect.rejects returns a thenable
             await expect(validateFilePath(symlinkPath)).rejects.toThrow(PathSecurityError);
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- bun test expect.rejects returns a thenable
             await expect(validateFilePath(symlinkPath)).rejects.toThrow('SECURITY');
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- bun test expect.rejects returns a thenable
             await expect(validateFilePath(symlinkPath)).rejects.toThrow('Symlinks not allowed');
         });
     });
@@ -101,7 +88,6 @@ describe('path-validator', () => {
         });
 
         test('should reject if any path is invalid', async () => {
-            // eslint-disable-next-line @typescript-eslint/await-thenable -- bun test expect.rejects returns a thenable
             await expect(validateFilePaths([validFile, '../etc/passwd'])).rejects.toThrow(PathSecurityError);
         });
     });

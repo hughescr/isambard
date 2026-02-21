@@ -65,7 +65,6 @@ describe.concurrent('system-prompt', () => {
 
             test('should work with ContextBuilder directly (legacy signature)', async () => {
                 const mockContextBuilder = {
-                    // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                     loadCoreIdentity: mock(async () => 'I am a test identity'),
                 } as unknown as ContextBuilder;
 
@@ -78,7 +77,6 @@ describe.concurrent('system-prompt', () => {
 
             test('should work with ContextBuilder that returns null', async () => {
                 const mockContextBuilder = {
-                    // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                     loadCoreIdentity: mock(async () => null),
                 } as unknown as ContextBuilder;
 
@@ -100,7 +98,6 @@ describe.concurrent('system-prompt', () => {
 
             test('should work with only contextBuilder option', async () => {
                 const mockContextBuilder = {
-                    // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                     loadCoreIdentity: mock(async () => 'I am a test identity'),
                 } as unknown as ContextBuilder;
 
@@ -124,7 +121,6 @@ describe.concurrent('system-prompt', () => {
 
             test('should work with both contextBuilder and channelList options', async () => {
                 const mockContextBuilder = {
-                    // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                     loadCoreIdentity: mock(async () => 'I am a test identity'),
                 } as unknown as ContextBuilder;
 
@@ -186,7 +182,6 @@ describe.concurrent('system-prompt', () => {
         describe('section ordering', () => {
             test('should order sections correctly when all options provided', async () => {
                 const mockContextBuilder = {
-                    // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                     loadCoreIdentity: mock(async () => 'I am a test identity'),
                 } as unknown as ContextBuilder;
 
@@ -208,7 +203,6 @@ describe.concurrent('system-prompt', () => {
 
         describe('contextBuilder behavior', () => {
             test('should call loadCoreIdentity when contextBuilder provided', async () => {
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 const loadCoreIdentity = mock(async () => 'I am a test identity');
                 const mockContextBuilder = {
                     loadCoreIdentity,
@@ -226,7 +220,6 @@ describe.concurrent('system-prompt', () => {
 
             test('should handle contextBuilder with null identity gracefully', async () => {
                 const mockContextBuilder = {
-                    // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                     loadCoreIdentity: mock(async () => null),
                 } as unknown as ContextBuilder;
 
@@ -241,7 +234,6 @@ describe.concurrent('system-prompt', () => {
 
             test('should handle contextBuilder with empty string identity', async () => {
                 const mockContextBuilder = {
-                    // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                     loadCoreIdentity: mock(async () => ''),
                 } as unknown as ContextBuilder;
 

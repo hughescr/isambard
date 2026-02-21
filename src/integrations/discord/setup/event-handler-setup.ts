@@ -18,6 +18,7 @@ import {
     ResponseRouter
 } from '../channel-registry';
 import type { DiscordRateLimiter } from '../rate-limiter';
+import { safeAsyncHandler } from '@/utils/safe-async-handler';
 
 /**
  * Initializes the channel registry by warming cache, discovering channels, and setting up event handlers.
@@ -139,8 +140,7 @@ export function setupMessageProcessing(params: SetupMessageProcessingParams): vo
 
     // Register message handler AFTER channel registry is initialized
     // This ensures channelRegistry.shouldProcess() has data to work with
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- messageCreate handler is async
-    client.on('messageCreate', createMessageHandler({
+    client.on('messageCreate', safeAsyncHandler(createMessageHandler({
         botUserId: createUserId(readyClient.user!.id),
         channelRegistry,
         addRecentMessage,
@@ -152,7 +152,7 @@ export function setupMessageProcessing(params: SetupMessageProcessingParams): vo
         botStateManager,
         perchSessionRunner,
         dmTracker,
-    }));
+    }), logger, 'messageCreate handler'));
 }
 
 /**
@@ -181,8 +181,7 @@ export function setupChannelCleanupHandlers(params: {
     });
 
     // guildDelete: Clean up coordinator state for all channels in a guild when bot leaves
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- guildDelete handler needs to be async for channel lookup
-    client.on('guildDelete', async (guild) => {
+    client.on('guildDelete', safeAsyncHandler(async (guild) => {
         if(!coordinator) {
             return;
         }
@@ -196,5 +195,5 @@ export function setupChannelCleanupHandlers(params: {
             .value();
 
         coordinator.removeGuildChannels(guildChannelIds);
-    });
+    }, logger, 'guildDelete handler'));
 }

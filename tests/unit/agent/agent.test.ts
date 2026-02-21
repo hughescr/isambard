@@ -1,7 +1,7 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- Test mocks require unsafe type operations */
 import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import _ from 'lodash';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import { createClaudeAgent, extractToolUses, extractThinkingContent, parseToolName, redactSensitiveArgs } from '../../../src/agent/agent';
 import { mockLogger } from '../../setup';
 import type { DiscordMessageContext } from '../../../src/integrations/discord/types';
@@ -265,7 +265,7 @@ describe('createClaudeAgent', () => {
             botUserId: createUserId('bot_444555666'),
         };
 
-        querySpy = spyOn(agentSdk, 'query').mockImplementation((_params: any): any => {
+        querySpy = spyOn(agentSdk, 'query').mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
             async function* mockGenerator() {
                 yield {
                     type:    'assistant' as const,
@@ -279,7 +279,7 @@ describe('createClaudeAgent', () => {
                     },
                 };
             }
-            return mockGenerator();
+            return mockGenerator() as unknown as Query;
         });
     });
 
@@ -301,7 +301,7 @@ describe('createClaudeAgent', () => {
     });
 
     test('should return null on API error', async () => {
-        querySpy.mockImplementation((_params: any): any => {
+        querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
             throw new Error('API rate limit exceeded');
         });
 
@@ -311,14 +311,14 @@ describe('createClaudeAgent', () => {
     });
 
     test('should return null when no text content', async () => {
-        querySpy.mockImplementation((_params: any): any => {
+        querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
             async function* mockGenerator() {
                 yield {
                     type:    'assistant' as const,
                     message: { content: [] },
                 };
             }
-            return mockGenerator();
+            return mockGenerator() as unknown as Query;
         });
 
         const agent = createClaudeAgent({});
@@ -327,7 +327,7 @@ describe('createClaudeAgent', () => {
     });
 
     test('should extract latest assistant message from stream', async () => {
-        querySpy.mockImplementation((_params: any): any => {
+        querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
             async function* mockGenerator() {
                 yield {
                     type:    'assistant' as const,
@@ -342,7 +342,7 @@ describe('createClaudeAgent', () => {
                     },
                 };
             }
-            return mockGenerator();
+            return mockGenerator() as unknown as Query;
         });
 
         const agent = createClaudeAgent({});
@@ -356,7 +356,6 @@ describe('createClaudeAgent', () => {
             await agent.handleInput([mockMessageContext]);
 
             expect(querySpy).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.model).toBe('sonnet');
             // Verify model is not an empty string (kills StringLiteral mutant on line 14)
@@ -368,7 +367,6 @@ describe('createClaudeAgent', () => {
             await agent.handleInput([mockMessageContext]);
 
             expect(querySpy).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.model).toBe('opus');
             expect(queryParams.options.model).not.toBe('sonnet');
@@ -379,7 +377,6 @@ describe('createClaudeAgent', () => {
             await agent.handleInput([mockMessageContext]);
 
             expect(querySpy).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.model).toBe('sonnet');
         });
@@ -388,9 +385,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const tools = queryParams.options.tools;
 
             // Verify exact array contents (order matters for mutation testing)
@@ -420,9 +415,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const tools = queryParams.options.tools;
 
             // Verify each tool individually (kills StringLiteral mutants on lines 24-41)
@@ -453,9 +446,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const agents = queryParams.options.agents;
 
             // Verify exact agent structure
@@ -489,9 +480,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const agents = queryParams.options.agents;
 
             // Verify agents object is not empty (kills ObjectLiteral mutant on line 49)
@@ -503,9 +492,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const exploreTools = queryParams.options.agents.Explore.tools;
 
             // Verify Explore agent tools array is not empty (kills ArrayDeclaration mutant on line 62)
@@ -528,9 +515,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const planTools = queryParams.options.agents.Plan.tools;
 
             // Verify Plan agent tools array is defined
@@ -557,7 +542,6 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.mcpServers).toBeUndefined();
         });
@@ -567,7 +551,6 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ memoryMcpServer: mockMemoryServer });
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.mcpServers).toBeDefined();
             expect(queryParams.options.mcpServers.memory).toEqual(mockMemoryServer);
@@ -578,7 +561,6 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ discordMcpServer: mockDiscordServer });
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.mcpServers).toBeDefined();
             expect(queryParams.options.mcpServers.discord).toEqual(mockDiscordServer);
@@ -593,7 +575,6 @@ describe('createClaudeAgent', () => {
             });
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.mcpServers).toBeDefined();
             expect(queryParams.options.mcpServers.memory).toEqual(mockMemoryServer);
@@ -605,7 +586,6 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ emailMcpServer: mockEmailServer });
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.mcpServers).toBeDefined();
             expect(queryParams.options.mcpServers.email).toEqual(mockEmailServer);
@@ -617,9 +597,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({});
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const allowedTools = queryParams.options.allowedTools;
 
             // Verify exact array contents (order matters for mutation testing)
@@ -656,9 +634,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ discordMcpServer: mockDiscordServer });
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const allowedTools = queryParams.options.allowedTools;
 
             // Verify exact array contents with Discord tools included
@@ -696,9 +672,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ emailMcpServer: mockEmailServer });
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const allowedTools = queryParams.options.allowedTools;
 
             // Verify exact array contents with email tools included
@@ -738,9 +712,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const allowedTools = queryParams.options.allowedTools;
 
             // Verify inbox tools are NOT included
@@ -752,9 +724,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const mcpServers = queryParams.options.mcpServers;
 
             // Verify inbox server is NOT registered
@@ -766,9 +736,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const allowedTools = queryParams.options.allowedTools;
 
             // Verify inbox tools are NOT included
@@ -780,9 +748,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const mcpServers = queryParams.options.mcpServers;
 
             // Verify inbox server is NOT registered
@@ -794,9 +760,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
             await agent.handleInput([mockMessageContext], { specialMode: 'catchup' });
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const allowedTools = queryParams.options.allowedTools;
 
             // Verify inbox tools ARE included
@@ -808,9 +772,7 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
             await agent.handleInput([mockMessageContext], { specialMode: 'catchup' });
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const mcpServers = queryParams.options.mcpServers;
 
             // Verify inbox server IS registered
@@ -823,7 +785,6 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ plugins: [] });
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             // Verify plugins is undefined when empty array provided (kills ConditionalExpression mutant on line 565)
             expect(queryParams.options.plugins).toBeUndefined();
@@ -833,7 +794,6 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ plugins: undefined });
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.plugins).toBeUndefined();
         });
@@ -843,7 +803,6 @@ describe('createClaudeAgent', () => {
             const agent = createClaudeAgent({ plugins: mockPlugins });
             await agent.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             // Verify plugins is passed through when non-empty (kills ConditionalExpression mutant on line 565)
             expect(queryParams.options.plugins).toEqual(mockPlugins);
@@ -864,24 +823,17 @@ describe('createClaudeAgent', () => {
 
         test('should load user timezone and pass to message timestamps', async () => {
             const mockContextBuilder = {
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadCoreIdentity:       mock(async () => 'I am a test identity'),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserTimezone:       mock(async () => 'America/New_York'),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadHotState:           mock(async () => ''),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserMemories:       mock(async () => ''),
                 loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),
                 recordAccess:           mock(async () => undefined),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildUserMessagePrefix: mock(async () => ''),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildPerchContext:      mock(async () => ''),
             };
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
-            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder as unknown as any });
+            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder });
             const result = await agent.handleInput([mockMessageContext]);
 
             // Verify loadUserTimezone was called once and value reused for message timestamps
@@ -893,9 +845,7 @@ describe('createClaudeAgent', () => {
 
             // Verify system prompt does NOT include timezone info (removed in this update)
             expect(querySpy).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const systemPrompt = queryParams.options.systemPrompt;
             expect(systemPrompt).not.toContain('America/New_York');
             expect(systemPrompt).not.toContain('Current Time');
@@ -905,31 +855,22 @@ describe('createClaudeAgent', () => {
             // This test verifies that the user timezone loaded from loadUserTimezone()
             // is used in message timestamps (but NOT in system prompt or separate time section)
             const mockContextBuilder = {
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadCoreIdentity:       mock(async () => 'I am a test identity'),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserTimezone:       mock(async () => 'America/Los_Angeles'),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadHotState:           mock(async () => ''),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserMemories:       mock(async () => ''),
                 loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),
                 recordAccess:           mock(async () => undefined),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildUserMessagePrefix: mock(async () => '[About this user]\n- User fact 1\n\n'),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildPerchContext:      mock(async () => ''),
             };
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
-            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder as unknown as any });
+            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder });
             await agent.handleInput([mockMessageContext]);
 
             // Verify user timezone does NOT appear in system prompt
             expect(querySpy).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const systemPrompt = queryParams.options.systemPrompt;
             expect(systemPrompt).not.toContain('America/Los_Angeles');
             expect(systemPrompt).not.toContain('Current Time');
@@ -944,24 +885,17 @@ describe('createClaudeAgent', () => {
 
         test('should NOT load user timezone for catch-up flow', async () => {
             const mockContextBuilder = {
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadCoreIdentity:       mock(async () => 'I am a test identity'),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserTimezone:       mock(async () => 'America/New_York'),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadHotState:           mock(async () => ''),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserMemories:       mock(async () => ''),
                 loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),
                 recordAccess:           mock(async () => undefined),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildUserMessagePrefix: mock(async () => ''),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildPerchContext:      mock(async () => ''),
             };
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
-            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder as unknown as any });
+            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder });
             await agent.handleInput([mockMessageContext], {
                 catchUpPrompt: 'Catch up on messages',
             });
@@ -972,24 +906,17 @@ describe('createClaudeAgent', () => {
 
         test('should NOT load user timezone for perch flow', async () => {
             const mockContextBuilder = {
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadCoreIdentity:       mock(async () => 'I am a test identity'),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserTimezone:       mock(async () => 'America/New_York'),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadHotState:           mock(async () => ''),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserMemories:       mock(async () => ''),
                 loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),
                 recordAccess:           mock(async () => undefined),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildUserMessagePrefix: mock(async () => ''),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildPerchContext:      mock(async () => ''),
             };
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
-            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder as unknown as any });
+            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder });
             await agent.handleInput([mockMessageContext], {
                 perchPrompt: 'Perch time',
             });
@@ -1000,24 +927,17 @@ describe('createClaudeAgent', () => {
 
         test('should NOT load user timezone for resume flow', async () => {
             const mockContextBuilder = {
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadCoreIdentity:       mock(async () => 'I am a test identity'),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserTimezone:       mock(async () => 'America/New_York'),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadHotState:           mock(async () => ''),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserMemories:       mock(async () => ''),
                 loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),
                 recordAccess:           mock(async () => undefined),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildUserMessagePrefix: mock(async () => ''),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildPerchContext:      mock(async () => ''),
             };
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
-            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder as unknown as any });
+            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder });
             await agent.handleInput([mockMessageContext], {
                 resumeContext: {
                     partialWork: {
@@ -1038,26 +958,20 @@ describe('createClaudeAgent', () => {
 
         test('should handle loadUserTimezone failure gracefully and continue with server timezone', async () => {
             const mockContextBuilder = {
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadCoreIdentity: mock(async () => 'I am a test identity'),
                 // Mock loadUserTimezone to throw an error
                 loadUserTimezone: mock(async () => {
                     throw new Error('DynamoDB connection failed');
                 }),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadHotState:           mock(async () => ''),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 loadUserMemories:       mock(async () => ''),
                 loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),
                 recordAccess:           mock(async () => undefined),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildUserMessagePrefix: mock(async () => ''),
-                // eslint-disable-next-line lodash/prefer-constant -- Mock setup for testing
                 buildPerchContext:      mock(async () => ''),
             };
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Mock context builder for testing
-            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder as unknown as any });
+            const agent = createClaudeAgent({ contextBuilder: mockContextBuilder });
             const result = await agent.handleInput([mockMessageContext]);
 
             // Verify loadUserTimezone was called and threw
@@ -1132,7 +1046,7 @@ describe('createClaudeAgent', () => {
         });
 
         test('should initialize lastAssistantText as empty string', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -1143,7 +1057,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -1155,7 +1069,7 @@ describe('createClaudeAgent', () => {
         });
 
         test('should not assign empty text to lastAssistantText', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -1174,7 +1088,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -1185,7 +1099,7 @@ describe('createClaudeAgent', () => {
         });
 
         test('should catch and return null for non-AbortError exceptions', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 // Use a regular async iterable that throws, not a generator
                 return {
                     [Symbol.asyncIterator]: () => ({
@@ -1195,7 +1109,7 @@ describe('createClaudeAgent', () => {
                             throw error;
                         },
                     }),
-                };
+                } as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -1209,7 +1123,7 @@ describe('createClaudeAgent', () => {
 
         test('should return wasInterrupted=true for outer catch when abort signal is set', async () => {
             const abortController = new AbortController();
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 // Use a regular async iterable that throws, not a generator
                 return {
                     [Symbol.asyncIterator]: () => ({
@@ -1221,7 +1135,7 @@ describe('createClaudeAgent', () => {
                             throw error;
                         },
                     }),
-                };
+                } as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -1237,7 +1151,7 @@ describe('createClaudeAgent', () => {
             mockLogger.info.mockClear();
 
             const abortController = new AbortController();
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:       'system' as const,
@@ -1249,7 +1163,7 @@ describe('createClaudeAgent', () => {
                     error.name = 'AbortError';
                     throw error;
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -1268,7 +1182,7 @@ describe('createClaudeAgent', () => {
         });
 
         test('should catch AbortError even without an abort controller', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:       'system' as const,
@@ -1279,7 +1193,7 @@ describe('createClaudeAgent', () => {
                     error.name = 'AbortError';
                     throw error;
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -1345,7 +1259,6 @@ describe('createClaudeAgent', () => {
 
             // Kills mutant #11: verify plugins are passed when present
             expect(querySpy).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.plugins).toEqual(mockPlugins);
             expect(queryParams.options.plugins).not.toBeUndefined();
@@ -1394,7 +1307,7 @@ describe('createClaudeAgent', () => {
 
         test('should return wasInterrupted=true when aborted', async () => {
             const abortController = new AbortController();
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -1408,7 +1321,7 @@ describe('createClaudeAgent', () => {
                     error.name = 'AbortError';
                     throw error;
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -1424,7 +1337,7 @@ describe('createClaudeAgent', () => {
             mockLogger.warn.mockClear();
 
             const abortController = new AbortController();
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:       'system' as const,
@@ -1437,7 +1350,7 @@ describe('createClaudeAgent', () => {
                     error.name = 'ConnectionError';
                     throw error;
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -1458,7 +1371,7 @@ describe('createClaudeAgent', () => {
         });
 
         test('should return streamTracker with captured progress', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -1470,7 +1383,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -1487,14 +1400,13 @@ describe('createClaudeAgent', () => {
             await agent.handleInput([mockMessageContext], { sessionId: 'test-session-id' });
 
             expect(querySpy).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.resume).toBe('test-session-id');
         });
 
         test('should call onStreamEvent callback', async () => {
             let callbackInvoked = false;
-            const onStreamEvent = (_event: any) => {
+            const onStreamEvent = (_event: unknown) => {
                 callbackInvoked = true;
             };
 
@@ -1506,7 +1418,7 @@ describe('createClaudeAgent', () => {
 
         test('should not cleanup session on interrupt', async () => {
             const abortController = new AbortController();
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:       'system' as const,
@@ -1519,7 +1431,7 @@ describe('createClaudeAgent', () => {
                     error.name = 'AbortError';
                     throw error;
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             // Spy on cleanupSession (it's a fire-and-forget call)
@@ -1536,7 +1448,7 @@ describe('createClaudeAgent', () => {
         });
 
         test('should cleanup session on completion', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:       'system' as const,
@@ -1550,7 +1462,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             // Spy on cleanupSession (it's a fire-and-forget call)
@@ -1570,7 +1482,7 @@ describe('createClaudeAgent', () => {
 
         test('should detect abort signal mid-stream (Mutant #303)', async () => {
             const abortController = new AbortController();
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:       'system' as const,
@@ -1594,7 +1506,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             // Clear mock before test
@@ -1612,7 +1524,7 @@ describe('createClaudeAgent', () => {
         });
 
         test('should return null when only empty text is yielded (Mutant #310)', async () => {
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -1624,7 +1536,7 @@ describe('createClaudeAgent', () => {
                     };
                     // Stream ends here - no more messages
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -1640,7 +1552,7 @@ describe('createClaudeAgent', () => {
             // Clear mock before test
             mockLogger.error.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 return {
                     [Symbol.asyncIterator]: () => ({
                         next: async () => {
@@ -1649,7 +1561,7 @@ describe('createClaudeAgent', () => {
                             throw error;
                         },
                     }),
-                };
+                } as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -1678,7 +1590,6 @@ describe('createClaudeAgent', () => {
 
             // Kills mutant #337: plugins conditional - empty array check (line 708)
             expect(querySpy).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.plugins).toBeUndefined();
             expect(queryParams.options.plugins).not.toEqual([]);
@@ -1691,7 +1602,6 @@ describe('createClaudeAgent', () => {
 
             // Kills mutant #340: plugins && check (line 708)
             expect(querySpy).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.plugins).toBeUndefined();
         });
@@ -1703,7 +1613,6 @@ describe('createClaudeAgent', () => {
 
             // Kills mutant #341: plugins.length > 0 check (line 708)
             expect(querySpy).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
             // Empty array should result in undefined, not the array itself
             expect(queryParams.options.plugins).toBeUndefined();
@@ -1714,7 +1623,6 @@ describe('createClaudeAgent', () => {
             const agent2 = createClaudeAgent({ plugins: mockPlugins });
             await agent2.handleInput([mockMessageContext]);
 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams2 = querySpy.mock.calls[0][0];
             expect(queryParams2.options.plugins).toEqual(mockPlugins);
         });
@@ -1758,7 +1666,7 @@ describe('createClaudeAgent', () => {
                 },
             };
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:       'system' as const,
@@ -1772,7 +1680,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({ taskPersistenceCoordinator: mockTaskPersistenceCoordinator });
@@ -1792,7 +1700,7 @@ describe('createClaudeAgent', () => {
                 },
             };
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:       'system' as const,
@@ -1806,7 +1714,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({ taskPersistenceCoordinator: mockTaskPersistenceCoordinator });
@@ -1834,7 +1742,7 @@ describe('createClaudeAgent', () => {
                 },
             };
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     // First system init event
                     yield {
@@ -1855,7 +1763,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({ taskPersistenceCoordinator: mockTaskPersistenceCoordinator });
@@ -1897,16 +1805,13 @@ describe('createClaudeAgent', () => {
             await agent.handleInput([mockMessageContext], { images: [testImage] });
 
             expect(querySpy).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
 
             // Should use async generator for multimodal prompt
             expect(typeof queryParams.prompt[Symbol.asyncIterator]).toBe('function');
 
             // Verify the generator yields a message with multimodal content
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const promptIterator = queryParams.prompt[Symbol.asyncIterator]();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const firstYield = await promptIterator.next();
 
             expect(_.isArray(firstYield.value.message.content)).toBe(true);
@@ -1922,7 +1827,6 @@ describe('createClaudeAgent', () => {
             await agent.handleInput([mockMessageContext]);
 
             expect(querySpy).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
 
             // Should use string for text-only prompt (not async generator)
@@ -1936,7 +1840,6 @@ describe('createClaudeAgent', () => {
             await agent.handleInput([mockMessageContext], { images: [] });
 
             expect(querySpy).toHaveBeenCalledTimes(1);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
             const queryParams = querySpy.mock.calls[0][0];
 
             // Should use string for text-only prompt when images array is empty
@@ -1956,7 +1859,7 @@ describe('createClaudeAgent', () => {
         test('should log user event as message send when no pending tools', async () => {
             mockLogger.debug.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'user' as const,
@@ -1969,7 +1872,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -1990,7 +1893,7 @@ describe('createClaudeAgent', () => {
         test('should log user event as tool_response when tools pending', async () => {
             mockLogger.debug.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     // Assistant requests tool
                     yield {
@@ -2018,7 +1921,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2040,7 +1943,7 @@ describe('createClaudeAgent', () => {
         test('should log assistant event with tool request', async () => {
             mockLogger.debug.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -2060,7 +1963,7 @@ describe('createClaudeAgent', () => {
                         message: { role: 'user', content: 'Tool result' },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2081,7 +1984,7 @@ describe('createClaudeAgent', () => {
         test('should log assistant event without tool as thinking when no text', async () => {
             mockLogger.debug.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -2092,7 +1995,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2113,7 +2016,7 @@ describe('createClaudeAgent', () => {
         test('should log assistant event without tool as responding when has text', async () => {
             mockLogger.debug.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -2124,7 +2027,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2145,7 +2048,7 @@ describe('createClaudeAgent', () => {
         test('should track multiple pending tools and log all on next user event', async () => {
             mockLogger.debug.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     // Assistant requests multiple tools
                     yield {
@@ -2173,7 +2076,7 @@ describe('createClaudeAgent', () => {
                         message: { role: 'user', content: 'Tool results' },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2200,7 +2103,7 @@ describe('createClaudeAgent', () => {
         test('should clear pending tools after logging tool responses', async () => {
             mockLogger.debug.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     // Assistant requests tool
                     yield {
@@ -2227,7 +2130,7 @@ describe('createClaudeAgent', () => {
                         message: { role: 'user', content: 'Regular message' },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2249,7 +2152,7 @@ describe('createClaudeAgent', () => {
         test('should log system event for compaction boundary with token info', async () => {
             mockLogger.info.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:             'system' as const,
@@ -2260,7 +2163,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2284,7 +2187,7 @@ describe('createClaudeAgent', () => {
         test('should log system event for compaction boundary without token info when undefined', async () => {
             mockLogger.info.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:             'system' as const,
@@ -2294,7 +2197,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2323,14 +2226,14 @@ describe('createClaudeAgent', () => {
         test('should log tool_progress event with correct eventType', async () => {
             mockLogger.debug.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:      'tool_progress' as const,
                         tool_name: 'mcp__memory__view',
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2354,14 +2257,14 @@ describe('createClaudeAgent', () => {
         test('should log tool_progress with specific message', async () => {
             mockLogger.debug.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:      'tool_progress' as const,
                         tool_name: 'mcp__discord__search',
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2383,14 +2286,14 @@ describe('createClaudeAgent', () => {
         test('should execute logToolProgressEvent function body', async () => {
             mockLogger.debug.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:      'tool_progress' as const,
                         tool_name: 'Read',
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2409,14 +2312,14 @@ describe('createClaudeAgent', () => {
         test('should log tool_result event with correct structure', async () => {
             mockLogger.debug.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:      'tool_result' as const,
                         tool_name: 'mcp__memory__store',
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2442,14 +2345,14 @@ describe('createClaudeAgent', () => {
         test('should log tool_result with specific message', async () => {
             mockLogger.debug.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:      'tool_result' as const,
                         tool_name: 'Grep',
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2471,14 +2374,14 @@ describe('createClaudeAgent', () => {
         test('should execute logToolResultEvent function body', async () => {
             mockLogger.debug.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:      'tool_result' as const,
                         tool_name: 'Write',
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2503,14 +2406,14 @@ describe('createClaudeAgent', () => {
         test('should not log when message type is not system', async () => {
             mockLogger.info.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
                         message: { role: 'assistant', content: 'Hello' },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2529,14 +2432,14 @@ describe('createClaudeAgent', () => {
         test('should not log when message has no subtype', async () => {
             mockLogger.info.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type: 'system' as const,
                         // No subtype property
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2555,7 +2458,7 @@ describe('createClaudeAgent', () => {
         test('should not log when subtype is not compact_boundary', async () => {
             mockLogger.info.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:       'system' as const,
@@ -2563,7 +2466,7 @@ describe('createClaudeAgent', () => {
                         session_id: 'test-session',
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2582,7 +2485,7 @@ describe('createClaudeAgent', () => {
         test('should handle missing compact_metadata gracefully', async () => {
             mockLogger.info.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'system' as const,
@@ -2590,7 +2493,7 @@ describe('createClaudeAgent', () => {
                         // Missing compact_metadata entirely
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2614,7 +2517,7 @@ describe('createClaudeAgent', () => {
         test('should include token info when pre_tokens is present', async () => {
             mockLogger.info.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:             'system' as const,
@@ -2625,7 +2528,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2649,7 +2552,7 @@ describe('createClaudeAgent', () => {
         test('should omit token info when pre_tokens is undefined', async () => {
             mockLogger.info.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:             'system' as const,
@@ -2660,7 +2563,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2692,7 +2595,7 @@ describe('createClaudeAgent', () => {
                 },
             };
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:       'system' as const,
@@ -2706,7 +2609,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({ taskPersistenceCoordinator: mockTaskPersistenceCoordinator });
@@ -2735,14 +2638,14 @@ describe('createClaudeAgent', () => {
             resetLogStreamState();
             mockLogger.debug.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'user' as const,
                         message: { role: 'user', content: 'Hello' },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2771,7 +2674,7 @@ describe('createClaudeAgent', () => {
             // First, populate pendingToolRequests by triggering a tool request
             mockLogger.debug.mockClear();
 
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -2787,7 +2690,7 @@ describe('createClaudeAgent', () => {
                         },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             const agent = createClaudeAgent({});
@@ -2799,14 +2702,14 @@ describe('createClaudeAgent', () => {
 
             // Clear logs and run another batch
             mockLogger.debug.mockClear();
-            querySpy.mockImplementation((_params: any): any => {
+            querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
                         type:    'user' as const,
                         message: { role: 'user', content: 'Hello' },
                     };
                 }
-                return mockGenerator();
+                return mockGenerator() as unknown as Query;
             });
 
             await agent.handleInput([mockMessageContext]);
@@ -2833,7 +2736,7 @@ describe('createClaudeAgent', () => {
         describe('Background task auto-resume', () => {
             test('should auto-resume when background tasks are uncollected', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: any): any => {
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
@@ -2856,7 +2759,7 @@ describe('createClaudeAgent', () => {
                                 },
                             };
                         }
-                        return firstCall();
+                        return firstCall() as unknown as Query;
                     }
                     // Second call (resume)
                     async function* resumeCall() {
@@ -2878,7 +2781,7 @@ describe('createClaudeAgent', () => {
                             },
                         };
                     }
-                    return resumeCall();
+                    return resumeCall() as unknown as Query;
                 });
 
                 const agent = createClaudeAgent({});
@@ -2888,7 +2791,6 @@ describe('createClaudeAgent', () => {
                 expect(querySpy).toHaveBeenCalledTimes(2);
 
                 // Second call should have resume option set
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Test mock access pattern
                 const secondCallParams = querySpy.mock.calls[1][0];
                 expect(secondCallParams.options.resume).toBe('test-session-bg');
 
@@ -2898,7 +2800,7 @@ describe('createClaudeAgent', () => {
 
             test('should use resumed text when available', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: any): any => {
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
@@ -2921,7 +2823,7 @@ describe('createClaudeAgent', () => {
                                 },
                             };
                         }
-                        return firstCall();
+                        return firstCall() as unknown as Query;
                     }
                     // Second call (resume) with different text
                     async function* resumeCall() {
@@ -2932,7 +2834,7 @@ describe('createClaudeAgent', () => {
                             },
                         };
                     }
-                    return resumeCall();
+                    return resumeCall() as unknown as Query;
                 });
 
                 const agent = createClaudeAgent({});
@@ -2944,7 +2846,7 @@ describe('createClaudeAgent', () => {
             });
 
             test('should not auto-resume when no background tasks', async () => {
-                querySpy.mockImplementation((_params: any): any => {
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                     async function* normalResponse() {
                         yield { type: 'system' as const, subtype: 'init' as const, session_id: 'test-session-no-bg' };
                         yield {
@@ -2954,7 +2856,7 @@ describe('createClaudeAgent', () => {
                             },
                         };
                     }
-                    return normalResponse();
+                    return normalResponse() as unknown as Query;
                 });
 
                 const agent = createClaudeAgent({});
@@ -2968,7 +2870,7 @@ describe('createClaudeAgent', () => {
             test('should not auto-resume when interrupted', async () => {
                 const abortController = new AbortController();
 
-                querySpy.mockImplementation((_params: any): any => {
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                     async function* interruptedResponse() {
                         yield { type: 'system' as const, subtype: 'init' as const, session_id: 'test-session-interrupted' };
                         yield {
@@ -2986,7 +2888,7 @@ describe('createClaudeAgent', () => {
                         abortController.abort();
                         throw new Error('AbortError');
                     }
-                    return interruptedResponse();
+                    return interruptedResponse() as unknown as Query;
                 });
 
                 const agent = createClaudeAgent({});
@@ -2999,7 +2901,7 @@ describe('createClaudeAgent', () => {
             });
 
             test('should not auto-resume without session ID', async () => {
-                querySpy.mockImplementation((_params: any): any => {
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                     async function* noSessionResponse() {
                         // No system init event, no session ID
                         yield {
@@ -3020,7 +2922,7 @@ describe('createClaudeAgent', () => {
                             },
                         };
                     }
-                    return noSessionResponse();
+                    return noSessionResponse() as unknown as Query;
                 });
 
                 const agent = createClaudeAgent({});
@@ -3033,7 +2935,7 @@ describe('createClaudeAgent', () => {
 
             test('should pass non-empty resume prompt containing TaskOutput instruction', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: any): any => {
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
@@ -3051,7 +2953,7 @@ describe('createClaudeAgent', () => {
                             };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched' }] } };
                         }
-                        return firstCall();
+                        return firstCall() as unknown as Query;
                     }
                     async function* resumeCall() {
                         yield {
@@ -3067,21 +2969,21 @@ describe('createClaudeAgent', () => {
                         };
                         yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Done' }] } };
                     }
-                    return resumeCall();
+                    return resumeCall() as unknown as Query;
                 });
 
                 const agent = createClaudeAgent({});
                 await agent.handleInput([mockMessageContext]);
 
                 expect(querySpy).toHaveBeenCalledTimes(2);
-                const resumePrompt = (querySpy.mock.calls[1] as any[])[0].prompt as string;
+                const resumePrompt = ((querySpy.mock.calls[1] as unknown[])[0] as { prompt: string }).prompt;
                 expect(resumePrompt).not.toBe('');
                 expect(resumePrompt).toContain('TaskOutput');
             });
 
             test('should preserve original text when resume returns no text', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: any): any => {
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
@@ -3099,7 +3001,7 @@ describe('createClaudeAgent', () => {
                             };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Original response text' }] } };
                         }
-                        return firstCall();
+                        return firstCall() as unknown as Query;
                     }
                     // Resume returns only tool_use, no text
                     async function* resumeCall() {
@@ -3115,7 +3017,7 @@ describe('createClaudeAgent', () => {
                             },
                         };
                     }
-                    return resumeCall();
+                    return resumeCall() as unknown as Query;
                 });
 
                 const agent = createClaudeAgent({});
@@ -3127,7 +3029,7 @@ describe('createClaudeAgent', () => {
 
             test('should update session ID when resume provides a new one', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: any): any => {
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
@@ -3145,7 +3047,7 @@ describe('createClaudeAgent', () => {
                             };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched' }] } };
                         }
-                        return firstCall();
+                        return firstCall() as unknown as Query;
                     }
                     async function* resumeCall() {
                         yield { type: 'system' as const, subtype: 'init' as const, session_id: 'resumed-session' };
@@ -3162,7 +3064,7 @@ describe('createClaudeAgent', () => {
                         };
                         yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Collected' }] } };
                     }
-                    return resumeCall();
+                    return resumeCall() as unknown as Query;
                 });
 
                 const agent = createClaudeAgent({});
@@ -3174,7 +3076,7 @@ describe('createClaudeAgent', () => {
 
             test('should preserve original session ID when resume provides none', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: any): any => {
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
@@ -3192,7 +3094,7 @@ describe('createClaudeAgent', () => {
                             };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched' }] } };
                         }
-                        return firstCall();
+                        return firstCall() as unknown as Query;
                     }
                     // Resume returns no system init event (no session ID)
                     async function* resumeCall() {
@@ -3209,7 +3111,7 @@ describe('createClaudeAgent', () => {
                         };
                         yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Collected' }] } };
                     }
-                    return resumeCall();
+                    return resumeCall() as unknown as Query;
                 });
 
                 const agent = createClaudeAgent({});
@@ -3221,7 +3123,7 @@ describe('createClaudeAgent', () => {
 
             test('should use updated session ID for subsequent operations when resume provides new one', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: any): any => {
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
@@ -3239,7 +3141,7 @@ describe('createClaudeAgent', () => {
                             };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched' }] } };
                         }
-                        return firstCall();
+                        return firstCall() as unknown as Query;
                     }
                     async function* resumeCall() {
                         yield { type: 'system' as const, subtype: 'init' as const, session_id: 'second-session' };
@@ -3256,7 +3158,7 @@ describe('createClaudeAgent', () => {
                         };
                         yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Collected' }] } };
                     }
-                    return resumeCall();
+                    return resumeCall() as unknown as Query;
                 });
 
                 const agent = createClaudeAgent({});
@@ -3269,7 +3171,7 @@ describe('createClaudeAgent', () => {
             test('should handle abort during auto-resume gracefully', async () => {
                 const abortController = new AbortController();
                 let callCount = 0;
-                querySpy.mockImplementation((_params: any): any => {
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
@@ -3290,7 +3192,7 @@ describe('createClaudeAgent', () => {
                                 message: { content: [{ type: 'text' as const, text: 'Launched background task' }] },
                             };
                         }
-                        return firstCall();
+                        return firstCall() as unknown as Query;
                     }
                     // Resume call — abort during processing
                     abortController.abort();
@@ -3310,7 +3212,7 @@ describe('createClaudeAgent', () => {
 
             test('should preserve initial response when auto-resume throws error', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: any): any => {
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
@@ -3331,7 +3233,7 @@ describe('createClaudeAgent', () => {
                                 message: { content: [{ type: 'text' as const, text: 'Initial response before resume' }] },
                             };
                         }
-                        return firstCall();
+                        return firstCall() as unknown as Query;
                     }
                     // Resume call throws a network error
                     throw new Error('Network connection failed');
@@ -3348,7 +3250,7 @@ describe('createClaudeAgent', () => {
 
             test('should loop auto-resume when resumed session spawns new background task', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: any): any => {
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         // Initial call: launches 2 background tasks
@@ -3375,7 +3277,7 @@ describe('createClaudeAgent', () => {
                             };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched 2 tasks' }] } };
                         }
-                        return firstCall();
+                        return firstCall() as unknown as Query;
                     }
                     if(callCount === 2) {
                         // First resume: collects bg1 (uncollected goes 2→1)
@@ -3393,7 +3295,7 @@ describe('createClaudeAgent', () => {
                             };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Collected task 1' }] } };
                         }
-                        return resumeCall1();
+                        return resumeCall1() as unknown as Query;
                     }
                     // Second resume: collects bg2 (uncollected goes 1→0)
                     async function* resumeCall2() {
@@ -3410,7 +3312,7 @@ describe('createClaudeAgent', () => {
                         };
                         yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'All tasks collected' }] } };
                     }
-                    return resumeCall2();
+                    return resumeCall2() as unknown as Query;
                 });
 
                 const agent = createClaudeAgent({});
@@ -3423,7 +3325,7 @@ describe('createClaudeAgent', () => {
 
             test('should cap auto-resume attempts at MAX_AUTO_RESUME_ATTEMPTS', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: any): any => {
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         // Initial call: launches 4 background tasks
@@ -3462,7 +3364,7 @@ describe('createClaudeAgent', () => {
                             };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched 4 tasks' }] } };
                         }
-                        return firstCall();
+                        return firstCall() as unknown as Query;
                     }
                     // Each resume collects one task (making progress each time)
                     async function* resumeCall() {
@@ -3479,7 +3381,7 @@ describe('createClaudeAgent', () => {
                         };
                         yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: `Resume ${callCount - 1} done` }] } };
                     }
-                    return resumeCall();
+                    return resumeCall() as unknown as Query;
                 });
 
                 const agent = createClaudeAgent({});
@@ -3493,7 +3395,7 @@ describe('createClaudeAgent', () => {
 
             test('should break auto-resume loop when no progress made (error case)', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: any): any => {
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
@@ -3511,7 +3413,7 @@ describe('createClaudeAgent', () => {
                             };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched task' }] } };
                         }
-                        return firstCall();
+                        return firstCall() as unknown as Query;
                     }
                     // First resume fails (error caught internally by attemptAutoResume)
                     throw new Error('Network error');

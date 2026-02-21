@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Test file uses mocks extensively */
-/* eslint-disable @typescript-eslint/no-empty-function, lodash/prefer-noop -- test mocks use empty functions to avoid unbound-method errors */
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import _ from 'lodash';
 import { createTaskPersistenceCoordinator } from '@/agent/task-persistence-coordinator';
@@ -65,7 +63,6 @@ describe('TaskPersistenceCoordinator', () => {
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
                     newSessionId,
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg: expect.stringContaining('No previous session'),
                 })
             );
@@ -110,7 +107,6 @@ describe('TaskPersistenceCoordinator', () => {
                 expect.objectContaining({
                     previousSessionId,
                     newSessionId,
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg: expect.stringContaining('Task persistence complete'),
                 })
             );
@@ -151,7 +147,6 @@ describe('TaskPersistenceCoordinator', () => {
                 expect.objectContaining({
                     previousSessionId,
                     newSessionId,
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg: expect.stringContaining('no tasks to copy'),
                 })
             );
@@ -179,7 +174,6 @@ describe('TaskPersistenceCoordinator', () => {
                 expect.objectContaining({
                     newSessionId,
                     error: testError.message,
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg:   expect.stringContaining('Task persistence failed'),
                 })
             );
@@ -213,7 +207,6 @@ describe('TaskPersistenceCoordinator', () => {
                 expect.objectContaining({
                     newSessionId,
                     error: testError.message,
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg:   expect.stringContaining('Task persistence failed'),
                 })
             );
@@ -243,7 +236,6 @@ describe('TaskPersistenceCoordinator', () => {
                 expect.objectContaining({
                     newSessionId,
                     error: testError.message,
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg:   expect.stringContaining('Task persistence failed'),
                 })
             );
@@ -266,9 +258,7 @@ describe('TaskPersistenceCoordinator', () => {
             expect(mockLogger.warn).toHaveBeenCalledWith(
                 expect.objectContaining({
                     newSessionId: invalidSessionId,
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     error:        expect.stringContaining('Session ID must be a valid UUID'),
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns AsymmetricMatcher
                     msg:          expect.stringContaining('Task persistence failed'),
                 })
             );
