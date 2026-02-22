@@ -1,27 +1,15 @@
 # Long-Term Roadmap (Months 3+)
 
-## Goals
-Scale to production and enhance autonomous capabilities.
+## Production Infrastructure
+- Lambda + Step Functions migration (or equivalent production deployment)
+- Production DynamoDB setup with proper capacity planning
+- Monitoring, alerting, and observability
+- Automated deployment pipeline
 
-## Month 3: Production Readiness
-- [ ] Lambda + Step Functions migration
-- [ ] Production DynamoDB setup
-- [ ] Monitoring and alerting
-- [ ] Rate limiting and error handling
-
-## Month 4+: Advanced Features
-- [ ] Learning from PR feedback
-- [ ] Proactive improvement cycles
-- [ ] Advanced knowledge synthesis
-- [ ] Multi-modal capabilities
-
-## Future Considerations
+## Advanced Capabilities
+- Proactive improvement cycles
+- Advanced knowledge synthesis
+- Multi-modal capabilities (image understanding, generation)
 - Voice integration
 - Additional communication channels
 - Expanded tool ecosystem
-- Fine-tuned models for specific tasks
-
-## Success Criteria
-- Running reliably in production
-- Self-improvement cycle operational
-- Measurable autonomous value creation
