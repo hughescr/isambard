@@ -179,6 +179,11 @@ export class PresenceManager {
         const previousMode = this.presenceDisplayMode;
         this.presenceDisplayMode = mode;
 
+        // Stryker disable next-line ConditionalExpression: stopIdleRefresh() is idempotent — →true equivalent (adds harmless no-op when mode=none)
+        if(mode !== 'none') {
+            this.stopIdleRefresh();
+        }
+
         // When ENTERING catch-up mode (from 'none'), generate ONE initial status update
         // with the 📥 prefix. The catch-up agent session's stream handler will then
         // drive all subsequent status updates (thinking, using_tool, responding).

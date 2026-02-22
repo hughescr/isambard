@@ -388,7 +388,11 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 // Build perch context (if context builder available)
                 let perchContext: string | undefined;
                 if(contextBuilder) {
+                    // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                    logger.debug({ slot }, 'Building perch context');
                     perchContext = await contextBuilder.buildPerchContext();
+                    // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                    logger.debug({ slot, contextLength: perchContext.length }, 'Perch context built');
                 }
 
                 // Build prompt for this slot (use test prompt if test mode enabled)

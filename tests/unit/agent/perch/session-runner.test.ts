@@ -473,6 +473,39 @@ describe('PerchSessionRunner - Error Handling', () => {
             expect.stringContaining('timeout')
         );
     });
+
+    test('should log diagnostic messages around buildPerchContext', async () => {
+        const mockContextBuilder = createMockContextBuilder({
+            buildPerchContext: mock(async (): Promise<string> => 'test perch context'),
+        });
+
+        const sessionMock = mock(async (): Promise<AgentSessionResult> => {
+            return { completed: true, sessionId: 'test-session' };
+        });
+
+        const deps: PerchSessionRunnerDeps = {
+            stateManager:    mockStateManager,
+            logger:          mockLogger,
+            config,
+            runAgentSession: sessionMock,
+            contextBuilder:  mockContextBuilder,
+        };
+
+        const runner = createPerchSessionRunner(deps);
+        await runner.startPerch('pre-dawn');
+
+        // Verify diagnostic logging before buildPerchContext
+        expect(mockLogger.debug).toHaveBeenCalledWith(
+            { slot: 'pre-dawn' },
+            'Building perch context'
+        );
+
+        // Verify diagnostic logging after buildPerchContext
+        expect(mockLogger.debug).toHaveBeenCalledWith(
+            { slot: 'pre-dawn', contextLength: 'test perch context'.length },
+            'Perch context built'
+        );
+    });
 });
 
 describe('PerchSessionRunner - Suspension', () => {

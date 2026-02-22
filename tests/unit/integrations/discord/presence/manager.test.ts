@@ -1376,4 +1376,126 @@ describe('PresenceManager', () => {
             expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallCountBefore);
         });
     });
+
+    describe('idle refresh stops on active mode entry via transitionPresenceDisplayMode', () => {
+        it('should stop idle refresh when entering perching mode', async () => {
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator as unknown as ActiveStatusGenerator,
+                idleStatusGenerator:   mockIdleGenerator as unknown as IdleStatusGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            // Go idle — starts idle refresh loop
+            await manager.updatePhase({ type: 'idle', since: new Date() });
+            const idleCallCount = mockIdleGenerator.generate.mock.calls.length;
+
+            // Enter perching mode — should stop idle refresh
+            manager.transitionPresenceDisplayMode('perching');
+
+            // Advance past idle refresh interval
+            jest.advanceTimersByTime(config.idleRefreshIntervalMs + 50);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // No new idle refreshes should have occurred
+            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallCount);
+        });
+
+        it('should stop idle refresh when entering processing_message mode', async () => {
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator as unknown as ActiveStatusGenerator,
+                idleStatusGenerator:   mockIdleGenerator as unknown as IdleStatusGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            // Go idle — starts idle refresh loop
+            await manager.updatePhase({ type: 'idle', since: new Date() });
+            const idleCallCount = mockIdleGenerator.generate.mock.calls.length;
+
+            // Enter processing_message mode — should stop idle refresh
+            manager.transitionPresenceDisplayMode('processing_message');
+
+            // Advance past idle refresh interval
+            jest.advanceTimersByTime(config.idleRefreshIntervalMs + 50);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // No new idle refreshes should have occurred
+            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallCount);
+        });
+
+        it('should stop idle refresh when entering catching_up mode', async () => {
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator as unknown as ActiveStatusGenerator,
+                idleStatusGenerator:   mockIdleGenerator as unknown as IdleStatusGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            // Go idle — starts idle refresh loop
+            await manager.updatePhase({ type: 'idle', since: new Date() });
+            const idleCallCount = mockIdleGenerator.generate.mock.calls.length;
+
+            // Enter catching_up mode — should stop idle refresh
+            // (the enteringCatchUp path fires ONE async status, but the refresh loop should stop)
+            manager.transitionPresenceDisplayMode('catching_up');
+
+            // Advance past idle refresh interval
+            jest.advanceTimersByTime(config.idleRefreshIntervalMs + 50);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Only +1 from the enteringCatchUp async generation, not from the refresh loop
+            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallCount + 1);
+        });
+
+        it('should not error when entering perching mode without prior idle refresh', async () => {
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator as unknown as ActiveStatusGenerator,
+                idleStatusGenerator:   mockIdleGenerator as unknown as IdleStatusGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            // Go active first (no idle refresh running)
+            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+
+            // Enter perching mode — stopIdleRefresh is idempotent, should not error
+            manager.transitionPresenceDisplayMode('perching');
+
+            // No errors should have been logged
+            expect(mockLogger.error).not.toHaveBeenCalled();
+        });
+
+        it('should NOT stop idle refresh when transitioning to none mode', async () => {
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator as unknown as ActiveStatusGenerator,
+                idleStatusGenerator:   mockIdleGenerator as unknown as IdleStatusGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            // Go idle — starts idle refresh loop
+            await manager.updatePhase({ type: 'idle', since: new Date() });
+            const idleCallCount = mockIdleGenerator.generate.mock.calls.length;
+
+            // Transition to 'none' — should NOT stop idle refresh (it's the idle mode)
+            manager.transitionPresenceDisplayMode('none');
+
+            // Advance past idle refresh interval
+            jest.advanceTimersByTime(config.idleRefreshIntervalMs + 50);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Idle refresh should have fired again (loop still running)
+            expect(mockIdleGenerator.generate.mock.calls.length).toBeGreaterThan(idleCallCount);
+        });
+    });
 });
