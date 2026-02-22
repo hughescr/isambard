@@ -362,7 +362,7 @@ async function determineResponseContext(
     let isReplyToBot = false;
     // Stryker disable next-line ConditionalExpression: Guard skips fetch when no reference exists; catch swallows the same failure
     if(message.reference?.messageId) {
-        // Stryker disable BlockStatement
+        // Stryker disable BlockStatement — Discord API call to fetch referenced message; catch silently ignores unavailable/deleted messages
         try {
             const referencedMessage = await message.fetchReference();
             isReplyToBot = referencedMessage.author.id === botUserId;

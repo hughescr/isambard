@@ -33,7 +33,7 @@ async function copyDirectory(sourceDir: string, destDir: string): Promise<void> 
         } else if(entry.isFile()) {
             // Copy file with FICLONE flag
             // For test compatibility, we read and write when copyFile with FICLONE fails
-            // Stryker disable BlockStatement
+            // Stryker disable BlockStatement — FICLONE copy with read/write fallback for test environments
             try {
                 await copyFile(sourcePath, destPath, constants.COPYFILE_FICLONE);
             } catch{
@@ -53,7 +53,7 @@ async function copyDirectory(sourceDir: string, destDir: string): Promise<void> 
  * @param dirPath - Directory to clear
  */
 async function clearDirectory(dirPath: string): Promise<void> {
-    // Stryker disable BlockStatement,ObjectLiteral,BooleanLiteral,ConditionalExpression,EqualityOperator,StringLiteral
+    // Stryker disable BlockStatement,ObjectLiteral,BooleanLiteral,ConditionalExpression,EqualityOperator,StringLiteral — filesystem I/O error handling with ENOENT graceful fallback
     try {
         // Remove entire directory and recreate it
         await rm(dirPath, { recursive: true, force: true });
@@ -89,7 +89,7 @@ export async function syncAgentsAndSkills(
     const skillsTargetPath = join(targetRoot, 'skills');
 
     // Process agents directory
-    // Stryker disable BlockStatement,ConditionalExpression,EqualityOperator,StringLiteral,ObjectLiteral,BooleanLiteral
+    // Stryker disable BlockStatement,ConditionalExpression,EqualityOperator,StringLiteral,ObjectLiteral,BooleanLiteral — filesystem I/O with ENOENT graceful degradation when source agents directory is absent
     try {
         const agentsStats = await stat(agentsSourcePath);
         if(agentsStats.isDirectory()) {
@@ -122,7 +122,7 @@ export async function syncAgentsAndSkills(
     // Stryker enable BlockStatement,ConditionalExpression,EqualityOperator,StringLiteral,ObjectLiteral,BooleanLiteral
 
     // Process skills directory
-    // Stryker disable BlockStatement,ConditionalExpression,EqualityOperator,StringLiteral,ObjectLiteral,BooleanLiteral
+    // Stryker disable BlockStatement,ConditionalExpression,EqualityOperator,StringLiteral,ObjectLiteral,BooleanLiteral — filesystem I/O with ENOENT graceful degradation when source skills directory is absent
     try {
         const skillsStats = await stat(skillsSourcePath);
         if(skillsStats.isDirectory()) {

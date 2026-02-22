@@ -2,13 +2,14 @@
 
 ## Problem Statement
 
-`BaseRepository` uses classical inheritance, but this pattern creates awkward coupling when used with helper classes. `MemoryToolBackend` extends `BaseRepository` and passes inherited methods as callbacks via `.bind(this)` to specialized helper classes (`MemoryToolBackendCore`, `MemoryToolBackendQuery`, `MemoryToolBackendVersions`). This is a leaky abstraction that exposes internal implementation details.
+`BaseRepository` uses classical inheritance, but this pattern creates awkward coupling when used with helper classes. `MemoryToolBackend` extends `BaseRepository` and passes inherited methods as callbacks via `.bind(this)` to specialized helper classes (`MemoryToolBackendCore`, `MemoryToolBackendQuery`, `MemoryToolBackendTagIndex`). This is a leaky abstraction that exposes internal implementation details.
 
 **Key issues:**
 - `.bind(this)` callbacks are verbose and error-prone
 - Helper classes receive method references instead of clear interfaces
 - Testing requires mocking the parent class or DynamoDB client
 - Inheritance couples storage implementation to DynamoDB client lifecycle
+- Helper classes like `MemoryToolBackendTagIndex` receive indirect callbacks instead of clear interfaces
 
 ## Current Pattern
 
@@ -49,7 +50,7 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
             stripDynamoKeys
         );
 
-        this.versionOps = new MemoryToolBackendVersions(
+        this.tagIndexOps = new MemoryToolBackendTagIndex(
             docClient,
             tableName,
             stripDynamoKeys,
@@ -103,7 +104,7 @@ export class MemoryToolBackend {
     private readonly dynamo: DynamoDBOperations;
     private readonly coreOps: MemoryToolBackendCore;
     private readonly queryOps: MemoryToolBackendQuery;
-    private readonly versionOps: MemoryToolBackendVersions;
+    private readonly tagIndexOps: MemoryToolBackendTagIndex;
 
     constructor(docClient: DynamoDBDocumentClient, tableName: string) {
         this.dynamo = new DynamoDBOperations(docClient, tableName);
@@ -119,7 +120,7 @@ export class MemoryToolBackend {
             stripDynamoKeys
         );
 
-        this.versionOps = new MemoryToolBackendVersions(
+        this.tagIndexOps = new MemoryToolBackendTagIndex(
             this.dynamo,        // ✅ Clear interface
             stripDynamoKeys,
             this.listByLayer.bind(this)  // Still needed - listByLayer delegates to queryOps
@@ -184,8 +185,8 @@ export class MemoryToolBackendCore {
 - **Action:** Replace direct `docClient` and `tableName` usage with `this.dynamo` where applicable
 - **Action:** Some methods use `QueryCommand` directly - these can stay as-is or use dynamo.query()
 
-### 5. Update MemoryToolBackendVersions
-- **File:** `src/storage/memory-tool/backend-versions.ts`
+### 5. Update MemoryToolBackendTagIndex
+- **File:** `src/storage/memory-tool/backend-tag-index.ts`
 - **Action:** Change constructor to accept `dynamo: DynamoDBOperations`
 - **Action:** Replace direct `docClient` and `tableName` usage with `this.dynamo`
 - **Action:** Keep `listByLayer` callback (cross-module dependency to queryOps)
@@ -193,7 +194,7 @@ export class MemoryToolBackendCore {
 ### 6. Check for Other Usages
 - **Action:** Search for `extends BaseRepository` across the codebase
 - **Action:** Update any other repositories to use composition pattern
-- **Action:** Currently, `MemoryRepository` may exist - check and update
+- **Action:** Note: `MemoryRepository` does not currently exist in `src/storage/repositories/` (only `base.ts` and `.gitkeep`)
 
 ## Testing Strategy
 

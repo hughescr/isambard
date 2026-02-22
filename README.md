@@ -193,50 +193,180 @@ See [.claude/CLAUDE.md](.claude/CLAUDE.md) for full development instructions.
 
 ```
 src/
-├── agent/                    # Claude Agent SDK integration
-│   ├── agent.ts              # Main agent with handleInput() method
-│   ├── types.ts              # Agent stream event types
-│   ├── context-builder.ts    # Memory context loading
-│   ├── memory-mcp-server.ts  # MCP server for memory tools
-│   ├── discord-mcp-server.ts # MCP server for message history
-│   ├── email-mcp-server.ts   # MCP server for email operations
-│   ├── inbox-mcp-server.ts   # MCP server for Discord inbox
-│   ├── text-generator.ts     # Lightweight LLM text generation
-│   ├── claude-retry.ts       # Retry logic for Claude API
-│   ├── plugin-loader.ts      # Plugin loading for Agent SDK
-│   ├── session-cleanup.ts    # Session lifecycle management
-│   └── prompts/              # System prompts
-├── integrations/             # External services
-│   ├── discord/              # Discord bot integration
-│   │   ├── presence/         # Dynamic status updates
-│   │   │   ├── manager.ts    # Presence state management
-│   │   │   ├── middleware.ts # Activity state transitions
-│   │   │   └── status-generator-*.ts  # Status text generators
-│   │   ├── message-history/  # Message search/caching
-│   │   │   ├── search.ts     # Search service
-│   │   │   ├── fetcher.ts    # Discord API fetcher
-│   │   │   └── summarizer.ts # Overflow summarization
-│   │   ├── rate-limiter.ts   # Rate limiting
-│   │   └── retry.ts          # Retry logic
-│   └── email/                # Email integration (WildDuck HTTP API + SSE)
-│       ├── wildduck-client.ts # WildDuck HTTP API client
-│       ├── wildduck-listener.ts # WildDuck SSE listener and inbox polling
-│       └── outbound-approval-handler.ts  # Admin approval workflow
-├── storage/                  # DynamoDB layer
-│   ├── memory-tool/          # Three-layer memory system
-│   │   ├── backend*.ts       # Backend operations
-│   │   └── handlers.ts       # Memory tool handlers
-│   ├── models/               # Entity definitions
-│   ├── repositories/         # Data access
-│   ├── client.ts             # DynamoDB client
-│   └── dynamo-retry.ts       # Retry logic
-├── config/                   # Zod-validated configuration
-│   ├── schemas.ts            # Configuration schemas
-│   ├── loader.ts             # Config loader
-│   └── retry-config.ts       # Retry configuration
-└── utils/                    # Shared utilities
-    ├── time.ts               # Time formatting utilities
-    └── retry/                # Retry with exponential backoff
+├── index.ts                         # Application entry point with lifecycle management
+├── agent/                           # Claude Agent SDK integration
+│   ├── agent.ts                        # Main agent with handleInput() method
+│   ├── types.ts                        # Platform-agnostic message types (MessageContext, PlatformImage)
+│   ├── context-builder.ts              # Memory context loading and user message prefix assembly
+│   ├── memory-mcp-server.ts            # MCP server: memory tools (view, store, search, list)
+│   ├── discord-mcp-server.ts           # MCP server: Discord message history
+│   ├── email-mcp-server.ts             # MCP server: email operations
+│   ├── inbox-mcp-server.ts             # MCP server: Discord inbox operations
+│   ├── text-generator.ts               # Lightweight LLM text generation (Haiku)
+│   ├── claude-retry.ts                 # Retry logic for Claude API calls
+│   ├── plugin-loader.ts                # Plugin loading for Agent SDK
+│   ├── session-cleanup.ts              # Session lifecycle management
+│   ├── event-delta-tracker.ts          # EventDeltaTracker: new events between agent interactions
+│   ├── stream-tracker.ts               # StreamTracker: streaming progress + background task state
+│   ├── event-summarizer.ts             # LLM-based event summarization for context compression
+│   ├── multimodal-message-builder.ts   # Builds multimodal messages with image support
+│   ├── resume-prompt-builder.ts        # Resume prompts for background task auto-resume
+│   ├── task-list-reader.ts             # TaskListReader: reads Claude task list state
+│   ├── task-cleanup-processor.ts       # Cleanup processor for stale task list entries
+│   ├── task-persistence-coordinator.ts # Coordinator for task list persistence across sessions
+│   ├── task-directory-copier.ts        # Utility for copying task directories
+│   ├── skill-agent-loader.ts           # Syncs agents/skills to scratch/.claude/ at startup
+│   ├── prompts/                        # Agent system prompts
+│   │   ├── system-prompt.ts         # Main system prompt
+│   │   └── compaction-prompt.ts     # Context window compaction summary prompt
+│   ├── answer-classifier/              # Answer classification subsystem
+│   │   ├── types.ts                 # ClassificationResult enum and MessageToClassify interface
+│   │   ├── haiku-classifier.ts      # LLM-based classification using Haiku
+│   │   └── classifier.ts            # AnswerClassifier class
+│   ├── question-registry/              # Question lifecycle management
+│   │   ├── registry.ts              # QuestionRegistry: pending questions with timeouts
+│   │   ├── types.ts                 # Question types and schemas
+│   │   └── index.ts                 # Public exports
+│   └── perch/                          # Time-based autonomous activity scheduling
+│       ├── types.ts                 # PerchSlot, SuggestionLevel, PerchConfig types
+│       ├── schedule.ts              # SLOT_CONFIGS and time-based slot lookup
+│       ├── prompts.ts               # Perch session prompt builders (initial/test/resume/wrap-up)
+│       ├── session-runner.ts        # Perch lifecycle: start/suspend/resume + timeout enforcement
+│       ├── scheduler.ts             # PerchScheduler: cron-based trigger with jitter + deferred support
+│       └── README.md                # Perch time scheduling design documentation
+├── integrations/                    # External service integrations
+│   ├── discord/                     # Discord bot integration
+│   │   ├── bot.ts                   # Thin bot orchestrator with start/stop lifecycle
+│   │   ├── handlers.ts              # Event handlers (ready, error, messageCreate)
+│   │   ├── client.ts                # Discord.js client factory
+│   │   ├── types.ts                 # Branded types (GuildId, ChannelId, UserId, MessageId)
+│   │   ├── messages.ts              # Message splitting (2000-char Discord limit)
+│   │   ├── message-coordinator.ts   # MessageCoordinator: debounced message queue per channel
+│   │   ├── rate-limiter.ts          # DiscordRateLimiter: rate-limited Discord API calls
+│   │   ├── retry.ts                 # Retry logic for Discord operations
+│   │   ├── button-builder.ts        # Discord ActionRow button components for question options
+│   │   ├── content-type.ts          # Image content type inference for attachments
+│   │   ├── interactions.ts          # Button interaction handler for question answer routing
+│   │   ├── response-sender.ts       # Shared helpers for routing agent responses
+│   │   ├── setup/                   # Bot initialization setup modules
+│   │   │   ├── presence-setup.ts          # Presence manager, status generators, BotStateManager subscriptions
+│   │   │   ├── perch-setup.ts             # Perch session runner and scheduler configuration
+│   │   │   ├── catchup-setup.ts           # Catch-up runner, inbox init, and catch-up context building
+│   │   │   ├── coordinator-setup.ts       # MessageCoordinator wiring with agent + Discord→agent boundary mapping
+│   │   │   ├── event-handler-setup.ts     # Channel registry init, message processing, cleanup handlers
+│   │   │   ├── email-setup.ts             # Email MCP server init and WildDuck SSE listener lifecycle
+│   │   │   └── presence-stream-handler.ts # Shared stream event handler for presence updates
+│   │   ├── state/                   # Bot operational state machine
+│   │   │   ├── types.ts                  # OperationalMode, ActivityPhase, BotState, BotStateManager interface
+│   │   │   ├── manager.ts                # BotStateManagerImpl: state machine with transitions + subscriber notifications
+│   │   │   ├── transitions.ts            # Valid state transition table, isValidTransition, getModeEmoji
+│   │   │   ├── agent-context-builder.ts  # Mode-dependent agent config (MCP servers, system prompt)
+│   │   │   └── status-context-builder.ts # StatusContext for presence status generation
+│   │   ├── presence/                # Dynamic status updates reflecting agent activity
+│   │   │   ├── types.ts                    # PresencePhase types (idle, thinking, responding, tool-use)
+│   │   │   ├── manager.ts                  # PresenceManager: debouncing and rate limiting
+│   │   │   ├── middleware.ts               # Presence state transition middleware
+│   │   │   ├── stream-event-handler.ts     # Stream event handler for presence with synopsis generation
+│   │   │   ├── status-generator-active.ts  # Status text for active phases
+│   │   │   ├── status-generator-idle.ts    # LLM-powered idle status text
+│   │   │   └── status-generator-dynamic.ts # Dynamic status with context awareness
+│   │   ├── message-history/         # Message search and caching for context
+│   │   │   ├── types.ts             # Search types (DiscordSearchResult, SearchParams)
+│   │   │   ├── snowflake.ts         # Discord snowflake ID utilities
+│   │   │   ├── fetcher.ts           # Discord API message fetcher
+│   │   │   ├── search.ts            # Message search service
+│   │   │   └── summarizer.ts        # Overflow message summarization
+│   │   ├── channel-registry/        # DynamoDB-backed channel registry with in-memory cache
+│   │   │   ├── types.ts             # ChannelStorageRecord, ChannelMetadata, WellKnownChannel types
+│   │   │   ├── backend.ts           # ChannelRegistryBackend: DynamoDB CRUD with GSI2 lookup
+│   │   │   ├── manager.ts           # ChannelRegistryManager: write-through cache + shouldProcess filtering
+│   │   │   ├── discovery.ts         # Guild channel discovery + channelCreate/Update/Delete handlers
+│   │   │   ├── dm-tracker.ts        # DMTracker: on-demand DM channel creation by user ID/username
+│   │   │   ├── response-router.ts   # ResponseRouter: routes agent responses by session type
+│   │   │   ├── sentinel.ts          # @@NO_RESPONSE@@ sentinel detection and stripping
+│   │   │   └── key-generator.ts     # ChannelRegistryKeyGenerator for DynamoDB key construction
+│   │   ├── inbox/                   # Unread message tracking with checkpoint persistence
+│   │   │   ├── types.ts              # DiscordChannelCheckpoint, UnreadMessage, UnreadOverview schemas
+│   │   │   ├── config.ts             # InboxConfig schema with defaults
+│   │   │   ├── checkpoint-manager.ts # CheckpointManager: last-seen timestamps per channel
+│   │   │   └── inbox-manager.ts      # InboxManager: unread queue + startup catch-up loading
+│   │   ├── catchup/                 # Catch-up session runner for unread backlogs
+│   │   │   ├── session-runner.ts    # createCatchUpSessionRunner: start/suspend/resume/complete lifecycle
+│   │   │   └── prompts.ts           # buildCatchUpPrompt and buildCatchUpResumedPrompt
+│   │   └── attachments/             # Image fetching, conversion, and formatting
+│   │       ├── types.ts             # AttachmentMetadata, FetchedImage, StoredAttachment types
+│   │       ├── converter.ts         # HEIC/HEIF to PNG conversion
+│   │       ├── fetcher.ts           # Fetches image attachments from Discord URLs
+│   │       └── formatting.ts        # Byte formatting and attachment info appending
+│   └── email/                       # Email integration (WildDuck HTTP API + SSE)
+│       ├── types.ts                     # Email types (EmailFolder, WildDuckMessage, SearchCriteria)
+│       ├── errors.ts                    # Email error hierarchy
+│       ├── wildduck-client.ts           # WildDuck HTTP API client (search, flags, drafts, send)
+│       ├── wildduck-listener.ts         # WildDuck SSE listener with poll fallback
+│       ├── email-processor.ts           # Email processing pipeline
+│       ├── outbound-approval-handler.ts # Admin approval workflow for outbound email
+│       ├── allowlist.ts                 # Recipient allowlist management
+│       ├── allowlist-commands.ts        # Discord slash commands for allowlist management
+│       ├── auth-checker.ts              # Authorization checking for outbound email
+│       ├── send-rate-limiter.ts         # Token bucket rate limiter (capacity=24, refill=1/hr)
+│       ├── classifier.ts                # Email classification
+│       ├── classifier-prompt.ts         # LLM prompt for email classification
+│       ├── review-embed-builder.ts      # Discord embed builder for approval review
+│       └── review-handler.ts            # Handles admin approval/rejection responses
+├── storage/                         # DynamoDB data access layer
+│   ├── client.ts                    # DynamoDB client factory
+│   ├── dynamo-retry.ts              # Retry logic for DynamoDB operations
+│   ├── repositories/                # Data access repositories
+│   │   └── base.ts                  # Base repository with common CRUD
+│   ├── memory-tool/                 # Three-layer memory system (identity/state/events)
+│   │   ├── types.ts                 # Zod schemas, branded types, type guards, factory functions
+│   │   ├── key-generator.ts         # DynamoDB key structure (PK/SK/GSI1) and tag index keys
+│   │   ├── layer-config.ts          # Layer configuration (TTL, autoLoad per layer)
+│   │   ├── backend.ts               # Main backend facade
+│   │   ├── backend-core.ts          # Core CRUD operations
+│   │   ├── backend-query.ts         # Query operations (list, search, getAutoLoadItems)
+│   │   ├── backend-tag-index.ts     # Tag index CRUD with BatchWriteItem + atomic counters
+│   │   ├── handlers.ts              # Memory tool handlers (create, insert, str_replace, rename, search...)
+│   │   ├── sigmoid.ts               # sigmoidScore(): frequency × recency decay for state prioritization
+│   │   └── reconciliation/          # Tag index reconciliation (three phases: completeness/orphan/count)
+│   │       ├── types.ts             # Reconciliation config, state, and result types
+│   │       ├── reconciler.ts        # Three-phase reconciler implementation
+│   │       └── scheduler.ts         # Interval-based reconciliation scheduler with abort support
+│   ├── task-session/                # Claude Agent SDK session ID persistence
+│   │   ├── types.ts                 # SessionId branded type and TaskSessionItem DynamoDB record
+│   │   └── backend.ts               # TaskSessionBackend: singleton for storing/retrieving session ID
+│   └── utils/                       # Storage utilities
+│       └── strip-keys.ts            # Strips DynamoDB internal keys
+├── app/                             # Application composition root
+│   ├── storage-layer.ts             # createStorageLayer: DynamoDB client, memory backend, reconciliation
+│   ├── discord-infrastructure.ts    # createDiscordInfrastructure: client, registry, history, inbox, state
+│   ├── context-layer.ts             # createContextLayer: context builder + event delta tracker
+│   ├── mcp-servers.ts               # createMCPServers: memory, Discord, and inbox MCP configs
+│   ├── catchup-signal-adapter.ts    # createCatchUpSignalAdapter: catch-up signal persistence
+│   └── identity-loader.ts           # loadIdentityContext: bot identity from memory for presence
+├── errors/                          # Centralized error hierarchy
+│   ├── base.ts                      # IsambardError base class with ErrorCode and typed context
+│   ├── codes.ts                     # ErrorCode enum (storage, memory, Discord, presence, email, ...)
+│   ├── storage.ts                   # StorageError subtree (ItemNotFound, Validation, DynamoTimeout, ...)
+│   ├── discord.ts                   # DiscordError subtree (InvalidToken, Permission, RateLimit, ...)
+│   ├── utils.ts                     # PathSecurityError for file path security validation
+│   └── README.md                    # Error hierarchy diagram, naming conventions, usage patterns
+├── config/                          # Zod-validated configuration
+│   ├── schemas.ts                   # Configuration schemas
+│   ├── loader.ts                    # Configuration loader
+│   └── retry-config.ts              # Retry configuration constants
+└── utils/                           # Shared utilities
+    ├── time.ts                      # Time formatting (formatRelativeTime, getCurrentTimeContext, ...)
+    ├── filename.ts                  # sanitizeFilename and deduplicateFilename
+    ├── path-validator.ts            # validateFilePath: CWD containment + symlink security checks
+    ├── text.ts                      # truncateToWordBoundary and HARD_MAX_STATUS_LENGTH
+    ├── safe-async-handler.ts        # safeAsyncHandler: async event handler → void with error logging
+    └── retry/                       # Retry utilities with exponential backoff
+        ├── types.ts                 # Retry configuration types
+        ├── classifier.ts            # Error classification for retry decisions
+        ├── delay.ts                 # Exponential backoff delay calculation
+        ├── retry-async.ts           # Retry wrapper for async functions
+        └── retry-async-generator.ts # Retry wrapper for async generators
 ```
 
 ## Roadmaps

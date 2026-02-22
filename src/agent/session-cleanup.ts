@@ -296,6 +296,7 @@ export const cleanupAllStaleSessions = async (): Promise<void> => {
  * - Is safe to call even if files were already deleted
  *
  * @param sessionId - The UUID of the session to clean up
+ * @param options - Optional cleanup options (e.g. skip sub-agent scan for faster cleanup)
  */
 export const cleanupSession = async (sessionId: string, options?: { skipSubAgentScan?: boolean }): Promise<void> => {
     // Validate session ID

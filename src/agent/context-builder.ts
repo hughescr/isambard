@@ -162,7 +162,6 @@ export function formatMemoryPreview(
 /**
  * Extract a rejection summary line from WildDuck message fields and metadata.
  * Returns a formatted string if the message has rejectedAt + reason + to, else undefined.
- * @internal
  */
 function formatRejectedDraftLine(
     subject:    string | undefined,
@@ -235,7 +234,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         // Older events summarized (rendered first for chronological order)
         // Stryker disable ConditionalExpression,EqualityOperator: Defensive empty check - for loop won't execute if empty anyway
         if(summaryItems.length > 0 && summarizeEventBatchesFn) {
-            // Stryker disable BlockStatement
+            // Stryker disable BlockStatement — external summarization API call with graceful preview fallback on failure
             try {
                 const batchSummaries = await summarizeEventBatchesFn(summaryItems, maxEventBatchSize, now);
                 for(const batch of batchSummaries) {

@@ -853,6 +853,7 @@ async function processStreamEvents(
  * @param memoryMcpServer Memory MCP server configuration
  * @param discordMcpServer Discord MCP server configuration
  * @param inboxMcpServer Inbox MCP server configuration
+ * @param emailMcpServer Email MCP server configuration
  * @param plugins Plugin configurations
  * @param options Optional batch processing options
  * @returns Query options object for Agent SDK
@@ -1110,6 +1111,7 @@ async function attemptAutoResume(
  * @param memoryMcpServer - Memory MCP server configuration
  * @param discordMcpServer - Discord MCP server configuration
  * @param inboxMcpServer - Inbox MCP server configuration
+ * @param emailMcpServer - Email MCP server configuration
  * @param plugins - Plugin configurations
  * @param options - HandleInput options (including abort controller)
  * @param taskPersistenceCoordinator - Task persistence coordinator if available

@@ -441,6 +441,10 @@ function formatQuestionResult(
  *
  * This server wraps the MessageSearchService and Discord client for use with the Claude Agent SDK.
  *
+ * @param searchService Message search service for querying Discord message history
+ * @param client Discord.js client for sending messages and fetching channel data
+ * @param questionRegistry Registry for tracking pending questions awaiting user responses
+ * @param channelRegistry Channel registry manager for DM channel and user metadata
  * @param timezone Server timezone for localTimestamp enrichment. The MCP server is a
  *                 shared, session-level resource created at startup. Per-user timezone
  *                 would require threading user context into each tool call. The agent's

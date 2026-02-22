@@ -63,7 +63,7 @@ export class EmailProcessor {
     }
 
     private async routeAllowlistBypass(email: EmailMetadata): Promise<ProcessingResult> {
-        // Stryker disable BlockStatement
+        // Stryker disable BlockStatement — WildDuck HTTP API call; catch re-throws as typed EmailProcessingError
         try {
             await this.wildDuckClient.moveMessage(EmailFolder.Inbox, email.uid, EmailFolder.CleanInbox);
         } catch (err) {
@@ -94,7 +94,7 @@ export class EmailProcessor {
 
     private async routeViaClassifier(email: EmailMetadata): Promise<ProcessingResult> {
         let verdict: ClassifierVerdict;
-        // Stryker disable BlockStatement
+        // Stryker disable BlockStatement — external classifier call; catch re-throws as typed EmailProcessingError
         try {
             verdict = await this.classifier.classify(email);
         } catch (err) {
@@ -108,7 +108,7 @@ export class EmailProcessor {
 
         const destination = this.verdictToFolder(verdict.verdict);
 
-        // Stryker disable BlockStatement
+        // Stryker disable BlockStatement — WildDuck HTTP API call; catch re-throws as typed EmailProcessingError
         try {
             await this.wildDuckClient.moveMessage(EmailFolder.Inbox, email.uid, destination);
         } catch (err) {

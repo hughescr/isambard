@@ -20,7 +20,7 @@ import type { DiscordConfig } from '@/config/schemas';
  * - Channel: Required for DM events in discord.js v14, since DM channels
  *   are not cached by default and would otherwise be unavailable
  *
- * @param config - Discord configuration including bot token and monitored channels
+ * @param _config - Discord configuration including bot token and monitored channels
  * @returns Configured Discord Client (not logged in)
  */
 export function createDiscordClient(_config: DiscordConfig): Client {

@@ -73,13 +73,18 @@ The agent subsystem connects Discord to Claude with persistent memory:
 - `src/agent/session-cleanup.ts` - Session cleanup and lifecycle management
 - `src/agent/prompts/` - Agent system prompts
   - `system-prompt.ts` - Main system prompt for the agent
+  - `compaction-prompt.ts` - Isambard-specific compaction summary prompt injected into context window compaction
   - `index.ts` - Public exports
 - `src/agent/event-delta-tracker.ts` - `EventDeltaTracker` class for tracking new events between agent interactions
 - `src/agent/stream-tracker.ts` - `StreamTracker` class for tracking Claude streaming response progress and background task collection state
 - `src/agent/answer-classifier/` - Answer classification subsystem
+  - `types.ts` - `ClassificationResult` Zod enum type (answer/interruption/unrelated) and `MessageToClassify` interface
+  - `haiku-classifier.ts` - LLM-based message classification using Haiku with prompt building and response parsing
   - `classifier.ts` - `AnswerClassifier` class for LLM-based answer classification
 - `src/agent/question-registry/` - Question lifecycle management
   - `registry.ts` - `QuestionRegistry` class for tracking pending questions with timeouts
+  - `types.ts` - Question types (PendingQuestion, QuestionAnswer, QuestionOption, QuestionState)
+  - `index.ts` - Public exports
 - `src/agent/email-mcp-server.ts` - MCP server for email operations (checkInbox, getEmailContent, archiveEmail, searchEmail, sendEmail, replyToEmail, deleteDraft, amendAndResubmitDraft)
 - `src/agent/inbox-mcp-server.ts` - MCP server for Discord inbox operations (getUnreadOverview, getChannelSummary, fetchMessages, markAsRead, markChannelRead)
 - `src/agent/event-summarizer.ts` - LLM-based event summarization for context compression
@@ -92,10 +97,19 @@ The agent subsystem connects Discord to Claude with persistent memory:
 - `src/agent/index.ts` - Public exports
 - `src/index.ts` - Application entry point with lifecycle management
 
+### Agent Perch System
+Time-based autonomous activity scheduling with graduated suggestion levels:
+- `src/agent/perch/types.ts` - `PerchSlot`, `SuggestionLevel`, `PerchSlotConfig`, `PerchConfig`, `PerchSchedulerState` types and Zod schemas
+- `src/agent/perch/schedule.ts` - `SLOT_CONFIGS` array and `getSlotForHour`/`getSlotConfig` lookup functions for time-based slot determination
+- `src/agent/perch/prompts.ts` - Prompt builders for perch sessions: initial, test, resumed, and timeout wrap-up variants
+- `src/agent/perch/session-runner.ts` - `createPerchSessionRunner` factory managing perch lifecycle: start/suspend/resume with timeout enforcement and wrap-up prompts
+- `src/agent/perch/scheduler.ts` - `PerchScheduler` cron-based trigger scheduler using cron-parser H option for jitter, with deferred trigger support when bot is busy
+- `src/agent/perch/index.ts` - Public exports
+- `src/agent/perch/README.md` - Design documentation for the perch time scheduling system
+
 ### Discord Integration
 The Discord integration provides bot functionality:
 - `src/integrations/discord/types.ts` - Branded types (GuildId, ChannelId, UserId, MessageId)
-- `src/integrations/discord/errors.ts` - Error hierarchy
 - `src/integrations/discord/client.ts` - Discord.js client factory
 - `src/integrations/discord/handlers.ts` - Event handlers (ready, error, messageCreate)
 - `src/integrations/discord/bot.ts` - Thin bot orchestrator delegating to setup/ modules with start/stop lifecycle
@@ -103,6 +117,10 @@ The Discord integration provides bot functionality:
 - `src/integrations/discord/message-coordinator.ts` - `MessageCoordinator` class for debounced message queue processing per channel
 - `src/integrations/discord/rate-limiter.ts` - `DiscordRateLimiter` class for rate-limited Discord API calls
 - `src/integrations/discord/retry.ts` - Retry logic for Discord operations
+- `src/integrations/discord/button-builder.ts` - Builds Discord ActionRow button components for question options
+- `src/integrations/discord/content-type.ts` - Infers image content type from filename for Discord attachments lacking MIME type
+- `src/integrations/discord/interactions.ts` - Discord button interaction handler for question answer routing
+- `src/integrations/discord/response-sender.ts` - Shared helpers for routing and sending agent responses to Discord channels
 - `src/integrations/discord/setup/` - Bot initialization setup modules (extracted from bot.ts)
   - `presence-stream-handler.ts` - Shared utility for creating stream event handlers for presence updates
   - `presence-setup.ts` - Presence manager creation, status generators, and BotStateManager subscriptions
@@ -113,13 +131,57 @@ The Discord integration provides bot functionality:
   - `email-setup.ts` - Email MCP server initialization and WildDuck SSE listener lifecycle
 - `src/integrations/discord/index.ts` - Public exports
 
+### Discord Attachments
+Image fetching, conversion, and formatting for Discord message attachments:
+- `src/integrations/discord/attachments/types.ts` - Attachment types (AttachmentMetadata, FetchedImage, StoredAttachment, FailedAttachment) with HEIC/HEIF and native image type definitions
+- `src/integrations/discord/attachments/converter.ts` - HEIC/HEIF to PNG conversion using heic-convert
+- `src/integrations/discord/attachments/fetcher.ts` - Fetches image attachments from Discord URLs, converting formats and saving non-image files to disk
+- `src/integrations/discord/attachments/formatting.ts` - Utilities for formatting bytes and appending attachment info to message contexts
+- `src/integrations/discord/attachments/index.ts` - Public exports
+
+### Discord Bot State
+Bot operational state machine with mode transitions and activity phases:
+- `src/integrations/discord/state/types.ts` - `OperationalMode`, `ActivityPhase`, `BotState`, `BotStateManager` interface and all mode context types (idle, catching_up, processing_message, perching)
+- `src/integrations/discord/state/manager.ts` - `BotStateManagerImpl` class implementing state machine with mode transitions, activity phase tracking, presence throttling, and subscriber notifications
+- `src/integrations/discord/state/transitions.ts` - Valid state transition table (idle-hub pattern), `isValidTransition`, and `getModeEmoji`
+- `src/integrations/discord/state/agent-context-builder.ts` - Builds mode-dependent agent configuration (MCP servers, system prompt additions, context injection) from current bot state
+- `src/integrations/discord/state/status-context-builder.ts` - Produces `StatusContext` for presence status generation, mapping bot state to LLM/static strategy
+- `src/integrations/discord/state/index.ts` - Public exports
+
+### Discord Channel Registry
+DynamoDB-backed channel registry with in-memory caching and well-known channel support:
+- `src/integrations/discord/channel-registry/types.ts` - `ChannelStorageRecord`, `ChannelMetadata`, `WellKnownChannel` types (`general`, `catch-up`, `perch-time`, `fallback`)
+- `src/integrations/discord/channel-registry/key-generator.ts` - `ChannelRegistryKeyGenerator` for DynamoDB PK/SK/GSI1/GSI2 key construction and parsing
+- `src/integrations/discord/channel-registry/backend.ts` - `ChannelRegistryBackend` DynamoDB CRUD with mute, well-known designation, and GSI2 lookup
+- `src/integrations/discord/channel-registry/manager.ts` - `ChannelRegistryManager` with write-through cache, Discord API merging, and `shouldProcess` filtering logic
+- `src/integrations/discord/channel-registry/discovery.ts` - Discovers all guild channels from Discord API and populates registry; sets up channelCreate/Update/Delete handlers
+- `src/integrations/discord/channel-registry/dm-tracker.ts` - `DMTracker` class for on-demand DM channel creation and tracking by user ID or username
+- `src/integrations/discord/channel-registry/resolve.ts` - Resolves `#channel-name` or numeric ID strings to typed `ChannelId`
+- `src/integrations/discord/channel-registry/response-router.ts` - `ResponseRouter` class routing agent responses to origin channel or well-known channels based on session type
+- `src/integrations/discord/channel-registry/sentinel.ts` - `@@NO_RESPONSE@@` sentinel detection and stripping for suppressing unwanted agent responses
+- `src/integrations/discord/channel-registry/index.ts` - Public exports
+
+### Discord Inbox
+Unread message tracking with checkpoint persistence for catch-up on restart:
+- `src/integrations/discord/inbox/types.ts` - `DiscordChannelCheckpoint`, `UnreadMessage`, `ChannelSummary`, `UnreadOverview` Zod schemas
+- `src/integrations/discord/inbox/config.ts` - `InboxConfig` schema with defaults (minGapDurationMs, maxCatchUpMessages, maxCatchUpAgeDays)
+- `src/integrations/discord/inbox/checkpoint-manager.ts` - `CheckpointManager` class persisting last-seen timestamps per channel in memory tool backend
+- `src/integrations/discord/inbox/inbox-manager.ts` - `InboxManager` class managing in-memory unread queue, loading messages since checkpoint on startup, marking read, and recording activity
+- `src/integrations/discord/inbox/index.ts` - Public exports
+
+### Discord Catch-Up System
+Session runner and prompts for processing unread message backlogs:
+- `src/integrations/discord/catchup/session-runner.ts` - `createCatchUpSessionRunner` factory managing catch-up lifecycle: startup check, session start/suspend/resume/complete, inProgress and completion signal persistence
+- `src/integrations/discord/catchup/prompts.ts` - `buildCatchUpPrompt` and `buildCatchUpResumedPrompt` for initial and resumed catch-up agent prompts
+- `src/integrations/discord/catchup/index.ts` - Public exports
+
 ### Discord Presence System
 Dynamic status updates reflecting agent activity:
 - `src/integrations/discord/presence/` - Complete presence management
   - `types.ts` - PresencePhase types (idle, thinking, responding, tool-use)
-  - `errors.ts` - Presence-related errors
   - `manager.ts` - `PresenceManager` class with debouncing and rate limiting
   - `middleware.ts` - Middleware for presence state transitions
+  - `stream-event-handler.ts` - Reusable stream event handler for presence updates with phase tracking and synopsis generation
   - `status-generator-active.ts` - Generates status text for active phases
   - `status-generator-idle.ts` - Generates LLM-powered idle status text
   - `status-generator-dynamic.ts` - Dynamic status with context awareness
@@ -141,7 +203,6 @@ WildDuck HTTP API for inbox reading with SSE push notifications, outbound sendin
 - `src/integrations/email/wildduck-client.ts` - WildDuck HTTP API client (message search, flag management, draft upload, message send, updateMessageFlags, folder creation, attachment fetch)
 - `src/integrations/email/wildduck-listener.ts` - WildDuck SSE listener with poll fallback and checkPendingNotifications loop
 - `src/integrations/email/email-processor.ts` - Email processing pipeline
-- `src/integrations/email/email-counters.ts` - CleanInbox unread counter management
 - `src/integrations/email/outbound-approval-handler.ts` - Admin approval workflow for outbound emails via Discord
 - `src/integrations/email/allowlist.ts` - Recipient allowlist management
 - `src/integrations/email/allowlist-commands.ts` - Discord slash commands for allowlist management
@@ -165,13 +226,17 @@ Custom memory tool implementation with DynamoDB backend and three-layer architec
   - `backend-query.ts` - Query operations (list, searchByTags, listByLayer, searchByTimeRange, getAutoLoadItems)
   - `backend-tag-index.ts` - Tag index CRUD with BatchWriteItem, META_COUNT atomic counters, and listTagCounts
   - `handlers.ts` - All memory tool handlers (create, insert, str_replace, rename, search, recall, list_by_layer, consolidate)
+  - `sigmoid.ts` - `sigmoidScore()` function combining access frequency (sigmoid activation) and recency (exponential decay) into a priority score
   - `reconciliation/` - Tag index reconciliation with three phases: completeness (A), orphan cleanup (B), count verification (C)
+    - `types.ts` - Reconciliation config, state, and result types
+    - `reconciler.ts` - Three-phase reconciler implementation
+    - `scheduler.ts` - `createReconciliationScheduler` interval-based scheduler with abort support and test mode
+    - `index.ts` - Public exports
   - `index.ts` - Public exports
 
 ### Storage Subsystem
 DynamoDB integration and data access layer:
 - `src/storage/client.ts` - DynamoDB client factory
-- `src/storage/errors.ts` - Storage-related error hierarchy
 - `src/storage/dynamo-retry.ts` - Retry logic for DynamoDB operations
 - `src/storage/index.ts` - Public exports
 - `src/storage/models/` - Entity definitions
@@ -179,9 +244,33 @@ DynamoDB integration and data access layer:
 - `src/storage/repositories/` - Data access repositories
   - `base.ts` - Base repository with common CRUD operations
   - `memory.ts` - Memory repository
+- `src/storage/task-session/` - Claude Agent SDK session ID persistence
+  - `types.ts` - `SessionId` branded type and `TaskSessionItem` DynamoDB record
+  - `backend.ts` - `TaskSessionBackend` singleton pattern for storing/retrieving the current agent session ID
+  - `index.ts` - Public exports
 - `src/storage/utils/` - Storage utilities
   - `strip-keys.ts` - Utility to strip DynamoDB internal keys
   - `index.ts` - Public exports
+
+### Application Composition Root
+Factory functions that wire together all subsystem components:
+- `src/app/storage-layer.ts` - `createStorageLayer` factory creating DynamoDB client, memory backend, task persistence coordinator, and optional reconciliation scheduler
+- `src/app/discord-infrastructure.ts` - `createDiscordInfrastructure` factory creating Discord client, channel registry, message history chain, inbox system, and bot state manager
+- `src/app/context-layer.ts` - `createContextLayer` factory creating context builder and event delta tracker for memory-aware agent operation
+- `src/app/mcp-servers.ts` - `createMCPServers` factory creating memory, Discord, and inbox MCP server configurations
+- `src/app/catchup-signal-adapter.ts` - `createCatchUpSignalAdapter` adapter persisting catch-up completion and in-progress signals via memory tool backend
+- `src/app/identity-loader.ts` - `loadIdentityContext` helper loading bot identity from memory for presence status generation
+- `src/app/index.ts` - Public exports
+
+### Error Hierarchy
+Centralized error classes for all Isambard operations:
+- `src/errors/base.ts` - `IsambardError` base class with `code: ErrorCode` and typed `context` bag
+- `src/errors/codes.ts` - `ErrorCode` enum with all error codes (storage, memory tool, reconciliation, Discord, channel registry, presence, state, utility, email)
+- `src/errors/storage.ts` - `StorageError` subtree (ItemNotFoundError, ValidationError, DynamoTimeoutError, MemoryToolError and subclasses, ReconciliationError)
+- `src/errors/discord.ts` - `DiscordError` subtree (InvalidTokenError, PermissionError, ChannelNotFoundByIdError, RateLimitError, MessageFetchError, InvalidSnowflakeError, ChannelRegistryError subclasses, PresenceError, TransitionError)
+- `src/errors/utils.ts` - `PathSecurityError` for file path security validation failures
+- `src/errors/index.ts` - Public exports
+- `src/errors/README.md` - Error hierarchy diagram, naming conventions, extension guidelines, and usage patterns
 
 ### Configuration Subsystem
 Zod-validated configuration loading with env-var for type-safe environment variable parsing:
@@ -192,6 +281,10 @@ Zod-validated configuration loading with env-var for type-safe environment varia
 
 ### Utilities
 - `src/utils/time.ts` - Time utilities (formatRelativeTime, getTimeOfDay, getCurrentTimeContext, formatShortRelativeTime, formatMemoryTimestamp, formatTimeHeader)
+- `src/utils/filename.ts` - `sanitizeFilename` (strips unsafe chars and path traversal) and `deduplicateFilename` (adds counter suffix to avoid name collisions)
+- `src/utils/path-validator.ts` - `validateFilePath`/`validateFilePaths` security checks (CWD containment, no symlinks, file-only)
+- `src/utils/text.ts` - `truncateToWordBoundary` for status length limiting; `HARD_MAX_STATUS_LENGTH` constant
+- `src/utils/safe-async-handler.ts` - `safeAsyncHandler` wrapper converting async event handlers to void-returning functions with error logging
 - `src/utils/retry/` - Retry utilities with exponential backoff
   - `types.ts` - Retry configuration types
   - `classifier.ts` - Error classification for retry decisions

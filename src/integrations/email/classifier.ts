@@ -27,7 +27,7 @@ export class EmailClassifier {
         const userMessage = this.buildUserMessage(email);
 
         let rawText: string;
-        // Stryker disable BlockStatement
+        // Stryker disable BlockStatement — external LLM API call; catch re-throws as typed ClassifierError
         try {
             // Stryker disable next-line StringLiteral: model name is SDK configuration constant
             rawText = await generateTextWithSystemPrompt(CLASSIFIER_SYSTEM_PROMPT, userMessage, { model: 'sonnet' });
@@ -110,7 +110,7 @@ export class EmailClassifier {
      */
     private extractJson(text: string): unknown {
         const trimmed = _.trim(text);
-        // Stryker disable BlockStatement
+        // Stryker disable BlockStatement — JSON parse with regex fallback; nested try/catch gracefully degrades malformed LLM responses to null
         try {
             return JSON.parse(trimmed);
         } catch{
