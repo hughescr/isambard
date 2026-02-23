@@ -786,7 +786,8 @@ async function processStreamEvents(
     response: AsyncIterable<unknown>,
     tracker: StreamTracker,
     options?: HandleInputOptions,
-    taskPersistenceCoordinator?: TaskPersistenceCoordinator
+    taskPersistenceCoordinator?: TaskPersistenceCoordinator,
+    sessionRef?: { capturedSessionId: string | undefined }
 ): Promise<{ lastAssistantText: string, wasInterrupted: boolean, capturedSessionId?: string }> {
     let lastAssistantText = '';
     let wasInterrupted = false;
@@ -809,6 +810,10 @@ async function processStreamEvents(
             );
             if(sessionId) {
                 capturedSessionId = sessionId;
+                // Propagate session ID to caller ref immediately so it is visible even if we throw
+                if(sessionRef) {
+                    sessionRef.capturedSessionId = sessionId;
+                }
                 taskPersistenceCompleted = persistenceCompleted;
             }
 
@@ -1173,13 +1178,14 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
         policy: retryConfig.claude,
     });
 
-    return {
+    const agent: ClaudeAgent = {
         handleInput: async (
             contexts: MessageContext[],
             options?: HandleInputOptions
         ): Promise<HandleInputResult> => {
             const tracker = new StreamTracker();
-            let capturedSessionId: string | undefined;
+            // Ref object lets processStreamEvents propagate capturedSessionId even when it throws
+            const sessionRef: { capturedSessionId: string | undefined } = { capturedSessionId: undefined };
 
             try {
                 // 1. Load user timezone for user message localization
@@ -1222,22 +1228,21 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 });
 
                 // 7. Process stream events and track progress
-                const { lastAssistantText: initialText, wasInterrupted: initialInterrupted, capturedSessionId: sessionId }
-                    = await processStreamEvents(response, tracker, options, taskPersistenceCoordinator);
-                capturedSessionId = sessionId;
+                const { lastAssistantText: initialText, wasInterrupted: initialInterrupted }
+                    = await processStreamEvents(response, tracker, options, taskPersistenceCoordinator, sessionRef);
                 let lastAssistantText = initialText;
                 const wasInterrupted = initialInterrupted;
 
                 // 8. Auto-resume: collect background tasks
                 const resumeCollected = await collectBackgroundTasks(
-                    tracker, lastAssistantText, capturedSessionId, wasInterrupted,
+                    tracker, lastAssistantText, sessionRef.capturedSessionId, wasInterrupted,
                     retryableQuery, resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, options, taskPersistenceCoordinator
                 );
                 lastAssistantText = resumeCollected.lastAssistantText;
-                capturedSessionId = resumeCollected.capturedSessionId;
+                sessionRef.capturedSessionId = resumeCollected.capturedSessionId;
 
                 // 9. Clean up session only on completion (not on interrupt)
-                cleanupSessionIfComplete(wasInterrupted, capturedSessionId);
+                cleanupSessionIfComplete(wasInterrupted, sessionRef.capturedSessionId);
 
                 // 10. Log completion
                 /* Stryker disable StringLiteral,ObjectLiteral: Logging for observability */
@@ -1250,10 +1255,22 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 /* Stryker restore StringLiteral,ObjectLiteral */
 
                 // 11. Return result
-                return buildHandleInputResult(lastAssistantText, wasInterrupted, capturedSessionId, tracker);
+                return buildHandleInputResult(lastAssistantText, wasInterrupted, sessionRef.capturedSessionId, tracker);
             } catch (error) {
-                return buildErrorHandleInputResult(error, options, capturedSessionId, tracker, contexts.length);
+                // If resume attempt failed before session was established, retry fresh
+                // Guard: options?.sessionId is falsy on retry, preventing infinite recursion
+                if(options?.sessionId && !sessionRef.capturedSessionId) {
+                    // Stryker disable StringLiteral,ObjectLiteral: Observability - warn logging for debugging resume retry
+                    logger.warn({
+                        sessionId: options.sessionId,
+                        msg:       'Resume failed before session established, retrying with fresh session',
+                    });
+                    // Stryker restore StringLiteral,ObjectLiteral
+                    return agent.handleInput(contexts, { ...options, sessionId: undefined });
+                }
+                return buildErrorHandleInputResult(error, options, sessionRef.capturedSessionId, tracker, contexts.length);
             }
         },
     };
+    return agent;
 }

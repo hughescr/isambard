@@ -3,13 +3,16 @@ import {
     guildIdSchema,
     channelIdSchema,
     userIdSchema,
+    messageIdSchema,
     discordMessageContextSchema,
     createGuildId,
     createChannelId,
     createUserId,
+    createMessageId,
     isGuildId,
     isChannelId,
     isUserId,
+    isMessageId,
     type GuildId,
     type ChannelId,
     type UserId
@@ -19,6 +22,7 @@ const idSchemas = [
     ['GuildId', guildIdSchema, '123456789012345678', 12345, createGuildId, isGuildId],
     ['ChannelId', channelIdSchema, '987654321098765432', 98765, createChannelId, isChannelId],
     ['UserId', userIdSchema, '111222333444555666', 11122, createUserId, isUserId],
+    ['MessageId', messageIdSchema, '1234567890123456789', 99999, createMessageId, isMessageId],
 ] as const;
 
 describe.concurrent('branded ID schemas', () => {

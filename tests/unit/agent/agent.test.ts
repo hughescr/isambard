@@ -3428,5 +3428,88 @@ describe('createClaudeAgent', () => {
                 expect(result.response).toBe('Launched task');
             });
         });
+
+        describe('resume retry on pre-session failure', () => {
+            test('should retry with fresh session when resume fails before session established', async () => {
+                let callCount = 0;
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                    callCount++;
+                    if(callCount === 1) {
+                        // First call: throw immediately (no system init event, no session established)
+                        throw new Error('Resume connection failed');
+                    }
+                    // Second call: succeed with a fresh session
+                    async function* secondCall() {
+                        yield { type: 'system' as const, subtype: 'init' as const, session_id: 'fresh-session-id' };
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{ type: 'text' as const, text: 'Fresh session response' }],
+                            },
+                        };
+                    }
+                    return secondCall() as unknown as Query;
+                });
+
+                const abortController = new AbortController();
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext], { sessionId: 'stale-session-id', abortController });
+
+                // Should have called query twice: failed resume + successful fresh call
+                expect(querySpy).toHaveBeenCalledTimes(2);
+
+                // Second call should NOT have resume option (fresh session)
+                const secondCallParams = querySpy.mock.calls[1][0];
+                expect(secondCallParams.options.resume).toBeUndefined();
+
+                // Other options (abortController) should be preserved on the retry
+                expect(secondCallParams.options.abortController).toBe(abortController);
+
+                // sessionId should be undefined on retry (fresh session)
+                expect(secondCallParams.options.sessionId).toBeUndefined();
+
+                // Result should come from the retry
+                expect(result.response).toBe('Fresh session response');
+            });
+
+            test('should NOT retry for errors with established session', async () => {
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                    async function* mockGenerator() {
+                        // Yield system init event to establish capturedSessionId
+                        yield { type: 'system' as const, subtype: 'init' as const, session_id: 'established-session' };
+                        // Then throw an error after session is established
+                        throw new Error('Error after session established');
+                    }
+                    return mockGenerator() as unknown as Query;
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext], { sessionId: 'some-session' });
+
+                // Should only call query once (no retry because capturedSessionId was set)
+                expect(querySpy).toHaveBeenCalledTimes(1);
+
+                // Result should be an error result (null response)
+                expect(result.response).toBeNull();
+            });
+
+            test('should propagate error from retry if fresh session also fails', async () => {
+                let callCount = 0;
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                    callCount++;
+                    // Both calls throw before establishing a session
+                    throw new Error(`Failure on call ${callCount}`);
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext], { sessionId: 'stale-session' });
+
+                // Should have called query twice: failed resume + failed fresh attempt
+                expect(querySpy).toHaveBeenCalledTimes(2);
+
+                // Final result should be an error result (null response)
+                expect(result.response).toBeNull();
+            });
+        });
     });
 });

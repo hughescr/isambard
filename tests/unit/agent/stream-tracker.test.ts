@@ -1221,4 +1221,79 @@ describe('StreamTracker', () => {
             });
         });
     });
+
+    describe('hasMeaningfulProgress()', () => {
+        test('should return false for a fresh tracker', () => {
+            expect(tracker.hasMeaningfulProgress()).toBe(false);
+        });
+
+        test('should return true after receiving thinking content', () => {
+            const event: AssistantEvent = {
+                type:    'assistant',
+                message: {
+                    content: [
+                        { type: 'thinking', text: 'Let me think about this' },
+                    ],
+                },
+            };
+            tracker.update(event);
+            expect(tracker.hasMeaningfulProgress()).toBe(true);
+        });
+
+        test('should return true after receiving text content', () => {
+            const event: AssistantEvent = {
+                type:    'assistant',
+                message: {
+                    content: [
+                        { type: 'text', text: 'Here is my response' },
+                    ],
+                },
+            };
+            tracker.update(event);
+            expect(tracker.hasMeaningfulProgress()).toBe(true);
+        });
+
+        test('should return true after receiving a tool_use block', () => {
+            const event: AssistantEvent = {
+                type:    'assistant',
+                message: {
+                    content: [
+                        {
+                            type:  'tool_use',
+                            id:    'tool_123',
+                            name:  'memory_view',
+                            input: { path: '/memories/test' },
+                        },
+                    ],
+                },
+            };
+            tracker.update(event);
+            expect(tracker.hasMeaningfulProgress()).toBe(true);
+        });
+
+        test('should return false after only receiving system events (no assistant content)', () => {
+            const event: SystemEvent = {
+                type:       'system',
+                subtype:    'init',
+                session_id: 'session_abc123',
+            };
+            tracker.update(event);
+            expect(tracker.hasMeaningfulProgress()).toBe(false);
+        });
+
+        test('should return false after reset even if progress was made', () => {
+            const event: AssistantEvent = {
+                type:    'assistant',
+                message: {
+                    content: [
+                        { type: 'text', text: 'Some text' },
+                    ],
+                },
+            };
+            tracker.update(event);
+            expect(tracker.hasMeaningfulProgress()).toBe(true);
+            tracker.reset();
+            expect(tracker.hasMeaningfulProgress()).toBe(false);
+        });
+    });
 });

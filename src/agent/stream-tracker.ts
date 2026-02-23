@@ -132,6 +132,17 @@ export class StreamTracker {
     }
 
     /**
+     * Check whether the stream has produced meaningful LLM output.
+     * Used to determine if an interrupted session is worth resuming.
+     * @returns true if any thinking, text, or pending tool use has been captured
+     */
+    hasMeaningfulProgress(): boolean {
+        return this.thinking !== ''
+          || this.text !== ''
+          || this.pendingToolUse !== null;
+    }
+
+    /**
      * Get the current accumulated progress.
      * @returns A copy of the current progress (immutable)
      */

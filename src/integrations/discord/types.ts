@@ -34,12 +34,11 @@ export type UserId = z.infer<typeof userIdSchema>;
 /**
  * MessageId is a branded type representing a Discord message ID.
  */
-// Stryker disable StringLiteral: error message and brand name are not behavior-affecting
 export const messageIdSchema = z
     .string()
-    .min(1, 'Message ID cannot be empty')
+    .min(1, 'MessageId cannot be empty')
+    // Stryker disable next-line StringLiteral: brand name is not behavior-affecting
     .brand<'MessageId'>();
-// Stryker restore StringLiteral
 
 export type MessageId = z.infer<typeof messageIdSchema>;
 

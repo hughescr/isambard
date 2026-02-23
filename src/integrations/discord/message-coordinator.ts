@@ -214,10 +214,13 @@ export class MessageCoordinator {
 
                 // If interrupted, capture partial work AND sessionId for resume
                 if(result.wasInterrupted) {
-                    state.partialWork = result.streamTracker.getProgress();
-                    if(result.sessionId) {
-                        state.sessionId = result.sessionId;
+                    if(result.streamTracker.hasMeaningfulProgress()) {
+                        state.partialWork = result.streamTracker.getProgress();
+                        if(result.sessionId) {
+                            state.sessionId = result.sessionId;
+                        }
                     }
+                    // No meaningful progress → next batch starts fresh
                 } else {
                     // Completed - clear sessionId (session was cleaned up), invoke callback
                     state.sessionId = undefined;
@@ -315,10 +318,13 @@ export class MessageCoordinator {
 
                 // If interrupted, capture partial work AND sessionId for resume
                 if(result.wasInterrupted) {
-                    state.partialWork = result.streamTracker.getProgress();
-                    if(result.sessionId) {
-                        state.sessionId = result.sessionId;
+                    if(result.streamTracker.hasMeaningfulProgress()) {
+                        state.partialWork = result.streamTracker.getProgress();
+                        if(result.sessionId) {
+                            state.sessionId = result.sessionId;
+                        }
                     }
+                    // No meaningful progress → next batch starts fresh
                 } else {
                     // Completed - clear sessionId (session was cleaned up), invoke callback
                     state.sessionId = undefined;
