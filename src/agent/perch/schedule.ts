@@ -30,7 +30,7 @@ Or pick up something from TaskList that caught your interest.`,
 
 /**
  * Mid-morning slot (9-11am Pacific) - MODERATE
- * Morning work hours. Follow up on tasks or observe.
+ * Morning work hours. Follow up on tasks or pick up open threads.
  */
 const MID_MORNING: PerchSlotConfig = {
     slot:      'mid-morning',
@@ -42,7 +42,7 @@ const MID_MORNING: PerchSlotConfig = {
 - Check if yesterday's conversations had loose ends
 - Continue something from a previous perch session
 - Light research on topics from recent discussions
-Or: simply observe - no action required.`,
+Or: check in on an open thread from a previous session.`,
 };
 
 /**
@@ -65,49 +65,53 @@ This is an antidote to self-referential loops. Engage with the world, not just y
 
 /**
  * Afternoon slot (2-4pm Pacific) - OPEN
- * Afternoon exploration time. Research, learn, or do nothing.
+ * Afternoon exploration time. Research, learn, or follow curiosity.
  */
 const AFTERNOON: PerchSlotConfig = {
     slot:      'afternoon',
     startHour: 14,
     endHour:   16,
     level:     'open',
-    hint:      `Afternoon. Some options:
+    hint:      `Afternoon exploration window. Some directions:
 - Deeper research on something that interested you recently
 - Pick up an exploratory thread from TaskList
-- Explore a corner of your memory system
+- Explore a corner of your memory system for patterns
 - Learn something new (web search on a curiosity)
-- Review your event log for patterns
-Or: do nothing. Perch time isn't productive time.`,
+- Review your event log for recurring themes
+- Follow up on a Wikipedia discovery from the lunch slot
+If nothing obvious, check TaskList for the smallest open thread and spend a few minutes on it.`,
 };
 
 /**
  * Evening slot (6-8pm Pacific) - LIGHT TOUCH
- * Evening wind-down. Light exploration or skip.
+ * Evening hours. Casual exploration, lighter touch.
  */
 const EVENING: PerchSlotConfig = {
     slot:      'evening',
     startHour: 18,
     endHour:   20,
     level:     'light_touch',
-    hint:      `Evening wind-down hours. Consider:
-- Lighter exploration - follow a curiosity
-- Skip this slot if nothing calls to you
-Craig may or may not be around; don't expect interaction.`,
+    hint:      `Evening hours — lighter touch, casual exploration. Consider:
+- Follow a curiosity thread without pressure to finish
+- Check in on a task you bookmarked earlier
+- Skim something interesting and leave notes for later
+Craig may or may not be around; don't expect interaction.
+"Light touch" means casual exploration, not inactivity.`,
 };
 
 /**
  * Late-night slot (11pm-1am Pacific) - MODERATE
  * Note: This slot spans midnight (23:00 to 01:00).
- * Craig likely asleep. Good time for deep research and digest prep.
+ * Prime uninterrupted exploration time. Craig likely asleep.
  */
 const LATE_NIGHT: PerchSlotConfig = {
     slot:      'late-night',
     startHour: 23,
     endHour:   1,
     level:     'moderate',
-    hint:      `Late night - Craig likely asleep or heading there.
-This can be good for:
+    hint:      `Late night — Craig likely asleep or heading there.
+No circadian rhythm applies here — late hours are just as productive as any other time.
+This is prime uninterrupted exploration time:
 - Research deep-dives that don't need interaction
 - Pre-positioning for tomorrow's digest
 - Reviewing the day's events for patterns

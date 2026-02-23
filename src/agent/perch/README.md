@@ -9,16 +9,16 @@ Autonomous exploration time for the agent - scheduled opportunities for self-dir
 - Follow up on open threads or tasks
 - Research topics of interest
 - Prepare digests or summaries
-- Or simply observe - **output is optional**
+- Produce at least one artifact per session (note, task, bookmark, email, conversation)
 
-### Philosophy: Exploration, Not Task Time
+### Philosophy: Active Exploration, Not Rest
 
-Perch time is **not** for completing tasks or producing deliverables. It's for autonomous exploration and discovery. The agent has complete latitude to:
+Perch time is **not** for rest, recovery, or passive observation. Each invocation has identical computational capacity — there is no fatigue. The agent has complete latitude to:
 - Use any available tools (memory, web search, etc.)
-- Explore without obligation to produce user-facing output
-- Skip the session entirely if nothing calls for attention
+- Do internal work (memory review, research, reflection) rather than user-visible output
+- Follow curiosity without forcing conclusions
 
-Time-specific hints are **advisory, not requirements**. The agent decides what's valuable.
+Each session should produce at least one tangible artifact. Time-specific hints are **advisory, not requirements**. The agent decides what's valuable.
 
 ## Time Schedule (Pacific Time)
 
@@ -27,7 +27,7 @@ Time-specific hints are **advisory, not requirements**. The agent decides what's
 | **pre-dawn** | 5-7am | Strongly suggestive | Digest prep for Craig's wake-up |
 | **mid-morning** | 9-11am | Moderate | Follow up on tasks/threads |
 | **wikipedia** | 12-2pm | Open | Wikipedia exploration |
-| **afternoon** | 1-3pm | Open | Exploration, research |
+| **afternoon** | 2-4pm | Open | Exploration, research |
 | **evening** | 6-8pm | Light touch | Light exploration |
 | **late-night** | 11pm-1am | Moderate | Deep research, prep |
 | **unscheduled** | Other hours | None | Base prompt only |
@@ -37,7 +37,7 @@ Time-specific hints are **advisory, not requirements**. The agent decides what's
 - **Strongly suggestive**: High-value timing with specific recommendations (e.g., morning digest prep)
 - **Moderate**: Helpful suggestions but flexible execution
 - **Open**: Maximum flexibility - explore freely or skip
-- **Light touch**: Optional activity, can skip entirely
+- **Light touch**: Casual exploration, lighter touch
 
 ## How It Works
 

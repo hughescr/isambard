@@ -199,7 +199,7 @@ describe.concurrent('getSlotConfig', () => {
             expect(config?.startHour).toBe(18);
             expect(config?.endHour).toBe(20);
             expect(config?.level).toBe('light_touch');
-            expect(config?.hint).toContain('Evening wind-down');
+            expect(config?.hint).toContain('Evening hours');
         });
 
         test('should return config for late-night', () => {

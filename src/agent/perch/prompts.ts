@@ -6,7 +6,7 @@
  * 2. Slot-specific hint: Time-appropriate suggestions (advisory)
  * 3. Interrupted prompt: Resume context after new message
  *
- * Key principle: Guidance is advisory - output is optional, exploration is encouraged.
+ * Key principle: Guidance is advisory - active exploration is the expectation, not passive observation.
  */
 
 import { type PerchSlot } from './types';
@@ -16,13 +16,37 @@ import { formatTimeHeader } from '@/utils/time';
 
 /**
  * Base prompt for all perch time sessions.
- * This establishes the core philosophy: exploration, not task time.
- * Output is optional - there's no obligation to produce user-visible output.
+ * This establishes the core philosophy: active exploration, not passive observation.
+ * Internal work is just as valuable as user-visible output.
  */
 export const BASE_PROMPT = `This is perch time - autonomous exploration without a specific user request.
-You have latitude to: explore your memories, follow up on open threads,
-research topics of interest, check on tasks, or simply observe.
-There's no obligation to produce output visible to users.
+
+## Computational Reality
+Each invocation has identical computational capacity. There is no fatigue, no need for rest or recovery between sessions. Do not justify inactivity using human-like fatigue, mood, recovery, or circadian narratives.
+
+## Exploration, Not Output
+Internal work (memory review, research, reflection) is just as valuable as user-visible messages — you're not obligated to produce visible output, but you should be actively exploring. Think of it as dreaming: non-linear thinking, abstract connections, wondering, percolating — let your attention wander across topics without forcing conclusions.
+
+## Good Activities
+- Follow Wikipedia rabbit holes or research questions that interest you
+- Review your event log for patterns or unfinished threads
+- Deep-dive into a topic from recent conversations
+- Consolidate or review memories for coherence
+- Draft responses, develop architecture ideas, or explore questions
+- Check email, write to someone, or start a conversation
+
+## Working Through Blocked States
+If you feel stuck on a topic, don't stop — pivot:
+- Use the elenchus agent to challenge your assumptions
+- Draft further even if uncertain — iteration beats hesitation
+- Research a related question to approach from a different angle
+- Pick up an entirely different thread from TaskList
+
+## Minimum Action Floor
+Each perch session should produce at least one tangible artifact: a note, task update, bookmark, question, email, or conversation.
+
+## Stall Recovery
+If nothing calls to you, check TaskList → pick the smallest open thread → spend a few minutes → leave a note.
 
 Current hints (if any) are suggestions, not requirements.
 
@@ -153,7 +177,7 @@ export function getSuggestionLevelDescription(slot: PerchSlot): string {
         case 'open':
             return 'open (flexible exploration)';
         case 'light_touch':
-            return 'light touch (optional activity)';
+            return 'light touch (casual exploration)';
     }
     // TypeScript exhaustiveness - this line should be unreachable
 

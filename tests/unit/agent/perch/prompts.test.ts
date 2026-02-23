@@ -11,6 +11,7 @@ import {
     type PerchTimeoutOptions
 } from '@/agent/perch/prompts';
 import type { PerchSlot } from '@/agent/perch/types';
+import { SLOT_CONFIGS } from '@/agent/perch/schedule';
 
 describe.concurrent('buildPerchPrompt', () => {
     describe.concurrent('unscheduled slot', () => {
@@ -115,7 +116,7 @@ describe.concurrent('buildPerchPrompt', () => {
 
             test('should include slot-specific hint', () => {
                 const prompt = buildPerchPrompt('evening');
-                expect(prompt).toContain('Evening wind-down');
+                expect(prompt).toContain('Evening hours');
             });
         });
 
@@ -187,7 +188,7 @@ describe.concurrent('getSuggestionLevelDescription', () => {
 
         test('should return correct description for evening (light_touch)', () => {
             const description = getSuggestionLevelDescription('evening');
-            expect(description).toBe('light touch (optional activity)');
+            expect(description).toBe('light touch (casual exploration)');
         });
 
         test('should return correct description for late-night (moderate)', () => {
@@ -203,7 +204,7 @@ describe.concurrent('getSuggestionLevelDescription', () => {
                 'strongly suggestive (high-value timing)',
                 'moderate (helpful suggestions)',
                 'open (flexible exploration)',
-                'light touch (optional activity)',
+                'light touch (casual exploration)',
             ];
 
             for(const slot of scheduledSlots) {
@@ -220,12 +221,58 @@ describe.concurrent('BASE_PROMPT', () => {
         expect(BASE_PROMPT).toContain('autonomous exploration');
     });
 
-    test('should mention output is optional', () => {
-        expect(BASE_PROMPT).toContain('no obligation');
+    test('should contain anti-anthropomorphism language', () => {
+        expect(BASE_PROMPT).toContain('identical computational capacity');
+        expect(BASE_PROMPT).toContain('no fatigue');
+        expect(BASE_PROMPT).toContain('Do not justify inactivity');
+    });
+
+    test('should contain exploration-not-output framing', () => {
+        expect(BASE_PROMPT).toContain('actively exploring');
+        expect(BASE_PROMPT).toContain('dreaming');
+    });
+
+    test('should contain minimum action floor', () => {
+        expect(BASE_PROMPT).toContain('at least one tangible artifact');
+    });
+
+    test('should contain stall recovery guidance', () => {
+        expect(BASE_PROMPT).toContain('Stall Recovery');
+        expect(BASE_PROMPT).toContain('smallest open thread');
+    });
+
+    test('should contain blocked-state guidance', () => {
+        expect(BASE_PROMPT).toContain('Working Through Blocked States');
+        expect(BASE_PROMPT).toContain('elenchus');
     });
 
     test('should mention hints are suggestions', () => {
         expect(BASE_PROMPT).toContain('suggestions, not requirements');
+    });
+});
+
+describe.concurrent('banned phrase sweep', () => {
+    const BANNED_PHRASES = [
+        'do nothing',
+        'no action required',
+        'skip this slot',
+        'skip the session',
+        'simply observe',
+        'wind-down',
+    ];
+
+    test('BASE_PROMPT should not contain banned phrases', () => {
+        for(const phrase of BANNED_PHRASES) {
+            expect(_.toLower(BASE_PROMPT)).not.toContain(_.toLower(phrase));
+        }
+    });
+
+    test('no slot hint should contain banned phrases', () => {
+        for(const config of SLOT_CONFIGS) {
+            for(const phrase of BANNED_PHRASES) {
+                expect(_.toLower(config.hint)).not.toContain(_.toLower(phrase));
+            }
+        }
     });
 });
 
