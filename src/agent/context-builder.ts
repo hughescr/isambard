@@ -343,11 +343,18 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         for(const uid of uids) {
             // Stryker disable next-line StringLiteral: EmailFolder.Drafts is configuration constant
             const msg    = await wdc.getMessage('Drafts', uid);
+            if(!msg) {
+                continue;
+            }
             // Stryker disable next-line ArrayDeclaration: defensive fallback for missing to field — equivalent to empty address list
-            const toStr  = _(msg?.to ?? []).map('address').join(', ');
-            const subject = msg?.subject ?? '(no subject)';
+            const toStr  = _(msg.to ?? []).map('address').join(', ');
+            const subject = msg.subject ?? '(no subject)';
             // Stryker disable next-line StringLiteral: Cosmetic line format
             gaveUpLines.push(`- Drafts:${uid} to ${toStr} — "${subject}"`);
+        }
+        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no lines = no section
+        if(gaveUpLines.length === 0) {
+            return undefined;
         }
         // Stryker disable next-line StringLiteral: Cosmetic section header text
         return `## CRITICAL: ${uids.length} draft(s) could not be sent for admin approval after multiple attempts:\n${gaveUpLines.join('\n')}\nPlease notify Craig directly to check the Drafts folder.`;

@@ -2992,5 +2992,61 @@ describe('createContextBuilder loading methods', () => {
             const between = result.slice(rejectedIdx, criticalIdx);
             expect(between).toContain('\n\n');
         });
+
+        test('should skip null messages in gave-up subsection', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
+                    getMessage:       mock(async (_folder: string, uid: number) => {
+                        if(uid === 401) {
+                            return { id: 401, subject: 'Valid draft', to: [{ address: 'test@example.com' }] };
+                        }
+                        return null;
+                    }),
+                    listMessages:    mock(async () => []),
+                    searchByKeyword: mock(async (_folder: string, keyword: string) => {
+                        if(keyword === 'DiscordNotifyGaveUp') {
+                            return [400, 401];
+                        }
+                        return [];
+                    }),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).toContain('Drafts:401');
+            expect(result).not.toContain('Drafts:400');
+        });
+
+        test('should return undefined from gave-up subsection when all messages are null', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
+                    getMessage:       mock(async () => null),
+                    listMessages:     mock(async () => []),
+                    searchByKeyword:  mock(async (_folder: string, keyword: string) => {
+                        if(keyword === 'DiscordNotifyGaveUp') {
+                            return [500];
+                        }
+                        return [];
+                    }),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).not.toContain('CRITICAL');
+        });
     });
 });
