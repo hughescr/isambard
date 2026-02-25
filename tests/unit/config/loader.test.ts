@@ -92,13 +92,13 @@ describe.concurrent('loadConfig', () => {
             expect(config.agent.mainModel).not.toBe('sonnet');
         });
 
-        test('should use default mainModel "sonnet" when IsambardMainModel value is undefined', () => {
+        test('should use default mainModel "opus" when IsambardMainModel value is undefined', () => {
             const resources = createMockResources({
                 IsambardMainModel: { value: undefined },
             });
             const config = loadConfig(resources);
 
-            expect(config.agent.mainModel).toBe('sonnet');
+            expect(config.agent.mainModel).toBe('opus');
         });
     });
 

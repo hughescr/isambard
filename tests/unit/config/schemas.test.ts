@@ -54,7 +54,7 @@ describe('agentConfigSchema', () => {
         expect(result.success).toBe(false);
     });
 
-    test('should default mainModel to "sonnet" when not provided', () => {
+    test('should default mainModel to "opus" when not provided', () => {
         const config = {
             oauthToken: 'test-token',
         };
@@ -62,7 +62,7 @@ describe('agentConfigSchema', () => {
         const result = agentConfigSchema.safeParse(config);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data.mainModel).toBe('sonnet');
+            expect(result.data.mainModel).toBe('opus');
             expect(result.data.mainModel).not.toBe('');
         }
     });

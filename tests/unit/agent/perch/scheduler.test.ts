@@ -1440,6 +1440,54 @@ describe('PerchScheduler', () => {
         });
     });
 
+    describe('double-fire prevention', () => {
+        test('should not schedule two triggers in the same hour', () => {
+            // Verifies the lastScheduledTime guard prevents double-fires:
+            // rapid successive calls to scheduleNextTrigger() skip past the
+            // previously scheduled hour instead of picking the same one.
+            const deps: PerchSchedulerDeps = {
+                stateManager:   mockStateManager,
+                logger:         mockLogger,
+                config,
+                onPerchTrigger: mockOnPerchTrigger,
+            };
+
+            // Start at a known time
+            const startTime = new Date('2026-02-08T12:00:00Z').getTime();
+            jest.setSystemTime(startTime);
+
+            const scheduler = createPerchScheduler(deps);
+            scheduler.start();
+
+            // Collect the first scheduled trigger time
+            const debugCalls1 = (mockLogger.debug as unknown as Mock<typeof _.noop>).mock.calls;
+            const firstScheduleCall = _.findLast(debugCalls1, call =>
+                _.isString(call[1]) && call[1].includes('Next perch trigger scheduled')
+            );
+            expect(firstScheduleCall).toBeDefined();
+            const firstLog = firstScheduleCall![0] as { delaySeconds: number, nextTrigger: string };
+            const firstTriggerHour = new Date(firstLog.nextTrigger).getUTCHours();
+
+            // Advance past the first trigger to fire onScheduledTrigger,
+            // which calls scheduleNextTrigger() again
+            jest.advanceTimersByTime(firstLog.delaySeconds * 1000 + 1);
+
+            // Collect the second scheduled trigger time
+            const debugCalls2 = (mockLogger.debug as unknown as Mock<typeof _.noop>).mock.calls;
+            const secondScheduleCall = _.findLast(debugCalls2, call =>
+                _.isString(call[1]) && call[1].includes('Next perch trigger scheduled')
+            );
+            expect(secondScheduleCall).toBeDefined();
+            const secondLog = secondScheduleCall![0] as { delaySeconds: number, nextTrigger: string };
+            const secondTriggerHour = new Date(secondLog.nextTrigger).getUTCHours();
+
+            // The two triggers must be in different hours
+            expect(secondTriggerHour).not.toBe(firstTriggerHour);
+
+            scheduler.stop();
+        });
+    });
+
     describe('triggerTestPerch mode check', () => {
         test('should defer test perch when bot is not idle', () => {
             // This test kills the ConditionalExpression mutant on line 307

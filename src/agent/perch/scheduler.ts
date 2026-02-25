@@ -57,21 +57,6 @@ function getDefaultLocalHour(timezone: string): number {
 }
 
 /**
- * Calculate next trigger time using cron-parser's H option.
- * Returns milliseconds until next trigger.
- */
-function getNextTriggerDelay(timezone: string): number {
-    // H provides random minute (0-59) for each hour
-    // Stryker disable next-line StringLiteral,ObjectLiteral: Cron expression format and config not testable with fake timers
-    const expression = CronExpressionParser.parse('H * * * *', {
-        tz: timezone,
-    });
-    const nextTime = expression.next().toDate();
-    const delayMs = nextTime.getTime() - Date.now();
-    return Math.max(0, delayMs);
-}
-
-/**
  * Create a perch scheduler.
  *
  * The scheduler:
@@ -94,6 +79,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
     };
     let unsubscribe: (() => void) | null = null;
     let schedulerTimeout: ReturnType<typeof setTimeout> | null = null;
+    let lastScheduledTime: Date | null = null;
 
     // Test mode: track next slot index for cycling
     let nextTestSlotIndex = 0;
@@ -174,6 +160,29 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
     }
 
     /**
+     * Calculate next trigger time using cron-parser's H option.
+     * Skips past lastScheduledTime to prevent double-fires within the same hour
+     * (a fresh parser may pick a random minute in the current hour, duplicating
+     * the previous trigger).
+     */
+    function getNextTriggerDelay(): { delayMs: number, nextTime: Date } {
+        // Stryker disable next-line StringLiteral,ObjectLiteral: Cron expression format and config
+        const expression = CronExpressionParser.parse('H * * * *', { tz: config.timezone });
+        let nextTime = expression.next().toDate();
+        // Skip past the previously scheduled time to avoid double-fires:
+        // a fresh parser picks a random minute that may land in the same hour
+        // Stryker disable all: Defensive guard against non-deterministic H minute; only triggers when random value collides with previous
+        if(lastScheduledTime) {
+            while(nextTime.getTime() <= lastScheduledTime.getTime()) {
+                nextTime = expression.next().toDate();
+            }
+        }
+        // Stryker restore all
+        const delayMs = Math.max(0, nextTime.getTime() - Date.now());
+        return { delayMs, nextTime };
+    }
+
+    /**
      * Format a Date as ISO 8601 with UTC offset for the configured timezone.
      * e.g., "2026-02-08T18:18:00-08:00"
      */
@@ -196,12 +205,13 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
         }
         // Stryker restore all
 
-        const delayMs = getNextTriggerDelay(config.timezone);
+        const { delayMs, nextTime } = getNextTriggerDelay();
+        lastScheduledTime = nextTime;
         schedulerTimeout = setTimeout(onScheduledTrigger, delayMs);
 
         logger.debug({
             delaySeconds: Math.round(delayMs / 1000),
-            nextTrigger:  formatISOWithOffset(new Date(Date.now() + delayMs)),
+            nextTrigger:  formatISOWithOffset(nextTime),
         }, 'Next perch trigger scheduled');
     }
 
@@ -295,6 +305,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
 
             // Clear state
             state = { perchPending: false };
+            lastScheduledTime = null;
 
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Perch scheduler stopped');
