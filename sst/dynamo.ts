@@ -28,6 +28,7 @@ export const memoryTable = new sst.aws.Dynamo('IsambardMemory', {
             billingMode:            'PROVISIONED',
             readCapacity:           5,
             writeCapacity:          2,
+            pointInTimeRecovery:    { enabled: true, recoveryPeriodInDays: 35 },
             globalSecondaryIndexes: [
                 {
                     name:           'GSI1',

@@ -10,7 +10,15 @@ export default $config({
             protect:   ['production'].includes(input?.stage),
             home:      'aws',
             providers: {
-                aws: { region: 'us-west-2' },
+                aws: {
+                    region:      'us-west-2',
+                    defaultTags: {
+                        tags: {
+                            'sst:app':   'isambard',
+                            'sst:stage': input?.stage ?? 'dev',
+                        },
+                    },
+                },
             },
         };
     },

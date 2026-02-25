@@ -41,7 +41,7 @@
     "p-limit": "^7.3.0",
     "remove-markdown": "^0.6.3",
     "semver": "^7.7.4",
-    "sst": "^3.19.3",
+    "sst": "^4.0.4",
     "zod": "^4.3.6"
   },
   "devDependencies": {
