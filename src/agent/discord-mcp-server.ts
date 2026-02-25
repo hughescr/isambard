@@ -7,21 +7,21 @@ import type { Client, TextChannel, Message, MessageCreateOptions } from 'discord
 import { logger } from '@hughescr/logger';
 // eslint-disable-next-line no-warning-comments -- tracked in roadmap, not forgotten
 // TODO: Decouple - Discord MCP server should expose platform-agnostic MCP tool interfaces wrapping messaging platform capabilities
-// eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord message history; decouple per roadmap
+// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord message history; decouple per roadmap
 import type { MessageSearchService } from '../integrations/discord/message-history/search';
 import type { QuestionRegistry } from './question-registry';
 import { questionOptionSchema } from './question-registry';
-// eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord button builder; decouple per roadmap
+// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord button builder; decouple per roadmap
 import { buildQuestionButtons } from '../integrations/discord/button-builder';
-// eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord types; decouple per roadmap
+// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord types; decouple per roadmap
 import { createChannelId, createUserId, type UserId, type ChannelId } from '../integrations/discord/types';
-// eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord retry logic; decouple per roadmap
+// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord retry logic; decouple per roadmap
 import { withDiscordRetry } from '../integrations/discord/retry';
-// eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord message utilities; decouple per roadmap
+// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord message utilities; decouple per roadmap
 import { splitMessage } from '../integrations/discord/messages';
-// eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord channel registry; decouple per roadmap
+// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord channel registry; decouple per roadmap
 import type { ChannelRegistryManager } from '../integrations/discord/channel-registry';
-// eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord channel utilities; decouple per roadmap
+// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord channel utilities; decouple per roadmap
 import { DMTracker, resolveChannelId } from '../integrations/discord/channel-registry';
 import { validateFilePaths, PathSecurityError, formatLocalDateTime } from '@/utils';
 

@@ -1,5 +1,4 @@
-import { createContextBuilder, EventDeltaTracker, summarizeEventBatches } from '@/agent';
-import type { ContextBuilder, EmailService } from '@/agent/context-builder';
+import { createContextBuilder, EventDeltaTracker, summarizeEventBatches, type ContextBuilder, type EmailService } from '@/agent';
 import type { MemoryToolBackend } from '@/storage';
 
 /**

@@ -1,4 +1,5 @@
 import { logger } from '@hughescr/logger';
+// eslint-disable-next-line boundaries/element-types -- Question registry uses Discord ChannelId type; decouple per roadmap
 import type { ChannelId } from '@/integrations/discord';
 import type { PendingQuestion, QuestionAnswer, QuestionResult } from './types';
 

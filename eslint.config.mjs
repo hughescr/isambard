@@ -14,11 +14,13 @@ import noCrossModuleInternal from './tools/eslint-rules/no-cross-module-internal
  *
  * Module Hierarchy (from independent to dependent):
  * 1. utils      - Pure utilities, no domain knowledge
- * 2. config     - Configuration loading, minimal dependencies
- * 3. storage    - Data layer, independent of application/agent
- * 4. agent      - Platform-agnostic AI agent logic
- * 5. discord    - Discord integration, depends on agent
- * 6. app        - Composition root (src/index.ts), wires everything together
+ * 2. errors     - Error types, minimal dependencies
+ * 3. config     - Configuration loading, minimal dependencies
+ * 4. storage    - Data layer, independent of application/agent
+ * 5. agent      - Platform-agnostic AI agent logic
+ * 6. discord    - Discord integration, depends on agent
+ *    email      - Email integration, depends on agent
+ * 7. app        - Composition root (src/index.ts + src/app/**), wires everything together
  */
 export default [
     ...config,

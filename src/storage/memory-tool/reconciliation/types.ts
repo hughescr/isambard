@@ -11,58 +11,14 @@ import { z } from 'zod';
 // Configuration Types
 // ============================================================================
 
-/**
- * Backoff configuration for exponential retry
- */
-/* Stryker disable BooleanLiteral,ArithmeticOperator: Default values are configuration */
-export const reconciliationBackoffSchema = z.object({
-    /** Base delay in milliseconds for exponential backoff */
-    baseDelayMs: z.number().int().positive().default(100),
-    /** Maximum number of retry attempts */
-    maxAttempts: z.number().int().positive().default(3),
-});
-/* Stryker restore BooleanLiteral,ArithmeticOperator */
-
-export type ReconciliationBackoff = z.infer<typeof reconciliationBackoffSchema>;
-
-/**
- * Test mode configuration for manual triggering
- */
-/* Stryker disable BooleanLiteral: Default values are configuration */
-export const reconciliationTestModeSchema = z.object({
-    /** Whether to trigger reconciliation immediately on startup */
-    triggerOnStartup: z.boolean().optional(),
-    /** Run only once instead of on interval (for testing) */
-    runOnce:          z.boolean().optional(),
-});
-/* Stryker restore BooleanLiteral */
-
-export type ReconciliationTestMode = z.infer<typeof reconciliationTestModeSchema>;
-
-/**
- * Configuration for tag index reconciliation job
- */
-/* Stryker disable BooleanLiteral,ArithmeticOperator: Default values are configuration */
-export const reconciliationConfigSchema = z.object({
-    /** Whether reconciliation job is enabled */
-    enabled:          z.boolean().default(false),
-    /** Interval between runs in milliseconds (default: 24 hours) */
-    intervalMs:       z.number().int().positive().default(24 * 60 * 60 * 1000),
-    /** Delay between DynamoDB operations in milliseconds (default: 1000ms) */
-    operationDelayMs: z.number().int().nonnegative().default(1000),
-    /** DynamoDB page size for scans (default: 25) */
-    scanPageSize:     z.number().int().positive().default(25),
-    /** Exponential backoff config */
-    backoff:          reconciliationBackoffSchema.default({
-        baseDelayMs: 100,
-        maxAttempts: 3,
-    }),
-    /** Test mode for manual triggering */
-    testMode: reconciliationTestModeSchema.optional(),
-});
-/* Stryker restore BooleanLiteral,ArithmeticOperator */
-
-export type ReconciliationConfig = z.infer<typeof reconciliationConfigSchema>;
+export {
+    reconciliationBackoffSchema,
+    type ReconciliationBackoff,
+    reconciliationTestModeSchema,
+    type ReconciliationTestMode,
+    reconciliationConfigSchema,
+    type ReconciliationConfig
+} from '@/config';
 
 // ============================================================================
 // Runtime State Types

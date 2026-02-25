@@ -12,8 +12,7 @@ export { BaseRepository, type DynamoDBKey } from './repositories/base';
 export { TaskSessionBackend, sessionIdSchema, createSessionId, isSessionId, type SessionId, type TaskSessionItem } from './task-session';
 
 // Utils
-/** @internal */
-export { stripDynamoKeys } from './utils/index.js';
+export { stripDynamoKeys, type DynamoDBKeyField } from './utils/index.js';
 
 // Memory Tool
 export * from './memory-tool';

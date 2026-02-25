@@ -1,1 +1,1 @@
-export { stripDynamoKeys } from './strip-keys.js';
+export { stripDynamoKeys, type DynamoDBKeyField } from './strip-keys.js';

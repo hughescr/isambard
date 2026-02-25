@@ -8,6 +8,7 @@
 import { CronExpressionParser } from 'cron-parser';
 import { DateTime } from 'luxon';
 import type { Logger } from '@hughescr/logger';
+// eslint-disable-next-line boundaries/element-types -- Perch scheduler imports Discord state manager; decouple per roadmap
 import type { BotStateManager, StateChange } from '@/integrations/discord';
 import { type PerchSlot, type PerchConfig, type PerchSchedulerState } from './types';
 import { getSlotForHour } from './schedule';

@@ -10,6 +10,7 @@
  */
 
 import type { Logger } from '@hughescr/logger';
+// eslint-disable-next-line boundaries/element-types -- Perch session runner imports Discord state types; decouple per roadmap
 import type { BotStateManager, InterruptingMessageDetails } from '@/integrations/discord';
 import { type PerchSlot, type PerchConfig } from './types';
 import { buildPerchPrompt, buildTestPerchPrompt, buildPerchResumedPrompt, buildPerchTimeoutPrompt, getSuggestionLevelDescription } from './prompts';

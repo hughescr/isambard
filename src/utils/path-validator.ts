@@ -2,6 +2,7 @@ import { resolve, relative } from 'node:path';
 import { lstat, access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { startsWith, isArray, map } from 'lodash';
+// eslint-disable-next-line boundaries/element-types -- PathSecurityError defined in errors uses PathSecurityReason from this file; intentional bidirectional type dependency
 import { PathSecurityError } from '@/errors';
 
 export type PathSecurityReason = 'outside_cwd' | 'is_symlink' | 'not_found' | 'not_file';

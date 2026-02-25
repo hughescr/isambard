@@ -1,15 +1,9 @@
 import { z } from 'zod';
 import { AttachmentMetadataSchema } from './attachments/types';
+import { guildIdSchema } from '@/config';
+import type { GuildId } from '@/config';
 
-/**
- * GuildId is a branded type representing a Discord guild (server) ID.
- */
-export const guildIdSchema = z
-    .string()
-    .min(1, 'Guild ID cannot be empty')
-    .brand<'GuildId'>();
-
-export type GuildId = z.infer<typeof guildIdSchema>;
+export { guildIdSchema, type GuildId } from '@/config';
 
 /**
  * ChannelId is a branded type representing a Discord channel ID.

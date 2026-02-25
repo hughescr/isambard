@@ -5,7 +5,6 @@
  * including status phases, activity updates, and configuration.
  */
 
-import { z } from 'zod';
 import type { ActivitiesOptions } from 'discord.js';
 import type { ActivityPhase } from '../state/types.js';
 
@@ -202,28 +201,4 @@ export function getToolDescription(toolName: string | undefined): string | undef
 // Configuration
 // ============================================================================
 
-/**
- * Configuration schema for presence management.
- * Defines rate limiting, refresh intervals, and timing constraints.
- */
-export const PresenceConfigSchema = z.object({
-    /**
-     * Minimum milliseconds between active phase Discord presence updates (throttle cooldown).
-     * Uses leading-edge throttle: first update fires immediately, subsequent updates within
-     * the cooldown window are dropped (not queued). This prevents status flickering during
-     * rapid phase transitions while ensuring the first status is always visible.
-     * Set to 12 seconds to match Discord's actual presence update rate limit.
-     */
-    updateThrottleMs: z.number().int().positive().default(12000), // 12 seconds (Discord rate limit)
-
-    /** Milliseconds to wait before showing idle status after last activity */
-    idleTimeoutMs: z.number().int().positive().default(60000), // 1 minute
-
-    /** How often to refresh idle status text (milliseconds) */
-    idleRefreshIntervalMs: z.number().int().positive().default(300000), // 5 minutes
-});
-
-/**
- * Inferred TypeScript type from the presence configuration schema.
- */
-export type PresenceConfig = z.infer<typeof PresenceConfigSchema>;
+export { PresenceConfigSchema, type PresenceConfig } from '@/config';

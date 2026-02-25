@@ -17,8 +17,7 @@ import type { PresenceManager } from './manager.js';
 import type { PresencePhase } from './types.js';
 import { getToolDescription } from './types.js';
 import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
-import { extractToolUses, redactSensitiveArgs } from '../../../agent/agent.js';
-import type { AgentStreamEvent } from '../../../agent/types.js';
+import { extractToolUses, redactSensitiveArgs, type AgentStreamEvent } from '@/agent';
 import type { BotStateManager } from '../state/index.js';
 
 /**

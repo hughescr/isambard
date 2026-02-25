@@ -3,8 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
-import type { MemoryToolBackend } from '../storage/memory-tool';
-import { type LayerName, type MemoryPath, createMemoryPath, createLayerName, createContentType } from '../storage/memory-tool/types';
+import { type MemoryToolBackend, type LayerName, type MemoryPath, createMemoryPath, createLayerName, createContentType } from '@/storage';
 
 /**
  * Creates an MCP server for memory operations.

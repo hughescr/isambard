@@ -13,7 +13,8 @@ import boundariesPlugin from 'eslint-plugin-boundaries';
  * 4. storage    - Data layer, independent of application/agent
  * 5. agent      - Platform-agnostic AI agent logic
  * 6. discord    - Discord integration, depends on agent
- * 7. app        - Composition root (src/index.ts), wires everything together
+ *    email      - Email integration, depends on agent
+ * 7. app        - Composition root (src/index.ts + src/app/**), wires everything together
  */
 
 export const boundaryElements = [
@@ -23,6 +24,7 @@ export const boundaryElements = [
     { type: 'storage', pattern: 'src/storage/**' },
     { type: 'agent',   pattern: 'src/agent/**' },
     { type: 'discord', pattern: 'src/integrations/discord/**' },
+    { type: 'email',   pattern: 'src/integrations/email/**' },
     { type: 'app',     pattern: ['src/index.ts', 'src/app/**'] },
 ];
 
@@ -33,8 +35,9 @@ export const boundariesConfig = {
     },
     settings: {
         'import/resolver': {
-            node: {
-                extensions: ['.ts', '.tsx', '.js', '.jsx']
+            typescript: {
+                alwaysTryTypes: true,
+                project:        './tsconfig.json'
             }
         },
         'boundaries/elements': boundaryElements,
@@ -47,36 +50,22 @@ export const boundariesConfig = {
         'boundaries/element-types': ['error', {
             'default': 'disallow',
             rules:     [
+                { from: 'utils',   allow: [] },
+                { from: 'errors',  allow: ['utils'] },
+                { from: 'config',  allow: ['utils'] },
+                { from: 'storage', allow: ['utils', 'errors', 'config'] },
+                { from: 'agent',   allow: ['utils', 'errors', 'config', 'storage', 'email'] },
+                { from: 'email',   allow: ['utils', 'errors', 'config', 'storage', 'agent'] },
+                { from: 'discord', allow: ['utils', 'errors', 'config', 'storage', 'agent', 'email'] },
+                { from: 'app',     allow: ['utils', 'errors', 'config', 'storage', 'agent', 'discord', 'email'] },
+            ]
+        }],
+        'boundaries/entry-point': ['error', {
+            'default': 'disallow',
+            rules:     [
                 {
-                    from:     'utils',
-                    disallow: ['agent', 'storage', 'discord', 'errors', 'config', 'app']
-                },
-                {
-                    from:  'errors',
-                    allow: ['utils', 'discord', 'storage']
-                },
-                {
-                    from:     'config',
-                    disallow: ['agent', 'storage', 'discord', 'errors', 'app']
-                },
-                {
-                    from:     'storage',
-                    allow:    ['errors'],
-                    disallow: ['agent', 'discord', 'app']
-                },
-                {
-                    from:     'agent',
-                    allow:    ['storage', 'errors', 'config', 'utils'],
-                    disallow: ['discord', 'app']
-                },
-                {
-                    from:     'discord',
-                    allow:    ['agent', 'storage', 'errors', 'config', 'utils'],
-                    disallow: ['app']
-                },
-                {
-                    from:  'app',
-                    allow: ['agent', 'storage', 'discord', 'errors', 'config', 'utils']
+                    target: ['utils', 'errors', 'config', 'storage', 'agent', 'discord', 'email', 'app'],
+                    allow:  'index.ts'
                 }
             ]
         }]

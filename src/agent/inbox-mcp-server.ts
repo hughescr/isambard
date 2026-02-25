@@ -5,7 +5,9 @@ import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 // eslint-disable-next-line no-warning-comments -- tracked in roadmap, not forgotten
 // TODO: Decouple - Inbox MCP server should expose platform-agnostic MCP tool interfaces wrapping inbox management capabilities
+// eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord types; decouple per roadmap
 import { createChannelId, resolveChannelId } from '@/integrations/discord';
+// eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord types; decouple per roadmap
 import type { InboxManager, ChannelSummaryResponse, MessageMetadata, BotStateManager, ChannelRegistryManager } from '@/integrations/discord';
 import { generateTextWithSystemPrompt } from './text-generator';
 

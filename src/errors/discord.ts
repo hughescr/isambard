@@ -8,8 +8,12 @@
 
 import { ErrorCode } from './codes';
 import { IsambardError } from './base';
-import type { OperationalMode } from '@/integrations/discord/state/types';
-import type { WellKnownChannel } from '@/integrations/discord/channel-registry/types';
+
+/** @see OperationalMode in src/integrations/discord/state/types.ts */
+type OperationalMode = 'idle' | 'catching_up' | 'processing_message' | 'perching';
+
+/** @see WellKnownChannel in src/integrations/discord/channel-registry/types.ts */
+type WellKnownChannel = 'general' | 'catch-up' | 'perch-time' | 'fallback';
 
 // ============================================================================
 // Base Discord Error

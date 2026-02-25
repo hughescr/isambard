@@ -34,6 +34,8 @@ export { safeAsyncHandler } from './safe-async-handler';
 
 export { sanitizeFilename, deduplicateFilename } from './filename';
 
+export { stripDynamoKeys, type DynamoDBKeyField } from './strip-dynamo-keys';
+
 export {
     retryAsync,
     retryAsyncGenerator,

@@ -21,9 +21,7 @@
 
 import type { Message } from 'discord.js';
 import type { DiscordMessageContext, ChannelId } from './types';
-import type { StreamTracker, StreamProgress } from '../../agent/stream-tracker';
-import type { ResumeContext } from '../../agent/resume-prompt-builder';
-import type { EventDeltaTracker } from '../../agent/event-delta-tracker';
+import type { StreamTracker, StreamProgress, ResumeContext, EventDeltaTracker } from '@/agent';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 

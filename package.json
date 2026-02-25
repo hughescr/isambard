@@ -62,6 +62,7 @@
     "eslint": "^9.39.2",
     "eslint-formatter-overview": "^2.0.0",
     "eslint-formatter-unix": "^9.0.1",
+    "eslint-import-resolver-typescript": "^4.4.4",
     "eslint-plugin-boundaries": "^5.4.0",
     "eslint-plugin-package-json": "^0.88.2",
     "jscpd": "^4.0.8",

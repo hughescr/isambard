@@ -25,11 +25,13 @@ import ts from 'typescript';
 // These MUST stay in sync with eslint-boundaries.config.mjs
 const MODULE_PATTERNS = [
     { type: 'utils',   pattern: /^src\/utils\// },
+    { type: 'errors',  pattern: /^src\/errors\// },
     { type: 'config',  pattern: /^src\/config\// },
     { type: 'storage', pattern: /^src\/storage\// },
     { type: 'agent',   pattern: /^src\/agent\// },
     { type: 'discord', pattern: /^src\/integrations\/discord\// },
-    { type: 'app',     pattern: /^src\/index\.ts$/ },
+    { type: 'email',   pattern: /^src\/integrations\/email\// },
+    { type: 'app',     pattern: /^src\/(app\/|index\.ts$)/ },
 ];
 
 /**

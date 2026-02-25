@@ -3,7 +3,7 @@ import { createDynamoDBClient, MemoryToolBackend, TaskSessionBackend, createReco
 import type { ReconciliationScheduler } from '@/storage';
 import { createTaskPersistenceCoordinator, createTaskCleanupProcessor, createTaskDirectoryCopier } from '@/agent';
 import type { TaskPersistenceCoordinator } from '@/agent';
-import type { DynamoDBConfig, ReconciliationConfig } from '@/config/schemas';
+import type { DynamoDBConfig, ReconciliationConfig } from '@/config';
 
 /**
  * Storage layer components
