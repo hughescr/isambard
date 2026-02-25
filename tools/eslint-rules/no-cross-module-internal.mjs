@@ -131,8 +131,8 @@ const rule = {
     },
 
     create(context) {
-        const cwd = context.getCwd?.() || process.cwd();
-        const filename = context.getFilename();
+        const cwd = context.cwd;
+        const filename = context.filename;
 
         // Skip test files
         if(filename.includes('.test.') || filename.includes('.spec.')) {
