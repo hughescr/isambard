@@ -1,9 +1,0 @@
-{
-  "$schema": "https://unpkg.com/knip@5/schema.json",
-  "entry": ["src/index.ts", "tools/**/*.ts", "scripts/**/*.ts"],
-  "project": ["src/**/*.ts", "tools/**/*.ts", "scripts/**/*.ts"],
-  "ignore": ["**/*.test.ts", "**/*.spec.ts", ".stryker-tmp/**", "sst.config.ts", "sst-env.d.ts"],
-  "includeEntryExports": true,
-  "ignoreExportsUsedInFile": { "type": true, "interface": true },
-  "paths": { "@/*": ["./src/*"] }
-}

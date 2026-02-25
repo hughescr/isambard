@@ -3,7 +3,6 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": ["bun-types"],
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
@@ -18,6 +17,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*", "tests/**/*", "tools/**/*", "scripts/**/*", "sst-env.d.ts"],
+  "include": ["knip.config.ts", "src/**/*", "tests/**/*", "tools/**/*", "scripts/**/*", "sst-env.d.ts"],
   "exclude": ["node_modules", "dist", "agents-skills-plugins", "reports", "scratch", "running"]
 }
