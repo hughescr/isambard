@@ -10,6 +10,12 @@ export {
     perchConfigSchema,
     configSchema,
     reconciliationConfigSchema,
+    reconciliationBackoffSchema,
+    reconciliationTestModeSchema,
+    guildIdSchema,
+    PresenceConfigSchema,
+    inboxConfigSchema,
+    DEFAULT_INBOX_CONFIG,
     type LogLevel,
     type AppConfig,
     type AgentConfig,
@@ -18,9 +24,14 @@ export {
     type DiscordConfig,
     type BoxConfig,
     type DynamoDBConfig,
-    type PerchConfig,
+    type PerchConfigInput,
     type Config,
-    type ReconciliationConfig
+    type ReconciliationConfig,
+    type ReconciliationBackoff,
+    type ReconciliationTestMode,
+    type GuildId,
+    type PresenceConfig,
+    type InboxConfig
 } from './schemas';
 
 export {

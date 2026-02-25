@@ -1,8 +1,4 @@
 import { z } from 'zod';
-import { PresenceConfigSchema } from '@/integrations/discord/presence/types';
-import { inboxConfigSchema } from '@/integrations/discord/inbox/config';
-import { guildIdSchema } from '@/integrations/discord/types';
-import { reconciliationConfigSchema } from '@/storage/memory-tool/reconciliation/types';
 import { resolveTimezone } from '@/utils';
 
 // Log level enum schema
@@ -45,6 +41,58 @@ export const emailConfigSchema = z.object({
     sendReservoirRefillRatePerHour: z.number().positive().default(1),
     // Stryker restore BooleanLiteral,StringLiteral,ArithmeticOperator
 });
+
+// GuildId branded type - canonical definition (re-exported by src/integrations/discord/types.ts)
+export const guildIdSchema = z
+    .string()
+    .min(1, 'Guild ID cannot be empty')
+    .brand<'GuildId'>();
+
+export type GuildId = z.infer<typeof guildIdSchema>;
+
+// Presence configuration schema - canonical definition (re-exported by src/integrations/discord/presence/types.ts)
+export const PresenceConfigSchema = z.object({
+    /**
+     * Minimum milliseconds between active phase Discord presence updates (throttle cooldown).
+     * Uses leading-edge throttle: first update fires immediately, subsequent updates within
+     * the cooldown window are dropped (not queued). This prevents status flickering during
+     * rapid phase transitions while ensuring the first status is always visible.
+     * Set to 12 seconds to match Discord's actual presence update rate limit.
+     */
+    updateThrottleMs: z.number().int().positive().default(12000), // 12 seconds (Discord rate limit)
+
+    /** Milliseconds to wait before showing idle status after last activity */
+    idleTimeoutMs: z.number().int().positive().default(60000), // 1 minute
+
+    /** How often to refresh idle status text (milliseconds) */
+    idleRefreshIntervalMs: z.number().int().positive().default(300000), // 5 minutes
+});
+
+export type PresenceConfig = z.infer<typeof PresenceConfigSchema>;
+
+// Inbox configuration schema - canonical definition (re-exported by src/integrations/discord/inbox/config.ts)
+export const inboxConfigSchema = z.object({
+    /** Minimum gap duration in milliseconds before catching up messages (default: 10 seconds) */
+    // Stryker disable next-line StringLiteral: Configuration default values are not logic to test
+    minGapDurationMs:   z.number().int().positive().default(10 * 1000),  // 10 seconds
+    /** Maximum number of messages to catch up per channel (default: 100) */
+    // Stryker disable next-line StringLiteral: Configuration default values are not logic to test
+    maxCatchUpMessages: z.number().int().positive().default(100),
+    /** Maximum age in days for catching up messages (default: 7) */
+    // Stryker disable next-line StringLiteral: Configuration default values are not logic to test
+    maxCatchUpAgeDays:  z.number().int().positive().default(7),
+});
+
+export type InboxConfig = z.infer<typeof inboxConfigSchema>;
+
+/**
+ * Default inbox configuration.
+ */
+export const DEFAULT_INBOX_CONFIG: InboxConfig = {
+    minGapDurationMs:   10 * 1000,        // 10 seconds
+    maxCatchUpMessages: 100,
+    maxCatchUpAgeDays:  7,
+};
 
 // Discord config
 export const discordConfigSchema = z.object({
@@ -91,6 +139,61 @@ export const perchConfigSchema = z.object({
 }).optional();
 /* Stryker restore BooleanLiteral,StringLiteral */
 
+// Reconciliation config schemas - canonical definitions (re-exported by src/storage/memory-tool/reconciliation/types.ts)
+
+/**
+ * Backoff configuration for exponential retry
+ */
+/* Stryker disable BooleanLiteral,ArithmeticOperator: Default values are configuration */
+export const reconciliationBackoffSchema = z.object({
+    /** Base delay in milliseconds for exponential backoff */
+    baseDelayMs: z.number().int().positive().default(100),
+    /** Maximum number of retry attempts */
+    maxAttempts: z.number().int().positive().default(3),
+});
+/* Stryker restore BooleanLiteral,ArithmeticOperator */
+
+export type ReconciliationBackoff = z.infer<typeof reconciliationBackoffSchema>;
+
+/**
+ * Test mode configuration for manual triggering
+ */
+/* Stryker disable BooleanLiteral: Default values are configuration */
+export const reconciliationTestModeSchema = z.object({
+    /** Whether to trigger reconciliation immediately on startup */
+    triggerOnStartup: z.boolean().optional(),
+    /** Run only once instead of on interval (for testing) */
+    runOnce:          z.boolean().optional(),
+});
+/* Stryker restore BooleanLiteral */
+
+export type ReconciliationTestMode = z.infer<typeof reconciliationTestModeSchema>;
+
+/**
+ * Configuration for tag index reconciliation job
+ */
+/* Stryker disable BooleanLiteral,ArithmeticOperator: Default values are configuration */
+export const reconciliationConfigSchema = z.object({
+    /** Whether reconciliation job is enabled */
+    enabled:          z.boolean().default(false),
+    /** Interval between runs in milliseconds (default: 24 hours) */
+    intervalMs:       z.number().int().positive().default(24 * 60 * 60 * 1000),
+    /** Delay between DynamoDB operations in milliseconds (default: 1000ms) */
+    operationDelayMs: z.number().int().nonnegative().default(1000),
+    /** DynamoDB page size for scans (default: 25) */
+    scanPageSize:     z.number().int().positive().default(25),
+    /** Exponential backoff config */
+    backoff:          reconciliationBackoffSchema.default({
+        baseDelayMs: 100,
+        maxAttempts: 3,
+    }),
+    /** Test mode for manual triggering */
+    testMode: reconciliationTestModeSchema.optional(),
+});
+/* Stryker restore BooleanLiteral,ArithmeticOperator */
+
+export type ReconciliationConfig = z.infer<typeof reconciliationConfigSchema>;
+
 // Full config schema (planned integrations are optional)
 export const configSchema = z.object({
     app:            appConfigSchema,
@@ -104,9 +207,6 @@ export const configSchema = z.object({
     box:            boxConfigSchema.optional(),
 });
 
-// Re-export reconciliation schema for external use
-export { reconciliationConfigSchema };
-
 // Type exports
 export type LogLevel = z.infer<typeof logLevelSchema>;
 export type AppConfig = z.infer<typeof appConfigSchema>;
@@ -116,6 +216,5 @@ export type EmailConfig = z.infer<typeof emailConfigSchema>;
 export type DiscordConfig = z.infer<typeof discordConfigSchema>;
 export type BoxConfig = z.infer<typeof boxConfigSchema>;
 export type DynamoDBConfig = z.infer<typeof dynamoDBConfigSchema>;
-export type PerchConfig = z.infer<typeof perchConfigSchema>;
-export type ReconciliationConfig = z.infer<typeof reconciliationConfigSchema>;
+export type PerchConfigInput = z.infer<typeof perchConfigSchema>;
 export type Config = z.infer<typeof configSchema>;
