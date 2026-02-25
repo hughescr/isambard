@@ -1,5 +1,5 @@
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
-import type { DiscordConfig } from '@/config/schemas';
+import type { DiscordConfig } from '@/config';
 
 /**
  * Creates a Discord client with the required intents for message processing.

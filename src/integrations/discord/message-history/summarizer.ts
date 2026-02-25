@@ -10,7 +10,7 @@
 
 import _ from 'lodash';
 import pLimit from 'p-limit';
-import { generateText } from '@/agent/text-generator';
+import { generateText } from '@/agent';
 import type { DiscordSearchResult, OverflowSummary, BatchOverflowSummary } from './types';
 
 /**

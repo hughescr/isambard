@@ -12,7 +12,7 @@
  * - Middleware logs timing for all operations
  */
 
-import type { RetryLogger } from '@/utils/retry/types';
+import type { RetryLogger } from '@/utils';
 import { DynamoTimeoutError } from '@/errors';
 
 export { DynamoTimeoutError };

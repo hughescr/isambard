@@ -3,13 +3,12 @@ import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import { createUserId, createChannelId, createGuildId } from '../types';
 import { createMessageHandler } from '../handlers';
-import { AnswerClassifier } from '@/agent/answer-classifier';
+import { AnswerClassifier } from '@/agent';
+import type { QuestionRegistry, PerchSessionRunner } from '@/agent';
 import type { MessageCoordinator } from '../message-coordinator';
-import type { QuestionRegistry } from '@/agent/question-registry';
 import type { InboxManager } from '../inbox';
 import type { CatchUpSessionRunner } from '../catchup';
 import type { BotStateManager } from '../state';
-import type { PerchSessionRunner } from '@/agent/perch';
 import {
     type ChannelRegistryManager,
     discoverAllChannels,
@@ -18,7 +17,7 @@ import {
     ResponseRouter
 } from '../channel-registry';
 import type { DiscordRateLimiter } from '../rate-limiter';
-import { safeAsyncHandler } from '@/utils/safe-async-handler';
+import { safeAsyncHandler } from '@/utils';
 
 /**
  * Initializes the channel registry by warming cache, discovering channels, and setting up event handlers.

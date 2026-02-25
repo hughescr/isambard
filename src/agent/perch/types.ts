@@ -6,7 +6,7 @@
  */
 
 import { z } from 'zod';
-import { resolveTimezone } from '@/utils/time';
+import { resolveTimezone } from '@/utils';
 
 // ============================================================================
 // Time Slot Types

@@ -3,7 +3,7 @@ import type { Resource as SstResource } from 'sst';
 import _ from 'lodash';
 import env from 'env-var';
 import { configSchema, dynamoDBConfigSchema, type Config, type DynamoDBConfig } from './schemas';
-import { resolveTimezone } from '@/utils/time';
+import { resolveTimezone } from '@/utils';
 
 /**
  * Keys in SST Resource that have a value property (configs and secrets).

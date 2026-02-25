@@ -1,9 +1,8 @@
 import type { Client } from 'discord.js';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
-import type { DiscordConfig } from '@/config/schemas';
-import type { ClaudeAgent } from '@/agent/agent';
-import type { ContextBuilder } from '@/agent/context-builder';
+import type { DiscordConfig } from '@/config';
+import type { ClaudeAgent, ContextBuilder } from '@/agent';
 import { createTaskListReader } from '@/agent';
 import { createDiscordClient } from './client';
 import { createReadyHandler, createErrorHandler } from './handlers';
@@ -14,8 +13,7 @@ import {
 import { setupPresence, type PresenceSetupResult } from './setup/presence-setup';
 import type { MessageCoordinator } from './message-coordinator';
 import { DiscordRateLimiter } from './rate-limiter';
-import { QuestionRegistry } from '@/agent/question-registry';
-import { AnswerClassifier, classifyWithHaiku } from '@/agent/answer-classifier';
+import { QuestionRegistry, AnswerClassifier, classifyWithHaiku } from '@/agent';
 import { createInteractionHandler } from './interactions';
 import type { InboxManager } from './inbox';
 import {
@@ -27,11 +25,7 @@ import {
     BotStateManagerImpl,
     type BotStateManager
 } from './state';
-import {
-    type PerchScheduler,
-    type PerchSessionRunner,
-    type PerchConfig
-} from '@/agent/perch';
+import type { PerchScheduler, PerchSessionRunner, PerchConfig } from '@/agent';
 import { DMTracker, ResponseRouter, type ChannelRegistryManager } from './channel-registry';
 import { setupPerchSessionRunnerAndScheduler } from './setup/perch-setup';
 import { setupCatchUpSessionRunner, setupInboxAndCatchUp } from './setup/catchup-setup';

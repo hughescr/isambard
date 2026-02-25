@@ -1,9 +1,9 @@
 import _ from 'lodash';
-import type { MemoryToolBackend } from '@/storage/memory-tool';
+import type { MemoryToolBackend, MemoryPath } from '@/storage';
+import { createMemoryPath } from '@/storage';
 import type { ChannelId, GuildId } from '@/integrations/discord/types';
 import type { DiscordChannelCheckpoint } from './types';
 import { discordChannelCheckpointSchema } from './types';
-import { createMemoryPath, type MemoryPath } from '@/storage/memory-tool/types';
 
 /**
  * Options for creating a CheckpointManager.

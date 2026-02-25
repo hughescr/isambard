@@ -1,6 +1,6 @@
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
-import type { ContextBuilder } from '@/agent/context-builder';
+import type { ContextBuilder } from '@/agent';
 
 /**
  * Loads identity context for presence idle status generation.

@@ -16,21 +16,27 @@
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { Client } from 'discord.js';
 import { logger } from '@hughescr/logger';
-import type { DiscordConfig } from '@/config/schemas';
-import type { MemoryToolBackend } from '@/storage/memory-tool';
-import { createDiscordClient } from '@/integrations/discord/client';
-import { ChannelRegistryBackend, ChannelRegistryManager } from '@/integrations/discord/channel-registry';
-import type { ChannelRegistryManager as ChannelRegistryManagerType } from '@/integrations/discord/channel-registry';
-import { createMessageFetcher } from '@/integrations/discord/message-history/fetcher';
-import type { MessageFetcher } from '@/integrations/discord/message-history/fetcher';
-import { createMessageSummarizer } from '@/integrations/discord/message-history/summarizer';
-import type { MessageSummarizer } from '@/integrations/discord/message-history/summarizer';
-import { createMessageSearchService } from '@/integrations/discord/message-history/search';
-import type { MessageSearchService } from '@/integrations/discord/message-history/search';
-import { CheckpointManager, InboxManager } from '@/integrations/discord/inbox';
-import type { InboxManager as InboxManagerType } from '@/integrations/discord/inbox';
-import { BotStateManagerImpl } from '@/integrations/discord/state';
-import type { BotStateManager } from '@/integrations/discord/state';
+import type { DiscordConfig } from '@/config';
+import type { MemoryToolBackend } from '@/storage';
+import {
+    createDiscordClient,
+    ChannelRegistryBackend,
+    ChannelRegistryManager,
+    createMessageFetcher,
+    createMessageSummarizer,
+    createMessageSearchService,
+    CheckpointManager,
+    InboxManager,
+    BotStateManagerImpl
+} from '@/integrations/discord';
+import type {
+    ChannelRegistryManager as ChannelRegistryManagerType,
+    MessageFetcher,
+    MessageSummarizer,
+    MessageSearchService,
+    InboxManager as InboxManagerType,
+    BotStateManager
+} from '@/integrations/discord';
 
 /**
  * Options for creating Discord infrastructure.

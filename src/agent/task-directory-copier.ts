@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import _ from 'lodash';
 import type { Logger } from '@hughescr/logger';
-import type { SessionId } from '../storage/task-session/types';
+import type { SessionId } from '@/storage';
 import type { TaskCleanupProcessor } from './task-cleanup-processor';
 
 export interface TaskDirectoryCopierOptions {

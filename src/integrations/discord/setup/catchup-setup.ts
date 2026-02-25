@@ -1,7 +1,7 @@
 import type { Client } from 'discord.js';
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
-import type { ClaudeAgent } from '@/agent/agent';
+import type { ClaudeAgent } from '@/agent';
 import type { BotStateManager } from '../state';
 import {
     createDynamicStatusGenerator,
@@ -15,10 +15,10 @@ import {
     type CatchUpCompletionSignal,
     type CatchUpInProgressSignal
 } from '../catchup';
-import type { PerchConfig } from '@/agent/perch';
+import type { PerchConfig } from '@/agent';
 import type { ResponseRouter } from '../channel-registry';
 import type { DiscordRateLimiter } from '../rate-limiter';
-import { formatTimeSince, getTimeOfDay } from '@/utils/time';
+import { formatTimeSince, getTimeOfDay } from '@/utils';
 import { sendResponseToWellKnownChannel } from '../response-sender';
 import { createPresenceStreamHandler } from './presence-stream-handler';
 

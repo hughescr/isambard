@@ -7,8 +7,8 @@ import {
     DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
 import _ from 'lodash';
+import { withDynamoTimeout } from '@/storage';
 import { stripDynamoKeys } from '@/storage/utils/index.js';
-import { withDynamoTimeout } from '@/storage/dynamo-retry';
 import { ItemNotFoundError, ValidationError } from '@/errors';
 import { createChannelId, type ChannelId, type GuildId } from '../types';
 import {

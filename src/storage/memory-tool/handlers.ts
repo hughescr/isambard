@@ -32,7 +32,7 @@ import {
     TextNotFoundError,
     TextNotUniqueError
 } from '@/errors';
-import { formatShortRelativeTime } from '@/utils/time';
+import { formatShortRelativeTime } from '@/utils';
 
 // === Utility Functions ===
 

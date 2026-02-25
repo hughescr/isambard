@@ -1,5 +1,5 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
-import type { QuestionOption } from '@/agent/question-registry';
+import type { QuestionOption } from '@/agent';
 
 export interface ButtonBuilderConfig {
     questionId: string

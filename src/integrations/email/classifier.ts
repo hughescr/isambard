@@ -1,6 +1,6 @@
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
-import { generateTextWithSystemPrompt } from '@/agent/text-generator';
+import { generateTextWithSystemPrompt } from '@/agent';
 import { CLASSIFIER_SYSTEM_PROMPT } from './classifier-prompt';
 import { classifierVerdictSchema } from './types';
 import { ClassifierError } from './errors';

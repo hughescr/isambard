@@ -7,8 +7,8 @@
 
 import type { ActivitiesOptions, ActivityType } from 'discord.js';
 import _ from 'lodash';
-import { generateTextWithSystemPrompt } from '@/agent/text-generator';
-import { truncateToWordBoundary } from '@/utils/text.js';
+import { generateTextWithSystemPrompt } from '@/agent';
+import { truncateToWordBoundary } from '@/utils';
 
 /**
  * Interface for generating idle status text using AI.

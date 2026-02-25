@@ -12,9 +12,9 @@
  */
 
 import _ from 'lodash';
-import { retryAsync } from '@/utils/retry';
+import { retryAsync } from '@/utils';
 import { RateLimitError } from '@/errors';
-import type { ErrorClassification, ErrorClassifier, RetryPolicy, RetryDeps } from '@/utils/retry/types';
+import type { ErrorClassification, ErrorClassifier, RetryPolicy, RetryDeps } from '@/utils';
 
 export interface DiscordRetryOptions {
     policy?: Partial<RetryPolicy>

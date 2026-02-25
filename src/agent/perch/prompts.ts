@@ -12,7 +12,7 @@
 import { type PerchSlot } from './types';
 import { getSlotConfig } from './schedule';
 import type { StreamProgress } from '@/agent/stream-tracker';
-import { formatTimeHeader } from '@/utils/time';
+import { formatTimeHeader } from '@/utils';
 
 /**
  * Base prompt for all perch time sessions.

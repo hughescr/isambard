@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ChannelId, UserId } from '@/integrations/discord/types';
+import type { ChannelId, UserId } from '@/integrations/discord';
 
 export const questionOptionSchema = z.object({
     label:       z.string(),

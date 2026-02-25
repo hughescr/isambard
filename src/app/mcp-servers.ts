@@ -1,15 +1,9 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { Client } from 'discord.js';
-import { createMemoryMCPServer } from '../agent/memory-mcp-server';
-import { createDiscordMCPServer } from '../agent/discord-mcp-server';
-import { createInboxMCPServer } from '../agent/inbox-mcp-server';
-import type { MemoryToolBackend } from '../storage/memory-tool';
-import type { MemoryPath } from '../storage/memory-tool/types';
-import type { MessageSearchService } from '../integrations/discord/message-history/search';
-import type { QuestionRegistry } from '../agent/question-registry';
-import type { ChannelRegistryManager } from '../integrations/discord/channel-registry';
-import type { InboxManager } from '../integrations/discord/inbox';
-import type { BotStateManager } from '../integrations/discord/state';
+import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer } from '@/agent';
+import type { QuestionRegistry } from '@/agent';
+import type { MemoryToolBackend, MemoryPath } from '@/storage';
+import type { MessageSearchService, ChannelRegistryManager, InboxManager, BotStateManager } from '@/integrations/discord';
 
 /**
  * Options for creating MCP servers.

@@ -23,8 +23,7 @@ import { splitMessage } from '../integrations/discord/messages';
 import type { ChannelRegistryManager } from '../integrations/discord/channel-registry';
 // eslint-disable-next-line boundaries/element-types -- Discord MCP server imports Discord channel utilities; decouple per roadmap
 import { DMTracker, resolveChannelId } from '../integrations/discord/channel-registry';
-import { validateFilePaths, PathSecurityError } from '../utils/path-validator';
-import { formatLocalDateTime } from '../utils/time';
+import { validateFilePaths, PathSecurityError, formatLocalDateTime } from '@/utils';
 
 /**
  * Context for the current Discord conversation.

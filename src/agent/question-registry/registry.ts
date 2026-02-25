@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import type { ChannelId } from '@/integrations/discord/types';
+import type { ChannelId } from '@/integrations/discord';
 import type { PendingQuestion, QuestionAnswer, QuestionResult } from './types';
 
 export interface QuestionRegistryConfig {

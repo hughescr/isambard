@@ -14,3 +14,9 @@ export { TaskSessionBackend, sessionIdSchema, createSessionId, isSessionId, type
 // Utils
 /** @internal */
 export { stripDynamoKeys } from './utils/index.js';
+
+// Memory Tool
+export * from './memory-tool';
+
+// DynamoDB Timeout
+export { withDynamoTimeout, DynamoTimeoutError, type DynamoTimeoutOptions } from './dynamo-retry';

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import env from 'env-var';
-import { retryPolicySchema } from '@/utils/retry/types';
+import { retryPolicySchema } from '@/utils';
 
 // Define the Claude retry policy schema with custom defaults
 const claudeRetryPolicySchema = retryPolicySchema.extend({

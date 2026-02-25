@@ -10,7 +10,7 @@
  */
 
 import type { Logger } from '@hughescr/logger';
-import type { BotStateManager, InterruptingMessageDetails } from '@/integrations/discord/state';
+import type { BotStateManager, InterruptingMessageDetails } from '@/integrations/discord';
 import { type PerchSlot, type PerchConfig } from './types';
 import { buildPerchPrompt, buildTestPerchPrompt, buildPerchResumedPrompt, buildPerchTimeoutPrompt, getSuggestionLevelDescription } from './prompts';
 import type { StreamProgress } from '@/agent/stream-tracker';

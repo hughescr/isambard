@@ -1,8 +1,8 @@
 import _ from 'lodash';
 import { logger } from '@hughescr/logger';
-import type { MemoryToolBackend } from '@/storage/memory-tool';
-import { createMemoryPath } from '@/storage/memory-tool/types';
-import type { CatchUpCompletionSignal, CatchUpInProgressSignal } from '@/integrations/discord/catchup';
+import type { MemoryToolBackend } from '@/storage';
+import { createMemoryPath } from '@/storage';
+import type { CatchUpCompletionSignal, CatchUpInProgressSignal } from '@/integrations/discord';
 
 /**
  * Adapter interface for catch-up signal persistence.

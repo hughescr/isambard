@@ -1,9 +1,9 @@
 import { ActivityType } from 'discord.js';
 import type { Client } from 'discord.js';
-import type { DiscordConfig } from '@/config/schemas';
+import type { DiscordConfig } from '@/config';
 import type { BotStateManager, StateChange } from '../state';
 import type { InboxManager } from '../inbox';
-import type { ContextBuilder } from '@/agent/context-builder';
+import type { ContextBuilder } from '@/agent';
 import {
     createActiveStatusGenerator,
     createDynamicStatusGenerator,

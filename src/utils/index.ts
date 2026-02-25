@@ -6,6 +6,9 @@ export {
     formatMemoryTimestamp,
     formatShortRelativeTime,
     formatTimeHeader,
+    resolveTimezone,
+    formatLocalDateTime,
+    formatTimeSince,
     timeOfDaySchema,
     dayOfWeekSchema,
     timeContextSchema,
@@ -28,3 +31,20 @@ export {
 } from './text.js';
 
 export { safeAsyncHandler } from './safe-async-handler';
+
+export { sanitizeFilename, deduplicateFilename } from './filename';
+
+export {
+    retryAsync,
+    retryAsyncGenerator,
+    defaultClassifier,
+    createHttpStatusClassifier,
+    calculateDelay,
+    retryPolicySchema,
+    type ErrorCategory,
+    type ErrorClassification,
+    type ErrorClassifier,
+    type RetryLogger,
+    type RetryDeps,
+    type RetryPolicy
+} from './retry';

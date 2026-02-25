@@ -4,21 +4,26 @@ import _ from 'lodash';
 import { logger } from '@hughescr/logger';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
-import type { EmailConfig } from '@/config/schemas';
+import type { EmailConfig } from '@/config';
 import { type ChannelId, createChannelId } from '@/integrations/discord/types';
-import { EmailClassifier } from '@/integrations/email/classifier';
-import { EmailAllowlist } from '@/integrations/email/allowlist';
-import { EmailProcessor } from '@/integrations/email/email-processor';
-import { WildDuckListener } from '@/integrations/email/wildduck-listener';
-import { ReviewHandler } from '@/integrations/email/review-handler';
-import { buildReviewEmbed, buildUnsafeAlert, buildRestrictedAccessEmbed } from '@/integrations/email/review-embed-builder';
-import { AllowlistCommandHandler, buildAllowlistCommand } from '@/integrations/email/allowlist-commands';
-import { EmailFolder } from '@/integrations/email/types';
-import { WildDuckClient } from '@/integrations/email/wildduck-client';
-import { SendRateLimiter } from '@/integrations/email/send-rate-limiter';
-import { OutboundApprovalHandler } from '@/integrations/email/outbound-approval-handler';
-import { createEmailMCPServer } from '@/agent/email-mcp-server';
-import { retryAsync } from '@/utils/retry';
+import {
+    EmailClassifier,
+    EmailAllowlist,
+    EmailProcessor,
+    WildDuckListener,
+    ReviewHandler,
+    buildReviewEmbed,
+    buildUnsafeAlert,
+    buildRestrictedAccessEmbed,
+    AllowlistCommandHandler,
+    buildAllowlistCommand,
+    EmailFolder,
+    WildDuckClient,
+    SendRateLimiter,
+    OutboundApprovalHandler
+} from '@/integrations/email';
+import { createEmailMCPServer } from '@/agent';
+import { retryAsync } from '@/utils';
 
 // ---------------------------------------------------------------------------
 // Types

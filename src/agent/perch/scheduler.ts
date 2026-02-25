@@ -8,7 +8,7 @@
 import { CronExpressionParser } from 'cron-parser';
 import { DateTime } from 'luxon';
 import type { Logger } from '@hughescr/logger';
-import type { BotStateManager, StateChange } from '@/integrations/discord/state';
+import type { BotStateManager, StateChange } from '@/integrations/discord';
 import { type PerchSlot, type PerchConfig, type PerchSchedulerState } from './types';
 import { getSlotForHour } from './schedule';
 

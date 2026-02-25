@@ -6,11 +6,11 @@
  */
 
 import _ from 'lodash';
-import { generateText } from '@/agent/text-generator.js';
+import { generateText } from '@/agent';
 import { logger } from '@hughescr/logger';
 import { getToolDescription } from './types.js';
 import type { SynopsisContext, CatchUpSynopsisContext } from './types.js';
-import { truncateToWordBoundary, HARD_MAX_STATUS_LENGTH } from '@/utils/text.js';
+import { truncateToWordBoundary, HARD_MAX_STATUS_LENGTH } from '@/utils';
 
 // Re-export for backwards compatibility with existing imports
 export { truncateToWordBoundary, HARD_MAX_STATUS_LENGTH };

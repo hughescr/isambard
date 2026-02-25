@@ -17,11 +17,9 @@ function formatAddressForDisplay(addr: { name?: string, address: string }): stri
     return addr.name ? `${addr.name} <${addr.address}>` : addr.address;
 }
 
-import { EmailFolder } from '@/integrations/email/types';
-import type { WildDuckClient, WildDuckAttachment, WildDuckAttachmentMeta } from '@/integrations/email/wildduck-client';
-import type { SendRateLimiter } from '@/integrations/email/send-rate-limiter';
-import type { EmailAllowlist } from '@/integrations/email/allowlist';
-import { sanitizeFilename, deduplicateFilename } from '@/utils/filename';
+import { EmailFolder } from '@/integrations/email';
+import type { WildDuckClient, WildDuckAttachment, WildDuckAttachmentMeta, SendRateLimiter, EmailAllowlist } from '@/integrations/email';
+import { sanitizeFilename, deduplicateFilename } from '@/utils';
 
 // Regex for Mailbox:UID format — e.g., "CleanInbox:42", "Sent Mail:7", "INBOX.Sub:15"
 // Allows any non-empty mailbox name (including spaces, dots, slashes) followed by colon and digits.

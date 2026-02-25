@@ -10,6 +10,6 @@ export * from './wildduck-listener';
 export * from './review-embed-builder';
 export * from './review-handler';
 export { WildDuckClient, WildDuckError, WildDuckAuthError, SPECIAL_USE_FLAGS } from './wildduck-client';
-export type { WildDuckClientOptions, WildDuckSearchParams, WildDuckSearchResult, WildDuckAddress, WildDuckMessageReference, WildDuckAttachment, WildDuckUploadPayload, WildDuckMessage, WildDuckMessageSummary, SearchCriteria } from './wildduck-client';
+export type { WildDuckClientOptions, WildDuckSearchParams, WildDuckSearchResult, WildDuckAddress, WildDuckMessageReference, WildDuckAttachment, WildDuckAttachmentMeta, WildDuckUploadPayload, WildDuckMessage, WildDuckMessageSummary, SearchCriteria } from './wildduck-client';
 export * from './send-rate-limiter';
 export * from './outbound-approval-handler';

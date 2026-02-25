@@ -12,7 +12,7 @@ import {
     isSupportedImageType
 } from './types';
 import { needsConversion, convert } from './converter';
-import { sanitizeFilename } from '@/utils/filename';
+import { sanitizeFilename } from '@/utils';
 
 const FETCH_TIMEOUT_MS = 30_000;
 

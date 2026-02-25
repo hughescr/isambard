@@ -9,6 +9,7 @@ export {
     dynamoDBConfigSchema,
     perchConfigSchema,
     configSchema,
+    reconciliationConfigSchema,
     type LogLevel,
     type AppConfig,
     type AgentConfig,
@@ -18,7 +19,8 @@ export {
     type BoxConfig,
     type DynamoDBConfig,
     type PerchConfig,
-    type Config
+    type Config,
+    type ReconciliationConfig
 } from './schemas';
 
 export {

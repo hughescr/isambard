@@ -15,7 +15,7 @@ import { readdir, readFile, writeFile, stat, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import _ from 'lodash';
 import type { Logger } from '@hughescr/logger';
-import type { SessionId } from '../storage/task-session/types';
+import type { SessionId } from '@/storage';
 import { getTaskDirectoryPath as getTaskDirectoryPathImpl } from './task-directory-copier';
 
 // Re-export for tests

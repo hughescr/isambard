@@ -3,25 +3,12 @@ import env from 'env-var';
 import { stat, mkdir } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import _ from 'lodash';
-import { loadConfig, loadDynamoDBConfig } from './config/loader';
-import { createClaudeAgent } from './agent/agent';
-import { loadPlugins } from './agent/plugin-loader';
-import { QuestionRegistry } from './agent/question-registry';
-import { cleanupAllStaleSessions } from './agent/session-cleanup';
-import { syncAgentsAndSkills } from './agent/skill-agent-loader';
-import { createStorageLayer } from './app/storage-layer';
-import { createContextLayer } from './app/context-layer';
-import { createDiscordInfrastructure } from './app/discord-infrastructure';
-import { createMCPServers } from './app/mcp-servers';
-import { loadIdentityContext } from './app/identity-loader';
-import { createDiscordBot } from './integrations/discord/bot';
-import type { DiscordBot } from './integrations/discord/bot';
-import { resolveTimezone } from './utils/time';
-import { safeAsyncHandler } from './utils/safe-async-handler';
+import { loadConfig, loadDynamoDBConfig } from '@/config';
+import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills } from '@/agent';
+import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMCPServers, loadIdentityContext, createCatchUpSignalAdapter } from '@/app';
+import { createDiscordBot, setupEmail, type DiscordBot, type EmailSetupResult } from '@/integrations/discord';
+import { resolveTimezone, safeAsyncHandler } from '@/utils';
 import { logger, setTimezone } from '@hughescr/logger';
-import { createCatchUpSignalAdapter } from './app/catchup-signal-adapter';
-import { setupEmail } from './integrations/discord/setup/email-setup';
-import type { EmailSetupResult } from './integrations/discord/setup/email-setup';
 
 export interface App {
     /**

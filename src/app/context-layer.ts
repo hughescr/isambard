@@ -1,7 +1,6 @@
-import { createContextBuilder, type ContextBuilder, type EmailService } from '@/agent/context-builder';
-import { EventDeltaTracker } from '@/agent/event-delta-tracker';
-import { summarizeEventBatches } from '@/agent/event-summarizer';
-import type { MemoryToolBackend } from '@/storage/memory-tool';
+import { createContextBuilder, EventDeltaTracker, summarizeEventBatches } from '@/agent';
+import type { ContextBuilder, EmailService } from '@/agent/context-builder';
+import type { MemoryToolBackend } from '@/storage';
 
 /**
  * Context layer components for memory-aware agent operation.

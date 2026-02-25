@@ -1,5 +1,4 @@
-import { IsambardError } from '@/errors/base';
-import { ErrorCode } from '@/errors/codes';
+import { IsambardError, ErrorCode } from '@/errors';
 
 export class EmailError extends IsambardError {
     constructor(message: string, code: ErrorCode = ErrorCode.EMAIL_ERROR, context?: Record<string, unknown>) {

@@ -14,7 +14,7 @@ import type { ChannelId } from '../types';
 import { buildCatchUpPrompt, buildCatchUpResumedPrompt } from './prompts';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
-import { formatTimeSince } from '@/utils/time';
+import { formatTimeSince } from '@/utils';
 import { DateTime } from 'luxon';
 
 /**

@@ -1,4 +1,4 @@
-import { formatTimeHeader } from '@/utils/time';
+import { formatTimeHeader } from '@/utils';
 
 /**
  * Options for building the catch-up resumed prompt.

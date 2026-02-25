@@ -3,7 +3,7 @@ import { PresenceConfigSchema } from '@/integrations/discord/presence/types';
 import { inboxConfigSchema } from '@/integrations/discord/inbox/config';
 import { guildIdSchema } from '@/integrations/discord/types';
 import { reconciliationConfigSchema } from '@/storage/memory-tool/reconciliation/types';
-import { resolveTimezone } from '@/utils/time';
+import { resolveTimezone } from '@/utils';
 
 // Log level enum schema
 // Stryker disable next-line StringLiteral: Log level enum values are configuration
