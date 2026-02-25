@@ -1,3 +1,6 @@
+[run]
+silent = true
+
 [test]
 root = "./tests"
 preload = ["./tests/setup.ts"]
