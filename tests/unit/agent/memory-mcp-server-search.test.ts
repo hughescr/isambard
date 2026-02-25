@@ -4,6 +4,7 @@ import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { MemoryPath, ContentType, MemoryToolItemData } from '../../../src/storage/memory-tool/types';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { textContent } from '../../setup';
 
 // Helper to create mock memory item data
 const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryToolItemData => ({
@@ -70,9 +71,9 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
             expect(result.content).toBeDefined();
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toContain('/memories/test1.md');
-            expect(result.content[0].text).toContain('/memories/test2.md');
-            expect(result.content[0].text).toContain('First memory content');
+            expect(textContent(result.content[0])).toContain('/memories/test1.md');
+            expect(textContent(result.content[0])).toContain('/memories/test2.md');
+            expect(textContent(result.content[0])).toContain('First memory content');
             expect(result.isError).toBeUndefined();
         });
 
@@ -89,7 +90,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
             expect(result.content).toBeDefined();
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toBe('No memories found matching tags');
+            expect(textContent(result.content[0])).toBe('No memories found matching tags');
             expect(result.isError).toBeUndefined();
         });
 
@@ -118,12 +119,12 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
             const result = await handler({ tags: ['tag1'] });
 
-            expect(result.content[0].text).toContain(_repeat(char, 200));
+            expect(textContent(result.content[0])).toContain(_repeat(char, 200));
             if(shouldTruncate) {
-                expect(result.content[0].text).toContain('...');
-                expect(result.content[0].text).not.toContain(_repeat(char, 201));
+                expect(textContent(result.content[0])).toContain('...');
+                expect(textContent(result.content[0])).not.toContain(_repeat(char, 201));
             } else {
-                expect(result.content[0].text).not.toContain('...');
+                expect(textContent(result.content[0])).not.toContain('...');
             }
         });
 
@@ -157,8 +158,8 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
             const result = await handler({ tags: ['tag1'] });
 
-            expect(result.content[0].text).toContain('\n\n');
-            expect(result.content[0].text).toMatch(/test1\.md.*\n\n.*test2\.md/);
+            expect(textContent(result.content[0])).toContain('\n\n');
+            expect(textContent(result.content[0])).toMatch(/test1\.md.*\n\n.*test2\.md/);
         });
 
         test('should return error when backend.searchByTags throws Error', async () => {
@@ -173,7 +174,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
             expect(result.content).toBeDefined();
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toBe('Error searching memories: Search failed');
+            expect(textContent(result.content[0])).toBe('Error searching memories: Search failed');
             expect(result.isError).toBe(true);
         });
 
@@ -188,7 +189,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const result = await handler({ tags: ['tag1'] });
 
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toBe('Error searching memories: Database timeout');
+            expect(textContent(result.content[0])).toBe('Error searching memories: Database timeout');
             expect(result.isError).toBe(true);
         });
 
@@ -213,7 +214,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
             const result = await handler({ tags: ['tag1'] });
 
-            expect(result.content[0].text).toBe('/memories/note.md: This is my note content');
+            expect(textContent(result.content[0])).toBe('/memories/note.md: This is my note content');
         });
     });
 
@@ -248,8 +249,8 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
             expect(result.content).toBeDefined();
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toContain('/identity/core-values');
-            expect(result.content[0].text).toContain('/identity/beliefs');
+            expect(textContent(result.content[0])).toContain('/identity/core-values');
+            expect(textContent(result.content[0])).toContain('/identity/beliefs');
             expect(result.isError).toBeUndefined();
         });
 
@@ -266,7 +267,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
             expect(result.content).toBeDefined();
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toBe('Directory is empty');
+            expect(textContent(result.content[0])).toBe('Directory is empty');
             expect(result.isError).toBeUndefined();
         });
 
@@ -282,7 +283,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
             expect(result.content).toBeDefined();
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toBe('Error listing directory: Database connection failed');
+            expect(textContent(result.content[0])).toBe('Error listing directory: Database connection failed');
             expect(result.isError).toBe(true);
         });
 
@@ -296,7 +297,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
             const result = await handler({ path: '/' });
 
-            expect(result.content[0].text).toBe('Error listing directory: Network error');
+            expect(textContent(result.content[0])).toBe('Error listing directory: Network error');
             expect(result.isError).toBe(true);
         });
 
@@ -328,7 +329,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
             const result = await handler({ path: '/users/alice' });
 
-            expect(result.content[0].text).toBe('/users/alice/pref-1\n/users/alice/pref-2');
+            expect(textContent(result.content[0])).toBe('/users/alice/pref-1\n/users/alice/pref-2');
         });
 
         describe('layer path routing', () => {
@@ -354,7 +355,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
                 expect(mockBackend.listByLayer).toHaveBeenCalledWith('events', undefined);
                 expect(mockBackend.list).not.toHaveBeenCalled();
-                expect(result.content[0].text).toContain('/events/conversation/2025-01-01T00-00-00Z');
+                expect(textContent(result.content[0])).toContain('/events/conversation/2025-01-01T00-00-00Z');
             });
 
             test('should use listByLayer for /identity path', async () => {

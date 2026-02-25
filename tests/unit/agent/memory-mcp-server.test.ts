@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { mockLogger } from '../../setup';
+import { mockLogger, textContent } from '../../setup';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { MemoryPath, ContentType, MemoryToolItemData, TagIndexItem } from '../../../src/storage/memory-tool/types';
@@ -158,7 +158,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             expect(result.content).toBeDefined();
             expect(result.content.length).toBe(1);
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toBe('Test content');
+            expect(textContent(result.content[0])).toBe('Test content');
             expect(result.isError).toBeUndefined();
         });
 
@@ -172,7 +172,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             expect(result.content).toBeDefined();
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toBe('Memory not found');
+            expect(textContent(result.content[0])).toBe('Memory not found');
             expect(result.isError).toBe(true);
         });
 
@@ -188,7 +188,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             expect(result.content).toBeDefined();
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toBe('Error viewing memory: Database connection failed');
+            expect(textContent(result.content[0])).toBe('Error viewing memory: Database connection failed');
             expect(result.isError).toBe(true);
         });
 
@@ -204,7 +204,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             expect(result.content).toBeDefined();
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toBe('Error viewing memory: String error message');
+            expect(textContent(result.content[0])).toBe('Error viewing memory: String error message');
             expect(result.isError).toBe(true);
         });
 
@@ -278,7 +278,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             const result = await handler({ path: '/state/test' });
 
             // Should still return content successfully
-            expect(result.content[0].text).toBe('Test content');
+            expect(textContent(result.content[0])).toBe('Test content');
             expect(result.isError).toBeUndefined();
         });
 
@@ -301,7 +301,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             await Promise.resolve();
 
             // Should still return content successfully (fire-and-forget)
-            expect(result.content[0].text).toBe('Test content');
+            expect(textContent(result.content[0])).toBe('Test content');
             expect(result.isError).toBeUndefined();
             expect(recordAccess).toHaveBeenCalledTimes(1);
 
@@ -339,7 +339,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             expect(result.content).toBeDefined();
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toBe(`Memory stored at /${layer}/${name}`);
+            expect(textContent(result.content[0])).toBe(`Memory stored at /${layer}/${name}`);
             expect(result.isError).toBeUndefined();
 
             expect(mockBackend.create).toHaveBeenCalledWith({
@@ -376,7 +376,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ layer: 'identity', name: 'test', content: 'Content' });
 
-            expect(result.content[0].text).toBe('Error storing self memory: Path already exists');
+            expect(textContent(result.content[0])).toBe('Error storing self memory: Path already exists');
             expect(result.isError).toBe(true);
         });
 
@@ -390,7 +390,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ layer: 'state', name: 'test', content: 'Content' });
 
-            expect(result.content[0].text).toContain('Error storing self memory:');
+            expect(textContent(result.content[0])).toContain('Error storing self memory:');
             expect(result.isError).toBe(true);
         });
 
@@ -423,7 +423,7 @@ describe.concurrent('createMemoryMCPServer', () => {
                 });
                 expect(mockBackend.create).not.toHaveBeenCalled();
 
-                expect(result.content[0].text).toBe('Memory stored at /identity/core-values');
+                expect(textContent(result.content[0])).toBe('Memory stored at /identity/core-values');
                 expect(result.isError).toBeUndefined();
             });
 
@@ -449,7 +449,7 @@ describe.concurrent('createMemoryMCPServer', () => {
                 });
                 expect(mockBackend.update).not.toHaveBeenCalled();
 
-                expect(result.content[0].text).toBe('Memory stored at /state/current-goals');
+                expect(textContent(result.content[0])).toBe('Memory stored at /state/current-goals');
                 expect(result.isError).toBeUndefined();
             });
         });
@@ -504,7 +504,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             expect(result.content).toBeDefined();
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toBe('User memory stored at /users/user123/preferences');
+            expect(textContent(result.content[0])).toBe('User memory stored at /users/user123/preferences');
             expect(result.isError).toBeUndefined();
         });
 
@@ -550,7 +550,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ userId: 'user1', name: 'test', content: 'Content' });
 
-            expect(result.content[0].text).toBe('Error storing user memory: Storage quota exceeded');
+            expect(textContent(result.content[0])).toBe('Error storing user memory: Storage quota exceeded');
             expect(result.isError).toBe(true);
         });
 
@@ -564,7 +564,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ userId: 'user1', name: 'test', content: 'Content' });
 
-            expect(result.content[0].text).toBe('Error storing user memory: Network error');
+            expect(textContent(result.content[0])).toBe('Error storing user memory: Network error');
             expect(result.isError).toBe(true);
         });
 
@@ -597,7 +597,7 @@ describe.concurrent('createMemoryMCPServer', () => {
                 });
                 expect(mockBackend.create).not.toHaveBeenCalled();
 
-                expect(result.content[0].text).toBe('User memory stored at /users/alice/preferences');
+                expect(textContent(result.content[0])).toBe('User memory stored at /users/alice/preferences');
                 expect(result.isError).toBeUndefined();
             });
 
@@ -623,7 +623,7 @@ describe.concurrent('createMemoryMCPServer', () => {
                 });
                 expect(mockBackend.update).not.toHaveBeenCalled();
 
-                expect(result.content[0].text).toBe('User memory stored at /users/bob/notes');
+                expect(textContent(result.content[0])).toBe('User memory stored at /users/bob/notes');
                 expect(result.isError).toBeUndefined();
             });
         });
@@ -640,7 +640,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             expect(result.content).toBeDefined();
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toMatch(/^Event logged at \/events\/conversation\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/);
+            expect(textContent(result.content[0])).toMatch(/^Event logged at \/events\/conversation\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/);
             expect(result.isError).toBeUndefined();
         });
 
@@ -732,7 +732,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ eventType: 'test', summary: 'Test' });
 
-            expect(result.content[0].text).toBe('Error logging event: DynamoDB write failed');
+            expect(textContent(result.content[0])).toBe('Error logging event: DynamoDB write failed');
             expect(result.isError).toBe(true);
         });
 
@@ -746,7 +746,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ eventType: 'test', summary: 'Test' });
 
-            expect(result.content[0].text).toContain('Error logging event:');
+            expect(textContent(result.content[0])).toContain('Error logging event:');
             expect(result.isError).toBe(true);
         });
     });
@@ -760,7 +760,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({});
 
-            expect(result.content[0].text).toBe('No tags found');
+            expect(textContent(result.content[0])).toBe('No tags found');
         });
 
         test('should return formatted tag list sorted by count descending', async () => {
@@ -775,7 +775,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({});
 
-            expect(result.content[0].text).toBe('personal: 8\nimportant: 5\nwork: 3');
+            expect(textContent(result.content[0])).toBe('personal: 8\nimportant: 5\nwork: 3');
         });
 
         test('should handle errors gracefully', async () => {
@@ -788,8 +788,8 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({});
 
-            expect(result.content[0].text).toContain('Error listing tags:');
-            expect(result.content[0].text).toContain('Database error');
+            expect(textContent(result.content[0])).toContain('Error listing tags:');
+            expect(textContent(result.content[0])).toContain('Database error');
             expect(result.isError).toBe(true);
         });
 
@@ -803,7 +803,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({});
 
-            expect(result.content[0].text).toContain('Error listing tags:');
+            expect(textContent(result.content[0])).toContain('Error listing tags:');
             expect(result.isError).toBe(true);
         });
     });
@@ -822,10 +822,10 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ path: '/state/old-goals' });
 
-            expect(result.content[0].text).toContain('Deleted memory at /state/old-goals');
-            expect(result.content[0].text).toContain('Tags: goals, outdated');
-            expect(result.content[0].text).toContain('Last updated: 2025-06-01T12:00:00.000Z');
-            expect(result.content[0].text).toContain('Old goals content');
+            expect(textContent(result.content[0])).toContain('Deleted memory at /state/old-goals');
+            expect(textContent(result.content[0])).toContain('Tags: goals, outdated');
+            expect(textContent(result.content[0])).toContain('Last updated: 2025-06-01T12:00:00.000Z');
+            expect(textContent(result.content[0])).toContain('Old goals content');
             expect(result.isError).toBeUndefined();
 
             expect(mockBackend.delete).toHaveBeenCalledWith('/state/old-goals');
@@ -842,7 +842,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ path: '/identity/test' });
 
-            expect(result.content[0].text).toContain('Tags: none');
+            expect(textContent(result.content[0])).toContain('Tags: none');
             expect(result.isError).toBeUndefined();
         });
 
@@ -858,7 +858,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ path: '/identity/test' });
 
-            expect(result.content[0].text).toContain('Tags: none');
+            expect(textContent(result.content[0])).toContain('Tags: none');
             expect(result.isError).toBeUndefined();
         });
 
@@ -870,7 +870,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ path: '/nonexistent/path' });
 
-            expect(result.content[0].text).toBe('Memory not found at path: /nonexistent/path');
+            expect(textContent(result.content[0])).toBe('Memory not found at path: /nonexistent/path');
             expect(result.isError).toBe(true);
         });
 
@@ -884,7 +884,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ path: '/state/test' });
 
-            expect(result.content[0].text).toBe('Error deleting memory: DynamoDB delete failed');
+            expect(textContent(result.content[0])).toBe('Error deleting memory: DynamoDB delete failed');
             expect(result.isError).toBe(true);
         });
 
@@ -898,7 +898,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ path: '/state/test' });
 
-            expect(result.content[0].text).toBe('Error deleting memory: Network timeout');
+            expect(textContent(result.content[0])).toBe('Error deleting memory: Network timeout');
             expect(result.isError).toBe(true);
         });
     });
@@ -923,7 +923,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ tags: ['test'] });
 
-            expect(result.content[0].text).toContain('/identity/test.md: No content');
+            expect(textContent(result.content[0])).toContain('/identity/test.md: No content');
             expect(result.isError).toBeUndefined();
         });
 
@@ -946,7 +946,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ tags: ['test'] });
 
-            expect(result.content[0].text).toContain('/identity/test.md: Test preview content');
+            expect(textContent(result.content[0])).toContain('/identity/test.md: Test preview content');
             expect(result.isError).toBeUndefined();
         });
     });
@@ -1036,7 +1036,7 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ path: '/events/test/2026-01-26T07-19-53-557Z', addTags: ['catch-up'], removeTags: ['discord'] });
 
-            expect(result.content[0].text).toBe('Updated tags on /events/test/2026-01-26T07-19-53-557Z\nBefore: debugging, discord\nAfter: catch-up, debugging');
+            expect(textContent(result.content[0])).toBe('Updated tags on /events/test/2026-01-26T07-19-53-557Z\nBefore: debugging, discord\nAfter: catch-up, debugging');
 
             expect(mockBackend.update).toHaveBeenCalledWith('/events/test/2026-01-26T07-19-53-557Z', {
                 tags:              new Set(['catch-up', 'debugging']),
@@ -1053,7 +1053,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             const result = await handler({ path: '/nonexistent/path', addTags: ['test'] });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toBe('Memory not found at path: /nonexistent/path');
+            expect(textContent(result.content[0])).toBe('Memory not found at path: /nonexistent/path');
         });
 
         test('should return error when backend.get throws Error', async () => {
@@ -1067,7 +1067,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             const result = await handler({ path: '/state/test', addTags: ['test'] });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toBe('Error updating tags: Database error');
+            expect(textContent(result.content[0])).toBe('Error updating tags: Database error');
         });
 
         test('should return error when backend.get throws non-Error', async () => {
@@ -1081,7 +1081,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             const result = await handler({ path: '/state/test', addTags: ['test'] });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toBe('Error updating tags: Connection reset');
+            expect(textContent(result.content[0])).toBe('Error updating tags: Connection reset');
         });
 
         test('should return error when backend.update throws Error', async () => {
@@ -1099,7 +1099,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             const result = await handler({ path: '/state/test', addTags: ['test'] });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toBe('Error updating tags: Write failed');
+            expect(textContent(result.content[0])).toBe('Error updating tags: Write failed');
         });
 
         test('should return error when backend.update throws non-Error', async () => {
@@ -1117,7 +1117,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             const result = await handler({ path: '/state/test', addTags: ['test'] });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toBe('Error updating tags: Timeout');
+            expect(textContent(result.content[0])).toBe('Error updating tags: Timeout');
         });
 
         test('should return validation error when neither addTags nor removeTags provided', async () => {
@@ -1127,7 +1127,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             const result = await handler({ path: '/state/test' });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toBe('Must provide at least one of addTags or removeTags (non-empty)');
+            expect(textContent(result.content[0])).toBe('Must provide at least one of addTags or removeTags (non-empty)');
         });
 
         test('should return validation error when both arrays are empty', async () => {
@@ -1137,7 +1137,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             const result = await handler({ path: '/state/test', addTags: [], removeTags: [] });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toBe('Must provide at least one of addTags or removeTags (non-empty)');
+            expect(textContent(result.content[0])).toBe('Must provide at least one of addTags or removeTags (non-empty)');
         });
 
         test('should handle adding tags that are already present (idempotent)', async () => {
@@ -1206,8 +1206,8 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ path: '/state/test', addTags: ['new'] });
 
-            expect(result.content[0].text).toContain('Before: (none)');
-            expect(result.content[0].text).toContain('After: new');
+            expect(textContent(result.content[0])).toContain('Before: (none)');
+            expect(textContent(result.content[0])).toContain('After: new');
         });
 
         test('should show "(none)" in After when all tags are removed', async () => {
@@ -1222,8 +1222,8 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ path: '/state/test', removeTags: ['only-tag'] });
 
-            expect(result.content[0].text).toContain('Before: only-tag');
-            expect(result.content[0].text).toContain('After: (none)');
+            expect(textContent(result.content[0])).toContain('Before: only-tag');
+            expect(textContent(result.content[0])).toContain('After: (none)');
         });
 
         test('should sort tags alphabetically in before/after display', async () => {
@@ -1238,8 +1238,8 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             const result = await handler({ path: '/state/test', addTags: ['banana'] });
 
-            expect(result.content[0].text).toContain('Before: apple, mango, zebra');
-            expect(result.content[0].text).toContain('After: apple, banana, mango, zebra');
+            expect(textContent(result.content[0])).toContain('Before: apple, mango, zebra');
+            expect(textContent(result.content[0])).toContain('After: apple, banana, mango, zebra');
         });
     });
 });

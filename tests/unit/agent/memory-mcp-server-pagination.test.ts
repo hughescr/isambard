@@ -3,6 +3,7 @@ import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { MemoryPath, ContentType, MemoryToolItemData, TagIndexItem } from '../../../src/storage/memory-tool/types';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { textContent } from '../../setup';
 
 // Helper to create mock memory item data
 const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryToolItemData => ({
@@ -125,10 +126,10 @@ describe.concurrent('Memory MCP Server Pagination', () => {
 
                 const result = await handler({ path: '/users/alice', limit: 1 });
 
-                expect(result.content[0].text).toContain('/users/alice/pref1');
-                expect(result.content[0].text).toContain('---');
-                expect(result.content[0].text).toContain('More results available. Use cursor:');
-                expect(result.content[0].text).toContain(returnedCursor);
+                expect(textContent(result.content[0])).toContain('/users/alice/pref1');
+                expect(textContent(result.content[0])).toContain('---');
+                expect(textContent(result.content[0])).toContain('More results available. Use cursor:');
+                expect(textContent(result.content[0])).toContain(returnedCursor);
             });
 
             test('should include nextCursor from listByLayer in response', async () => {
@@ -145,9 +146,9 @@ describe.concurrent('Memory MCP Server Pagination', () => {
 
                 const result = await handler({ path: '/events', limit: 1 });
 
-                expect(result.content[0].text).toContain('/events/test/2025-01-01');
-                expect(result.content[0].text).toContain('More results available. Use cursor:');
-                expect(result.content[0].text).toContain(returnedCursor);
+                expect(textContent(result.content[0])).toContain('/events/test/2025-01-01');
+                expect(textContent(result.content[0])).toContain('More results available. Use cursor:');
+                expect(textContent(result.content[0])).toContain(returnedCursor);
             });
 
             test('should not include cursor section when no nextCursor', async () => {
@@ -163,9 +164,9 @@ describe.concurrent('Memory MCP Server Pagination', () => {
 
                 const result = await handler({ path: '/users/alice' });
 
-                expect(result.content[0].text).toBe('/users/alice/pref1');
-                expect(result.content[0].text).not.toContain('---');
-                expect(result.content[0].text).not.toContain('cursor');
+                expect(textContent(result.content[0])).toBe('/users/alice/pref1');
+                expect(textContent(result.content[0])).not.toContain('---');
+                expect(textContent(result.content[0])).not.toContain('cursor');
             });
         });
 
@@ -241,10 +242,10 @@ describe.concurrent('Memory MCP Server Pagination', () => {
 
                 const result = await handler({ tags: ['important'], limit: 1 });
 
-                expect(result.content[0].text).toContain('/memories/result1');
-                expect(result.content[0].text).toContain('---');
-                expect(result.content[0].text).toContain('More results available. Use cursor:');
-                expect(result.content[0].text).toContain(returnedCursor);
+                expect(textContent(result.content[0])).toContain('/memories/result1');
+                expect(textContent(result.content[0])).toContain('---');
+                expect(textContent(result.content[0])).toContain('More results available. Use cursor:');
+                expect(textContent(result.content[0])).toContain(returnedCursor);
             });
 
             test('should not include cursor section when no nextCursor', async () => {
@@ -266,9 +267,9 @@ describe.concurrent('Memory MCP Server Pagination', () => {
 
                 const result = await handler({ tags: ['tag1'] });
 
-                expect(result.content[0].text).toBe('/memories/result1: Only result');
-                expect(result.content[0].text).not.toContain('---');
-                expect(result.content[0].text).not.toContain('cursor');
+                expect(textContent(result.content[0])).toBe('/memories/result1: Only result');
+                expect(textContent(result.content[0])).not.toContain('---');
+                expect(textContent(result.content[0])).not.toContain('cursor');
             });
 
             test('should format multiple results with nextCursor correctly', async () => {
@@ -298,10 +299,10 @@ describe.concurrent('Memory MCP Server Pagination', () => {
 
                 const result = await handler({ tags: ['tag1'], limit: 2 });
 
-                expect(result.content[0].text).toContain('/memories/result1');
-                expect(result.content[0].text).toContain('/memories/result2');
-                expect(result.content[0].text).toContain('\n\n---\nMore results available. Use cursor:');
-                expect(result.content[0].text).toContain(returnedCursor);
+                expect(textContent(result.content[0])).toContain('/memories/result1');
+                expect(textContent(result.content[0])).toContain('/memories/result2');
+                expect(textContent(result.content[0])).toContain('\n\n---\nMore results available. Use cursor:');
+                expect(textContent(result.content[0])).toContain(returnedCursor);
             });
         });
     });

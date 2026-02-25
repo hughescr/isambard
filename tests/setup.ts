@@ -19,6 +19,17 @@ import {
     filter,
     forEach
 } from 'lodash';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+
+type ContentItem = CallToolResult['content'][number];
+
+/** Narrow an MCP content item to text type and return the text string. Throws if not text. */
+export function textContent(item: ContentItem): string {
+    if(item.type !== 'text') {
+        throw new Error(`Expected text content, got ${item.type}`);
+    }
+    return item.text;
+}
 
 // Mock SST Resource - MUST be mutable so tests can customize values
 export const mockSstResource: Record<string, { value?: unknown, name?: string }> = {

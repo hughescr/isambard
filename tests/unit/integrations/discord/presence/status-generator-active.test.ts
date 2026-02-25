@@ -1,7 +1,6 @@
 import { describe, test, expect, mock } from 'bun:test';
 import { ActivityType } from 'discord.js';
 import { createActiveStatusGenerator } from '@/integrations/discord/presence/status-generator-active';
-import type { ActiveStatusGeneratorDeps, } from '@/integrations/discord/presence/status-generator-active';
 import type { PresencePhase } from '@/integrations/discord/presence/types';
 
 type MockFn = ReturnType<typeof mock>;

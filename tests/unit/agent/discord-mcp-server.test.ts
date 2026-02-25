@@ -7,7 +7,7 @@ import type { MessageSearchService } from '../../../src/integrations/discord/mes
 import type { SearchResponse, DiscordSearchResult } from '../../../src/integrations/discord/message-history/types';
 import type { ChannelId, GuildId, UserId } from '../../../src/integrations/discord/types';
 import type { ChannelRegistryManager } from '../../../src/integrations/discord/channel-registry';
-import { mockFsPromises, resetMockFsPrefix } from '../../setup';
+import { mockFsPromises, resetMockFsPrefix, textContent } from '../../setup';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { QuestionRegistry } from '../../../src/agent/question-registry';
 
@@ -242,7 +242,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             expect(result.content[0].type).toBe('text');
 
-            const parsed = JSON.parse(result.content[0].text as string) as SearchResponse;
+            const parsed = JSON.parse(textContent(result.content[0])) as SearchResponse;
             expect(parsed.messages).toHaveLength(2);
             expect(parsed.messages[0].content).toBe('First message');
 
@@ -299,8 +299,8 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             expect(result.content[0].type).toBe('text');
 
-            expect(result.content[0].text).toBe('Error: Discord API error');
-            expect(result.content[0].text).not.toBe('');
+            expect(textContent(result.content[0])).toBe('Error: Discord API error');
+            expect(textContent(result.content[0])).not.toBe('');
 
             expect(result.isError).toBe(true);
             // Verify error object structure (kills ObjectLiteral and StringLiteral mutants on line 463)
@@ -321,7 +321,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             const result = await handler({ channelId: '123456789012345678' });
 
-            expect(result.content[0].text).toBe('Error: Network failure');
+            expect(textContent(result.content[0])).toBe('Error: Network failure');
 
             expect(result.isError).toBe(true);
         });
@@ -345,7 +345,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             const result = await handler({ channelId: '123456789012345678' });
 
-            const parsed = JSON.parse(result.content[0].text as string) as SearchResponse;
+            const parsed = JSON.parse(textContent(result.content[0])) as SearchResponse;
             expect(parsed.overflow).toBeDefined();
             expect(parsed.overflow?.count).toBe(5);
             expect(parsed.overflow?.summaries).toHaveLength(1);
@@ -371,7 +371,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             const result = await handler({ channelId: '123456789012345678' });
 
-            const parsed = JSON.parse(result.content[0].text as string) as SearchResponse;
+            const parsed = JSON.parse(textContent(result.content[0])) as SearchResponse;
             expect(parsed.messages[0].localTimestamp).toBeDefined();
             expect(parsed.messages[0].localTimestamp).toBe('2025-01-15T06:30:00');
             expect(parsed.messages[1].localTimestamp).toBe('2025-01-15T08:45:00');
@@ -395,7 +395,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             const result = await handler({ channelId: '123456789012345678' });
 
-            const parsed = JSON.parse(result.content[0].text as string) as SearchResponse;
+            const parsed = JSON.parse(textContent(result.content[0])) as SearchResponse;
             expect(parsed.messages[0].localTimestamp).toBeUndefined();
         });
 
@@ -439,7 +439,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             expect(result.content[0].type).toBe('text');
 
-            const parsed = JSON.parse(result.content[0].text as string) as SearchResponse;
+            const parsed = JSON.parse(textContent(result.content[0])) as SearchResponse;
             expect(parsed.messages).toHaveLength(2);
             expect(parsed.messages[0].content).toBe('Recent message 1');
 
@@ -456,8 +456,8 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             const result = await handler({ channelId: '123456789012345678' });
 
-            expect(result.content[0].text).toBe('Error: Channel not found');
-            expect(result.content[0].text).not.toBe('');
+            expect(textContent(result.content[0])).toBe('Error: Channel not found');
+            expect(textContent(result.content[0])).not.toBe('');
 
             expect(result.isError).toBe(true);
             // Verify error object structure (kills ObjectLiteral and StringLiteral mutants on line 493)
@@ -478,7 +478,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             const result = await handler({ channelId: '123456789012345678' });
 
-            expect(result.content[0].text).toContain('Error:');
+            expect(textContent(result.content[0])).toContain('Error:');
 
             expect(result.isError).toBe(true);
         });
@@ -503,7 +503,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             const result = await handler({ channelId: '123456789012345678' });
 
-            const parsed = JSON.parse(result.content[0].text as string) as SearchResponse;
+            const parsed = JSON.parse(textContent(result.content[0])) as SearchResponse;
             expect(parsed.messages[0].localTimestamp).toBeDefined();
             expect(parsed.messages[0].localTimestamp).toBe('2025-01-15T06:30:00');
             expect(parsed.messages[1].localTimestamp).toBe('2025-01-15T08:45:00');
@@ -522,7 +522,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             const result = await handler({ channelId: '123456789012345678' });
 
-            const parsed = JSON.parse(result.content[0].text as string) as SearchResponse;
+            const parsed = JSON.parse(textContent(result.content[0])) as SearchResponse;
             expect(parsed.messages[0].localTimestamp).toBeUndefined();
         });
 
@@ -558,7 +558,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             expect(result.content[0].type).toBe('text');
 
-            const parsed = JSON.parse(result.content[0].text as string) as DiscordSearchResult;
+            const parsed = JSON.parse(textContent(result.content[0])) as DiscordSearchResult;
             expect(parsed.id).toBe('999888777666555444');
             expect(parsed.content).toBe('Specific message content');
 
@@ -580,7 +580,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             expect(result.content[0].type).toBe('text');
 
-            expect(result.content[0].text).toBe('Message not found');
+            expect(textContent(result.content[0])).toBe('Message not found');
 
             expect(result.isError).toBeUndefined();
         });
@@ -607,7 +607,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 messageId: '999888777666555444',
             });
 
-            const parsed = JSON.parse(result.content[0].text as string) as DiscordSearchResult;
+            const parsed = JSON.parse(textContent(result.content[0])) as DiscordSearchResult;
             expect(parsed.localTimestamp).toBeDefined();
             expect(parsed.localTimestamp).toBe('2025-01-15T06:30:00');
         });
@@ -628,7 +628,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 messageId: '999888777666555444',
             });
 
-            const parsed = JSON.parse(result.content[0].text as string) as DiscordSearchResult;
+            const parsed = JSON.parse(textContent(result.content[0])) as DiscordSearchResult;
             expect(parsed.localTimestamp).toBeUndefined();
         });
 
@@ -645,8 +645,8 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 messageId: '999888777666555444',
             });
 
-            expect(result.content[0].text).toBe('Error: Access denied');
-            expect(result.content[0].text).not.toBe('');
+            expect(textContent(result.content[0])).toBe('Error: Access denied');
+            expect(textContent(result.content[0])).not.toBe('');
 
             expect(result.isError).toBe(true);
             // Verify error object structure (kills ObjectLiteral and StringLiteral mutants on line 539)
@@ -670,7 +670,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 messageId: '999888777666555444',
             });
 
-            expect(result.content[0].text).toBe('Error: Unknown error');
+            expect(textContent(result.content[0])).toBe('Error: Unknown error');
 
             expect(result.isError).toBe(true);
         });
@@ -694,7 +694,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             expect(result.content[0].type).toBe('text');
 
-            const parsed = JSON.parse(result.content[0].text as string) as DiscordSearchResult[];
+            const parsed = JSON.parse(textContent(result.content[0])) as DiscordSearchResult[];
             expect(parsed).toHaveLength(2);
             expect(parsed[0].content).toBe('First message');
             expect(parsed[1].content).toBe('Second message');
@@ -716,7 +716,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 messageId: ['111111111111111111'],
             });
 
-            const parsed = JSON.parse(result.content[0].text as string) as DiscordSearchResult[];
+            const parsed = JSON.parse(textContent(result.content[0])) as DiscordSearchResult[];
             expect(_isArray(parsed)).toBe(true);
             expect(parsed).toHaveLength(1);
         });
@@ -750,7 +750,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 messageId: ['111111111111111111', '222222222222222222'],
             });
 
-            const parsed = JSON.parse(result.content[0].text as string) as DiscordSearchResult[];
+            const parsed = JSON.parse(textContent(result.content[0])) as DiscordSearchResult[];
             expect(parsed).toHaveLength(2);
             expect(parsed[0].localTimestamp).toBeDefined();
             expect(parsed[0].localTimestamp).toBe('2025-01-15T06:30:00');
@@ -769,7 +769,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 messageId: [],
             });
 
-            const parsed = JSON.parse(result.content[0].text as string) as DiscordSearchResult[];
+            const parsed = JSON.parse(textContent(result.content[0])) as DiscordSearchResult[];
             expect(parsed).toHaveLength(0);
 
             expect(result.isError).toBeUndefined();
@@ -791,7 +791,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 messageId: ['111111111111111111', '222222222222222222', '333333333333333333'],
             });
 
-            const parsed = JSON.parse(result.content[0].text as string) as DiscordSearchResult[];
+            const parsed = JSON.parse(textContent(result.content[0])) as DiscordSearchResult[];
             expect(parsed).toHaveLength(2);
 
             expect(result.isError).toBeUndefined();
@@ -810,7 +810,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 messageId: ['111111111111111111'],
             });
 
-            expect(result.content[0].text).toBe('Error: Batch fetch failed');
+            expect(textContent(result.content[0])).toBe('Error: Batch fetch failed');
 
             expect(result.isError).toBe(true);
         });
@@ -902,7 +902,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.content[0].type).toBe('text');
 
-            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], chunksCount: number };
+            const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], chunksCount: number };
             expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toEqual(['sent-message-id']);
             expect(parsed.chunksCount).toBe(1);
@@ -942,7 +942,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBeUndefined();
 
-            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], chunksCount: number };
+            const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], chunksCount: number };
             expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toEqual(['sent-message-id']);
             expect(parsed.chunksCount).toBe(1);
@@ -983,7 +983,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(result.isError).toBeUndefined();
 
             // Parse response
-            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], chunksCount: number };
+            const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], chunksCount: number };
             expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toBeInstanceOf(Array);
             expect(parsed.messageIds.length).toBe(2);
@@ -1060,7 +1060,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 content:   'Short message',
             });
 
-            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], chunksCount: number };
+            const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], chunksCount: number };
             expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toEqual(['msg-1']);
             expect(parsed.chunksCount).toBe(1);
@@ -1079,12 +1079,12 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBe(true);
 
-            expect(result.content[0].text).toContain('Channel not found');
-            expect(result.content[0].text).not.toBe('');
+            expect(textContent(result.content[0])).toContain('Channel not found');
+            expect(textContent(result.content[0])).not.toBe('');
             // Verify error object structure (kills ObjectLiteral and StringLiteral mutants on lines 86)
             expect(result.content).toHaveLength(1);
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toBe('Error: Channel not found');
+            expect(textContent(result.content[0])).toBe('Error: Channel not found');
         });
 
         test('should return error when missing threadName with createThread', async () => {
@@ -1099,7 +1099,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBe(true);
 
-            expect(result.content[0].text).toContain('threadName is required');
+            expect(textContent(result.content[0])).toContain('threadName is required');
         });
 
         test('should return error when createThread is true with empty threadName', async () => {
@@ -1115,12 +1115,12 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBe(true);
 
-            expect(result.content[0].text).toContain('threadName is required');
-            expect(result.content[0].text).not.toBe('');
+            expect(textContent(result.content[0])).toContain('threadName is required');
+            expect(textContent(result.content[0])).not.toBe('');
             // Verify error object structure (kills ObjectLiteral and StringLiteral mutants on lines 61-62)
             expect(result.content).toHaveLength(1);
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toBe('Error: threadName is required when createThread is true');
+            expect(textContent(result.content[0])).toBe('Error: threadName is required when createThread is true');
         });
 
         test('should not create thread when createThread is false with valid threadName', async () => {
@@ -1146,7 +1146,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBeUndefined();
 
-            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], chunksCount: number, threadId?: string };
+            const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], chunksCount: number, threadId?: string };
             expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toEqual(['sent-message-id']);
             expect(parsed.chunksCount).toBe(1);
@@ -1177,7 +1177,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBeUndefined();
 
-            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], chunksCount: number, threadId?: string };
+            const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], chunksCount: number, threadId?: string };
             expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toEqual(['sent-message-id']);
             expect(parsed.chunksCount).toBe(1);
@@ -1197,7 +1197,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toContain('threadName is required');
+            expect(textContent(result.content[0])).toContain('threadName is required');
         });
 
         test('should send as reply when replyToMessageId provided', async () => {
@@ -1228,7 +1228,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBeUndefined();
 
-            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], chunksCount: number };
+            const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], chunksCount: number };
             expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toEqual(['reply-message-id']);
             expect(parsed.chunksCount).toBe(1);
@@ -1263,7 +1263,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBeUndefined();
 
-            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], chunksCount: number, threadId: string };
+            const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], chunksCount: number, threadId: string };
             expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toEqual(['sent-message-id']);
             expect(parsed.chunksCount).toBe(1);
@@ -1294,8 +1294,8 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBe(true);
 
-            expect(result.content[0].text).toBe('Error: Discord API error');
-            expect(result.content[0].text).not.toBe('');
+            expect(textContent(result.content[0])).toBe('Error: Discord API error');
+            expect(textContent(result.content[0])).not.toBe('');
             // Verify error object structure (kills ObjectLiteral and StringLiteral mutants on line 623)
             expect(result.content).toHaveLength(1);
             expect(result.content[0]).toEqual({
@@ -1370,7 +1370,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBeUndefined();
 
-            const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[] };
+            const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[] };
             expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toEqual(['sent-dm-message-id']);
 
@@ -1409,7 +1409,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toBe('Error: Could not find user @nonexistent in any server');
+            expect(textContent(result.content[0])).toBe('Error: Could not find user @nonexistent in any server');
         });
 
         describe('file attachments', () => {
@@ -1458,7 +1458,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
                 expect(result.isError).toBeUndefined();
 
-                const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[], filesAttached?: number };
+                const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], filesAttached?: number };
                 expect(parsed.success).toBe(true);
                 expect(parsed.filesAttached).toBe(2);
                 expect(mockChannel.send).toHaveBeenCalled();
@@ -1488,7 +1488,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
                 expect(result.isError).toBeUndefined();
 
-                const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[] };
+                const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[] };
                 expect(parsed.success).toBe(true);
                 expect(mockChannel.send).toHaveBeenCalled();
             });
@@ -1518,7 +1518,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
                 expect(result.isError).toBeUndefined();
 
-                const parsed = JSON.parse(result.content[0].text as string) as { success: boolean, messageIds: string[] };
+                const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[] };
                 expect(parsed.success).toBe(true);
                 expect(mockChannel.send).toHaveBeenCalled();
             });
@@ -1544,9 +1544,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 });
 
                 expect(result.isError).toBe(true);
-                expect(result.content[0].text).toContain('Security Error:');
-                expect(result.content[0].text).toContain('SECURITY:');
-                expect(result.content[0].text).toContain('outside the working directory');
+                expect(textContent(result.content[0])).toContain('Security Error:');
+                expect(textContent(result.content[0])).toContain('SECURITY:');
+                expect(textContent(result.content[0])).toContain('outside the working directory');
                 // Send should NOT be called due to security error
                 expect(mockChannel.send).not.toHaveBeenCalled();
             });
@@ -1819,7 +1819,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBeUndefined();
 
-            const parsed = JSON.parse(result.content[0].text as string);
+            const parsed = JSON.parse(textContent(result.content[0]));
             expect(parsed.questionId).toBe('q1');
             expect(parsed.answer).toBe('Blue');
             expect(parsed.responderId).toBe('user-123');
@@ -1852,9 +1852,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 question:  'What is your favorite color?',
             });
 
-            expect(result.content[0].text).toContain('timedOut');
+            expect(textContent(result.content[0])).toContain('timedOut');
 
-            const parsed = JSON.parse(result.content[0].text as string);
+            const parsed = JSON.parse(textContent(result.content[0]));
             expect(parsed.questionId).toBe('q1');
             expect(parsed.timedOut).toBe(true);
             expect(parsed.message).toBe('Question timed out without response');
@@ -1879,8 +1879,8 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toContain('not a text-based channel');
-            expect(result.content[0].text).not.toBe('');
+            expect(textContent(result.content[0])).toContain('not a text-based channel');
+            expect(textContent(result.content[0])).not.toBe('');
             // Verify error object structure (kills ObjectLiteral mutant on line 174)
             expect(result.content).toHaveLength(1);
             expect(result.content[0].type).toBe('text');
@@ -1898,8 +1898,8 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toContain('Channel not found');
-            expect(result.content[0].text).not.toBe('');
+            expect(textContent(result.content[0])).toContain('Channel not found');
+            expect(textContent(result.content[0])).not.toBe('');
             // Verify error object structure
             expect(result.content).toHaveLength(1);
             expect(result.content[0].type).toBe('text');
@@ -1922,7 +1922,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toContain('maximum of 25 buttons');
+            expect(textContent(result.content[0])).toContain('maximum of 25 buttons');
         });
 
         test('should allow exactly 25 options without error', async () => {
@@ -2048,7 +2048,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toBe('Error: Discord rate limit exceeded');
+            expect(textContent(result.content[0])).toBe('Error: Discord rate limit exceeded');
         });
 
         test('should return error when askUserQuestion encounters non-Error exception', async () => {
@@ -2072,7 +2072,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toContain('Error:');
+            expect(textContent(result.content[0])).toContain('Error:');
         });
     });
 
@@ -2161,7 +2161,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toContain('Parent channel not found');
+            expect(textContent(result.content[0])).toContain('Parent channel not found');
         });
 
         test('should return error when parent channel is not text-based', async () => {
@@ -2192,7 +2192,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toContain('Channel is not a text-based channel');
+            expect(textContent(result.content[0])).toContain('Channel is not a text-based channel');
         });
     });
 
@@ -2308,7 +2308,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toContain('Channel is not a text-based channel');
+            expect(textContent(result.content[0])).toContain('Channel is not a text-based channel');
         });
     });
 
@@ -2335,7 +2335,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             // Should succeed but not create thread
             expect(result.isError).toBeUndefined();
-            const parsed = JSON.parse(result.content[0].text as string);
+            const parsed = JSON.parse(textContent(result.content[0]));
             expect(parsed.threadId).toBeUndefined();
         });
     });
@@ -2437,7 +2437,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toContain('Network error');
+            expect(textContent(result.content[0])).toContain('Network error');
         });
     });
 
@@ -2595,8 +2595,8 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(result.isError).toBe(true);
             expect(result.content).toHaveLength(1);
             expect(result.content[0].type).toBe('text');
-            expect(result.content[0].text).toBe('Error: Channel not found');
-            expect(result.content[0].text).not.toBe('');
+            expect(textContent(result.content[0])).toBe('Error: Channel not found');
+            expect(textContent(result.content[0])).not.toBe('');
             // Verify the full error object structure
             expect(result).toEqual({
                 content: [{ type: 'text', text: 'Error: Channel not found' }],
@@ -2649,7 +2649,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const result = await handler({});
 
             expect(result.isError).toBeUndefined();
-            const parsed = JSON.parse(result.content[0].text as string);
+            const parsed = JSON.parse(textContent(result.content[0]));
             expect(parsed.count).toBe(1);
             expect(parsed.channels).toHaveLength(1);
             expect(parsed.channels[0].channelId).toBe('111111111111111111');
@@ -2701,7 +2701,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const result = await handler({ includesMuted: true });
 
             expect(result.isError).toBeUndefined();
-            const parsed = JSON.parse(result.content[0].text as string);
+            const parsed = JSON.parse(textContent(result.content[0]));
             expect(parsed.count).toBe(2);
             expect(parsed.channels).toHaveLength(2);
             expect(parsed.channels[0].channelId).toBe('111111111111111111');
@@ -2755,7 +2755,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const result = await handler({ includesMuted: false });
 
             expect(result.isError).toBeUndefined();
-            const parsed = JSON.parse(result.content[0].text as string);
+            const parsed = JSON.parse(textContent(result.content[0]));
             expect(parsed.count).toBe(1);
             expect(parsed.channels).toHaveLength(1);
             expect(parsed.channels[0].channelId).toBe('111111111111111111');
@@ -2778,7 +2778,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const result = await handler({});
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toBe('Error: Database error');
+            expect(textContent(result.content[0])).toBe('Error: Database error');
         });
     });
 
@@ -2808,7 +2808,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBeUndefined();
 
-            const parsed = JSON.parse(result.content[0].text as string);
+            const parsed = JSON.parse(textContent(result.content[0]));
             expect(parsed.success).toBe(true);
             expect(parsed.addedEmojis).toEqual(['👍']);
             expect(mockMessage.react).toHaveBeenCalledWith('👍');
@@ -2839,7 +2839,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBeUndefined();
 
-            const parsed = JSON.parse(result.content[0].text as string);
+            const parsed = JSON.parse(textContent(result.content[0]));
             expect(parsed.success).toBe(true);
             expect(parsed.addedEmojis).toEqual(['👍', '❤️', '🎉']);
             expect(mockMessage.react).toHaveBeenCalledTimes(3);
@@ -2874,7 +2874,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBe(true);
 
-            const parsed = JSON.parse(result.content[0].text as string);
+            const parsed = JSON.parse(textContent(result.content[0]));
             expect(parsed.success).toBe(false);
             expect(parsed.addedEmojis).toEqual(['👍', '🎉']);
             expect(parsed.failedEmojis[0].emoji).toBe('❤️');
@@ -2900,7 +2900,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toContain('Message not found');
+            expect(textContent(result.content[0])).toContain('Message not found');
         });
 
         test('should return error when channel fetch throws exception', async () => {
@@ -2918,7 +2918,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toBe('Error: Discord API unavailable');
+            expect(textContent(result.content[0])).toBe('Error: Discord API unavailable');
             // Verify error object structure (kills StringLiteral and ObjectLiteral mutants in catch block)
             expect(result.content).toHaveLength(1);
             expect(result.content[0]).toEqual({
@@ -2938,7 +2938,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(result.isError).toBeUndefined();
             expect(mockChannelRegistry.muteChannel).toHaveBeenCalledWith('1451694737026449581');
 
-            const parsed = JSON.parse(result.content[0].text as string);
+            const parsed = JSON.parse(textContent(result.content[0]));
             expect(parsed.success).toBe(true);
             expect(parsed.muted).toBe(true);
             expect(parsed.channelId).toBe('1451694737026449581');
@@ -2982,7 +2982,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const result = await handler({ channelId: '#nonexistent' });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toContain('Channel not found: nonexistent');
+            expect(textContent(result.content[0])).toContain('Channel not found: nonexistent');
         });
     });
 
@@ -2996,7 +2996,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(result.isError).toBeUndefined();
             expect(mockChannelRegistry.unmuteChannel).toHaveBeenCalledWith('1451694737026449581');
 
-            const parsed = JSON.parse(result.content[0].text as string);
+            const parsed = JSON.parse(textContent(result.content[0]));
             expect(parsed.success).toBe(true);
             expect(parsed.muted).toBe(false);
             expect(parsed.channelId).toBe('1451694737026449581');
@@ -3040,7 +3040,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const result = await handler({ channelId: '#nonexistent' });
 
             expect(result.isError).toBe(true);
-            expect(result.content[0].text).toContain('Channel not found: nonexistent');
+            expect(textContent(result.content[0])).toContain('Channel not found: nonexistent');
         });
     });
 });

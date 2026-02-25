@@ -221,7 +221,7 @@ function splitBySentences(text: string, maxLength: number): string[] {
  */
 function splitByParagraphs(text: string, maxLength: number): string[] {
     // Split on paragraph breaks (two or more newlines)
-    const paragraphs = _.compact(_(_.split(text, /\n{2,}/)).map(p => _.trim(p)).value());
+    const paragraphs = _(text).split(/\n{2,}/).map(p => _.trim(p)).compact().value();
 
     // Pre-condition: caller guarantees non-empty trimmed text
     // The text will produce at least one paragraph (even without \n\n)
